@@ -32,7 +32,7 @@ const DONE = new Set([
   "finished",
 ]);
 const FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled"]);
-const ACCEPTED = new Set(["accepted", "adopted", "promoted", "bound"]);
+const ACCEPTED = new Set(["accepted", "applied", "adopted", "promoted", "bound"]);
 const REJECTED = new Set(["rejected", "discarded", "failed"]);
 const PENDING = new Set([
   "pending",
@@ -70,6 +70,7 @@ const labels = {
   paused: "已暂停",
   stopped: "已停止",
   accepted: "已采纳",
+  applied: "已采纳",
   adopted: "已采纳",
   promoted: "已晋升",
   bound: "已绑定",
