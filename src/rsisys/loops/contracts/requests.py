@@ -47,6 +47,15 @@ class EvaluationSpec:
 
 
 @dataclass(frozen=True)
+class ApplyCandidateSpec:
+    candidate_id: str
+
+    def __post_init__(self):
+        if not isinstance(self.candidate_id, str) or not self.candidate_id.strip():
+            raise ValueError('Applying a candidate requires a nonempty candidate_id')
+
+
+@dataclass(frozen=True)
 class TrainSpec:
     """Delegate a complete training job; algorithm/data requirements belong to its backend."""
 

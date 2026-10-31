@@ -4,7 +4,7 @@
 
 ## 接口
 
-[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈和 directive_modes。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数。scope 仅标记证据来源，不是优化目标接口。
+[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈、directive_modes 和跨轮 candidates。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数；候选集合不受这两个 limit 截断。scope 仅标记证据来源，不是优化目标接口。
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项，可附 reason。wait 的任务由外部通过 `loop.harness.resume(job, result)` 回填，见 [Harness](../README.md)。
 
@@ -13,7 +13,7 @@
 同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
 
 - invoke：operation 和 arguments；具体名称与参数由 Decision Action Space 校验。
-- explore：必填 strategy，mode 默认 execute。sft 需 recipe_ref，apply_result 默认 false；rl 需 recipe_ref，updates 默认 1，必须为正整数；evaluate 需 protocol_ref 和来自最新反馈 candidates 的 candidate_id；configure_prompt 需字符串 instructions。
+- explore：必填 strategy，mode 默认 execute。sft 需 recipe_ref，apply_result 默认 false；rl 需 recipe_ref，updates 默认 1，必须为正整数；evaluate 需 protocol_ref 和来自 context.candidates 的 candidate_id，也兼容 last_feedback.candidates；configure_prompt 需字符串 instructions。
 - wait：job 对象含 job_id、backend；finish：可选 reason。
 
 系统指令的描述、schema 与参数解析由注入的 `DirectiveDefinitions` 提供；ModelDecisionPolicy 和 Decision Action Space 应使用同一个 catalog。请求只包含当前 directive_modes 允许的定义。模型将模式参数放入 `arguments`，例如：
@@ -23,6 +23,8 @@
 ```
 
 仍接受旧的顶层参数形式，但同一响应不能混用顶层模式参数和 arguments。新增模式不需要修改 policy 的 JSON 分派代码，详见 [Action Space](../../action_space/README.md#扩展系统指令)。
+
+parser 的候选按 candidate_id 合并去重，以 context.candidates 为准，最新反馈补齐缺失项。早期训练候选在后续训练或不携带候选的评测反馈之后仍可引用；未知 ID 仍被拒绝。
 
 explore 未提供 input_ids 时使用全部当前准备产物；提供时必须是产物 ID 列表，只能引用当前准备结果或最新反馈的 artifact_refs，空列表表示不传输入。
 

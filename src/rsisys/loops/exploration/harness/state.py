@@ -6,6 +6,7 @@ from rsisys.loops.contracts.feedback import Feedback
 from .rl import RLState
 from rsisys.experience.records import ExperienceRecord
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.training import TrainingResult
 
 
 @dataclass
@@ -32,3 +33,5 @@ class ExplorationState:
     measured_output_tokens: int = 0
     calls_with_missing_usage: int = 0
     instructions: str = ''
+    candidate_results: dict[str, TrainingResult] = field(default_factory=dict)
+    applied_candidates: set[str] = field(default_factory=set)

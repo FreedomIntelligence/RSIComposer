@@ -89,7 +89,7 @@ Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务�
 
 - 优化目标可能是 Actor 模型/prompt、决策者自身，或 Harness 配置/代码；当前没有统一的 target 接口。
 - 决策者训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
-- 候选评测与应用尚未形成统一验收机制：SFT 与可选 train 的 `apply_result` 默认 false，默认 RL 每轮应用学习结果，evaluate 不自动部署候选。
+- 候选跨轮保存，显式启用 `apply_candidate` 可独立应用已评测候选；验收指标和阈值由具体 policy 决定，没有全局默认验收规则。SFT 与可选 train 的 `apply_result` 默认 false，默认 RL 每轮应用学习结果，evaluate 不自动部署候选。
 
 ## 图示
 

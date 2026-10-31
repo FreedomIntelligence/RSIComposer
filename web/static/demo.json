@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "run_id": "example-dual-loop-001",
+  "objective": "提升多步推理的可靠性，同时保持模型的通用能力。",
+  "status": "running",
+  "updated_at": "2026-10-31T14:32:18+08:00",
+  "loops": {
+    "decision_making": {
+      "status": "running",
+      "summary": "评估最新候选的表现，决定下一轮探索方向。"
+    },
+    "exploration": {
+      "status": "training",
+      "summary": "训练 actor 候选 r008，等待独立评测结果。"
+    }
+  },
+  "models": {
+    "decision_maker": {
+      "model_id": "reasoner-small",
+      "revision": "dm-r003"
+    },
+    "actor": {
+      "model_id": "actor-base",
+      "revision": "actor-r007"
+    }
+  },
+  "jobs": [
+    {
+      "job_id": "train-actor-008",
+      "kind": "actor_training",
+      "status": "running"
+    },
+    {
+      "job_id": "eval-candidate-007",
+      "kind": "candidate_evaluation",
+      "status": "completed"
+    },
+    {
+      "job_id": "train-decision-004",
+      "kind": "decision_maker_training",
+      "status": "queued"
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "candidate-008",
+      "status": "training",
+      "base_revision": "actor-r007",
+      "revision": "actor-r008",
+      "metrics": {}
+    },
+    {
+      "candidate_id": "candidate-007",
+      "status": "accepted",
+      "base_revision": "actor-r006",
+      "revision": "actor-r007",
+      "metrics": {
+        "base_nll": 1.942,
+        "candidate_nll": 1.781,
+        "delta_nll": -0.161,
+        "eval_samples": 128
+      }
+    },
+    {
+      "candidate_id": "candidate-006",
+      "status": "rejected",
+      "base_revision": "actor-r006",
+      "revision": "actor-r006-alt",
+      "metrics": {
+        "base_nll": 1.942,
+        "candidate_nll": 2.013,
+        "delta_nll": 0.071,
+        "eval_samples": 128
+      }
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "2026-10-31T14:32:18+08:00",
+      "kind": "training.started",
+      "summary": "探索循环开始训练新的 actor 候选。",
+      "details": {
+        "job_id": "train-actor-008",
+        "candidate_id": "candidate-008",
+        "revision": "actor-r008"
+      }
+    },
+    {
+      "timestamp": "2026-10-31T14:30:42+08:00",
+      "kind": "model.bound",
+      "summary": "actor 绑定更新为 actor-r007。",
+      "details": {
+        "role": "actor",
+        "base_revision": "actor-r006",
+        "revision": "actor-r007"
+      }
+    },
+    {
+      "timestamp": "2026-10-31T14:30:41+08:00",
+      "kind": "candidate.accepted",
+      "summary": "决策循环采纳 candidate-007。",
+      "details": {
+        "candidate_id": "candidate-007"
+      }
+    },
+    {
+      "timestamp": "2026-10-31T14:28:06+08:00",
+      "kind": "evaluation.completed",
+      "summary": "基线与新版本评测完成，结果已记录。",
+      "details": {
+        "job_id": "eval-candidate-007",
+        "candidate_id": "candidate-007"
+      }
+    },
+    {
+      "timestamp": "2026-10-31T14:19:23+08:00",
+      "kind": "candidate.rejected",
+      "summary": "candidate-006 未通过评测，保留原绑定。",
+      "details": {
+        "candidate_id": "candidate-006"
+      }
+    },
+    {
+      "timestamp": "2026-10-31T14:00:00+08:00",
+      "kind": "run.started",
+      "summary": "运行开始，决策循环与探索循环已就绪。",
+      "details": {}
+    }
+  ]
+}

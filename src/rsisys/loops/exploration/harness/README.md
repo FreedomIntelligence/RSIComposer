@@ -41,6 +41,8 @@ accept 复制并校验请求；advance 推进阶段，execute 会同步运行一
 
 内置本地控制通过 `loop.harness` 使用：`run(directive, loop.action_space)`、`submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning`、`submit_evaluation` / `poll_evaluation` / `cancel_evaluation`，以及 `start_rl` / `step_rl(loop.action_space)` / `cancel_rl`。示例见 [loop_internals.py](../../../../../examples/loop_internals.py)。
 
+训练成功后，默认 Harness 按 candidate_id 保存完整 TrainingResult。`candidate_result(id)` 返回副本，`apply_candidate(id)` 在本地空闲边界应用已保存候选，不依赖原训练 job 继续存在。指令路径需显式配对决策侧 `apply_candidate_directive()` 与 `ApplyCandidateHandler()`；验收标准由 policy 或调用方负责，handler 不假定评测通过。应用仍校验 base 是否过时、模型 readiness 和控制占用；同一候选重试不会重复切换绑定。应用成功后的证据写入失败只重试记录。
+
 指令未 acknowledge 前，禁止本地执行、新提交、模型应用和 RL 控制；已有 job 仍可 poll / cancel。本地 RL 占用执行、训练提交与模型更新，评测可独立提交。SFT/RL 取消与成功竞速时不自动应用本次候选，已应用的版本不回滚。RL 当前顺序采样与训练，不支持并行采样或异步权重广播。
 
 每个执行 episode 写一条 runtime_feedback，Feedback.evidence_refs 引用共享系统记录；RL 的 trajectory_refs 引用默认 Harness 本地 history，不能互换。训练/评测终态写入共享 [Experience](../../../experience/README.md)。执行后记录失败时缓存结果与稳定 ID，再次推进只补写，不重新 rollout；待写期间禁止快照，暂存不支持崩溃恢复。

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from rsisys.experience.records import ExperienceRecord
 from rsisys.loops._memory import Memory, HistoryEntry
+from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.directive import Directive
@@ -19,6 +20,7 @@ class DecisionContext:
     last_feedback: Feedback | None = None
     history: tuple[HistoryEntry, ...] = ()
     directive_modes: tuple[str, ...] = ("execute",)
+    candidates: tuple[Candidate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -53,3 +55,4 @@ class DecisionState:
     measured_input_tokens: int = 0
     measured_output_tokens: int = 0
     calls_with_missing_usage: int = 0
+    candidates: dict[str, Candidate] = field(default_factory=dict)

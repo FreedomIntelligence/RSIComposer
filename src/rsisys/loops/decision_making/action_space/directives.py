@@ -98,7 +98,7 @@ def _evaluate(arguments, candidates):
     available = {c.candidate_id: c for c in candidates}
     ident = arguments['candidate_id']
     if not isinstance(ident, str) or ident not in available:
-        raise ValueError('Evaluation must reference a candidate from the latest feedback')
+        raise ValueError('Evaluation must reference an available candidate in decision context')
     return EvaluationSpec(available[ident], arguments['protocol_ref'])
 
 
@@ -117,7 +117,7 @@ def builtin_directives() -> tuple[DirectiveDefinition, ...]:
         definition('rl', 'Alternate environment rollout and model training', {
             'recipe_ref': {'type': 'string'}, 'updates': {'type': 'integer', 'minimum': 1, 'default': 1},
         }, ('recipe_ref',), _rl),
-        definition('evaluate', 'Evaluate a candidate from the latest feedback on selected inputs', {
+        definition('evaluate', 'Evaluate an available candidate from decision context on selected inputs', {
             'candidate_id': {'type': 'string'}, 'protocol_ref': {'type': 'string'},
         }, ('candidate_id', 'protocol_ref'), _evaluate),
         definition('configure_prompt', 'Replace Actor instructions; an empty string clears them', {
@@ -144,3 +144,24 @@ def training_directive() -> DirectiveDefinition:
             'apply_result': {'type': 'boolean', 'default': False},
         }, 'required': ['recipe_ref', 'method'], 'additionalProperties': False,
     }), parse)
+
+
+def apply_candidate_directive() -> DirectiveDefinition:
+    """Explicitly enable applying a known candidate; no job identity is required."""
+
+    def parse(arguments, candidates):
+        _arguments(arguments, ('candidate_id',))
+        ident = arguments['candidate_id']
+        if (not isinstance(ident, str) or not ident.strip()
+                or not any(candidate.candidate_id == ident for candidate in candidates)):
+            raise ValueError('Application must reference an available candidate in decision context')
+        from rsisys.loops.contracts.requests import ApplyCandidateSpec
+
+        return ApplyCandidateSpec(ident)
+
+    return DirectiveDefinition(DirectiveSpec(
+        'apply_candidate', 'Apply an available candidate from decision context', {
+            'type': 'object', 'properties': {'candidate_id': {'type': 'string', 'minLength': 1}},
+            'required': ['candidate_id'], 'additionalProperties': False,
+        },
+    ), parse)

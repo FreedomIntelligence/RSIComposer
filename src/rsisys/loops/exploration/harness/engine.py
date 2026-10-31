@@ -228,6 +228,11 @@ class DefaultExplorationHarness:
                 raise ValueError("Training result does not match the submitted base")
             if "actor" not in result.candidate.affected_roles:
                 raise ValueError("Training result does not target this loop's role")
+            candidate_id = result.candidate.candidate_id
+            if (candidate_id in self.state.candidate_results
+                    and self.state.candidate_results[candidate_id] != result):
+                raise ValueError('Candidate ID reused with different training content')
+            self.state.candidate_results[candidate_id] = deepcopy(result)
         if outcome.terminal and outcome.job not in self.state.recorded_training:
             self.experience.record(ExperienceRecord(
                 record_id=self.state.training_record_ids.setdefault(outcome.job, str(uuid4())),
@@ -256,18 +261,53 @@ class DefaultExplorationHarness:
         if outcome.status != JobStatus.SUCCEEDED:
             raise RuntimeError(f"Training has no usable result: {outcome.status}")
         result = outcome.result
-        if job in self.state.applied_training:
+        model = self._apply_training_result(result)
+        self.state.applied_training.add(job)
+        return model
+
+    def candidate_result(self, candidate_id: str) -> TrainingResult:
+        """Read a retained result without requiring its training job or backend."""
+        if candidate_id not in self.state.candidate_results:
+            raise ValueError(f'Unknown candidate: {candidate_id}')
+        return deepcopy(self.state.candidate_results[candidate_id])
+
+    def apply_candidate(self, candidate_id: str) -> ModelRef:
+        """Explicit local selection; evaluation acceptance belongs to the caller."""
+        self._require_local_control()
+        return self._apply_candidate(candidate_id)
+
+    def apply_candidate_for_command(self, candidate_id: str, *, directive_id: str) -> ModelRef:
+        """Handler support: apply under the owning, uncancelled command receipt."""
+        if self.commands.active != directive_id:
+            raise RuntimeError('Candidate application requires the owning directive')
+        state = self.commands.receipts[directive_id]
+        if state.cancel_requested or state.feedback is not None:
+            raise RuntimeError('Cannot apply a candidate for a cancelled or finished directive')
+        return self._apply_candidate(candidate_id)
+
+    def _apply_candidate(self, candidate_id: str) -> ModelRef:
+        if self.state.rl is not None and not self.state.rl.terminal:
+            raise RuntimeError('An RL cycle owns model updates; advance it with step_rl')
+        return self._apply_training_result(self.candidate_result(candidate_id))
+
+    def _apply_training_result(self, result: TrainingResult) -> ModelRef:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
+            raise RuntimeError('Cannot replace the actor during environment interaction')
+        if self.training.busy:
+            raise RuntimeError('Cannot replace the model while another training job is active')
+        if 'actor' not in result.candidate.affected_roles:
+            raise ValueError("Training result does not target this loop's role")
+        candidate_id = result.candidate.candidate_id
+        if candidate_id in self.state.applied_candidates:
             return result.model
         if not isinstance(self.policy, ModelUpdatable):
             raise TypeError("This policy does not support model updates")
         if self.policy.model != result.base:
             raise ValueError("Training base is stale relative to this policy")
-        if self.training.busy:
-            raise RuntimeError("Cannot replace the model while another training job is active")
         ready = prepare_model_activation(result, self.model_activator,
-            idempotency_key=json.dumps(('exploration', job.backend, job.job_id)))
+            idempotency_key=json.dumps(('exploration', 'candidate', candidate_id)))
         self.policy.update_model(ready)
-        self.state.applied_training.add(job)
+        self.state.applied_candidates.add(candidate_id)
         return result.model
 
     def submit_evaluation(self, request: EvaluationRequest, *, idempotency_key: str) -> JobRef:

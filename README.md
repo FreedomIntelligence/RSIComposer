@@ -25,6 +25,8 @@ pixi run test
 
 `pixi run backend-demo` 运行 [backend_training.py](examples/backend_training.py)：在独立子进程中进行真实 CPU 标量回归并回传权重产物和 MSE。它不是 LLM 训练或 verl 现成适配，也不演示 RL rollout。
 
+[Qwen3.5 toycase](examples/qwen_toy/README.md) 提供真实模型决策、LoRA 训练、独立评测、候选应用与后续 Actor 执行的装配例子；服务默认使用 CPU，小规模验证使用 0.8B，也可接入 9B。[监视前端](web/README.md) 使用标准库 HTTP 服务读取 `runs/*/monitor.json`，展示双 loop、作业、候选指标和事件时间线。
+
 ## 系统文档
 
 - [架构](docs/ARCHITECTURE.md)：Harness / Action Space 边界、双 loop 协同与图示。

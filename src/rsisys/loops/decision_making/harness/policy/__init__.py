@@ -31,10 +31,12 @@ class ModelDecisionPolicy:
         inputs["directives"] = [asdict(spec) for spec in self.directives.describe(context.directive_modes)]
         response = self.backend.generate(GenerationRequest(
             "decision_maker", self.model, json.dumps(inputs),
-            system=("Return one JSON object, no markdown. Decide the next step using only the listed operations. "
-                    "Use {\"kind\":\"invoke\",\"operation\":name,\"arguments\":{...}} to prepare; "
-                    "{\"kind\":\"explore\",\"strategy\":text,\"mode\":\"execute\"} to dispatch; "
-                    "Choose exploration modes only from context.directive_modes. "
+            system=("Return one JSON object, no markdown. There are two separate action namespaces. "
+                    "Use {\"kind\":\"invoke\",\"operation\":name,\"arguments\":{...}} ONLY for context.operations. "
+                    "If operations is empty, invoke is unavailable. "
+                    "For EVERY system directive in context.directive_modes use "
+                    "{\"kind\":\"explore\",\"strategy\":text,\"mode\":mode,\"arguments\":{...}}. "
+                    "A directive mode is never an operation name. "
                     "Put mode-specific parameters in arguments, following its listed input_schema. "
                     "System instruction execution is owned by the exploration harness. "
                     "Optional input_ids selects only artifacts from current operation results or last_feedback; "
@@ -57,8 +59,12 @@ class ModelDecisionPolicy:
                       if key not in ('kind', 'strategy', 'mode', 'input_ids', 'arguments')}
             if 'arguments' in payload and fields:
                 raise ValueError('Use either arguments or top-level directive parameters, not both')
+            candidates = {c.candidate_id: c for c in context.candidates}
+            if context.last_feedback:
+                for candidate in context.last_feedback.candidates:
+                    candidates.setdefault(candidate.candidate_id, candidate)
             request = self.directives.parse(mode, payload.get('arguments', fields),
-                candidates=context.last_feedback.candidates if context.last_feedback else ())
+                candidates=tuple(candidates.values()))
             inputs = tuple(ref for result in context.operation_results for ref in result.artifacts)
             if 'input_ids' in payload:
                 available = {ref.artifact_id: ref for ref in inputs}

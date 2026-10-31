@@ -94,7 +94,8 @@ class DefaultDecisionHarness:
                                   action_space.describe(), tuple(self.state.operation_results),
                                   self.memory.recall(limit=self.memory_limit),
                                   deepcopy(self.state.last_feedback),
-                                  self.memory.history(limit=self.memory_limit), action_space.directive_modes())
+                                  self.memory.history(limit=self.memory_limit), action_space.directive_modes(),
+                                  candidates=deepcopy(tuple(self.state.candidates.values())))
         decision = self.policy.decide(context)
         self._record_usage(decision.usage)
         self.memory.append(HistoryEntry(str(uuid4()), "decision", None, decision.kind,
@@ -164,6 +165,14 @@ class DefaultDecisionHarness:
             raise ValueError("Feedback does not match the pending directive.")
         if self.state.pending_directive != directive:
             raise ValueError('Directive content differs from the dispatched request')
+        directive, feedback = deepcopy(directive), deepcopy(feedback)
+        candidates = dict(self.state.candidates)
+        # Validate the entire batch before any write, including duplicate IDs
+        # within this feedback. Publish the index only after both records succeed.
+        for candidate in deepcopy(feedback.candidates):
+            if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
+                raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
+            candidates[candidate.candidate_id] = candidate
         self.memory.append(HistoryEntry(
             record_id=self.state.feedback_record_id, kind="feedback", task_id=directive.directive_id,
             summary=feedback.summary, simulated=feedback.simulated, source_refs=feedback.evidence_refs,
@@ -179,8 +188,9 @@ class DefaultDecisionHarness:
                      "execution_metrics": feedback.execution_metrics,
                      "candidates": [asdict(c) for c in feedback.candidates]},
         ))
-        self.state.last_feedback = deepcopy(feedback)
-        self.state.last_directive = deepcopy(directive)
+        self.state.candidates = candidates
+        self.state.last_feedback = feedback
+        self.state.last_directive = directive
         self.state.pending_directive_id = None
         self.state.pending_directive = None
         self.state.feedback_record_id = None
