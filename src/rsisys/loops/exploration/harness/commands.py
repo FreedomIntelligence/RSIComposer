@@ -1,7 +1,9 @@
 """Exploration-owned command lifecycle; runtime only transports progress/feedback."""
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from types import MappingProxyType
 from hashlib import sha256
 from uuid import uuid4
 
@@ -22,19 +24,82 @@ from .rl import RLPlan
 class CommandState:
     directive: Directive
     phase: str = 'accepted'
-    request: ActorTrainingRequest | EvaluationRequest | None = None
+    request: object | None = None
     job: JobRef | None = None
     feedback: Feedback | None = None
     cancel_requested: bool = False
     record: ExperienceRecord | None = None
+    data: dict[str, object] = field(default_factory=dict)
+    started: bool = False
+
+    @property
+    def idempotency_key(self) -> str:
+        return f'directive:{self.directive.directive_id}'
+
+
+class CommandHandler:
+    """Explicit command implementation; state survives in-process retries.
+
+    prepare validates/freezes the request without starting external work.
+    advance makes one bounded step and returns Feedback when terminal, or None
+    while waiting. An exception without terminal feedback retains the receipt.
+    After work starts, advance must honor state.cancel_requested. Use the stable
+    state.idempotency_key for submissions whose response may be lost.
+    """
+
+    def prepare(self, harness, state: CommandState) -> None:
+        raise NotImplementedError
+
+    def advance(self, harness, state: CommandState, action_space) -> Feedback | None:
+        raise NotImplementedError
+
+    def cancel_before_start(self, harness, state: CommandState, action_space) -> Feedback | None:
+        return Feedback(state.directive.directive_id, ExecutionStatus.CANCELLED,
+                        'Cancelled before execution', state.directive.simulated)
+
+
+class _BuiltinHandler(CommandHandler):
+    def __init__(self, prepare, advance, *, cancel_before_start=None):
+        self._prepare, self._advance, self._cancel = prepare, advance, cancel_before_start
+
+    def prepare(self, harness, state):
+        self._prepare(state)
+
+    def advance(self, harness, state, action_space):
+        return self._advance(state, action_space)
+
+    def cancel_before_start(self, harness, state, action_space):
+        if self._cancel is not None:
+            return self._cancel(state, action_space)
+        return super().cancel_before_start(harness, state, action_space)
 
 
 class ExplorationCommands:
-    def __init__(self, loop):
+    def __init__(self, loop, handlers: Mapping[str, CommandHandler] | None = None):
         self.loop = loop
         self.active: str | None = None
         # In-process receipts support retries. They are not a durable job journal.
         self.receipts: dict[str, CommandState] = {}
+        defaults = {
+            'execute': _BuiltinHandler(self._prepare_execute, self._advance_execute),
+            'configure_prompt': _BuiltinHandler(self._prepare_prompt,
+                lambda state, actions: self._advance_prompt(state),
+                cancel_before_start=lambda state, actions: self._advance_prompt(state)),
+            'sft': _BuiltinHandler(self._prepare_sft,
+                lambda state, actions: self._advance_job(state, training=True)),
+            'rl': _BuiltinHandler(self._prepare_rl, self._advance_rl),
+            'evaluate': _BuiltinHandler(self._prepare_evaluation,
+                lambda state, actions: self._advance_job(state, training=False)),
+        }
+        for mode, handler in (handlers or {}).items():
+            if not isinstance(mode, str) or not mode.strip():
+                raise ValueError('Command handler modes must be nonempty strings')
+            if not isinstance(handler, CommandHandler):
+                raise TypeError('Handlers must implement CommandHandler')
+            defaults[mode] = handler
+        self.builtin_modes = tuple(mode for mode in defaults if mode not in (handlers or {}))
+        self.customized = bool(handlers)
+        self.handlers = MappingProxyType(defaults)
 
     @property
     def busy(self):
@@ -54,49 +119,59 @@ class ExplorationCommands:
         self.receipts[directive.directive_id] = state
         self.active = directive.directive_id
         try:
-            self._prepare(state)
+            if directive.mode not in self.handlers:
+                raise NotImplementedError(f"Unsupported exploration mode: {directive.mode}")
+            self.handlers[directive.mode].prepare(loop, state)
         except BaseException as exc:
             self._fail(state, exc)
             raise
         return self.inspect(directive.directive_id)
 
-    def _prepare(self, state):
-        directive, loop = state.directive, self.loop
-        payload = directive.payload
-        if directive.mode == 'execute':
-            if payload is not None:
-                raise ValueError('Execute does not accept a system command payload')
-        elif directive.mode == 'configure_prompt':
-            if not isinstance(payload, PromptSpec):
-                raise ValueError('configure_prompt requires PromptSpec')
-        elif directive.mode in ('sft', 'rl'):
-            if loop.learner is None:
-                raise NotImplementedError('Training directives require a learner')
-            expected = SFTSpec if directive.mode == 'sft' else RLSpec
-            if not isinstance(payload, expected):
-                raise ValueError(f'{directive.mode} requires {expected.__name__}')
-            if directive.mode == 'rl' or payload.apply_result:
-                if not isinstance(loop.policy, ModelUpdatable):
-                    raise TypeError('This command requires a model-updatable policy')
-            if directive.mode == 'sft':
-                base = payload.base or getattr(loop.policy, 'model', None)
-                if not isinstance(base, ModelRef):
-                    raise ValueError('SFT requires a base model')
-                state.request = ActorTrainingRequest(base, directive.input_refs, payload.recipe_ref)
-        elif directive.mode == 'evaluate':
-            if loop.evaluation.backend is None:
-                raise NotImplementedError('Evaluation directives require an evaluator')
-            if not isinstance(payload, EvaluationSpec):
-                raise ValueError('Evaluation requires EvaluationSpec')
-            state.request = EvaluationRequest(payload.candidate, payload.protocol_ref)
-        else:
-            raise NotImplementedError(f'Unsupported exploration mode: {directive.mode}')
+    @staticmethod
+    def _prepare_execute(state):
+        if state.directive.payload is not None:
+            raise ValueError('Execute does not accept a system command payload')
+
+    @staticmethod
+    def _prepare_prompt(state):
+        if not isinstance(state.directive.payload, PromptSpec):
+            raise ValueError('configure_prompt requires PromptSpec')
+
+    def _require_training(self, payload, expected, *, apply):
+        if self.loop.learner is None:
+            raise NotImplementedError('Training directives require a learner')
+        if not isinstance(payload, expected):
+            raise ValueError(f'Training requires {expected.__name__}')
+        if apply and not isinstance(self.loop.policy, ModelUpdatable):
+            raise TypeError('This command requires a model-updatable policy')
+
+    def _prepare_sft(self, state):
+        payload = state.directive.payload
+        self._require_training(payload, SFTSpec, apply=isinstance(payload, SFTSpec) and payload.apply_result)
+        base = payload.base or getattr(self.loop.policy, 'model', None)
+        if not isinstance(base, ModelRef):
+            raise ValueError('SFT requires a base model')
+        state.request = ActorTrainingRequest(base, state.directive.input_refs, payload.recipe_ref)
+
+    def _prepare_rl(self, state):
+        self._require_training(state.directive.payload, RLSpec, apply=True)
+
+    def _prepare_evaluation(self, state):
+        if self.loop.evaluation.backend is None:
+            raise NotImplementedError('Evaluation directives require an evaluator')
+        payload = state.directive.payload
+        if not isinstance(payload, EvaluationSpec):
+            raise ValueError('Evaluation requires EvaluationSpec')
+        state.request = EvaluationRequest(payload.candidate, payload.protocol_ref, state.directive.input_refs)
 
     def inspect(self, directive_id):
         state = self.receipts[directive_id]
         return deepcopy(ExplorationProgress(directive_id, state.phase, state.directive, state.job, state.feedback))
 
     def _finish(self, state, feedback):
+        if not isinstance(feedback, Feedback) or feedback.directive_id != state.directive.directive_id:
+            raise ValueError('Command feedback must match its directive')
+        feedback = replace(feedback, simulated=feedback.simulated or state.directive.simulated)
         state.feedback = deepcopy(feedback)
         state.phase = feedback.status.value
         self.loop.state.last_feedback = deepcopy(feedback)
@@ -111,30 +186,30 @@ class ExplorationCommands:
         state = self.receipts[directive_id]
         if state.feedback is not None:
             return self.inspect(directive_id)
-        directive, loop = state.directive, self.loop
-        if directive.mode == 'configure_prompt':
-            self._advance_prompt(state)
-        elif state.cancel_requested and state.phase == 'accepted':
-            self._finish(state, Feedback(directive_id, ExecutionStatus.CANCELLED,
-                                        'Cancelled before execution', directive.simulated))
-        elif directive.mode == 'execute':
-            state.phase = 'executing'
-            try:
-                self._finish(state, loop._run_episode(directive, action_space))
-            except BaseException as exc:
-                if loop.state.pending_episode is not None:
-                    raise  # Keep the receipt nonterminal until system feedback is saved.
-                feedback = loop.state.last_feedback
-                if feedback is not None and feedback.directive_id == directive_id:
-                    self._finish(state, feedback)
-                else:
-                    self._fail(state, exc)
-                raise
-        elif directive.mode == 'rl':
-            self._advance_rl(state, action_space)
+        handler = self.handlers[state.directive.mode]
+        if state.cancel_requested and not state.started:
+            feedback = handler.cancel_before_start(self.loop, state, action_space)
         else:
-            self._advance_job(state)
+            # An uncertain first advance may already have started external work.
+            state.started = True
+            feedback = handler.advance(self.loop, state, action_space)
+        if feedback is not None:
+            self._finish(state, feedback)
         return self.inspect(directive_id)
+
+    def _advance_execute(self, state, action_space):
+        state.phase = 'executing'
+        try:
+            self._finish(state, self.loop._run_episode(state.directive, action_space))
+        except BaseException as exc:
+            if self.loop.state.pending_episode is not None:
+                raise  # Save system feedback before exposing a terminal receipt.
+            feedback = self.loop.state.last_feedback
+            if feedback is not None and feedback.directive_id == state.directive.directive_id:
+                self._finish(state, feedback)
+            else:
+                self._fail(state, exc)
+            raise
 
     def _advance_prompt(self, state):
         loop, directive = self.loop, state.directive
@@ -165,14 +240,13 @@ class ExplorationCommands:
             evidence_refs=(state.record.record_id,),
         ))
 
-    def _advance_job(self, state):
+    def _advance_job(self, state, *, training: bool):
         loop, directive = self.loop, state.directive
-        training = directive.mode == 'sft'
         if state.phase in ('accepted', 'submitting'):
             # Submission may have succeeded remotely before raising. Retain request/key.
             state.phase = 'submitting'
             submit = loop._submit_learning if training else loop._submit_evaluation
-            state.job = submit(state.request, idempotency_key=f'directive:{directive.directive_id}')
+            state.job = submit(state.request, idempotency_key=state.idempotency_key)
             state.phase = 'running'
             return
         if training:

@@ -5,9 +5,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Protocol
 
-from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.directive import Directive
-from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.coordination import OperationResult
+from .directives import DirectiveDefinitions, DEFAULT_DIRECTIVE_MODES
 
 
 @dataclass(frozen=True)
@@ -21,26 +21,6 @@ class OperationSpec:
 class OperationCall:
     name: str
     arguments: dict[str, object]
-
-
-@dataclass(frozen=True)
-class OperationResult:
-    summary: str
-    artifacts: tuple[ArtifactRef, ...]
-    simulated: bool
-    status: ExecutionStatus = ExecutionStatus.COMPLETED
-    error: str | None = None
-
-    def __post_init__(self):
-        if self.status not in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
-            raise ValueError("An operation result must be terminal")
-        if self.status == ExecutionStatus.FAILED and not self.error:
-            raise ValueError("A failed operation requires an error")
-        if self.status == ExecutionStatus.COMPLETED and self.error:
-            raise ValueError("A completed operation cannot carry an error")
-
-
-DEFAULT_DIRECTIVE_MODES = ("execute", "sft", "rl", "evaluate", "configure_prompt")
 
 
 class DecisionActionSpace(Protocol):
@@ -63,7 +43,8 @@ class DecisionActionDefinition(Protocol):
 
 class ModularDecisionActionSpace:
     def __init__(self, definitions: Iterable[DecisionActionDefinition], *,
-                 directive_modes: tuple[str, ...] = DEFAULT_DIRECTIVE_MODES):
+                 directive_modes: tuple[str, ...] | None = None,
+                 directives: DirectiveDefinitions | None = None):
         self._definitions: dict[str, DecisionActionDefinition] = {}
         for definition in definitions:
             if not isinstance(definition.spec, OperationSpec):
@@ -76,10 +57,15 @@ class ModularDecisionActionSpace:
             if not callable(getattr(definition, "validate", None)):
                 raise TypeError("Decision definitions require a validate method")
             self._definitions[name] = definition
+        self.directives = directives if directives is not None else DirectiveDefinitions()
+        if not isinstance(self.directives, DirectiveDefinitions):
+            raise TypeError("Expected a DirectiveDefinitions catalog")
+        if directive_modes is None:
+            directive_modes = self.directives.modes()
         if isinstance(directive_modes, str):
             raise TypeError("directive_modes must be a collection of mode names")
         self._directive_modes = tuple(directive_modes)
-        if any(not isinstance(mode, str) or mode not in DEFAULT_DIRECTIVE_MODES
+        if any(not isinstance(mode, str) or mode not in self.directives.modes()
                for mode in self._directive_modes):
             raise ValueError("Unsupported directive mode")
         if len(set(self._directive_modes)) != len(self._directive_modes):
@@ -127,18 +113,20 @@ class _StringArgumentDefinition:
 
 
 class DemoDecisionActionSpace(ModularDecisionActionSpace):
-    def __init__(self, *, directive_modes: tuple[str, ...] = DEFAULT_DIRECTIVE_MODES):
+    def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
+                 directives: DirectiveDefinitions | None = None):
         super().__init__((_StringArgumentDefinition(
             "prepare_data", "Prepare a demonstration input artifact", "text",
-        ),), directive_modes=directive_modes)
+        ),), directive_modes=directive_modes, directives=directives)
 
 
 class LocalDecisionActionSpace(ModularDecisionActionSpace):
-    def __init__(self, *, directive_modes: tuple[str, ...] = DEFAULT_DIRECTIVE_MODES):
+    def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
+                 directives: DirectiveDefinitions | None = None):
         super().__init__((
             _StringArgumentDefinition("prepare_data", "Store text as a reusable input artifact", "text"),
             _StringArgumentDefinition("search_literature", "Search explicitly imported text literature",
                                       "query", nonempty=True),
             _StringArgumentDefinition("store_strategy", "Save an explicit strategy as an artifact",
                                       "strategy", nonempty=True),
-        ), directive_modes=directive_modes)
+        ), directive_modes=directive_modes, directives=directives)

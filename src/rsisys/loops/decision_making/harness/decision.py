@@ -6,7 +6,8 @@ from typing import Literal
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.jobs import JobRef
 
-from ..action_space import OperationCall, OperationResult
+from ..action_space import OperationCall
+from rsisys.loops.contracts.coordination import LoopStepResult
 
 
 @dataclass(frozen=True)
@@ -27,15 +28,6 @@ class Decision:
         wanted = set() if expected[self.kind] is None else {expected[self.kind]}
         if present != wanted:
             raise ValueError(f"Decision {self.kind} requires only {expected[self.kind]}")
-
-
-@dataclass(frozen=True)
-class LoopStepResult:
-    kind: Literal["progressed", "dispatch", "waiting", "finished"]
-    directive: Directive | None = None
-    job: JobRef | None = None
-    operation_result: OperationResult | None = None
-    reason: str = ""
 
 
 @dataclass(frozen=True)

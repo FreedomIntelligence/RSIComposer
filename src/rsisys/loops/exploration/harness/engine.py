@@ -24,7 +24,8 @@ from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
 from .state import ExplorationState, PendingEpisode
-from .commands import ExplorationCommands
+from .commands import ExplorationCommands, CommandHandler
+from collections.abc import Mapping
 
 
 class DefaultExplorationHarness:
@@ -32,7 +33,8 @@ class DefaultExplorationHarness:
 
     def __init__(self, policy: ActorPolicy, environment: Environment,
                  experience: ExperienceSystem, learner: ActorLearner | None = None,
-                 evaluator: Evaluator | None = None, *, memory: MemoryStore | None = None, memory_limit: int = 32):
+                 evaluator: Evaluator | None = None, *, memory: MemoryStore | None = None, memory_limit: int = 32,
+                 command_handlers: Mapping[str, CommandHandler] | None = None):
         self.policy, self.environment = policy, environment
         self.experience, self.learner = experience, learner
         if type(memory_limit) is not int or memory_limit < 1:
@@ -42,7 +44,7 @@ class DefaultExplorationHarness:
         self.state = ExplorationState()
         self.training = JobBook[ActorTrainingRequest, TrainingResult](learner)
         self.evaluation = JobBook[EvaluationRequest, EvaluationResult](evaluator)
-        self.commands = ExplorationCommands(self)
+        self.commands = ExplorationCommands(self, command_handlers)
 
     @property
     def command_busy(self) -> bool:

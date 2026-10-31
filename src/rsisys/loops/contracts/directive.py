@@ -1,7 +1,8 @@
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass
+import json
 
 from .artifacts import ArtifactRef
-from .requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 
 
 @dataclass(frozen=True)
@@ -20,10 +21,19 @@ class Directive:
     allowed_actions: tuple[str, ...] = ("echo",)
     max_steps: int = 4
     simulated: bool = False
-    payload: SFTSpec | RLSpec | EvaluationSpec | PromptSpec | None = None
+    payload: object | None = None
 
     def __post_init__(self):
         if not isinstance(self.directive_id, str) or not self.directive_id:
             raise ValueError('A directive ID is required')
         if type(self.max_steps) is not int or self.max_steps < 1:
             raise ValueError("max_steps must be a positive integer")
+        # Receipts compare deep-copied directives; default histories serialize them.
+        # Fail at construction rather than after a handler has performed work.
+        try:
+            json.dumps(asdict(self)['payload'], allow_nan=False)
+            if deepcopy(self.payload) != self.payload:
+                raise ValueError('Payload does not preserve value equality when copied')
+        except Exception as exc:
+            raise TypeError('Directive payload must serialize as JSON data and preserve value equality '
+                            'when deep-copied; use plain values or value-equal dataclasses') from exc

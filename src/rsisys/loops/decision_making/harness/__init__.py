@@ -4,7 +4,7 @@ from typing import Protocol
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from ..action_space import DecisionActionSpace
-from .decision import LoopStepResult
+from rsisys.loops.contracts.coordination import LoopStepResult
 
 
 class DecisionHarness(Protocol):

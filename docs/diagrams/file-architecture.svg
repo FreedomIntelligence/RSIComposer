@@ -86,6 +86,6 @@
 <rect x="1190" y="1250" width="1110" height="170" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
 <text x="1214" y="1290" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">snapshot/ + 系统装配</text>
 <text x="1214" y="1324" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">snapshot/：捕获 / 编解码 / 保存 / 恢复</text>
-<text x="1214" y="1353" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · config.py：系统装配</text>
+<text x="1214" y="1353" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · config.py · assembly.py：装配</text>
 </g>
 </svg>

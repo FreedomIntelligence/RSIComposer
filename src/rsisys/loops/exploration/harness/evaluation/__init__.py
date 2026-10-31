@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome
 
@@ -9,10 +10,13 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome
 class EvaluationRequest:
     candidate: Candidate
     protocol_ref: str
+    data_refs: tuple[ArtifactRef, ...] = ()
 
     def __post_init__(self):
         if not self.protocol_ref:
             raise ValueError('An evaluation protocol is required')
+        if not isinstance(self.data_refs, tuple) or any(not isinstance(ref, ArtifactRef) for ref in self.data_refs):
+            raise TypeError('Evaluation data_refs must be a tuple of ArtifactRef values')
 
 
 @dataclass(frozen=True)

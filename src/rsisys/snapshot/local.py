@@ -112,6 +112,8 @@ class LocalSnapshotCapture:
         app = self.application
         if app.store is None:
             raise RuntimeError('Application is closed')
+        if app.custom_assembly:
+            raise TypeError('Custom assembly factories need explicit snapshot integration')
         decision_loop, exploration_loop = app.runner.decision_making, app.runner.exploration
         dm, actor = decision_loop.harness, exploration_loop.harness
         if type(dm) is not DefaultDecisionHarness or type(actor) is not DefaultExplorationHarness:
@@ -137,6 +139,9 @@ class LocalSnapshotCapture:
                                     (actor.environment, expected_env)):
             if type(component) is not expected:
                 raise TypeError('Custom components must provide their own snapshot integration')
+        if (actor.commands.customized or not dm.policy.directives.is_default
+                or not decision_loop.action_space.directives.is_default):
+            raise TypeError('Custom directive definitions or handlers need explicit snapshot integration')
         if type(dm.memory) is not DecisionMemory or type(actor.memory) is not ExplorationMemory:
             raise TypeError('Custom loop memories need explicit snapshot integration')
         if dm.experience is not app.experience or actor.experience is not app.experience:

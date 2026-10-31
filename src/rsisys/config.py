@@ -4,25 +4,15 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+from rsisys.assembly import (
+    AssemblyContext, AssemblyRunner, DecisionFactory, ExplorationFactory,
+    build_default_decision, build_default_exploration,
+)
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
-from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace
-from rsisys.loops.decision_making.harness.tools import DemoDecisionTools
-from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
-from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
-from rsisys.loops.decision_making.loop import DecisionMakingLoop
-from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
-from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
-from rsisys.loops.exploration.action_space import EchoActionSpace
-from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
-from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
-from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
-from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.runtime.artifacts import InMemoryArtifactStore
 from rsisys.runtime.model import MockModelBackend
-from rsisys.runtime.runner import Runner
 from rsisys.runtime.sandbox import MockSandboxBackend
 
 
@@ -50,7 +40,9 @@ class DemoConfig:
         return cls(raw["objective"], raw["rounds"], backends, roles)
 
 
-def build_demo(config: DemoConfig, *, with_learning: bool = False) -> tuple[Runner, InMemoryExperienceStore]:
+def build_demo(config: DemoConfig, *, with_learning: bool = False,
+               decision_factory: DecisionFactory | None = None,
+               exploration_factory: ExplorationFactory | None = None) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
     if any(binding.kind != "mock" for binding in config.backends.values()):
         raise NotImplementedError("Only mock backends are assembled by the demo.")
     backends = {key: MockModelBackend() for key in config.backends}
@@ -58,21 +50,22 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False) -> tuple[Runn
     experience = BasicExperienceSystem(store)
     artifacts = InMemoryArtifactStore()
     sandbox = MockSandboxBackend()
-    decision_model, actor_model = config.roles["decision_maker"], config.roles["actor"]
-    modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if with_learning else ())
-    decision = DecisionMakingLoop(
-        DefaultDecisionHarness(
-            ModelDecisionPolicy(backends[decision_model.backend_id], decision_model),
-            DemoDecisionTools(sandbox, artifacts), experience,
-            learner=MockDecisionLearner(artifacts) if with_learning else None,
-        ), DemoDecisionActionSpace(directive_modes=modes),
+    context = AssemblyContext(
+        experience=experience, artifacts=artifacts, backends=backends, sandbox=sandbox,
+        roles=dict(config.roles), with_learning=with_learning,
     )
-    exploration = ExplorationLoop(
-        DefaultExplorationHarness(
-            ModelActorPolicy(backends[actor_model.backend_id], actor_model),
-            SandboxEchoEnvironment(sandbox, artifacts), experience,
-            learner=MockActorLearner(artifacts) if with_learning else None,
-            evaluator=MockEvaluator(artifacts) if with_learning else None,
-        ), EchoActionSpace(),
-    )
-    return Runner(decision, exploration), store
+    for backend in backends.values():
+        if callable(getattr(backend, 'close', None)):
+            context.add_cleanup(backend.close)
+    if callable(getattr(sandbox, 'close_all', None)):
+        context.add_cleanup(sandbox.close_all)
+    try:
+        exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(context)
+        decision = (decision_factory if decision_factory is not None else build_default_decision)(context, exploration)
+        return AssemblyRunner(decision, exploration, context), store
+    except BaseException as exc:
+        try:
+            context.close()
+        except BaseException as cleanup_error:
+            exc.add_note(f"Assembly cleanup also failed: {cleanup_error}")
+        raise

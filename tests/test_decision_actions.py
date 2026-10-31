@@ -210,7 +210,7 @@ class DecisionActionTests(unittest.TestCase):
             self.assertEqual(space.directive_modes(), ("execute", "sft"))
             for mode in DEFAULT_DIRECTIVE_MODES + ("unknown",):
                 # A malformed payload is deliberately left for exploration to reject.
-                directive = Directive("id", "objective", "strategy", mode=mode, payload=object())
+                directive = Directive("id", "objective", "strategy", mode=mode, payload={"invalid_for_builtin_mode": True})
                 with self.subTest(factory=factory, mode=mode):
                     if mode in ("execute", "sft"):
                         self.assertIsNone(space.validate_directive(directive))

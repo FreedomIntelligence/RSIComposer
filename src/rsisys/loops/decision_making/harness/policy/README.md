@@ -10,11 +10,19 @@
 
 ## 实现与替换
 
-同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",))` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
+同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
 
 - invoke：operation 和 arguments；具体名称与参数由 Decision Action Space 校验。
 - explore：必填 strategy，mode 默认 execute。sft 需 recipe_ref，apply_result 默认 false；rl 需 recipe_ref，updates 默认 1，必须为正整数；evaluate 需 protocol_ref 和来自最新反馈 candidates 的 candidate_id；configure_prompt 需字符串 instructions。
 - wait：job 对象含 job_id、backend；finish：可选 reason。
+
+系统指令的描述、schema 与参数解析由注入的 `DirectiveDefinitions` 提供；ModelDecisionPolicy 和 Decision Action Space 应使用同一个 catalog。请求只包含当前 directive_modes 允许的定义。模型将模式参数放入 `arguments`，例如：
+
+```json
+{"kind":"explore","mode":"configure_prompt","strategy":"short answers","arguments":{"instructions":"Be concise."}}
+```
+
+仍接受旧的顶层参数形式，但同一响应不能混用顶层模式参数和 arguments。新增模式不需要修改 policy 的 JSON 分派代码，详见 [Action Space](../../action_space/README.md#扩展系统指令)。
 
 explore 未提供 input_ids 时使用全部当前准备产物；提供时必须是产物 ID 列表，只能引用当前准备结果或最新反馈的 artifact_refs，空列表表示不传输入。
 

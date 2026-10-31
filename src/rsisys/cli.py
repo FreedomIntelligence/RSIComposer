@@ -30,7 +30,8 @@ def main() -> None:
         if args.command == 'demo':
             config = DemoConfig.load(args.config)
             runner, store = build_demo(config)
-            result = runner.run(config.objective, config.rounds)
+            with runner:
+                result = runner.run(config.objective, config.rounds)
             output = {'mode': 'demo', 'simulated': True, 'training_performed': False,
                       'snapshot_supported': False, 'experience_records': len(store.records()), **asdict(result)}
         elif args.command == 'inspect':

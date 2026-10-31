@@ -265,7 +265,7 @@ def file_architecture():
     ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
     s.node('snapshot-dir', 1190, 1250, 1110, 170, 'snapshot/ + 系统装配', (
         'snapshot/：捕获 / 编解码 / 保存 / 恢复',
-        'application.py · config.py：系统装配',
+        'application.py · config.py · assembly.py：装配',
     ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
     s.save('file-architecture.svg')
 

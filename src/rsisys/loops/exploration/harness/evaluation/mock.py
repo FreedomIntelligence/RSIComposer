@@ -18,6 +18,8 @@ class MockEvaluator:
         def evaluate():
             for ref in request.candidate.changes.values():
                 self.artifacts.get(ref)
+            for ref in request.data_refs:
+                self.artifacts.get(ref)
             report = self.artifacts.put(json.dumps({
                 'simulated': True, 'request': asdict(request), 'quality_evaluated': False,
             }).encode(), kind='mock_evaluation_report')

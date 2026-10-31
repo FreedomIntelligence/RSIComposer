@@ -19,6 +19,7 @@ src/rsisys/
 ├── experience/            # 共享系统反馈库
 ├── runtime/               # Runner 与公共后端
 ├── snapshot/              # 独立保存与恢复
+├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── application.py         # 本地持久化装配
 ├── config.py              # 内存演示装配
 ├── cli.py                 # 命令逻辑
@@ -37,6 +38,8 @@ Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops
 |---|---|---|
 | Decision Action Space | 本地 research 操作，以及 execute / sft / rl / evaluate / configure_prompt 系统指令 | 本地操作由 Decision Harness 的 tools 执行；Directive 交给 Exploration Harness |
 | Exploration Action Space | Actor 的环境动作，如 echo / execute | Harness 调用 ActorPolicy.act，校验提案，再交给环境执行 |
+
+内置指令定义集中在 `decision_making/action_space/directives.py`；可通过 `DirectiveDefinitions` 注入其他模式。探索侧通过 `DefaultExplorationHarness(command_handlers=...)` 绑定执行器，两个映射在装配时显式配对。新增系统指令不需要扩充 Actor Action Space。
 
 Decision Action Space 只负责 `describe` / `validate` / `validate_directive`，通过 `directive_modes()` 列出系统指令模式；它不执行工具或训练。Directive 来自 decision policy 或外部系统，目标是 Exploration Harness，不是 ActorPolicy 的动作。指令模式 `execute` 与环境动作 `execute` 分属不同层次。
 

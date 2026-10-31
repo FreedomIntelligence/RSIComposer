@@ -1,31 +1,19 @@
 """Persistent composition root. Loop business logic remains in its own module."""
 
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 import fcntl
 import json
 from pathlib import Path
 from uuid import uuid4
 
+from rsisys.assembly import (
+    AssemblyContext, DecisionFactory, ExplorationFactory,
+    build_default_decision, build_default_exploration,
+)
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
-from rsisys.loops.decision_making.loop import DecisionMakingLoop
-from rsisys.loops.decision_making.harness.memory import DecisionMemory
-from rsisys.loops.exploration.harness.memory import ExplorationMemory
-from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
-from rsisys.loops.decision_making.action_space import LocalDecisionActionSpace
-from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
-from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
-from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
-from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
-from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.loops.exploration.harness.policy import ModelActorPolicy
-from rsisys.loops.exploration.action_space import EchoActionSpace
-from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
-from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
-from rsisys.loops.exploration.action_space.local import CommandActionSpace
-from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
-from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -92,22 +80,31 @@ class ApplicationConfig:
 
 
 class Application:
-    def __init__(self, config: ApplicationConfig, *, _restore: bool = False):
+    def __init__(self, config: ApplicationConfig, *, decision_factory: DecisionFactory | None = None,
+                 exploration_factory: ExplorationFactory | None = None, _restore: bool = False):
         self.config = config
-        root = config.data_dir
-        # Validate transports before touching storage. Keys themselves are read only at call time.
-        backends = {key: MockModelBackend() if binding.kind == 'mock' else RemoteModelBackend(binding)
-                    for key, binding in config.backends.items()}
-        root.mkdir(parents=True, exist_ok=True)
-        self._lock = (root / '.lock').open('a+b')
-        try:
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self._lock.close()
-            raise RuntimeError('This workspace is already open in another process') from None
+        self.custom_assembly = decision_factory is not None or exploration_factory is not None
+        self.assembly: AssemblyContext | None = None
+        self._resources = ExitStack()
+        self._closed = False
         self.store = None
         self.sandbox = None
+        root = config.data_dir
         try:
+            # Validate transports before touching storage. Keys are read only at call time.
+            self.backends = {}
+            for key, binding in config.backends.items():
+                backend = MockModelBackend() if binding.kind == 'mock' else RemoteModelBackend(binding)
+                self.backends[key] = backend
+                if callable(getattr(backend, 'close', None)):
+                    self._resources.callback(backend.close)
+            root.mkdir(parents=True, exist_ok=True)
+            self._lock = (root / '.lock').open('a+b')
+            self._resources.callback(self._lock.close)
+            try:
+                fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('This workspace is already open in another process') from None
             contents = {p.name for p in root.iterdir()} - {'.lock'}
             if contents and not _restore:
                 raise ValueError('Workspace is not empty; resume a snapshot into a new directory')
@@ -116,34 +113,24 @@ class Application:
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
                     raise ValueError('Restored run identity does not match configuration')
             self.store = SQLiteExperienceStore(root / 'experience.sqlite3')
+            self._resources.callback(self.store.close)
             self.experience = BasicExperienceSystem(self.store, run_id=config.run_id)
             self.artifacts = FileArtifactStore(root / 'artifacts')
             if config.execution == 'local_process':
                 self.sandbox = LocalProcessBackend(root / 'workspaces')
-                space, environment = CommandActionSpace(), LocalProcessEnvironment(self.sandbox, self.artifacts)
             else:
                 self.sandbox = MockSandboxBackend()
-                space, environment = EchoActionSpace(), SandboxEchoEnvironment(self.sandbox, self.artifacts)
-            dm, actor = config.roles['decision_maker'], config.roles['actor']
-            modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if config.learning == 'mock' else ())
-            decision = DecisionMakingLoop(
-                DefaultDecisionHarness(
-                    ModelDecisionPolicy(backends[dm.backend_id], dm,
-                                        allowed_actions=tuple(spec.name for spec in space.describe())),
-                    LocalDecisionTools(self.artifacts), self.experience,
-                    learner=MockDecisionLearner(self.artifacts) if config.learning == 'mock' else None,
-                    experience_limit=config.experience_limit,
-                    memory=DecisionMemory(root / "decision_memory.json"), memory_limit=config.memory_limit,
-                ), LocalDecisionActionSpace(directive_modes=modes),
+            if callable(getattr(self.sandbox, 'close_all', None)):
+                self._resources.callback(self.sandbox.close_all)
+            self.assembly = AssemblyContext(
+                experience=self.experience, artifacts=self.artifacts, backends=self.backends,
+                sandbox=self.sandbox, roles=dict(config.roles), data_dir=root, execution=config.execution,
+                with_learning=config.learning == 'mock', experience_limit=config.experience_limit,
+                memory_limit=config.memory_limit,
             )
-            exploration = ExplorationLoop(
-                DefaultExplorationHarness(
-                    ModelActorPolicy(backends[actor.backend_id], actor), environment, self.experience,
-                    learner=MockActorLearner(self.artifacts) if config.learning == 'mock' else None,
-                    evaluator=MockEvaluator(self.artifacts) if config.learning == 'mock' else None,
-                    memory=ExplorationMemory(root / "exploration_memory.json"), memory_limit=config.memory_limit,
-                ), space,
-            )
+            self._resources.callback(self.assembly.close)
+            exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(self.assembly)
+            decision = (decision_factory if decision_factory is not None else build_default_decision)(self.assembly, exploration)
             self.runner = Runner(decision, exploration)
             if not _restore:
                 atomic_write(root / 'run.json', json_bytes({'run_id': config.run_id, 'objective': config.objective}))
@@ -151,30 +138,32 @@ class Application:
         except BaseException as exc:
             try:
                 self.close()
-            except Exception as cleanup_error:
+            except BaseException as cleanup_error:
                 exc.add_note(f"Application cleanup also failed: {cleanup_error}")
             raise
 
     def run(self, *, rounds: int | None = None, max_decision_steps: int | None = None):
+        if self._closed:
+            raise RuntimeError('Application is closed')
         return self.runner.run(self.config.objective, self.config.rounds if rounds is None else rounds,
                                max_decision_steps=max_decision_steps)
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         try:
-            if self.sandbox is not None and hasattr(self.sandbox, 'close_all'):
-                self.sandbox.close_all()
+            self._resources.close()
         finally:
-            try:
-                if self.store is not None:
-                    self.store.close()
-                    self.store = None
-            finally:
-                if not self._lock.closed:
-                    fcntl.flock(self._lock, fcntl.LOCK_UN)
-                    self._lock.close()
+            self.store = None
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *args):
-        self.close()
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self.close()
+        except BaseException as cleanup_error:
+            if exc is None:
+                raise
+            exc.add_note(f"Application cleanup also failed: {cleanup_error}")

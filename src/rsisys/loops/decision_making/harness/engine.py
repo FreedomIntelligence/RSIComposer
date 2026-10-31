@@ -16,7 +16,7 @@ from rsisys.loops.contracts.training import TrainingResult
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
-from .decision import LoopStepResult, DecisionRunResult
+from rsisys.loops.contracts.coordination import LoopStepResult
 from ..action_space import DecisionActionSpace, OperationCall, OperationResult
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy

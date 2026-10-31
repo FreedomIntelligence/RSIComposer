@@ -26,7 +26,7 @@ PYTHONPATH=src pixi run python -m rsisys --help
 - [local.json](../configs/local.json)：本地持久化，由 application.py 装配。
 - [model-service.example.json](../configs/model-service.example.json)：HTTP 模型模板。
 
-backends 定义调用后端，roles 分别绑定 decision_maker / actor；execution 选择 mock / local_process，learning 选择 none / mock。默认 Decision Harness 的 experience_limit 限制系统反馈条数，memory_limit 限制自身 history 与工作记忆条数；默认 Exploration Harness 仅使用 memory_limit。这些限制不计算 token。配置入口目前只装配内置组合，Harness 构造函数参数见各 Harness 文档。
+backends 定义调用后端，roles 分别绑定 decision_maker / actor；execution 选择 mock / local_process，learning 选择 none / mock。默认 Decision Harness 的 experience_limit 限制系统反馈条数，memory_limit 限制自身 history 与工作记忆条数；默认 Exploration Harness 仅使用 memory_limit。这些限制不计算 token。JSON 配置装配内置组合；Python 可通过下述工厂替换任一 loop。
 
 ```bash
 PYTHONPATH=src pixi run python -m rsisys run \
@@ -45,6 +45,44 @@ PYTHONPATH=src pixi run python -m rsisys run \
 需要鉴权时 credential_env 填环境变量名，启动前设置对应环境变量。不支持 JSON response_format 的服务可将 json_mode 设为 false，但内置模型 policy 仍要求回复合法 JSON。传输能力、版本验证和本地进程限制见 [Runtime](../src/rsisys/runtime/README.md)。
 
 ## 使用 Python 接入组件
+
+[Application](../src/rsisys/application.py) 和 [build_demo](../src/rsisys/config.py) 接受可选的 `exploration_factory(context)` 与 `decision_factory(context, exploration)`，分别返回 ExplorationLoop 与 DecisionMakingLoop。先构造 exploration，再构造 decision；未传入的一侧使用 [assembly.py](../src/rsisys/assembly.py) 的 `build_default_exploration` / `build_default_decision`，也可在自定义工厂内直接调用这两个函数。默认 decision 的 allowed_actions 从已构造的 exploration.action_space 读取；directive_modes 根据实际未被覆盖的内置 command handlers，以及 learner/evaluator、模型和 rollout 能力推导，不从 with_learning 猜测。
+
+`AssemblyContext` 提供共享 experience、artifacts、backends、sandbox、roles，以及 data_dir（demo 为 None）、execution、with_learning、experience_limit 和 memory_limit。Application 管理共享资源的创建与关闭，自定义工厂无需重复创建存储或构造后修改属性。例如只替换 exploration：
+
+```python
+from rsisys.application import Application
+from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions, builtin_directives
+from rsisys.loops.exploration.loop import ExplorationLoop
+
+# config、MyHarness 和 MyActionSpace 由调用方提供；本例 MyHarness 支持 execute。
+def exploration_factory(context):
+    harness = MyHarness(context.experience, context.artifacts)
+    context.add_cleanup(harness.close)  # 若实现持有自有资源，在取得资源后立即注册。
+    context.exploration_directives = DirectiveDefinitions(
+        definition for definition in builtin_directives() if definition.spec.mode == "execute"
+    )
+    return ExplorationLoop(harness, MyActionSpace())
+
+with Application(config, exploration_factory=exploration_factory) as app:
+    app.run()
+```
+
+未知自定义 Harness 必须显式设置 `context.exploration_directives`，或提供 `decision_factory`。新增或覆盖 handler 的模式不会自动向默认 decision 开放，也需 declaration（`DirectiveDefinitions`）或由自定义 decision_factory 配置。显式 catalog 完整指定可用模式及参数解析器，会同时注入默认 policy 和 Action Space；它不是追加列表。对默认 Harness，装配还会检查声明的 handler 是否存在、内置模式所需能力是否齐备。
+
+工厂自有资源用 `context.add_cleanup(callback)` 登记无参清理函数。回调逆序执行且只执行一次；某个回调失败不跳过其余清理。正常关闭和任一工厂装配失败均会清理；Application 在回调完成后关闭共享存储与执行后端。替代 Harness 不必提供 policy 或 memory。
+
+`build_demo` 保持 `(runner, store)` 返回形式，同样接受两个工厂。返回的 runner 支持 `close()` 和上下文管理；自定义工厂使用资源时须显式关闭：
+
+```python
+from rsisys.config import build_demo
+
+runner, store = build_demo(demo_config, exploration_factory=exploration_factory)
+with runner:
+    runner.run(demo_config.objective, rounds=demo_config.rounds)
+```
+
+工厂仅通过 Python 参数注入，不写入 JSON 配置，也不会自动获得快照恢复支持；自定义装配仍需显式集成 Snapshot。
 
 先组合 Harness 与独立 Action Space，再交给 loop。默认实现内部的 policy、tools、memory、learner/evaluator 通过 Harness 构造函数注入：
 

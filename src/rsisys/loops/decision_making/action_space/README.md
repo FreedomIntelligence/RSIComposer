@@ -15,7 +15,7 @@
 
 ## 当前实现
 
-`ModularDecisionActionSpace(definitions, *, directive_modes=...)` 接收带 spec 和 `validate(arguments)` 的定义。名称必须唯一，校验结果必须是同名 OperationCall；输入与返回值作副本处理。JSON Schema 用于描述，实际校验由 definition 实现，不自动运行通用 schema 校验。
+`ModularDecisionActionSpace(definitions, *, directive_modes=..., directives=...)` 接收带 spec 和 `validate(arguments)` 的定义。名称必须唯一，校验结果必须是同名 OperationCall；输入与返回值作副本处理。JSON Schema 用于描述，实际校验由 definition 实现，不自动运行通用 schema 校验。
 
 `LocalDecisionActionSpace()` 提供下列操作，配合 `LocalDecisionTools(artifacts)` 使用：
 
@@ -28,3 +28,27 @@
 `DemoDecisionActionSpace()` 只描述 prepare_data，配合 DemoDecisionTools 使用。构造 Action Space 不需要 sandbox 或产物存储；新增操作时同时提供纯校验定义与 Harness 执行绑定。
 
 OperationCall 包含 name、arguments；OperationResult 描述工具执行后的 summary、artifacts、simulated、status 和可选 error。结果必须为 COMPLETED / FAILED / CANCELLED，FAILED 必须有 error，COMPLETED 不能有 error。异步结果回填、重试与记录由 Harness 管理。
+
+## 扩展系统指令
+
+[directives.py](directives.py) 提供 `DirectiveSpec(mode, description, input_schema)`、`DirectiveDefinition(spec, parser)` 和 `DirectiveDefinitions(definitions=None)`。每个装配实例独立持有定义；无全局注册表。省略 definitions 使用内置模式，显式传入则替换整个目录；追加模式使用 `(*builtin_directives(), custom_definition)`。
+
+parser 接收 `(arguments, candidates)`，返回 payload；它负责参数验证，JSON Schema 仅向模型描述参数。payload 应为可被 JSON 序列化的值或仅包含这些值的 dataclass，以适配默认 Harness 的 history 与事件记录。返回可序列化 payload 不代表具备快照支持。
+
+```python
+from rsisys.loops.decision_making.action_space.directives import (
+    DirectiveSpec, DirectiveDefinition, DirectiveDefinitions, builtin_directives,
+)
+
+# parse_custom(arguments, candidates) 由调用方提供，必须完成参数校验。
+catalog = DirectiveDefinitions((*builtin_directives(), DirectiveDefinition(
+    DirectiveSpec("custom", "Run a custom system instruction", {
+        "type": "object", "properties": {}, "additionalProperties": False,
+    }), parse_custom,
+)))
+space = LocalDecisionActionSpace(directives=catalog, directive_modes=("execute", "custom"))
+# 构造 ModelDecisionPolicy(..., directives=catalog)，共享同一份定义。
+# 构造 DefaultExplorationHarness(..., command_handlers={"custom": handler})。
+```
+
+`directive_modes` 是允许发出的子集，必须存在于 catalog；不提供时默认使用 catalog 全部模式。探索侧必须提供同名 [CommandHandler](../../exploration/harness/README.md#扩展系统指令)。新模式或覆盖内置模式均需显式快照集成。
