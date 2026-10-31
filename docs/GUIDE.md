@@ -9,6 +9,7 @@
 | `pixi run demo` | 内存中的准备与执行演示 |
 | `pixi run loop-demo` | 两个 loop 的本地学习、Actor RL 和评测 |
 | `pixi run coordination-demo` | 跨 loop 的 SFT → 评测 → RL 指令链 |
+| `pixi run backend-demo` | 独立子进程中的真实 CPU 标量回归训练 |
 | `pixi run local-demo` | Mock 模型、真实本地 echo、持久化与快照 |
 | `pixi run test` | 行为测试 |
 
@@ -112,10 +113,11 @@ exploration = ExplorationLoop(
 
 - [loop_internals.py](../examples/loop_internals.py)：训练请求、查询、版本应用和独立评测。
 - [coordination.py](../examples/coordination.py)：自定义 policy 消费 last_feedback 并发出下一条指令。
+- [backend_training.py](../examples/backend_training.py)：通过可选 train 指令委托独立 CPU 训练进程并回传结果。
 
 两个默认 Harness 内部分别使用 DecisionMemory / ExplorationMemory，可在默认实现中替换。DecisionContext 同时包含全部来源的 experience、自身 history 和 memories；ActorContext 读取当前任务 history 与自身 memories，不默认注入系统经验。scope 仅标记反馈来源，优化对象由 Decision policy 选择。
 
-默认 Harness 的 RL 请求使用 trajectory_refs 引用 Actor 本地 history；Feedback.evidence_refs 引用系统记录。决策者自身训练仍使用系统反馈的 experience_refs。
+默认 Harness 的本地 RL 请求使用 trajectory_refs 引用 Actor 本地 history；Feedback.evidence_refs 引用系统记录。两侧训练请求均为后端中立：method / recipe_ref 是非空字符串，base 为 ModelRef，引用要求正确类型的 tuple，但允许为空。DecisionTrainingRequest 保留 `(base, experience_refs, recipe_ref)` 位置参数，追加 `data_refs=()` 与 `method="sft"`；可使用系统反馈 experience_refs、外部数据 data_refs，或由后端根据 recipe 获取数据。
 
 调用 runner.step(objective) 推进一步，或 runner.run(objective, rounds=1) 推进到轮次完成、等待或结束；waiting 后由调用方安排下一次推进。Runner 通过 decision_making.receive_feedback(directive, feedback) 交付反馈。取消用 runner.cancel()，之后继续推进直到终态。协同语义见[系统架构](ARCHITECTURE.md)。
 
@@ -124,6 +126,33 @@ exploration = ExplorationLoop(
 Decision Action Space 覆盖 research 操作和 execute / sft / rl / evaluate / configure_prompt 系统指令。Directive 由 decision policy 生成，或由外部系统通过 `exploration.accept(directive)` 提交，再调用 advance / inspect / cancel / acknowledge 管理生命周期。外部直接提交时，由调用方负责反馈消费与 acknowledge。
 
 Exploration Action Space 仅包含 Actor 环境动作。execute episode 和 RL rollout 使用 ActorPolicy.act；SFT、prompt 配置和评测绕过它。真实推理评测需要替换 evaluator；当前默认训练与评测仍是 Mock。`configure_prompt` 使用 `PromptSpec(instructions)` 替换 Actor 指令文本，空字符串清空配置，见[共享协议](../src/rsisys/loops/contracts/README.md)。
+
+## 接入整项训练任务
+
+默认 `rl` 继续由 Harness 执行本地 rollout → learner 训练 → 应用版本 → 下一轮 rollout。若要由外部后端自主完成整个任务的采样与训练，显式启用 `train`：决策侧加入 `training_directive()`，探索侧注册 `TrainingCommandHandler()` 并注入实现作业协议的 learner。
+
+```python
+from rsisys.loops.decision_making.action_space.directives import (
+    DirectiveDefinitions, builtin_directives, training_directive,
+)
+from rsisys.loops.exploration.harness.learner.command import TrainingCommandHandler
+
+catalog = DirectiveDefinitions((*builtin_directives(), training_directive()))
+# 手动装配时，将 catalog 同时传给 Decision policy 与 Action Space，允许 train。
+# 工厂装配时，设置 context.exploration_directives = catalog；
+# catalog 中其他模式也必须具备对应的 handler 和能力，可按实际能力筛选。
+exploration_harness = DefaultExplorationHarness(
+    actor_policy, environment, experience,
+    learner=external_learner,
+    command_handlers={"train": TrainingCommandHandler()},
+)
+```
+
+上述 actor_policy、environment、experience 与 external_learner 由调用方提供。`train` payload 为 `TrainSpec(recipe_ref, method, base=None, apply_result=False)`；handler 将 input_refs 作为 data_refs，以单个 ActorTrainingRequest 提交，不预先生成 trajectory_refs，也不运行本地 RL 循环。后端决定 method、数据与 rollout 的语义，Harness 复用提交重试、轮询、取消、证据记录和可选版本应用。直接向 Exploration 端点提交时仍需注册 handler，调用方负责反馈消费与 acknowledge。
+
+接口允许接入外部 RL/SFT 框架，但具体框架的适配、模型产物解析及作业幂等保证仍需实现。默认 MockActorLearner 只支持 sft / rl，并在提交时分别要求非空 data_refs / trajectory_refs，不能替代自主采样的后端。
+
+运行 `pixi run backend-demo` 查看 [backend_training.py](../examples/backend_training.py)。示例使用独立子进程在 CPU 上优化标量回归模型，返回真实权重产物与 MSE；它展示训练作业接入，不是 LLM 训练、RL rollout 或 verl 的现成适配。请求字段及结果要求见 [Actor learner](../src/rsisys/loops/exploration/harness/learner/README.md) 和 [Decision learner](../src/rsisys/loops/decision_making/harness/learner/README.md)。
 
 ## 恢复运行
 

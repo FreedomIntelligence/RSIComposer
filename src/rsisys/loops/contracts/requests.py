@@ -44,3 +44,21 @@ class EvaluationSpec:
     def __post_init__(self):
         if not isinstance(self.candidate, Candidate) or not self.protocol_ref:
             raise ValueError('Evaluation requires a candidate and protocol')
+
+
+@dataclass(frozen=True)
+class TrainSpec:
+    """Delegate a complete training job; algorithm/data requirements belong to its backend."""
+
+    recipe_ref: str
+    method: str
+    base: ModelRef | None = None
+    apply_result: bool = False
+
+    def __post_init__(self):
+        if any(not isinstance(value, str) or not value.strip() for value in (self.recipe_ref, self.method)):
+            raise ValueError('Training requires nonempty recipe and method names')
+        if self.base is not None and not isinstance(self.base, ModelRef):
+            raise TypeError('Training base must be a ModelRef')
+        if type(self.apply_result) is not bool:
+            raise TypeError('apply_result must be boolean')

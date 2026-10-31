@@ -4,7 +4,9 @@
 
 ## 接口与输入
 
-[DecisionLearner](__init__.py) 提供 `submit(request, *, idempotency_key) → JobRef`、`poll(job) → JobOutcome[TrainingResult]`、`cancel(job) → None`、`result(job) → TrainingResult`。DecisionTrainingRequest 包含 base: ModelRef、非空 experience_refs 元组和非空 recipe_ref；默认 Harness 校验引用的是共享 Experience 中的系统反馈记录 ID，来源不限于 decision_maker；scope 不指定训练或优化目标。
+[DecisionLearner](__init__.py) 提供 `submit(request, *, idempotency_key) → JobRef`、`poll(job) → JobOutcome[TrainingResult]`、`cancel(job) → None`、`result(job) → TrainingResult`。DecisionTrainingRequest 保留原位置参数 `(base, experience_refs, recipe_ref)`，末尾追加 `data_refs=()` 与 `method="sft"`。
+
+请求是后端中立的：base 必须为 ModelRef，recipe_ref / method 为非空字符串，experience_refs 为字符串元组，data_refs 为 ArtifactRef 元组。两类引用均允许为空，method 可自定义，后端决定算法和数据要求。外部数据可通过 data_refs 提交，无需先生成系统反馈。提供 experience_refs 时，默认 Harness 校验它们是共享 Experience 中的系统反馈记录 ID，来源不限于 decision_maker；scope 不指定训练或优化目标。
 
 提交和终态的公共约定见[共享协议](../../../contracts/README.md)。成功结果必须是 TrainingResult，base 与提交请求一致，candidate.affected_roles 包含 decision_maker。
 
@@ -18,7 +20,7 @@
 
 ## 实现与替换
 
-[MockDecisionLearner](backends/mock.py) 的构造参数为 artifacts 和仅限关键字的 pending_polls=1（非负整数）：前 pending_polls 次轮询返回 RUNNING，下一次生成 simulated=True 的版本清单，无后台线程或梯度训练。result 只读取已成功结果，不推进任务。
+[MockDecisionLearner](backends/mock.py) 的构造参数为 artifacts 和仅限关键字的 pending_polls=1（非负整数）：前 pending_polls 次轮询返回 RUNNING，下一次读取并校验每个 data_refs 产物，再生成 simulated=True 的版本清单；引用不存在或摘要不匹配时任务失败。它没有后台线程或梯度训练，method 字段不意味着实际执行相应算法。result 只读取已成功结果，不推进任务。
 
 真实实现可放在 backends/ 并注入默认 Harness 的 learner 参数；UnimplementedDecisionLearner 的所有方法均抛 NotImplementedError。
 

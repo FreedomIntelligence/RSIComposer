@@ -216,9 +216,9 @@ class DefaultDecisionHarness:
                 kind="training_run", scope="decision_maker", directive_id=None,
                 summary=f"decision_maker learning {outcome.status}",
                 simulated=outcome.simulated or bool(outcome.result and outcome.result.simulated),
-                source_refs=request.experience_refs + tuple(
-                    ref.artifact_id for ref in outcome.result.candidate.changes.values()
-                ) if outcome.result else request.experience_refs,
+                source_refs=request.experience_refs + tuple(ref.artifact_id for ref in request.data_refs)
+                + (tuple(ref.artifact_id for ref in outcome.result.candidate.changes.values())
+                   if outcome.result else ()),
                 details={"request": asdict(request), "outcome": asdict(outcome)},
             ))
             self.state.recorded_training.add(outcome.job)

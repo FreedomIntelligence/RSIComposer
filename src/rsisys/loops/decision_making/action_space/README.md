@@ -13,6 +13,8 @@
 
 默认模式为 execute / sft / rl / evaluate / configure_prompt。它们是 decision policy 可发出的系统指令，不是 ActorPolicy.act 的动作；外部系统也可直接向 Exploration 端点提交 Directive。PromptSpec(instructions) 的约定见[共享协议](../../contracts/README.md)。
 
+整项训练通过可选的 `training_directive()` 定义 `train` 模式，解析 recipe_ref、method 与可选 apply_result 为 TrainSpec。它不包含在 builtin_directives() 中；需显式加入 catalog / directive_modes，并在 Exploration Harness 注册 TrainingCommandHandler、注入 learner。后端可独立完成 rollout 与训练；默认 `rl` 仍执行本地采样循环。完整接入见[使用指南](../../../../../docs/GUIDE.md#接入整项训练任务)。
+
 ## 当前实现
 
 `ModularDecisionActionSpace(definitions, *, directive_modes=..., directives=...)` 接收带 spec 和 `validate(arguments)` 的定义。名称必须唯一，校验结果必须是同名 OperationCall；输入与返回值作副本处理。JSON Schema 用于描述，实际校验由 definition 实现，不自动运行通用 schema 校验。

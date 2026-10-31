@@ -15,10 +15,15 @@ Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策�
 ```bash
 pixi run demo
 pixi run coordination-demo
+pixi run backend-demo
 pixi run test
 ```
 
 默认模型、训练与评测使用 Mock。版本引用变化不代表真实梯度训练或能力提升，Mock 评测不执行真实推理打分。HTTP 模型、本地进程、持久化和空闲边界恢复的范围见组件说明。
+
+训练请求保持后端中立，允许自定义 method 和外部数据；Decision 请求也支持 data_refs 与 method。默认 `rl` 保留本地采样、训练、应用版本的简单循环；显式启用 `training_directive()` + `TrainingCommandHandler` 并注入 learner 后，`train` 可把整个任务的 rollout 与训练交给后端。接口开放不等于已有具体框架适配，接入见[使用指南](docs/GUIDE.md#接入整项训练任务)。
+
+`pixi run backend-demo` 运行 [backend_training.py](examples/backend_training.py)：在独立子进程中进行真实 CPU 标量回归并回传权重产物和 MSE。它不是 LLM 训练或 verl 现成适配，也不演示 RL rollout。
 
 ## 系统文档
 

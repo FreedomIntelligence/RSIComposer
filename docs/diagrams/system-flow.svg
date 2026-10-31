@@ -160,5 +160,5 @@
 <text x="1214" y="1560" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">Snapshot / 保存与恢复</text>
 <text x="1214" y="1594" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内置实现支持空闲边界快照；自定义组件需显式集成</text>
 </g>
-<text x="100" y="1712" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#52637B" text-anchor="start">当前训练与评测后端为 Mock。</text>
+<text x="100" y="1712" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#52637B" text-anchor="start">默认训练与评测后端为 Mock。</text>
 </svg>

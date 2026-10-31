@@ -14,6 +14,10 @@
 | evaluate | EvaluationSpec(candidate, protocol_ref) | 独立评测指定候选；input_refs 传入 EvaluationRequest.data_refs |
 | configure_prompt | PromptSpec(instructions) | 替换 Actor 指令文本；空字符串清空；绕过 ActorPolicy.act |
 
+可选 `train` 使用 `TrainSpec(recipe_ref, method, base=None, apply_result=False)`，需显式注册 `training_directive()`、`TrainingCommandHandler` 并注入 learner，不属于默认模式。input_refs 作为训练 data_refs，缺省 base 在接收时捕获；整个任务交给一个后端作业，后端可自主采样与训练，默认仅返回候选。默认 `rl` 继续使用本地采样循环。装配见[使用指南](../../../../docs/GUIDE.md#接入整项训练任务)。
+
+具体 [ActorTrainingRequest](../exploration/harness/learner/README.md) 与 [DecisionTrainingRequest](../decision_making/harness/learner/README.md) 是后端中立的请求：校验模型、非空 method / recipe 字符串和引用元组类型，不统一限定算法或要求非空数据。Decision 请求支持外部 data_refs 与自定义 method；mock 的能力限制由各后端负责。
+
 Directive 由 decision policy 或外部系统发给 Exploration Harness，不是 ActorPolicy 动作。sft 直接调用 learner；rl 只有 rollout 使用 Actor 环境动作；推理评测由 evaluator 调用模型服务。默认训练与评测仍是 Mock，未实现真实梯度或推理评分。
 
 [Feedback](feedback.py) 关联原指令，携带状态、质量/训练/执行指标、产物、证据、候选、作业及错误。completed / failed / cancelled / partial 都是终态；缺失指标保持为空。evidence_refs 引用系统反馈记录；Actor RL 请求的 trajectory_refs 引用 Actor 本地 history，两者不能互换。

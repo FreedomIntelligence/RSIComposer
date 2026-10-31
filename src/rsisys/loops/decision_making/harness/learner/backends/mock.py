@@ -19,6 +19,8 @@ class MockDecisionLearner:
 
     def submit(self, request: DecisionTrainingRequest, *, idempotency_key: str):
         def train():
+            for ref in request.data_refs:
+                self.artifacts.get(ref)
             model = replace(request.base, revision=f'mock-{uuid4()}')
             manifest = self.artifacts.put(json.dumps({
                 'simulated': True, 'request': asdict(request), 'model': asdict(model),

@@ -16,14 +16,16 @@ class ActorTrainingRequest:
     trajectory_refs: tuple[str, ...] = ()
 
     def __post_init__(self):
-        if self.method not in ("sft", "rl"):
-            raise ValueError("Training method must be sft or rl")
-        if not self.recipe_ref:
-            raise ValueError("A training recipe is required")
-        if self.method == "sft" and not self.data_refs:
-            raise ValueError("SFT requires data artifacts")
-        if self.method == "rl" and not self.trajectory_refs:
-            raise ValueError("RL requires trajectory records")
+        if not isinstance(self.base, ModelRef):
+            raise ValueError("Training base must be a ModelRef")
+        if not isinstance(self.method, str) or not self.method.strip():
+            raise ValueError("Training method must be a nonempty string")
+        if not isinstance(self.recipe_ref, str) or not self.recipe_ref.strip():
+            raise ValueError("Training recipe must be a nonempty string")
+        if not isinstance(self.data_refs, tuple) or not all(isinstance(ref, ArtifactRef) for ref in self.data_refs):
+            raise ValueError("data_refs must be a tuple of ArtifactRef objects")
+        if not isinstance(self.trajectory_refs, tuple) or not all(isinstance(ref, str) for ref in self.trajectory_refs):
+            raise ValueError("trajectory_refs must be a tuple of strings")
 
 
 class ActorLearner(Protocol):

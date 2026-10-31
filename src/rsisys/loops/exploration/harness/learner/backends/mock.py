@@ -18,6 +18,14 @@ class MockActorLearner:
         self.jobs = MockJobQueue[TrainingResult]('mock-actor-training', pending_polls=pending_polls)
 
     def submit(self, request: ActorTrainingRequest, *, idempotency_key: str):
+        # These are this mock's capabilities, not restrictions on external learners.
+        if request.method not in ("sft", "rl"):
+            raise ValueError("MockActorLearner only supports sft or rl")
+        if request.method == "sft" and not request.data_refs:
+            raise ValueError("MockActorLearner SFT requires data artifacts")
+        if request.method == "rl" and not request.trajectory_refs:
+            raise ValueError("MockActorLearner RL requires trajectory records")
+
         def train():
             for ref in request.data_refs:
                 self.artifacts.get(ref)

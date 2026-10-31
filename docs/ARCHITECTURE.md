@@ -45,6 +45,10 @@ Decision Action Space 只负责 `describe` / `validate` / `validate_directive`�
 
 Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、prompt 配置、评测直接进入对应控制流程，绕过 `ActorPolicy.act`；RL 只有 rollout 阶段使用 Actor 动作，训练与版本应用不进入 Actor Action Space。推理评测应由 evaluator 调用所需模型服务，不通过 Actor 的环境动作选择。默认训练/评测仍为 Mock，不提供真实梯度或推理打分；`configure_prompt` 使用 `PromptSpec(instructions)` 更新 Harness 保存的 Actor 指令文本；空字符串清空配置，后续 Actor 上下文读取该文本，见[共享协议](../src/rsisys/loops/contracts/README.md)。
 
+训练请求是后端中立（backend-neutral）的接口，只约束模型、非空 method / recipe 字符串与引用元组类型；不把训练算法限定为 sft / rl，也不要求引用非空。Actor 请求允许外部后端自主采样；Decision 请求保留原位置参数，追加 `data_refs=()` 和 `method="sft"`，支持外部数据。提供本地轨迹或系统经验引用时，默认 Harness 仍验证其归属。数据格式和算法能力由具体 learner 校验。
+
+默认 `rl` 保留本地顺序采样循环。可选 `train` 通过 `training_directive()` + `TrainingCommandHandler` + 注入的 learner 配对启用，不属于默认指令映射：Harness 将整个训练任务作为一个作业提交，后端可独立负责 rollout 与更新，Harness 负责作业生命周期、证据和可选应用。该路径开放外部 RL/SFT 框架接入，但不意味着已有 verl 等框架的具体适配。[backend_training.py](../examples/backend_training.py) 是独立子进程中的真实 CPU 标量回归示例，展示作业与产物边界，不演示 LLM 训练或 RL rollout；装配见[使用指南](GUIDE.md#接入整项训练任务)。
+
 ## 双 loop 协同
 
 1. Decision Harness 读取上下文、完成本地准备，policy 发出 Directive；Action Space 校验操作和指令模式。
@@ -85,7 +89,7 @@ Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务�
 
 - 优化目标可能是 Actor 模型/prompt、决策者自身，或 Harness 配置/代码；当前没有统一的 target 接口。
 - 决策者训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
-- 候选评测与应用尚未形成统一验收机制：SFT 的 `apply_result` 默认 false，RL 每轮应用学习结果，evaluate 不自动部署候选。
+- 候选评测与应用尚未形成统一验收机制：SFT 与可选 train 的 `apply_result` 默认 false，默认 RL 每轮应用学习结果，evaluate 不自动部署候选。
 
 ## 图示
 

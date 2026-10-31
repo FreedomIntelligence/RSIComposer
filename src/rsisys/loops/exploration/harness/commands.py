@@ -151,6 +151,8 @@ class ExplorationCommands:
         base = payload.base or getattr(self.loop.policy, 'model', None)
         if not isinstance(base, ModelRef):
             raise ValueError('SFT requires a base model')
+        if not state.directive.input_refs:
+            raise ValueError('The built-in SFT command requires data artifacts; use train for backend-owned inputs')
         state.request = ActorTrainingRequest(base, state.directive.input_refs, payload.recipe_ref)
 
     def _prepare_rl(self, state):

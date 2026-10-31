@@ -5,6 +5,7 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+backend-demo = { cmd = "python examples/backend_training.py", env = { PYTHONPATH = "src" } }
 coordination-demo = { cmd = "python examples/coordination.py", env = { PYTHONPATH = "src" } }
 local-demo = { cmd = "python -m rsisys run --config configs/local.json", env = { PYTHONPATH = "src" } }
 loop-demo = { cmd = "python examples/loop_internals.py", env = { PYTHONPATH = "src" } }

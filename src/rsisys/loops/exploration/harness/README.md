@@ -14,6 +14,8 @@
 | evaluate | evaluator 提交与轮询 | 否 |
 | configure_prompt | PromptSpec(instructions) 替换 Actor 指令文本 | 否 |
 
+`train` 为显式启用的扩展，不在默认映射中。配对注册 `training_directive()` 与 `command_handlers={"train": TrainingCommandHandler()}` 并注入 learner 后，整项任务通过单个后端作业执行，后端可自主 rollout 与训练；Harness 不启动本地采样循环。默认 `rl` 的上述流程不变，详见 [learner](learner/README.md)。
+
 推理评测属于 evaluator 的模型调用流程，不通过 Actor 的环境动作选择。内置 learner/evaluator 仍是 Mock，既不执行真实梯度训练，也不产生真实推理评分；prompt 配置不等于模型权重训练。
 
 configure_prompt 将 instructions 保存到 Harness 状态，空字符串清空；后续 execute / RL rollout 的 ActorContext 使用该文本。配置操作不调用 Actor.act，系统反馈只记录文本摘要哈希、字符数及是否配置，不写入原文。
@@ -25,7 +27,7 @@ configure_prompt 将 instructions 保存到 Harness 状态，空字符串清空�
 | [policy](policy/README.md) | Actor 环境动作选择 |
 | [environment](environment/README.md) | 执行动作、生成观察与工具副作用 |
 | [memory](memory/README.md) | 本地轨迹与工作记忆 |
-| [learner](learner/README.md) | SFT/RL 训练后端 |
+| [learner](learner/README.md) | 后端中立的训练请求、作业及可选 train handler |
 | [evaluation](evaluation/README.md) | 候选评测后端 |
 | [commands.py](commands.py) | 系统指令接收、校验、分派与交付状态 |
 | [rl.py](rl.py) | RLPlan / RLState |
@@ -55,4 +57,4 @@ accept 复制并校验请求；advance 推进阶段，execute 会同步运行一
 
 prepare 失败会形成失败回执并重新抛出异常；调用方交付并 acknowledge 后才能接收下一条指令。handler 负责自身详细证据的稳定写入；Runner 交付后，默认 Decision Harness 仍统一记录策略结果。终态交付失败只补交 Feedback，不再调用 handler。框架统一保留原指令的 simulated 标记，handler 不能将模拟来源降为真实结果。全部回执仅在进程内，不提供崩溃恢复或自定义快照。
 
-决策侧需同时注入对应的 [DirectiveDefinition](../../decision_making/action_space/README.md#扩展系统指令)，并将模式加入 directive_modes。自定义 handler 可以调用自身后端；内置 learner 的 SFT/RL 请求类型不会自动支持新的训练算法。
+决策侧需同时注入对应的 [DirectiveDefinition](../../decision_making/action_space/README.md#扩展系统指令)，并将模式加入 directive_modes。自定义 handler 可以调用自身后端；ActorTrainingRequest 允许自定义 method，具体算法与数据处理能力由 learner 实现。整项训练可直接使用 [TrainingCommandHandler](learner/command.py)，装配见[使用指南](../../../../../docs/GUIDE.md#接入整项训练任务)。

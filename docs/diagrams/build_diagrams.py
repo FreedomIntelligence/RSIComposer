@@ -199,7 +199,7 @@ def system_flow():
     s.node('snapshot', 1190, 1520, 1110, 145, 'Snapshot / 保存与恢复', (
         '内置实现支持空闲边界快照；自定义组件需显式集成',
     ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
-    s.text(100, 1712, '当前训练与评测后端为 Mock。', 21, MUTED)
+    s.text(100, 1712, '默认训练与评测后端为 Mock。', 21, MUTED)
     s.save('system-flow.svg')
 
 

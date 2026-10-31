@@ -127,3 +127,20 @@ def builtin_directives() -> tuple[DirectiveDefinition, ...]:
 
 
 DEFAULT_DIRECTIVE_MODES = tuple(d.spec.mode for d in builtin_directives())
+
+
+def training_directive() -> DirectiveDefinition:
+    """Explicitly enable backend-owned training; not advertised by default."""
+    from rsisys.loops.contracts.requests import TrainSpec
+
+    def parse(arguments, candidates):
+        _arguments(arguments, ('recipe_ref', 'method'), ('apply_result',))
+        return TrainSpec(arguments['recipe_ref'], arguments['method'],
+                         apply_result=arguments.get('apply_result', False))
+
+    return DirectiveDefinition(DirectiveSpec('train', 'Delegate a complete training job to the configured backend', {
+        'type': 'object', 'properties': {
+            'recipe_ref': {'type': 'string'}, 'method': {'type': 'string'},
+            'apply_result': {'type': 'boolean', 'default': False},
+        }, 'required': ['recipe_ref', 'method'], 'additionalProperties': False,
+    }), parse)
