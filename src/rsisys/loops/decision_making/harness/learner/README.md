@@ -12,6 +12,8 @@
 
 ## 任务与应用
 
+DefaultDecisionHarness 接受可选 `model_activator`。应用真实训练结果时必须由它确认 `TrainingResult.model` 已可用于推理，之后才能更新决策者绑定；部署进行中可用 `ModelActivationPending` 保持原绑定并在后续重试。具体接口见[共享协议](../../../contracts/README.md#作业与版本)。模拟后端可继续模拟版本切换。
+
 通过默认 Harness 的 `loop.harness.submit_learning(request, *, idempotency_key)` 提交：键不能为空，同键同请求复用任务，同键不同请求报错；同一 Harness 最多一个未终结训练任务。未配置 learner 时不能提交。
 
 `loop.harness.poll_learning(job)` 和 `loop.harness.cancel_learning(job)` 返回 JobOutcome，并在终态向 Experience 记录一次 training_run；取消请求后仍会轮询确认状态，不保证立即终结。默认 Harness 从 poll 的结果读取训练产物，不调用后端 result。

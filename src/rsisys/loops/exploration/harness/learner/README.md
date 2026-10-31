@@ -20,6 +20,8 @@
 
 ## 本地 RL 与整项任务委托
 
+真实训练结果的应用需要向 DefaultExplorationHarness 注入 `model_activator`，确认目标版本可用于推理后才更新角色绑定；仅产生 checkpoint 不足以启用。接口与重试约定见[共享协议](../../../contracts/README.md#作业与版本)。适配器可读取外部 ArtifactRef，框架不要求复制权重或数据到本地存储。版本校验和已应用任务去重仍由 Harness 保留。
+
 默认 `rl` 仍由 Harness 顺序执行本地 rollout → learner 训练 → 应用版本 → 下一轮 rollout；只有 rollout 调用 ActorPolicy.act 和 Actor Action Space。SFT 与 RL 的训练阶段直接调用 learner。
 
 可选 `train` 需要配对注册 [training_directive()](../../../decision_making/action_space/directives.py) 和 [TrainingCommandHandler](command.py)，并注入 learner。handler 将 TrainSpec 与 Directive.input_refs 转为 ActorTrainingRequest，以单个作业提交；不启动本地 RL 循环，后端可自行负责整个任务的 rollout 与训练。提交重试、轮询、取消、证据记录及可选应用复用 Harness 的作业流程。装配方法见[使用指南](../../../../../../docs/GUIDE.md#接入整项训练任务)。

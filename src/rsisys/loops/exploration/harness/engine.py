@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict, replace
 from copy import deepcopy
 from uuid import uuid4
@@ -19,7 +20,8 @@ from .rl import RLPlan, RLState
 from .environment import Environment
 from .learner import ActorLearner, ActorTrainingRequest
 from .policy import ActorContext, ActorPolicy
-from rsisys.loops.contracts.training import TrainingResult
+from rsisys.loops.contracts.training import TrainingResult, ModelActivator
+from rsisys.runtime.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
@@ -34,13 +36,15 @@ class DefaultExplorationHarness:
     def __init__(self, policy: ActorPolicy, environment: Environment,
                  experience: ExperienceSystem, learner: ActorLearner | None = None,
                  evaluator: Evaluator | None = None, *, memory: MemoryStore | None = None, memory_limit: int = 32,
-                 command_handlers: Mapping[str, CommandHandler] | None = None):
+                 command_handlers: Mapping[str, CommandHandler] | None = None,
+                 model_activator: ModelActivator | None = None):
         self.policy, self.environment = policy, environment
         self.experience, self.learner = experience, learner
         if type(memory_limit) is not int or memory_limit < 1:
             raise ValueError("memory_limit must be a positive integer")
         self.memory = memory if memory is not None else ExplorationMemory()
         self.memory_limit = memory_limit
+        self.model_activator = model_activator
         self.state = ExplorationState()
         self.training = JobBook[ActorTrainingRequest, TrainingResult](learner)
         self.evaluation = JobBook[EvaluationRequest, EvaluationResult](evaluator)
@@ -260,7 +264,9 @@ class DefaultExplorationHarness:
             raise ValueError("Training base is stale relative to this policy")
         if self.training.busy:
             raise RuntimeError("Cannot replace the model while another training job is active")
-        self.policy.update_model(result.model)
+        ready = prepare_model_activation(result, self.model_activator,
+            idempotency_key=json.dumps(('exploration', job.backend, job.job_id)))
+        self.policy.update_model(ready)
         self.state.applied_training.add(job)
         return result.model
 

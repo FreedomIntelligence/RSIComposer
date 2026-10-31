@@ -24,8 +24,12 @@ HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；
 
 ## 产物与文件
 
+ArtifactRef 是纯数据引用：artifact_id、kind、uri 必须为非空文本；version、digest 默认 None，提供时必须为非空文本。仍兼容原有五个位置参数。契约不限定 URI scheme，也不规定外部摘要格式；外部路径、对象存储地址或后端自定义标识均由消费方解释。引用可无需本地注册，通过 Directive、训练和评估请求传递；构造、传递与 codec 往返不会自动解析、下载或将产物入库，None 会原样保留。
+
 [artifacts.py](artifacts.py) 的 ArtifactStore 协议与 InMemoryArtifactStore 仅提供 put / get；内存对象随实例丢失，引用不能用于跨进程恢复。FileArtifactStore 另有 put_file / resolve / refs；artifact:// 引用须配套存储目录，搬迁时需保留内容与元数据。
 
-FileArtifactStore 的 put_file 分块写入，resolve 校验元数据及 SHA-256 后返回路径，get 会完整载入内存；引用本身不会加载文件，也不保证文件永久可用。[files.py](files.py) 提供原子写入辅助。
+两个内置存储仅接受自身管理的引用：InMemoryArtifactStore 依赖当前实例，FileArtifactStore 依赖当前根目录中的内容与元数据。它们要求各自生成的 URI、版本和非缺失的 SHA-256 摘要，读取时仍严格校验完整引用元数据及内容哈希；可选 digest 不意味着跳过内部校验。外部引用、缺失摘要或篡改的引用不会被自动接纳，使用内置存储的 Mock learner/evaluator 同样受此限制。
+
+FileArtifactStore 的 put_file 分块写入，resolve 校验后返回路径，get 会完整载入内存；引用本身不会加载文件，也不保证文件永久可用。[files.py](files.py) 提供原子写入辅助。
 
 远程对象存储和自动回收尚未接入；自定义持久化的[快照集成](../snapshot/README.md)需另行实现。

@@ -1,6 +1,7 @@
 """Training outputs describe candidates; they do not authorize shared-model updates."""
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from .candidate import Candidate
 from .model_service import ModelRef
@@ -19,3 +20,18 @@ class TrainingResult:
             raise ValueError("Candidate base version must match the training base")
         if self.model == self.base:
             raise ValueError("Training must produce a new model version")
+
+
+class ModelActivationPending(RuntimeError):
+    """Deployment is not confirmed ready; retry the same activation key later."""
+
+
+class ModelActivator(Protocol):
+    """Load/publish and verify a trained version before a role binds to it.
+
+    Return result.model only when ready. Raise ModelActivationPending for ongoing
+    work or an uncertain response. Repeated keys must resume the same operation.
+    Other exceptions indicate activation failure. Does not mutate role policies.
+    """
+
+    def activate(self, result: TrainingResult, *, idempotency_key: str) -> ModelRef: ...

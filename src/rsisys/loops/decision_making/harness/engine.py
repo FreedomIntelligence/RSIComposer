@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict, replace
 from copy import deepcopy
 from uuid import uuid4
@@ -12,7 +13,8 @@ from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.loops.contracts.training import TrainingResult
+from rsisys.loops.contracts.training import TrainingResult, ModelActivator
+from rsisys.runtime.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
@@ -28,7 +30,8 @@ from .state import DecisionContext, DecisionState, _PendingOperationRecord
 class DefaultDecisionHarness:
     def __init__(self, policy: DecisionPolicy, tools: DecisionTools,
                  experience: ExperienceSystem, learner: DecisionLearner | None = None,
-                 *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32):
+                 *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32,
+                 model_activator: ModelActivator | None = None):
         self.policy, self.tools, self.experience, self.learner = policy, tools, experience, learner
         if type(experience_limit) is not int or experience_limit < 1:
             raise ValueError("experience_limit must be a positive integer")
@@ -37,6 +40,7 @@ class DefaultDecisionHarness:
         self.memory = memory if memory is not None else DecisionMemory()
         self.memory_limit = memory_limit
         self.experience_limit = experience_limit
+        self.model_activator = model_activator
         self.state = DecisionState()
         self.training = JobBook[DecisionTrainingRequest, TrainingResult](learner)
 
@@ -238,7 +242,9 @@ class DefaultDecisionHarness:
             raise ValueError("Training base is stale relative to this policy")
         if self.training.busy:
             raise RuntimeError("Cannot replace the model while another training job is active")
-        self.policy.update_model(result.model)
+        ready = prepare_model_activation(result, self.model_activator,
+            idempotency_key=json.dumps(('decision_making', job.backend, job.job_id)))
+        self.policy.update_model(ready)
         self.state.applied_training.add(job)
         return result.model
 

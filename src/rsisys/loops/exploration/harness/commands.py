@@ -15,6 +15,7 @@ from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
+from rsisys.loops.contracts.training import ModelActivationPending
 from .learner import ActorTrainingRequest
 from .evaluation import EvaluationRequest
 from .rl import RLPlan
@@ -86,10 +87,10 @@ class ExplorationCommands:
                 lambda state, actions: self._advance_prompt(state),
                 cancel_before_start=lambda state, actions: self._advance_prompt(state)),
             'sft': _BuiltinHandler(self._prepare_sft,
-                lambda state, actions: self._advance_job(state, training=True)),
+                lambda state, actions: self.advance_job(state, training=True)),
             'rl': _BuiltinHandler(self._prepare_rl, self._advance_rl),
             'evaluate': _BuiltinHandler(self._prepare_evaluation,
-                lambda state, actions: self._advance_job(state, training=False)),
+                lambda state, actions: self.advance_job(state, training=False)),
         }
         for mode, handler in (handlers or {}).items():
             if not isinstance(mode, str) or not mode.strip():
@@ -137,7 +138,11 @@ class ExplorationCommands:
         if not isinstance(state.directive.payload, PromptSpec):
             raise ValueError('configure_prompt requires PromptSpec')
 
-    def _require_training(self, payload, expected, *, apply):
+    def validate_training_payload(self, payload, expected, *, apply) -> None:
+        """Validate learner, payload type and optional model-update support.
+
+        Handler support for the default harness only; starts no external work.
+        """
         if self.loop.learner is None:
             raise NotImplementedError('Training directives require a learner')
         if not isinstance(payload, expected):
@@ -147,7 +152,7 @@ class ExplorationCommands:
 
     def _prepare_sft(self, state):
         payload = state.directive.payload
-        self._require_training(payload, SFTSpec, apply=isinstance(payload, SFTSpec) and payload.apply_result)
+        self.validate_training_payload(payload, SFTSpec, apply=isinstance(payload, SFTSpec) and payload.apply_result)
         base = payload.base or getattr(self.loop.policy, 'model', None)
         if not isinstance(base, ModelRef):
             raise ValueError('SFT requires a base model')
@@ -156,7 +161,7 @@ class ExplorationCommands:
         state.request = ActorTrainingRequest(base, state.directive.input_refs, payload.recipe_ref)
 
     def _prepare_rl(self, state):
-        self._require_training(state.directive.payload, RLSpec, apply=True)
+        self.validate_training_payload(state.directive.payload, RLSpec, apply=True)
 
     def _prepare_evaluation(self, state):
         if self.loop.evaluation.backend is None:
@@ -242,7 +247,14 @@ class ExplorationCommands:
             evidence_refs=(state.record.record_id,),
         ))
 
-    def _advance_job(self, state, *, training: bool):
+    def advance_job(self, state: CommandState, *, training: bool) -> None:
+        """Advance a prepared job for a default-harness handler in place.
+
+        Select training or evaluation with ``training``. Reuse the state's
+        request/idempotency key, honor cancellation, record evidence and apply
+        training results when requested. Terminal feedback is written to state,
+        not returned; uncertain work retains the receipt for a later advance.
+        """
         loop, directive = self.loop, state.directive
         if state.phase in ('accepted', 'submitting'):
             # Submission may have succeeded remotely before raising. Retain request/key.
@@ -266,6 +278,8 @@ class ExplorationCommands:
         if training and result and directive.payload.apply_result and not state.cancel_requested:
             try:
                 loop._apply_learning(state.job)
+            except ModelActivationPending:
+                raise  # Retry application of this job without a terminal receipt.
             except Exception as exc:
                 status, error, application_error = ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}', exc
         records = loop.state.training_record_ids if training else loop.state.evaluation_record_ids

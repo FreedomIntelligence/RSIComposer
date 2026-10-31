@@ -207,9 +207,37 @@ class SubprocessActorLearner:
         self._closed = True
 
 
+class ScalarModelService:
+    """Tiny in-process serving fixture, explicitly separate from training."""
+    def __init__(self, artifacts):
+        self.artifacts = artifacts
+        self.weights = {}
+        self.receipts = {}
+
+    def activate(self, result, *, idempotency_key):
+        previous = self.receipts.get(idempotency_key)
+        if previous is not None:
+            if previous != result:
+                raise ValueError('Activation key reused with different result')
+            return result.model
+        checkpoint = json.loads(self.artifacts.get(result.candidate.changes['model']))
+        weight = checkpoint['weight']
+        if type(weight) not in (int, float) or not math.isfinite(weight):
+            raise ValueError('Invalid scalar weights')
+        self.weights[result.model] = weight
+        self.receipts[idempotency_key] = deepcopy(result)
+        return result.model
+
+    def predict(self, model, value):
+        return self.weights[model] * value
+
+
 class TrainingOnlyPolicy:
     # This model identifies the scalar initialization, not the demo's mock LLM.
     model = ModelRef('toy-cpu', 'scalar-linear-regression', 'zero-weight')
+
+    def update_model(self, model):
+        self.model = model
 
     def act(self, context):
         raise AssertionError('Backend-owned training must not call actor.act')
@@ -225,6 +253,7 @@ def exploration_factory(context) -> ExplorationLoop:
     harness = DefaultExplorationHarness(
         TrainingOnlyPolicy(), environment, context.experience, learner=learner,
         command_handlers={'train': TrainingCommandHandler()},
+        model_activator=ScalarModelService(context.artifacts),
     )
     return ExplorationLoop(harness, EchoActionSpace())
 
@@ -239,7 +268,7 @@ def main() -> dict:
         }).encode(), kind='training_data')
         directive = Directive(
             'toy-training', 'Fit y = 2*x on CPU', 'delegate', mode='train',
-            payload=TrainSpec('toy-recipe', method='linear_regression'), input_refs=(data,),
+            payload=TrainSpec('toy-recipe', method='linear_regression', apply_result=True), input_refs=(data,),
         )
         exploration = runner.exploration
         progress = exploration.accept(directive)  # prepare needs no trajectory.
@@ -267,6 +296,8 @@ def main() -> dict:
             **result.metrics, 'checkpoint': checkpoint,
             'checkpoint_artifact': asdict(checkpoint_ref),
             'training_result': asdict(result),
+            'active_model': asdict(exploration.harness.policy.model),
+            'prediction_at_3': exploration.harness.model_activator.predict(exploration.harness.policy.model, 3),
         }
 
 

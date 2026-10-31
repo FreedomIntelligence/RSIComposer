@@ -26,6 +26,12 @@ Directive 由 decision policy 或外部系统发给 Exploration Harness，不是
 
 ## 作业与版本
 
+模型产物、推理可用性和角色绑定是三个不同概念。`Candidate.changes` 引用产物，`TrainingResult.model` 指定预期启用的版本，不表示服务已加载。两个默认 Harness 接受 `model_activator`；真实结果应用前调用 `ModelActivator.activate(result, idempotency_key=...)`，仅在返回完全匹配的 ModelRef 后更新 Policy 绑定。适配器负责部署或检查已经部署的版本，无需重新部署已有服务。
+
+部署进行中或响应不确定时抛出 `ModelActivationPending`，调用方稍后推进同一任务；键在重试间保持一致，适配器必须兑现幂等性。其他异常表示失败，旧角色绑定保持不变。模拟结果在未配置 activator 时仍可模拟切换；真实结果缺少 activator 时拒绝应用，但仍可保存为候选或提交评测。取消待启用的训练指令不会切换绑定，不负责撤销已在外部启动的部署。
+
+外部 `ArtifactRef` 无需先登记到内置 ArtifactStore；version 与 digest 未知时用 None。传递引用不代表下载、解析或验证了内容；这些由接入实现负责。内置存储仍只读取自身管理的产物，并保留完整性校验。
+
 [jobs.py](jobs.py) 定义 JobRef、JobStatus、JobOutcome。queued / running / unknown 非终态；unknown 不能当作失败。仅 succeeded 携带结果，failed 必须携带错误，cancelled 表示作业已确认取消。训练/评测后端的 result(job) 只读取成功结果，不轮询、不推进任务；内置 Mock 在其他状态下抛出 RuntimeError。
 
 相同幂等键与相同请求应返回同一任务，不同请求复用键应拒绝。取消请求不等于作业取消完成；命令取消时作业仍可能成功，Feedback 的 cancelled 不等同于 JobStatus.CANCELLED。具体后端必须实现作业约定，[Runtime](../../runtime/README.md) 的进程内记账不能替代远端幂等保证。

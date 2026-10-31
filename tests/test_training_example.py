@@ -25,6 +25,8 @@ class TrainingExampleTests(unittest.TestCase):
         self.assertFalse(output['simulated'])
         self.assertLess(output['loss_after'], output['loss_before'])
         self.assertAlmostEqual(output['checkpoint']['weight'], 2.0, places=4)
+        self.assertAlmostEqual(output['prediction_at_3'], 6.0, places=4)
+        self.assertEqual(output['active_model'], output['training_result']['model'])
 
     def test_worker_failure_is_terminal_and_duplicate_submit_reuses_job(self):
         artifacts = InMemoryArtifactStore()

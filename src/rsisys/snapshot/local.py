@@ -118,6 +118,8 @@ class LocalSnapshotCapture:
         dm, actor = decision_loop.harness, exploration_loop.harness
         if type(dm) is not DefaultDecisionHarness or type(actor) is not DefaultExplorationHarness:
             raise TypeError('Custom harnesses need explicit snapshot integration')
+        if dm.model_activator is not None or actor.model_activator is not None:
+            raise TypeError('Custom model activators need explicit snapshot integration')
         if app.runner.busy or actor.command_busy:
             raise RuntimeError('Snapshot requires no pending coordination delivery')
         check_states(dm.state, actor.state)

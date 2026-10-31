@@ -58,3 +58,12 @@ accept 复制并校验请求；advance 推进阶段，execute 会同步运行一
 prepare 失败会形成失败回执并重新抛出异常；调用方交付并 acknowledge 后才能接收下一条指令。handler 负责自身详细证据的稳定写入；Runner 交付后，默认 Decision Harness 仍统一记录策略结果。终态交付失败只补交 Feedback，不再调用 handler。框架统一保留原指令的 simulated 标记，handler 不能将模拟来源降为真实结果。全部回执仅在进程内，不提供崩溃恢复或自定义快照。
 
 决策侧需同时注入对应的 [DirectiveDefinition](../../decision_making/action_space/README.md#扩展系统指令)，并将模式加入 directive_modes。自定义 handler 可以调用自身后端；ActorTrainingRequest 允许自定义 method，具体算法与数据处理能力由 learner 实现。整项训练可直接使用 [TrainingCommandHandler](learner/command.py)，装配见[使用指南](../../../../../docs/GUIDE.md#接入整项训练任务)。
+
+### 默认 Harness 的公共 handler 支持方法
+
+`harness.commands` 的以下公共 helper 供 `DefaultExplorationHarness` 的 handler 复用，不属于通用 `ExplorationHarness` 协议；其他 Harness 无需提供这些方法：
+
+- `validate_training_payload(payload, expected, *, apply)`：检查 learner 是否存在、payload 是否为 expected 类型，以及 apply 为真时 policy 是否支持模型更新。成功返回 None，失败抛出异常，不启动外部工作；base、数据输入等具体请求约束仍由 handler 校验。
+- `advance_job(state, *, training)`：handler 先在 prepare 中冻结 `state.request`，再在 advance 中调用。training 为真使用训练作业，为假使用评测作业；每次推进一个提交或轮询/取消阶段，复用请求和幂等键，记录终态证据，并按 payload.apply_result 应用训练结果。该 helper 返回 None，直接更新 state.phase、state.job 和终态 state.feedback；调用方无需再返回 Feedback。
+
+`advance_job` 的不确定提交、轮询、证据写入失败保留回执供重试。应用阶段抛出 `ModelActivationPending` 时同样保持未终态，下次 advance 对同一 job 重试应用；其他应用异常生成 FAILED 回执后重新抛出。取消后不再应用候选，已发生的外部应用不回滚。开始前的取消仍由框架的 cancel_before_start 处理。这些 helper 应在 handler 生命周期内使用，不替代 Harness 的本地控制入口。

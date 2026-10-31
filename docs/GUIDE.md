@@ -154,6 +154,14 @@ exploration_harness = DefaultExplorationHarness(
 
 运行 `pixi run backend-demo` 查看 [backend_training.py](../examples/backend_training.py)。示例使用独立子进程在 CPU 上优化标量回归模型，返回真实权重产物与 MSE；它展示训练作业接入，不是 LLM 训练、RL rollout 或 verl 的现成适配。请求字段及结果要求见 [Actor learner](../src/rsisys/loops/exploration/harness/learner/README.md) 和 [Decision learner](../src/rsisys/loops/decision_making/harness/learner/README.md)。
 
+## 模型启用与外部引用
+
+真实后端返回训练结果后，若要 apply_learning 或 apply_result，需要在对应 Harness 构造时传入 `model_activator`。该适配器实现 `activate(result, *, idempotency_key)`：解析候选权重引用，完成部署或确认既有部署，并返回与 result.model 相同的 ModelRef。等待状态抛出 ModelActivationPending，由调用方稍后继续推进；不在框架内部持续轮询。角色绑定仅在确认后改变。
+
+`backend-demo` 还展示标量模型的加载与推理：独立进程输出权重，ScalarModelService 加载并确认，Harness 更新绑定，最后通过新版本进行预测。它是简单接口示例，不提供第三方推理服务部署适配。
+
+外部数据可以直接使用 `ArtifactRef("dataset-id", "dataset", "s3://bucket/path")` 等引用，无需先写入框架存储；URI 和数据格式由使用者的适配实现解释。未知的 version/digest 保留 None，不伪造摘要。
+
 ## 恢复运行
 
 CLI 在空闲边界生成快照，并在 JSON 输出中给出路径：

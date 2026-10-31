@@ -1,8 +1,9 @@
 """Whole-job training delegation does not invoke the built-in rollout sequencer."""
 from dataclasses import replace
 import json
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import DEFAULT, Mock
 
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
@@ -11,7 +12,7 @@ from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.jobs import JobStatus
 from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse
 from rsisys.loops.contracts.requests import TrainSpec
-from rsisys.loops.contracts.training import TrainingResult
+from rsisys.loops.contracts.training import ModelActivationPending, TrainingResult
 from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions, training_directive
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
@@ -19,6 +20,7 @@ from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
 from rsisys.loops.exploration.action_space import EchoActionSpace
 from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
+from rsisys.loops.exploration.harness.commands import CommandState
 from rsisys.loops.exploration.harness.learner.command import TrainingCommandHandler
 from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.loops.exploration.loop import ExplorationLoop
@@ -114,6 +116,58 @@ class BackendTrainingTests(unittest.TestCase):
         self.assertEqual(backend.requests[0], backend.requests[1])
         runner.exploration.harness.policy.update_model.assert_called_once()
         self.assertEqual(runner.exploration.harness.policy.model.revision, 'trained')
+
+    def test_training_handler_uses_only_public_command_helpers(self):
+        runner, backend = self.make()
+        harness = runner.exploration.harness
+        # Expose only the supported helpers, so private command access fails.
+        handler_harness = SimpleNamespace(policy=harness.policy, commands=SimpleNamespace(
+            validate_training_payload=harness.commands.validate_training_payload,
+            advance_job=harness.commands.advance_job,
+        ))
+        state = CommandState(Directive('public-helpers', 'task', 'strategy', mode='train',
+            payload=TrainSpec('recipe', 'custom', apply_result=False)))
+        handler = TrainingCommandHandler()
+        handler.prepare(handler_harness, state)
+        self.assertEqual(backend.requests, [])
+        for _ in range(8):
+            self.assertIsNone(handler.advance(handler_harness, state, None))
+            if state.feedback is not None:
+                break
+        self.assertIsNotNone(state.feedback)
+        self.assertEqual(state.feedback.status, 'completed')
+        request, = backend.requests
+        self.assertEqual(request.method, 'custom')
+        record, = harness.experience.retrieve(kinds=('training_run',))
+        self.assertEqual(state.feedback.evidence_refs, (record.record_id,))
+
+    def test_pending_activation_retries_same_job_or_cancels_without_apply(self):
+        for cancel in (False, True):
+            with self.subTest(cancel=cancel):
+                runner, backend = self.make(apply=True)
+                harness = runner.exploration.harness
+                apply = Mock(wraps=harness._apply_learning,
+                    side_effect=[ModelActivationPending('deployment pending'), DEFAULT])
+                harness._apply_learning = apply
+                with self.assertRaisesRegex(ModelActivationPending, 'deployment pending'):
+                    self.finish(runner)
+                state = harness.commands.receipts[harness.commands.active]
+                job = state.job
+                self.assertEqual(state.phase, 'running')
+                self.assertIsNone(state.feedback)
+                self.assertEqual(harness.policy.model, MODEL)
+                self.assertTrue(runner.busy)
+                if cancel:
+                    runner.cancel()
+                result = self.finish(runner)
+                self.assertEqual(result.event['feedback']['status'],
+                                 'cancelled' if cancel else 'completed')
+                self.assertEqual(state.job, job)
+                self.assertEqual(len(backend.requests), 1)
+                self.assertEqual(apply.call_count, 1 if cancel else 2)
+                for call in apply.call_args_list:
+                    self.assertEqual(call.args, (job,))
+                self.assertEqual(harness.policy.model.revision, 'base' if cancel else 'trained')
 
     def test_cancel_uncertain_submit_resolves_then_cancels_without_apply(self):
         runner, backend = self.make(apply=True)

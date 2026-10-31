@@ -6,13 +6,15 @@ from rsisys.loops.contracts.artifacts import ArtifactRef
 
 
 class ArtifactStore(Protocol):
+    """Content access for store-managed references, not arbitrary external URIs."""
+
     def put(self, content: bytes, *, kind: str) -> ArtifactRef: ...
 
     def get(self, ref: ArtifactRef) -> bytes: ...
 
 
 class InMemoryArtifactStore:
-    """Immutable demo objects. References expire with the Python process."""
+    """Immutable demo objects; only references managed by this instance are accepted."""
 
     def __init__(self):
         self._items: dict[str, tuple[ArtifactRef, bytes]] = {}
@@ -27,13 +29,16 @@ class InMemoryArtifactStore:
 
     def get(self, ref: ArtifactRef) -> bytes:
         stored_ref, content = self._items[ref.artifact_id]
+        if (ref.uri != f'memory://{ref.artifact_id}' or ref.version != '1'
+                or ref.digest is None):
+            raise ValueError('Artifact reference is not managed by this store')
         if stored_ref != ref or sha256(content).hexdigest() != ref.digest:
             raise ValueError("Artifact reference or digest mismatch")
         return content
 
 
 class FileArtifactStore:
-    """Immutable local artifacts with portable references and verified content digests."""
+    """Immutable local artifacts; only references managed under this root are accepted."""
 
     def __init__(self, root):
         from pathlib import Path
@@ -90,6 +95,9 @@ class FileArtifactStore:
 
     def resolve(self, ref: ArtifactRef):
         import json
+        if (ref.uri != f'artifact://{ref.artifact_id}' or ref.version != '1'
+                or ref.digest is None):
+            raise ValueError('Artifact reference is not managed by this store')
         directory = self._directory(ref.artifact_id)
         if not directory.is_dir():
             raise KeyError(ref.artifact_id)
