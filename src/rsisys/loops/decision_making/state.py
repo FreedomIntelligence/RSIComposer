@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from rsisys.experience.records import ExperienceRecord
-from rsisys.experience.memory import Memory
+from rsisys.loops.contracts.memory import Memory, HistoryEntry
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.directive import Directive
@@ -17,6 +17,17 @@ class DecisionContext:
     operation_results: tuple[OperationResult, ...]
     memories: tuple[Memory, ...] = ()
     last_feedback: Feedback | None = None
+    history: tuple[HistoryEntry, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PendingOperationRecord:
+    record_id: str
+    call: OperationCall | None
+    result: OperationResult
+    elapsed_seconds: float | None
+    job: JobRef | None
+    resume_result: OperationResult | None = None
 
 
 @dataclass
@@ -33,6 +44,7 @@ class DecisionState:
     pending_job: JobRef | None = None
     pending_operation: OperationCall | None = None
     pending_simulated: bool = False
+    pending_operation_record: _PendingOperationRecord | None = None
     finished: bool = False
     recorded_training: set[JobRef] = field(default_factory=set)
     applied_training: set[JobRef] = field(default_factory=set)

@@ -164,11 +164,11 @@ class LoopInternalsTests(unittest.TestCase):
         self.assertEqual(state.results[1].base, state.results[0].model)
         self.assertEqual(self.actor.policy.model, state.results[1].model)
         self.assertEqual(self.decision.policy.model, decision_base)
-        trajectories = [r for r in self.store.records() if r.kind == 'actor_trajectory']
+        trajectories = self.actor.memory.history(kind='trajectory')
         self.assertEqual(len(trajectories), 2)
         self.assertEqual(trajectories[0].details['model']['revision'], base.revision)
         self.assertEqual(trajectories[1].details['model']['revision'], state.results[0].model.revision)
-        self.assertNotEqual(trajectories[0].directive_id, trajectories[1].directive_id)
+        self.assertNotEqual(trajectories[0].task_id, trajectories[1].task_id)
         records = len(self.store.records())
         self.assertEqual(self.actor.step_rl(), state)
         self.assertEqual(len(self.store.records()), records)
@@ -200,7 +200,7 @@ class LoopInternalsTests(unittest.TestCase):
         self.assertEqual(self.actor.state.rl.phase, 'submitting')
         self.assertEqual(self.advance_rl().phase, 'completed')
         self.assertEqual(calls[0], calls[1])
-        self.assertEqual(len([r for r in self.store.records() if r.kind == 'actor_trajectory']), 1)
+        self.assertEqual(len(self.actor.memory.history(kind='trajectory')), 1)
 
     def test_rl_failure_stops_without_applying_weights(self):
         base = self.actor.policy.model
@@ -380,14 +380,22 @@ class LoopInternalsTests(unittest.TestCase):
     def test_context_limit_applies_to_decision_and_actor(self):
         self.runner.run('test', 3)
         self.decision.experience_limit = 1
-        self.actor.experience_limit = 1
+        self.decision.memory_limit = 1
+        self.actor.memory_limit = 1
         decide = self.decision.policy.decide
         act = self.actor.policy.act
         self.decision.policy.decide = Mock(wraps=decide)
         self.actor.policy.act = Mock(wraps=act)
         self.runner.run('test', 1)
         self.assertEqual(len(self.decision.policy.decide.call_args.args[0].experience), 1)
-        self.assertEqual(len(self.actor.policy.act.call_args.args[0].experience), 1)
+        self.assertEqual(len(self.decision.policy.decide.call_args.args[0].history), 1)
+        self.assertEqual(self.actor.policy.act.call_args.args[0].history, ())
+        step = self.actor.environment.step
+        self.actor.environment.step = lambda action: replace(step(action), terminated=False)
+        self.actor.run(Directive('limited-history', 'task', 'strategy', max_steps=3))
+        context = self.actor.policy.act.call_args.args[0]
+        self.assertEqual(len(context.history), 1)
+        self.assertEqual(context.history[0].task_id, 'limited-history')
 
     def test_model_response_revision_must_match_request(self):
         backend = self.actor.policy.backend

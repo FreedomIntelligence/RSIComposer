@@ -99,7 +99,7 @@ class CoordinationTests(unittest.TestCase):
         self.assertEqual(len(feedback.jobs), 2)
         self.assertEqual(len(feedback.evidence_refs), 4)
         self.assertTrue(feedback.simulated)
-        trajectories = [r for r in self.store.records() if r.kind == 'actor_trajectory']
+        trajectories = self.actor.memory.history(kind='trajectory')
         self.assertEqual(trajectories[0].details['model']['revision'], base.revision)
         self.assertNotEqual(trajectories[0].details['model'], trajectories[1].details['model'])
 
@@ -110,7 +110,7 @@ class CoordinationTests(unittest.TestCase):
         def flaky(value):
             nonlocal failed
             record(value)
-            if value.kind == 'decision_episode' and not failed:
+            if value.kind == 'improvement' and not failed:
                 failed = True
                 raise OSError('commit response lost')
         self.dm.experience.record = flaky
@@ -121,11 +121,11 @@ class CoordinationTests(unittest.TestCase):
         self.assertEqual(self.finish().status, 'completed')
         self.assertEqual(count, self.actor.environment.sandbox.execution_count)
         self.assertEqual(self.dm.state.completed, 1)
-        self.assertEqual(len([r for r in self.store.records() if r.kind == 'decision_episode']), 1)
+        self.assertEqual(len([r for r in self.store.records() if r.kind == 'improvement']), 1)
 
     def test_lost_delivery_ack_is_idempotent_and_blocks_new_decisions(self):
         self.dispatch(Directive('once', 'task', 'execute'))
-        receive = self.dm.receive
+        receive = self.dm.receive_feedback
         calls = 0
         def flaky(directive, feedback):
             nonlocal calls
@@ -133,7 +133,7 @@ class CoordinationTests(unittest.TestCase):
             calls += 1
             if calls == 1:
                 raise OSError('ack lost')
-        self.dm.receive = flaky
+        self.dm.receive_feedback = flaky
         with self.assertRaises(OSError):
             self.runner.run('task', 1)
         self.finish()
@@ -239,7 +239,7 @@ class CoordinationTests(unittest.TestCase):
         class DecisionPort:
             step = staticmethod(dm.step)
             pending = staticmethod(dm.pending)
-            receive = staticmethod(dm.receive)
+            receive_feedback = staticmethod(dm.receive_feedback)
         class ActorPort:
             accept = staticmethod(actor.accept)
             advance = staticmethod(actor.advance)
@@ -275,9 +275,9 @@ class CoordinationTests(unittest.TestCase):
             self.actor.advance(directive.directive_id)
         feedback = self.actor.inspect(directive.directive_id).feedback
         with self.assertRaisesRegex(ValueError, 'content differs'):
-            self.dm.receive(replace(directive, strategy='changed'), feedback)
+            self.dm.receive_feedback(replace(directive, strategy='changed'), feedback)
         with self.assertRaisesRegex(ValueError, 'does not match'):
-            self.dm.receive(directive, replace(feedback, directive_id='other'))
+            self.dm.receive_feedback(directive, replace(feedback, directive_id='other'))
         self.assertIsNotNone(self.dm.pending())
         self.finish()
 
@@ -360,17 +360,17 @@ class CoordinationTests(unittest.TestCase):
             config = ApplicationConfig.load(CONFIG.parent / 'local.json')
             config = replace(config, data_dir=Path(tmp) / 'source')
             with Application(config) as app:
-                receive = app.runner.decision_making.receive
+                receive = app.runner.decision_making.receive_feedback
                 def lost(directive, feedback):
                     receive(directive, feedback)
                     raise OSError('ack lost')
-                app.runner.decision_making.receive = lost
+                app.runner.decision_making.receive_feedback = lost
                 with self.assertRaises(OSError):
                     app.run()
                 self.assertIsNone(app.runner.decision_making.pending())
                 with self.assertRaisesRegex(RuntimeError, 'pending coordination'):
                     LocalSnapshotCapture(app).capture('too-early')
-                app.runner.decision_making.receive = receive
+                app.runner.decision_making.receive_feedback = receive
                 app.run()
                 manifest = LocalSnapshotCapture(app).capture('done')
                 directory = config.data_dir / 'snapshots' / manifest.snapshot_id

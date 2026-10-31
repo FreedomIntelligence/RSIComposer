@@ -25,7 +25,7 @@ class SnapshotManifest:
     component_refs: dict[str, str]
     random_state_refs: tuple[str, ...]
     resume_policy: dict[str, str]
-    schema_version: int = 1
+    schema_version: int = 2
     kind: str = "local_quiescent"
     label: str = ""
     file_digests: dict[str, str] = field(default_factory=dict)

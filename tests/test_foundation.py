@@ -14,7 +14,9 @@ import unittest
 from unittest.mock import patch
 
 from rsisys.application import Application, ApplicationConfig
-from rsisys.experience.memory import Memory
+from rsisys.loops.contracts.memory import Memory
+from rsisys.loops.decision_making.memory import DecisionMemory
+from rsisys.loops.exploration.memory import ExplorationMemory
 from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.sqlite import SQLiteExperienceStore
@@ -30,7 +32,7 @@ from rsisys.snapshot.codec import decode
 
 
 def record(ident='record', scope='actor', summary='experience'):
-    return ExperienceRecord(ident, 'actor_trajectory', scope, 'directive', summary, False)
+    return ExperienceRecord(ident, 'runtime_feedback', scope, 'directive', summary, False)
 
 
 @contextmanager
@@ -129,23 +131,16 @@ class FoundationTests(unittest.TestCase):
         finally:
             reopened.close()
 
-    def test_memory_is_evidence_linked_and_persisted(self):
-        path = self.root/'experience.sqlite3'
-        store = SQLiteExperienceStore(path)
-        system = BasicExperienceSystem(store)
-        memory = Memory('memory', 'procedural', 'shared', 'Inspect outputs before accepting', ('source',), 'execution')
+    def test_memory_is_owned_by_each_harness_and_persisted_separately(self):
+        path = self.root/'decision_memory.json'
+        memory = DecisionMemory(path)
+        note = Memory('memory', 'procedural', 'Inspect outputs before accepting', ('source',), 'execution')
+        memory.remember(note)
+        memory.remember(replace(note, status='supported'))
+        self.assertEqual(DecisionMemory(path).recall(text='outputs')[0].status, 'supported')
+        self.assertEqual(ExplorationMemory().recall(), ())
         with self.assertRaises(ValueError):
-            system.remember(memory)
-        system.record(record('source'))
-        system.remember(memory)
-        system.remember(replace(memory, status='supported'))
-        store.close()
-        store = SQLiteExperienceStore(path)
-        try:
-            self.assertEqual(store.memories('decision_maker', text='outputs')[0].status, 'supported')
-            self.assertEqual(store.memories('actor', text='absent'), ())
-        finally:
-            store.close()
+            ExplorationMemory(path)
 
     def test_local_command_exports_actual_output_and_filters_environment(self):
         backend = LocalProcessBackend(self.root/'work')
@@ -304,7 +299,8 @@ class FoundationTests(unittest.TestCase):
         with Application(self.config(execution='local_process')) as app:
             app.run()
             evidence = app.store.records()[0].record_id
-            app.experience.remember(Memory('m', 'semantic', 'shared', 'Persist evidence', (evidence,), 'task'))
+            app.runner.exploration.memory.remember(Memory('m', 'semantic', 'Persist evidence', (evidence,), 'task'))
+            app.runner.decision_making.memory.remember(Memory('m', 'procedural', 'Compare training efficiency'))
             manifest = LocalSnapshotCapture(app).capture('first')
             directory = app.config.data_dir/'snapshots'/manifest.snapshot_id
             saved_count = len(app.store.records())
@@ -313,7 +309,10 @@ class FoundationTests(unittest.TestCase):
             self.assertGreater(len(app.store.records()), saved_count)
         with restore_snapshot(directory, self.root/'restored') as restored:
             self.assertEqual(len(restored.store.records()), saved_count)
-            self.assertEqual(restored.experience.memories('actor')[0].memory_id, 'm')
+            self.assertEqual(restored.runner.exploration.memory.recall()[0].content, 'Persist evidence')
+            self.assertEqual(restored.runner.decision_making.memory.recall()[0].content, 'Compare training efficiency')
+            self.assertTrue(restored.runner.exploration.memory.history())
+            self.assertTrue(restored.runner.decision_making.memory.history())
             for ref in saved_refs:
                 self.assertTrue(restored.artifacts.get(ref))
             self.assertEqual(restored.run().status, 'completed')
@@ -395,7 +394,7 @@ class FoundationTests(unittest.TestCase):
             matches = json.loads(app.artifacts.get(result.artifacts[0]))
             self.assertEqual(matches[0]['artifact_id'], ref.artifact_id)
             app.experience.record(record('evidence'))
-            app.experience.remember(Memory('m', 'procedural', 'shared', 'Check results', ('evidence',), 'task'))
+            app.runner.decision_making.memory.remember(Memory('m', 'procedural', 'Check results', ('evidence',), 'task'))
             policy = app.runner.decision_making.policy
             with patch.object(policy, 'decide', wraps=policy.decide) as decide:
                 app.runner.decision_making.step(app.config.objective)

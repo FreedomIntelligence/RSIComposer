@@ -4,9 +4,9 @@
 
 ## 接口与输入
 
-[ActorLearner](__init__.py) 提供 `submit(request, *, idempotency_key)`、`poll(job)`、`cancel(job)`、`result(job)`；后端 cancel 返回 None，loop 的 cancel_learning 返回 JobOutcome。ActorTrainingRequest 包含 base、recipe_ref、method 和数据/经验引用。
+[ActorLearner](__init__.py) 提供 `submit(request, *, idempotency_key)`、`poll(job)`、`cancel(job)`、`result(job)`；后端 cancel 返回 None，loop 的 cancel_learning 返回 JobOutcome。ActorTrainingRequest 包含 base、recipe_ref、method、data_refs 和 trajectory_refs。
 
-method=sft 要求非空 data_refs；method=rl 要求非空 experience_refs，loop 校验它们为可见的 actor_trajectory。成功的 TrainingResult.base 必须匹配请求，candidate.affected_roles 必须包含 actor。幂等、终态与版本约定见[共享协议](../../contracts/README.md)。
+method=sft 要求非空 data_refs；method=rl 要求非空 trajectory_refs，loop 校验它们引用 Actor 本地 memory/history 中的轨迹。这些引用不指向 Experience，也不能用 Feedback.evidence_refs 替代。训练终态仍以 training_run 写入共享 Experience。成功的 TrainingResult.base 必须匹配请求，candidate.affected_roles 必须包含 actor。幂等、终态与版本约定见[共享协议](../../contracts/README.md)。
 
 ## 实现与替换
 

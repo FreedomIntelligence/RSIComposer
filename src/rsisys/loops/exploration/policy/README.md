@@ -4,7 +4,7 @@
 
 ## 接口
 
-[ActorPolicy](__init__.py) 的 `act(ActorContext) → ActionProposal` 接收 observation、directive、actions、experience 和 memories。ActionProposal 包含 name、arguments、simulated，以及可选模型身份和 token 用量。
+[ActorPolicy](__init__.py) 的 `act(ActorContext) → ActionProposal` 接收 observation、directive、actions、history 和 memories。history 自动注入当前任务的本地轨迹，memories 来自自身 memory；默认不注入共享系统经验。`memory_limit=32` 限制本地 history 和工作记忆条数，必须为正整数。ActionProposal 包含 name、arguments、simulated，以及可选模型身份和 token 用量。
 
 ## 实现与替换
 

@@ -13,6 +13,8 @@ from rsisys.runtime.files import atomic_write, json_bytes, sync_directory, sync_
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.decision_making.state import DecisionState
 from rsisys.loops.exploration.state import ExplorationState
+from rsisys.loops.decision_making.memory import DecisionMemory
+from rsisys.loops.exploration.memory import ExplorationMemory
 from .codec import encode, decode
 from .manifest import SnapshotManifest
 
@@ -38,7 +40,9 @@ def check_states(decision, actor):
     if not isinstance(decision, DecisionState) or not isinstance(actor, ExplorationState):
         raise ValueError('Invalid loop state types')
     if (decision.pending_directive_id is not None or decision.pending_directive is not None
-            or decision.pending_job is not None or actor.active_directive_id is not None):
+            or decision.pending_job is not None or decision.pending_operation_record is not None
+            or actor.active_directive_id is not None
+            or actor.pending_episode is not None):
         raise RuntimeError('Snapshot requires a boundary with no pending directive or operation')
     if actor.rl is not None and not actor.rl.terminal:
         raise RuntimeError('An RL cycle is still active')
@@ -72,7 +76,7 @@ def load_manifest(directory: Path) -> SnapshotManifest:
     raw['role_bindings'] = {key: ModelRef(**value) for key, value in raw['role_bindings'].items()}
     raw['random_state_refs'] = tuple(raw['random_state_refs'])
     manifest = SnapshotManifest(**raw)
-    if manifest.schema_version != 1 or manifest.kind != 'local_quiescent':
+    if manifest.schema_version != 2 or manifest.kind != 'local_quiescent':
         raise ValueError('Unsupported snapshot schema')
     if manifest.code_revision != code_revision():
         raise ValueError('Snapshot requires the same framework source revision')
@@ -90,7 +94,8 @@ def load_manifest(directory: Path) -> SnapshotManifest:
             raise ValueError('Snapshot file escapes its directory')
         if digest_file(directory / relative) != digest:
             raise ValueError(f'Snapshot digest mismatch: {name}')
-    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3'}
+    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3',
+                'decision_memory.json', 'exploration_memory.json'}
     if not required <= files:
         raise ValueError('Snapshot is missing required local state')
     return manifest
@@ -124,6 +129,8 @@ class LocalSnapshotCapture:
                                     (actor.environment, expected_env)):
             if type(component) is not expected:
                 raise TypeError('Custom components must provide their own snapshot integration')
+        if type(dm.memory) is not DecisionMemory or type(actor.memory) is not ExplorationMemory:
+            raise TypeError('Custom loop memories need explicit snapshot integration')
         if dm.experience is not app.experience or actor.experience is not app.experience:
             raise TypeError('Custom experience systems need explicit snapshot integration')
         if dm.space.artifacts is not app.artifacts or actor.environment.artifacts is not app.artifacts:
@@ -156,9 +163,12 @@ class LocalSnapshotCapture:
             shutil.copyfile(app.config.data_dir / 'run.json', staging / 'run.json')
             atomic_write(staging / 'runtime.json', json_bytes({
                 'python': list(sys.version_info[:2]),
-                'experience_limits': {'decision_maker': dm.experience_limit, 'actor': actor.experience_limit},
+                'decision_experience_limit': dm.experience_limit,
+                'memory_limits': {'decision_maker': dm.memory_limit, 'actor': actor.memory_limit},
             }))
             app.store.backup(staging / 'experience.sqlite3')
+            dm.memory.backup(staging / 'decision_memory.json')
+            actor.memory.backup(staging / 'exploration_memory.json')
             (staging / 'artifacts').mkdir()
             for ref in app.artifacts.refs():
                 shutil.copytree(app.artifacts.root / ref.artifact_id, staging / 'artifacts' / ref.artifact_id)
@@ -173,7 +183,9 @@ class LocalSnapshotCapture:
                 learner_state_refs={}, environment_state_refs={}, experience_revision=digests['experience.sqlite3'],
                 runtime_state_ref='runtime.json', code_revision=code_revision(), config_ref='config.json',
                 dependency_lock_ref='pixi.lock' if lock.is_file() else '',
-                component_refs={'artifacts': 'artifacts/', 'experience': 'experience.sqlite3'}, random_state_refs=(),
+                component_refs={'artifacts': 'artifacts/', 'experience': 'experience.sqlite3',
+                                'decision_memory': 'decision_memory.json',
+                                'exploration_memory': 'exploration_memory.json'}, random_state_refs=(),
                 resume_policy={'active_jobs': 'forbidden', 'completed_jobs': 'archived_in_experience',
                                'models': 'external_references_only', 'environment': 'fresh_session',
                                'random_state': 'not_captured'}, label=label, file_digests=digests,
@@ -206,10 +218,15 @@ def restore_snapshot(directory, target):
     runtime = json.loads((directory / 'runtime.json').read_text())
     if runtime['python'] != list(sys.version_info[:2]):
         raise ValueError('Snapshot requires the same Python major/minor version')
-    if set(runtime['experience_limits']) != {'decision_maker', 'actor'} or any(
-        type(n) is not int or n < 1 for n in runtime['experience_limits'].values()
+    if set(runtime['memory_limits']) != {'decision_maker', 'actor'} or any(
+        type(n) is not int or n < 1 for n in runtime['memory_limits'].values()
     ):
-        raise ValueError('Invalid restored experience limits')
+        raise ValueError('Invalid restored memory limits')
+    if type(runtime['decision_experience_limit']) is not int or runtime['decision_experience_limit'] < 1:
+        raise ValueError('Invalid restored experience limit')
+    # Validate both owners and payloads before creating the restore target.
+    DecisionMemory(directory / 'decision_memory.json')
+    ExplorationMemory(directory / 'exploration_memory.json')
     if not (directory / 'artifacts').is_dir():
         raise ValueError('Snapshot artifacts directory is missing')
     FileArtifactStore(directory / 'artifacts').refs()
@@ -218,6 +235,8 @@ def restore_snapshot(directory, target):
     staging = Path(tempfile.mkdtemp(prefix='.restore-', dir=target.parent))
     try:
         shutil.copyfile(directory / 'experience.sqlite3', staging / 'experience.sqlite3')
+        for name in ('decision_memory.json', 'exploration_memory.json'):
+            shutil.copyfile(directory / name, staging / name)
         shutil.copytree(directory / 'artifacts', staging / 'artifacts')
         shutil.copyfile(directory / 'run.json', staging / 'run.json')
         atomic_write(staging / 'config.json', json_bytes(config.to_dict()))
@@ -230,7 +249,8 @@ def restore_snapshot(directory, target):
     app = Application(config, _restore=True)
     app.runner.decision_making.state = decision
     app.runner.exploration.state = actor
-    app.runner.decision_making.experience_limit = runtime['experience_limits']['decision_maker']
-    app.runner.exploration.experience_limit = runtime['experience_limits']['actor']
+    app.runner.decision_making.experience_limit = runtime['decision_experience_limit']
+    app.runner.decision_making.memory_limit = runtime['memory_limits']['decision_maker']
+    app.runner.exploration.memory_limit = runtime['memory_limits']['actor']
     app.parent_snapshot_id = manifest.snapshot_id
     return app

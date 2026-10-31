@@ -83,7 +83,7 @@ class ScaffoldTests(unittest.TestCase):
         directive = decision.step('input content').directive
         self.assertEqual(directive.input_refs, (ref,))
         feedback = exploration.run(directive)
-        decision.observe(directive, feedback)
+        decision.receive_feedback(directive, feedback)
         self.assertIn('input content', feedback.summary)
         self.assertEqual(feedback.status, ExecutionStatus.COMPLETED)
         self.assertEqual(len(self.store.records()), 3)
@@ -116,11 +116,11 @@ class ScaffoldTests(unittest.TestCase):
             decision.step('overlap')
         feedback = exploration.run(directive)
         with self.assertRaises(ValueError):
-            decision.observe(directive, replace(feedback, directive_id='wrong'))
+            decision.receive_feedback(directive, replace(feedback, directive_id='wrong'))
         self.assertEqual(decision.state.completed, 0)
-        decision.observe(directive, feedback)
-        with self.assertRaises(ValueError):
-            decision.observe(directive, feedback)
+        decision.receive_feedback(directive, feedback)
+        decision.receive_feedback(directive, feedback)
+        self.assertEqual(decision.state.completed, 1)
 
     def test_action_validation_does_not_execute_and_releases_sandbox(self):
         sandbox = self.runner.exploration.environment.sandbox
@@ -128,7 +128,8 @@ class ScaffoldTests(unittest.TestCase):
             self.runner.exploration.run(Directive('test', 'task', 'strategy', allowed_actions=()))
         self.assertEqual(sandbox.execution_count, 0)
         self.assertEqual(sandbox.active_count, 0)
-        self.assertEqual(self.store.records(), ())
+        self.assertEqual(self.store.records()[0].kind, "runtime_feedback")
+        self.assertEqual(self.store.records()[0].details["status"], "failed")
         self.assertIsNone(self.runner.exploration.state.active_directive_id)
 
     def test_multistep_and_step_limit_are_distinct(self):
@@ -136,7 +137,7 @@ class ScaffoldTests(unittest.TestCase):
         self.runner.exploration.environment = environment
         feedback = self.runner.exploration.run(Directive('multi', 'task', 'strategy', max_steps=3))
         self.assertEqual(feedback.status, ExecutionStatus.COMPLETED)
-        self.assertEqual(len(feedback.evidence_refs), 2)
+        self.assertEqual(len(feedback.evidence_refs), 1)
         self.assertEqual(environment.steps, 2)
         self.assertTrue(environment.closed)
         limited = self.runner.exploration.run(Directive('limited', 'task', 'strategy', max_steps=1))
@@ -202,7 +203,7 @@ class ScaffoldTests(unittest.TestCase):
                 self.assertIsNone(runner.exploration.state.active_directive_id)
                 self.assertEqual(runner.exploration.state.completed, 0)
                 if phase == 'close':
-                    self.assertEqual(len(feedback.evidence_refs), 2)
+                    self.assertEqual(len(feedback.evidence_refs), 1)
 
     def test_cleanup_error_does_not_mask_original_error(self):
         actor = self.runner.exploration
@@ -243,12 +244,19 @@ class ScaffoldTests(unittest.TestCase):
         actor.experience.record = fail_actor_record
         with self.assertRaisesRegex(OSError, 'actor record failed'):
             self.runner.run('test', 1)
+        self.assertTrue(self.runner.busy)
+        self.assertIsNone(self.runner.decision_making.state.last_feedback)
+        pending = actor.state.pending_episode
+        self.assertEqual(len(pending.feedback.artifact_refs), 1)
+        self.assertEqual(actor.environment.artifacts.get(pending.feedback.artifact_refs[0]).decode(),
+                         pending.feedback.summary)
+        executions = actor.environment.sandbox.execution_count
+        actor.experience.record = record
+        self.assertEqual(self.runner.run('test', 1).status, 'completed')
+        self.assertEqual(actor.environment.sandbox.execution_count, executions)
         feedback = self.runner.decision_making.state.last_feedback
-        self.assertEqual(feedback.status, ExecutionStatus.FAILED)
-        self.assertEqual(len(feedback.artifact_refs), 1)
-        self.assertEqual(feedback.evidence_refs, ())
-        self.assertEqual(actor.environment.artifacts.get(feedback.artifact_refs[0]).decode(), feedback.summary)
-        self.assertEqual(actor.environment.sandbox.execution_count, 2)
+        self.assertEqual(feedback.status, ExecutionStatus.COMPLETED)
+        self.assertEqual(feedback.evidence_refs, (pending.record.record_id,))
 
     def test_interrupt_is_propagated_with_cancelled_feedback(self):
         self.runner.exploration.policy = Mock(act=Mock(side_effect=KeyboardInterrupt()))

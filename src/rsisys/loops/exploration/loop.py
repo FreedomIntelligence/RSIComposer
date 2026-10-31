@@ -1,6 +1,10 @@
 from dataclasses import asdict, replace
 from copy import deepcopy
 from uuid import uuid4
+from time import perf_counter
+
+from rsisys.loops.contracts.memory import LoopMemory, HistoryEntry
+from .memory import ExplorationMemory
 
 from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.retrieval import ExperienceSystem
@@ -19,7 +23,7 @@ from rsisys.loops.contracts.training import TrainingResult
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
-from .state import ExplorationState
+from .state import ExplorationState, PendingEpisode
 from .commands import ExplorationCommands
 
 
@@ -28,12 +32,13 @@ class ExplorationLoop:
 
     def __init__(self, policy: ActorPolicy, space: ActionSpace, environment: Environment,
                  experience: ExperienceSystem, learner: ActorLearner | None = None,
-                 evaluator: Evaluator | None = None, *, experience_limit: int = 32):
+                 evaluator: Evaluator | None = None, *, memory: LoopMemory | None = None, memory_limit: int = 32):
         self.policy, self.space, self.environment = policy, space, environment
         self.experience, self.learner = experience, learner
-        if type(experience_limit) is not int or experience_limit < 1:
-            raise ValueError("experience_limit must be a positive integer")
-        self.experience_limit = experience_limit
+        if type(memory_limit) is not int or memory_limit < 1:
+            raise ValueError("memory_limit must be a positive integer")
+        self.memory = memory if memory is not None else ExplorationMemory()
+        self.memory_limit = memory_limit
         self.state = ExplorationState()
         self.training = JobBook[ActorTrainingRequest, TrainingResult](learner)
         self.evaluation = JobBook[EvaluationRequest, EvaluationResult](evaluator)
@@ -70,7 +75,20 @@ class ExplorationLoop:
             raise RuntimeError("A training job is still active")
         return self._run_episode(directive)
 
+    def _flush_episode(self) -> Feedback:
+        pending = self.state.pending_episode
+        self.experience.record(pending.record)
+        self.state.last_feedback = deepcopy(pending.feedback)
+        if pending.count_completion:
+            self.state.completed += 1
+        self.state.pending_episode = None
+        return deepcopy(self.state.last_feedback)
+
     def _run_episode(self, directive: Directive) -> Feedback:
+        if self.state.pending_episode is not None:
+            if directive != self.state.pending_episode.directive:
+                raise RuntimeError("Retry the pending episode feedback before new execution")
+            return self._flush_episode()
         if directive.mode != "execute":
             raise NotImplementedError(f"Exploration mode {directive.mode!r} is not implemented.")
         if self.state.active_directive_id is not None:
@@ -78,6 +96,11 @@ class ExplorationLoop:
         self.state.active_directive_id = directive.directive_id
         self.state.last_feedback = None
         evidence, artifacts = [], []
+        steps_executed = 0
+        episode_id = str(uuid4())
+        started = perf_counter()
+        input_before, output_before = self.state.measured_input_tokens, self.state.measured_output_tokens
+        unknown_before = self.state.calls_with_missing_usage
         simulated = directive.simulated
         status, error = ExecutionStatus.PARTIAL, None
         observation = ""
@@ -85,18 +108,19 @@ class ExplorationLoop:
         try:
             observation = self.environment.reset(directive)
             for _ in range(directive.max_steps):
-                context = ActorContext(observation, directive, self.experience.retrieve("actor", limit=self.experience_limit),
+                context = ActorContext(observation, directive, self.memory.history(task_id=directive.directive_id, limit=self.memory_limit),
                                        self.space.describe(),
-                                       self.experience.memories("actor", limit=self.experience_limit))
+                                       self.memory.recall(limit=self.memory_limit))
                 proposal = self.policy.act(context)
                 self._record_usage(proposal.usage)
                 simulated = simulated or proposal.simulated
                 action = self.space.validate(proposal, directive.allowed_actions)
                 transition = self.environment.step(action)
+                steps_executed += 1
                 simulated = simulated or proposal.simulated or transition.simulated
-                record = ExperienceRecord(
-                    record_id=str(uuid4()), kind="actor_trajectory", scope="actor",
-                    directive_id=directive.directive_id, summary=transition.observation,
+                record = HistoryEntry(
+                    record_id=str(uuid4()), kind="trajectory",
+                    task_id=directive.directive_id, summary=transition.observation,
                     simulated=simulated, source_refs=tuple(ref.artifact_id for ref in transition.artifacts),
                     details={"observation": observation, "action": asdict(action),
                              "transition": asdict(transition),
@@ -105,7 +129,7 @@ class ExplorationLoop:
                 )
                 artifacts.extend(transition.artifacts)
                 observation = transition.observation
-                self.experience.record(record)
+                self.memory.append(record)
                 evidence.append(record.record_id)
                 if transition.error:
                     status, error = ExecutionStatus.FAILED, transition.error
@@ -132,13 +156,37 @@ class ExplorationLoop:
                 failure.add_note(cleanup_error)
             finally:
                 self.state.active_directive_id = None
+                metrics = {
+                    "elapsed_seconds": perf_counter() - started,
+                    "steps": steps_executed,
+                    "measured_input_tokens": self.state.measured_input_tokens - input_before,
+                    "measured_output_tokens": self.state.measured_output_tokens - output_before,
+                    "calls_with_missing_usage": self.state.calls_with_missing_usage - unknown_before,
+                }
                 self.state.last_feedback = Feedback(
                     directive_id=directive.directive_id, status=status,
                     summary=observation or "Exploration ended before an observation was available.",
                     simulated=simulated, artifact_refs=tuple(artifacts),
-                    evidence_refs=tuple(evidence), error=error,
+                    evidence_refs=(episode_id,), execution_metrics=metrics, error=error,
                 )
-        self.state.completed += 1
+                record = ExperienceRecord(
+                    episode_id, "runtime_feedback", "actor", directive.directive_id,
+                    f"Exploration execution {status.value}", simulated,
+                    source_refs=tuple(f"history:actor:{ref}" for ref in evidence) + tuple(a.artifact_id for a in artifacts),
+                    details={"status": status.value, "error": error, "execution_metrics": metrics,
+                             "trajectory_refs": tuple(evidence), "history_owner": "actor",
+                             "model": asdict(self.policy.model) if isinstance(getattr(self.policy, "model", None), ModelRef) else None},
+                )
+                self.state.pending_episode = PendingEpisode(
+                    deepcopy(directive), record, deepcopy(self.state.last_feedback), failure is None,
+                )
+                try:
+                    self._flush_episode()
+                except Exception as record_error:
+                    if failure is not None:
+                        failure.add_note(f"Could not record system feedback: {record_error}")
+                    else:
+                        raise
         return self.state.last_feedback
 
     def submit_learning(self, request: ActorTrainingRequest, *, idempotency_key: str) -> JobRef:
@@ -151,14 +199,11 @@ class ExplorationLoop:
     def _submit_learning(self, request: ActorTrainingRequest, *, idempotency_key: str) -> JobRef:
         if not isinstance(request, ActorTrainingRequest):
             raise TypeError("Expected ActorTrainingRequest")
-        if self.state.active_directive_id is not None:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
             raise RuntimeError("Cannot start training during environment interaction")
-        available = {r.record_id: r for r in self.experience.retrieve("actor")}
-        if any(ref not in available for ref in request.experience_refs):
-            raise ValueError("Training references must identify visible experience records")
-        if request.method == "rl" and any(available[ref].kind != "actor_trajectory"
-                                           for ref in request.experience_refs):
-            raise ValueError("RL requires actor trajectory records")
+        available = {r.record_id for r in self.memory.history(kind="trajectory")}
+        if any(ref not in available for ref in request.trajectory_refs):
+            raise ValueError("Training references must identify this loop's trajectory history")
         return self.training.submit(request, idempotency_key=idempotency_key)
 
     def poll_learning(self, job: JobRef) -> JobOutcome[TrainingResult]:
@@ -182,7 +227,7 @@ class ExplorationLoop:
                 kind="training_run", scope="actor", directive_id=None,
                 summary=f"actor learning {outcome.status}",
                 simulated=outcome.simulated or bool(outcome.result and outcome.result.simulated),
-                source_refs=request.experience_refs + tuple(ref.artifact_id for ref in request.data_refs)
+                source_refs=tuple(f"history:actor:{ref}" for ref in request.trajectory_refs) + tuple(ref.artifact_id for ref in request.data_refs)
                 + (tuple(ref.artifact_id for ref in outcome.result.candidate.changes.values())
                    if outcome.result else ()),
                 details={"request": asdict(request), "outcome": asdict(outcome)},
@@ -198,7 +243,7 @@ class ExplorationLoop:
         return self._apply_learning(job)
 
     def _apply_learning(self, job: JobRef) -> ModelRef:
-        if self.state.active_directive_id is not None:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
             raise RuntimeError("Cannot replace the actor during environment interaction")
         outcome = self.poll_learning(job)
         if outcome.status != JobStatus.SUCCEEDED:
@@ -260,7 +305,7 @@ class ExplorationLoop:
             raise TypeError("Expected RLPlan")
         if self.state.rl is not None and not self.state.rl.terminal:
             raise RuntimeError("An RL cycle is already active")
-        if self.state.active_directive_id is not None or self.training.busy:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None or self.training.busy:
             raise RuntimeError("Actor is busy")
         if self.learner is None:
             raise NotImplementedError("RL requires a learner")
@@ -286,18 +331,23 @@ class ExplorationLoop:
             try:
                 feedback = self._run_episode(directive)
             except BaseException as exc:
+                if self.state.pending_episode is not None:
+                    raise  # Retry evidence persistence before advancing or repeating this rollout.
                 state.phase = "failed" if isinstance(exc, Exception) else "cancelled"
                 state.error = f"{type(exc).__name__}: {exc}"
                 if self.state.last_feedback is not None:
                     state.feedback.append(self.state.last_feedback)
                 raise
             state.feedback.append(feedback)
-            if feedback.status in (ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
+            if state.cancel_requested:
+                state.phase = "cancelled"
+            elif feedback.status in (ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
                 state.phase = "failed" if feedback.status == ExecutionStatus.FAILED else "cancelled"
                 state.error = feedback.error
             else:
                 state.request = ActorTrainingRequest(self.policy.model, (), state.plan.recipe_ref,
-                                                     "rl", feedback.evidence_refs)
+                                                     "rl", tuple(r.record_id for r in self.memory.history(
+                                                         task_id=directive.directive_id, kind="trajectory")))
                 state.phase = "submitting"
         elif state.phase == "submitting":
             # Keep request and key stable if submission raises after a backend accepted it.
@@ -339,6 +389,8 @@ class ExplorationLoop:
         if state.terminal:
             return deepcopy(state)
         state.cancel_requested = True
+        if self.state.pending_episode is not None:
+            state.feedback.append(self._flush_episode())
         if state.phase == "submitting" and state.submission_attempted:
             # A lost submit response may hide a real job. Resolve the same key before cancelling.
             return deepcopy(state)

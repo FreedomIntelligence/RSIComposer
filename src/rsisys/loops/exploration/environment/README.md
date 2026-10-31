@@ -6,7 +6,7 @@
 
 [Environment](__init__.py) 提供 reset(Directive) → observation、step(Action) → Transition、close()。Transition 包含 observation、terminated、simulated、可选 reward、产物和 error。
 
-环境终止、步数耗尽和执行错误分别产生 completed、partial、failed Feedback；reward 保留在轨迹中，缺失时保持 None。loop 在异常路径也调用 close，清理异常不会覆盖原始执行异常。
+环境终止、步数耗尽和执行错误分别产生 completed、partial、failed Feedback；reward 保留在 Actor memory 的本地轨迹中，缺失时保持 None；原始观察与行动不写入 Experience。loop 在异常路径也调用 close，清理异常不会覆盖原始执行异常。
 
 ## 当前实现
 

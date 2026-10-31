@@ -43,7 +43,7 @@ class ExplorationCommands:
                 raise ValueError('Directive ID reused with different content')
             return self.inspect(directive.directive_id)
         loop = self.loop
-        if (self.busy or loop.state.active_directive_id is not None or loop.training.busy
+        if (self.busy or loop.state.active_directive_id is not None or loop.state.pending_episode is not None or loop.training.busy
                 or loop.evaluation.busy or (loop.state.rl is not None and not loop.state.rl.terminal)):
             raise RuntimeError('Exploration is busy')
         state = CommandState(deepcopy(directive))
@@ -109,9 +109,12 @@ class ExplorationCommands:
             self._finish(state, Feedback(directive_id, ExecutionStatus.CANCELLED,
                                         'Cancelled before execution', directive.simulated))
         elif directive.mode == 'execute':
+            state.phase = 'executing'
             try:
                 self._finish(state, loop._run_episode(directive))
             except BaseException as exc:
+                if loop.state.pending_episode is not None:
+                    raise  # Keep the receipt nonterminal until system feedback is saved.
                 feedback = loop.state.last_feedback
                 if feedback is not None and feedback.directive_id == directive_id:
                     self._finish(state, feedback)

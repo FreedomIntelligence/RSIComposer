@@ -1,10 +1,10 @@
 # Decision policy
 
-负责选择决策，不执行准备操作或 Actor 任务。所属流程见 [Decision-making loop](../README.md)。
+负责选择优化目标与决策，不执行准备操作或 Actor 任务。所属流程见 [Decision-making loop](../README.md)。
 
 ## 接口
 
-[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、可见经验、memories、操作定义、当前准备结果和最新反馈。loop 的 `experience_limit=32` 必须为正整数，分别限制上下文中的经验和 memory 数量。
+[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果和最新反馈。loop 的 `experience_limit=32` 限制系统反馈条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数。scope 仅标记反馈来源，policy 独立选择优化对象与策略。
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项，可附 reason。wait 的任务由外部按 [准备操作回填方式](../decision_space/README.md) 完成。
 

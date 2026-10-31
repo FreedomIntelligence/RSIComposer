@@ -4,11 +4,22 @@ from dataclasses import dataclass, field
 
 from rsisys.loops.contracts.feedback import Feedback
 from .rl import RLState
+from rsisys.experience.records import ExperienceRecord
+from rsisys.loops.contracts.directive import Directive
+
+
+@dataclass
+class PendingEpisode:
+    directive: Directive
+    record: ExperienceRecord
+    feedback: Feedback
+    count_completion: bool
 
 
 @dataclass
 class ExplorationState:
     completed: int = 0
+    pending_episode: PendingEpisode | None = None
     active_directive_id: str | None = None
     last_feedback: Feedback | None = None
     recorded_training: set[JobRef] = field(default_factory=set)

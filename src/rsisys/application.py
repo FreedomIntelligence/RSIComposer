@@ -10,6 +10,8 @@ from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
+from rsisys.loops.decision_making.memory import DecisionMemory
+from rsisys.loops.exploration.memory import ExplorationMemory
 from rsisys.loops.decision_making.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.decision_space.local import LocalDecisionSpace
 from rsisys.loops.decision_making.learner.backends.mock import MockDecisionLearner
@@ -38,6 +40,7 @@ class ApplicationConfig:
     learning: str = 'none'
     rounds: int = 1
     experience_limit: int = 32
+    memory_limit: int = 32
     run_id: str = field(default_factory=lambda: uuid4().hex)
 
     def __post_init__(self):
@@ -47,6 +50,8 @@ class ApplicationConfig:
             raise ValueError('Unsupported execution or learning backend')
         if type(self.rounds) is not int or self.rounds < 1 or type(self.experience_limit) is not int or self.experience_limit < 1:
             raise ValueError('rounds and experience_limit must be positive integers')
+        if type(self.memory_limit) is not int or self.memory_limit < 1:
+            raise ValueError('memory_limit must be a positive integer')
         if set(self.roles) != {'decision_maker', 'actor'}:
             raise ValueError('Both decision_maker and actor role bindings are required')
         if not isinstance(self.run_id, str) or not self.run_id:
@@ -122,12 +127,13 @@ class Application:
                 LocalDecisionSpace(self.artifacts), self.experience,
                 learner=MockDecisionLearner(self.artifacts) if config.learning == 'mock' else None,
                 experience_limit=config.experience_limit,
+                memory=DecisionMemory(root / "decision_memory.json"), memory_limit=config.memory_limit,
             )
             exploration = ExplorationLoop(
                 ModelActorPolicy(backends[actor.backend_id], actor), space, environment, self.experience,
                 learner=MockActorLearner(self.artifacts) if config.learning == 'mock' else None,
                 evaluator=MockEvaluator(self.artifacts) if config.learning == 'mock' else None,
-                experience_limit=config.experience_limit,
+                memory=ExplorationMemory(root / "exploration_memory.json"), memory_limit=config.memory_limit,
             )
             self.runner = Runner(decision, exploration)
             if not _restore:

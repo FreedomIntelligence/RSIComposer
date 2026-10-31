@@ -13,7 +13,7 @@ class ActorTrainingRequest:
     data_refs: tuple[ArtifactRef, ...]
     recipe_ref: str
     method: str = "sft"
-    experience_refs: tuple[str, ...] = ()
+    trajectory_refs: tuple[str, ...] = ()
 
     def __post_init__(self):
         if self.method not in ("sft", "rl"):
@@ -22,7 +22,7 @@ class ActorTrainingRequest:
             raise ValueError("A training recipe is required")
         if self.method == "sft" and not self.data_refs:
             raise ValueError("SFT requires data artifacts")
-        if self.method == "rl" and not self.experience_refs:
+        if self.method == "rl" and not self.trajectory_refs:
             raise ValueError("RL requires trajectory records")
 
 

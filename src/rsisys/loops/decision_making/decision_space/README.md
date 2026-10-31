@@ -6,7 +6,7 @@
 
 [DecisionSpace](__init__.py) 提供 `describe() → tuple[OperationSpec, ...]` 和 `execute(call: OperationCall) → OperationResult | JobRef`。OperationCall 包含 name、arguments；OperationResult 包含 summary、artifacts、simulated、status（默认 COMPLETED）和可选 error。结果必须为 COMPLETED / FAILED / CANCELLED；FAILED 必须有 error，COMPLETED 不能有 error。
 
-execute 是同步调用，可返回异步任务 JobRef。调用方通过 `loop.resume(job, result)` 回填终态 OperationResult，job 必须匹配当前等待任务；loop 不自动轮询或取消，也不重复执行。操作抛异常时，loop 尝试记录失败经验后重抛原异常。
+execute 是同步调用，可返回异步任务 JobRef。调用方通过 `loop.resume(job, result)` 回填终态 OperationResult，job 必须匹配当前等待任务；loop 不自动轮询或取消，也不重复执行。操作抛异常时，loop 尝试记录失败反馈后重抛原异常。准备过程与结果保存在 Decision memory；Experience 的 runtime_feedback 仅记录操作名、状态、指标、错误和本地 history 引用，不保存原始准备过程。
 
 `ModularDecisionSpace(operations)` 接收操作元组，每项提供 spec 和 `execute(arguments)`，名称必须唯一。它校验调用类型、参数为 dict、操作存在及返回类型；具体参数校验与副作用由操作负责，spec 中的 JSON Schema 仅用于描述。
 
@@ -27,3 +27,5 @@ execute 是同步调用，可返回异步任务 JobRef。调用方通过 `loop.r
 ## 扩展
 
 新增操作后注入 ModularDecisionSpace，或替换整个 DecisionSpace。PDF 解析、在线检索、数据生成与质量筛选由具体操作实现。
+
+操作已执行而 history/Experience 写入失败时，loop 缓存稳定 ID 和结果；下一次 step 或相同 job/result 的 resume 只补写，不重复执行。待补写期间拒绝不同的回填结果，并禁止快照；这份暂存不提供崩溃恢复。

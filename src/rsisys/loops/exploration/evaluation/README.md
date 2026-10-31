@@ -6,7 +6,7 @@
 
 [Evaluator](__init__.py) 提供 `submit(request, *, idempotency_key)` / `poll(job)` / `cancel(job)` / `result(job)`；后端 cancel 返回 None，loop 的 cancel_evaluation 返回 JobOutcome。EvaluationRequest 包含 candidate 和非空 protocol_ref；EvaluationResult 包含 candidate_id、protocol_ref、metrics、evidence_refs 和 simulated。
 
-通过 loop 的 poll / cancel 获取成功结果时，校验候选 ID 与协议一致；终态记录到 Experience，同一 job 只记录一次。异步后端约定见[共享协议](../../contracts/README.md)。
+通过 loop 的 poll / cancel 获取成功结果时，校验候选 ID 与协议一致；终态以 evaluation 记录到 Experience，同一 job 只记录一次。scope=actor 表示反馈来源，不限制 Decision policy 检索或指定后续优化对象。异步后端约定见[共享协议](../../contracts/README.md)。
 
 ## 实现与替换
 

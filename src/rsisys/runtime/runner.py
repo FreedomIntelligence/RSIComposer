@@ -41,7 +41,7 @@ class Runner:
 
     def _deliver(self):
         # Retain the outbox until both delivery and acknowledgement succeed.
-        self.decision_making.receive(deepcopy(self._directive), deepcopy(self._feedback))
+        self.decision_making.receive_feedback(deepcopy(self._directive), deepcopy(self._feedback))
         self.exploration.acknowledge(self._directive.directive_id)
         self._directive = None
         self._feedback = None

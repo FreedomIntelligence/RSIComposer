@@ -2,6 +2,8 @@
 
 负责指令执行、环境探索、学习和候选评测；跨 loop 协调见[系统架构](../../../../docs/ARCHITECTURE.md)。
 
+本目录的 policy、context、memory、action_space、environment、状态与生命周期控制共同组成 Actor harness，learner/evaluation 提供 RSI 扩展；loop 编排运行循环与策略流程。
+
 ## 生命周期
 
 [loop.py](loop.py) 对外提供 accept / advance / inspect / cancel / acknowledge，委托 [commands.py](commands.py) 管理单条指令。指令类型与终态约定见[共享协议](../contracts/README.md)。
@@ -11,17 +13,20 @@
 ## 可替换组件
 
 - [policy](policy/README.md)：选择行动。
+- [memory](memory/README.md)：本地任务轨迹与工作记忆。
 - [action_space](action_space/README.md)：声明并校验行动。
 - [environment](environment/README.md)：执行行动与产生观察。
 - [learner](learner/README.md)：SFT/RL 训练后端。
 - [evaluation](evaluation/README.md)：候选评测后端。
 
-通过 `ExplorationLoop(policy, space, environment, experience, learner=..., evaluator=...)` 注入。
+通过 `ExplorationLoop(policy, space, environment, experience, learner=..., evaluator=..., memory=None, memory_limit=32)` 注入，默认使用 ExplorationMemory。Actor policy 自动读取当前任务 history 和自身工作记忆，不默认注入共享 Experience；Actor loop 不再使用 experience_limit。
 
 ## 本地控制
 
 本地入口是 Python API：`run(Directive(..., mode="execute"))`、`submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning`，以及 `submit_evaluation` / `poll_evaluation` / `cancel_evaluation`。提交训练、评测须提供 `idempotency_key`；完整示例见 [loop_internals.py](../../../../examples/loop_internals.py)。
 
-[rl.py](rl.py) 定义 RLPlan / RLState；`start_rl` / `step_rl` / `cancel_rl` 驱动 rollout → submitting → training → 下一次 rollout，达到更新次数后结束。每次成功应用的新版本用于下一次采样，每次 rollout 使用独立 ID；跨 loop 的 RL 反馈汇总采样证据、训练记录和已应用的候选。
+[rl.py](rl.py) 定义 RLPlan / RLState；`start_rl` / `step_rl` / `cancel_rl` 驱动 rollout → submitting → training → 下一次 rollout，达到更新次数后结束。每次成功应用的新版本用于下一次采样，每次 rollout 使用独立 ID；跨 loop 的 RL 反馈汇总采样证据、训练记录和已应用的候选。原始轨迹保存在 Actor memory，trajectory_refs 从本地 history 获取；每个执行 episode 向 Experience 写一条 runtime_feedback，Feedback.evidence_refs 引用这些系统记录。训练与评测终态仍写入 Experience。
 
 跨 loop 指令未 acknowledge 前，禁止本地执行、提交、应用模型及 RL 控制；已有 job 的 poll / cancel 仍可调用。本地 RL 占用执行、训练提交与模型更新，评测可独立提交。SFT 指令或 RL 取消与成功竞速时不自动应用本次候选，已应用的更新不回滚。当前 RL 顺序采样/训练，不支持并行采样或异步权重广播。
+
+执行结果暂存后，若 Experience 写入失败，保持指令未终结；再次推进仅补写同一记录，不重新调用环境。RL 同样先保存本次 rollout 反馈再继续训练。待写结果只在进程内保留，未写完时不能捕获快照。

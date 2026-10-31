@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate editable, dependency-free SVG diagrams for the RSISys design."""
+"""Generate editable SVGs for two loop-local Harnesses and shared Experience."""
 from pathlib import Path
 from html import escape
 import unicodedata
@@ -68,7 +68,8 @@ class SVG:
             title_y=y+40
         self.text(x+24,title_y,title,title_size,color,650,max_width=w-48)
         for i,line in enumerate(lines):
-            self.text(x+24,title_y+34+i*29,line,20,MUTED,max_width=w-48)
+            if line:
+                self.text(x+24,title_y+34+i*29,line,20,MUTED,max_width=w-48)
         self.parts.append('</g>')
 
     def save(self, name):
@@ -80,172 +81,230 @@ class SVG:
 
 
 def system_flow():
-    s=SVG(2000,1580,'RSISys 系统流程图','两个 loop 拥有各自流程与可替换实现，共享 Experience；Runtime 协调，Snapshot 独立。')
-    s.text(64,75,'RSISys / 系统流程',42,weight=750)
-    s.text(64,116,'两个 Loop 定义执行流程 · 模型、沙箱与产物后端通过依赖注入接入',23,MUTED)
-    s.chip(1530,48,180,'流程与职责','#E3F3EC',GREEN)
-    s.chip(1730,48,206,'实现见 README','#FFF5DD',AMBER)
-    s.rect(64,155,1872,92)
-    s.text(94,192,'ModelBackend / 模型调用接口',26,BLUE,700)
-    s.text(94,225,'backend_id + model_id + revision；角色可共享或独立绑定，具体调用方式由后端实现。',21,MUTED)
+    s = SVG(2400, 1920, 'RSISys 系统流程图',
+            '两个 Loop 各有一套 Harness 和本地 memory，共享 Experience 系统反馈。'
+            'Actor 读取自身 history，RL 读取 Exploration memory 的原始轨迹；'
+            'receive_feedback 是 Loop 执行控制。Runtime 提供底层服务，Snapshot 分别保存两份 memory 和 Experience。')
+    s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
+    s.text(100, 126, '两个 Loop · 各自一套 Harness + RSI 扩展 · 一个共享 Experience', 26, MUTED)
+    s.chip(1990, 52, 310, '概念架构 / 模块职责', '#E3F3EC', GREEN, 20)
 
-    s.rect(64,290,776,740,fill='#EFF5FF',stroke='#BCD1F2',rx=24)
-    s.rect(1160,290,776,740,fill='#EFF8F3',stroke='#B9DDCF',rx=24)
-    s.text(100,338,'01  Decision-making Loop',30,BLUE,700)
-    s.text(1200,338,'02  Exploration Loop',30,GREEN,700)
-    s.path('M 760 247 V 385',BLUE,arrow='blue')
-    s.path('M 1180 247 V 590 H 1200',GREEN,arrow='green')
-    s.node('decision-policy',104,385,692,100,'Decision Policy',('结构化 Decision：invoke / explore / wait / finish',),BLUE,stroke='#9FBEEB')
-    s.node('command-lifecycle',1200,385,692,100,'指令生命周期',('accept / advance / inspect / cancel / acknowledge',),GREEN,stroke='#9ACBB6')
-    s.node('decision-space',104,540,692,115,'Decision Space',('describe / execute：独立执行决策操作', '文献 / 数据 / 策略操作 → 结果与 ArtifactRef'),PURPLE,'#F2EBFB','#B89CDC',title_size=25)
-    s.path('M 450 485 V 540',BLUE,arrow='blue')
-    s.label(450,520,'invoke',BLUE,17)
-    s.node('directive',880,540,240,110,'Directive',('目标 / 输入 / 策略', '执行 / 学习 / 评测'),AMBER,'#FFF5DD','#E4C47F',title_size=25)
-    s.path('M 796 435 H 855 V 592 H 880',BLUE,arrow='blue')
-    s.label(925,435,'explore',BLUE,17)
-    s.path('M 796 592 H 818 V 465 H 796',BLUE,arrow='blue')
-    s.path('M 1120 592 H 1140 V 435 H 1200',BLUE,arrow='blue')
-    s.node('action-space',1200,540,310,115,'Policy + Space',('Actor 选择行动', 'Action Space 校验'),PURPLE,'#F2EBFB','#B89CDC',title_size=24)
-    s.node('environment',1582,540,310,115,'Environment',('reset / step / close', '执行行动并返回结果'),GREEN,stroke='#9ACBB6',title_size=24)
-    s.path('M 1355 485 V 540',GREEN,arrow='green')
-    s.path('M 1510 594 H 1582',GREEN,arrow='green')
-    s.label(1546,580,'行动',GREEN,17)
-    s.node('feedback',880,720,240,110,'Feedback',('结果 / 经验引用', '模拟标记 / 指标'),AMBER,'#FFF5DD','#E4C47F',title_size=25)
-    s.path('M 1737 655 V 775 H 1120',AMBER,arrow='amber')
-    s.label(1480,761,'汇总结果与证据',AMBER,18,190)
-    s.node('observe',104,720,692,110,'Observe / 接收反馈',('关联当前指令，记录 Decision Episode', '反馈进入下一轮决策上下文'),BLUE,stroke='#9FBEEB',title_size=25)
-    s.path('M 880 775 H 796',AMBER,arrow='amber')
-    s.path('M 104 775 H 84 V 435 H 104',BLUE,arrow='blue')
+    # Each Harness is a grouping of existing loop components, not a new layer.
+    for x, title, color, fill, stroke in [
+        (100, '01  Decision-making Loop', BLUE, '#EFF5FF', '#BCD1F2'),
+        (1360, '02  Exploration Loop', GREEN, '#EFF8F3', '#B9DDCF'),
+    ]:
+        s.rect(x, 210, 940, 1050, fill, stroke, rx=24)
+        s.text(x+40, 260, title, 31, color, 700)
+        s.text(x+40, 299, 'Loop = Harness + RSI 扩展；loop.py 负责执行编排', 22, MUTED)
+        s.rect(x+20, 330, 900, 670, '#FFFFFF', stroke, rx=20)
+        s.text(x+40, 366, 'Harness / policy · context + memory · space + tools · 执行控制',
+               21, color, 650, max_width=860)
+        s.text(x+40, 1045, 'RSI 扩展', 21, color, 700)
 
-    for ident,x,w,title,detail,color in [
-        ('decision-learner',104,692,'Decision Learner','提交 / 查询 / 取消 / 模型绑定',BLUE),
-        ('actor-learner',1200,310,'Actor Learner','SFT / RL 作业控制',GREEN),
-        ('evaluation',1582,310,'Evaluation','候选与评测协议',GREEN)]:
-        s.rect(x,880,w,100,fill='#FFFFFF',stroke=color)
-        s.text(x+20,919,title,24,color,650,max_width=w-40)
-        s.text(x+20,953,detail,19,MUTED,max_width=w-40)
-    s.path('M 1855 485 H 1915 V 850 H 1355 V 880',GREEN,arrow='green')
-    s.path('M 1737 850 V 880',GREEN,arrow='green')
-    s.label(1550,850,'学习 / 评测指令',GREEN,17,190)
-    s.path('M 1355 980 V 995 H 1145 V 800 H 1120',AMBER,arrow='amber')
-    s.path('M 1737 980 V 995 H 1355',AMBER,arrow=None)
-    s.text(1200,1020,'RL 在一条指令内部推进多次采样与版本更新',19,MUTED)
-    s.text(104,1010,'各自拥有 Policy / Space / Learner',19,MUTED)
+    s.node('decision-policy', 140, 395, 860, 135, 'Decision Policy / Context', (
+        '生成结构化 Decision：invoke / explore / wait / finish',
+        '读取本地记忆及两个 Loop 的系统反馈，制定改进方案',
+    ), BLUE, stroke='#9FBEEB')
+    s.node('decision-memory', 140, 700, 410, 200, 'Harness-local memory/', (
+        'test-time history',
+        'working memory / 长期任务知识',
+        '自身 Harness 的上下文与任务记忆',
+    ), BLUE, '#EFF5FF', '#9FBEEB', title_size=24)
+    s.node('decision-space', 590, 700, 410, 200, 'Decision Space / Tools', (
+        'describe / execute',
+        '文献 / 数据 / 策略操作',
+        '操作结果与 ArtifactRef',
+    ), PURPLE, '#F2EBFB', '#B89CDC', title_size=25)
+    s.path('M 345 700 V 530', BLUE, arrow='blue')
+    s.label(345, 650, '读取自身 history / 任务记忆', BLUE, 18)
+    s.path('M 900 530 V 700', BLUE, arrow='blue')
+    s.label(900, 663, 'invoke', BLUE, 18)
+    s.path('M 795 900 V 955 H 345 V 900', BLUE, arrow='blue')
+    s.label(570, 955, '操作结果写入自身 memory', BLUE, 18)
+    s.node('decision-learner', 140, 1070, 860, 145, 'Decision Learner', (
+        '训练作业控制 / 模型绑定',
+        '训练反馈与改进结论进入共享 Experience',
+    ), BLUE, stroke='#9FBEEB')
+    s.text(140, 1244, 'Harness 管执行与上下文；RSI 扩展负责策略改进。', 19, MUTED)
 
-    s.rect(64,1080,1872,230,fill='#F2EBFB',stroke='#B89CDC',rx=24)
-    s.text(100,1121,'Experience System / 两个 Loop 共用',29,PURPLE,700)
-    s.path('M 450 1030 V 1080',PURPLE,arrow='purple')
-    s.path('M 1546 1030 V 1080',PURPLE,arrow='purple')
-    for x,w,title,lines in [
-        (100,570,'Records / 经验记录',['Trajectory · Decision Episode','Training Run · Evaluation Record']),
-        (710,570,'Evidence & Provenance',['证据 / 产物引用 / 版本','来源与关联关系']),
-        (1320,576,'Memory / 可复用记忆',['Episodic · Semantic · Procedural','适用条件 / 来源 / 验证状态'])]:
-        s.node(f'experience-{x}',x,1145,w,110,title,lines,PURPLE,stroke='#D7C5EC',title_size=22)
-    s.text(100,1290,'记录、来源引用与显式 Memory 共用；存储和检索实现可替换。',20,MUTED)
-    s.label(450,1064,'记录 / 查询',PURPLE,17)
-    s.label(1546,1064,'记录 / 查询',PURPLE,17)
+    s.text(1070, 346, '跨 Loop contracts', 21, AMBER, 650, max_width=260)
+    s.node('directive', 1070, 385, 260, 145, 'Directive', (
+        '目标 / 输入 / 策略',
+        '执行 / 学习 / 评测',
+    ), AMBER, '#FFF5DD', '#E4C47F', title_size=26)
+    s.path('M 1000 440 H 1070', BLUE, arrow='blue')
+    s.label(1035, 420, 'explore', BLUE, 16)
+    s.path('M 1330 440 H 1340 V 410 H 1400', BLUE, arrow='blue')
+    s.node('feedback', 1070, 560, 260, 150, 'Feedback', (
+        '结果 / 状态 / 指标',
+        'evidence_refs',
+        '引用系统记录',
+    ), AMBER, '#FFF5DD', '#E4C47F', title_size=26)
+    # Feedback advances control state; it is not a separate cognitive module.
+    s.path('M 1070 630 H 1020 V 570 H 980 V 530', AMBER, arrow='amber')
+    s.text(590, 580, 'loop.py · receive_feedback', 22, BLUE, 650, max_width=410)
+    s.text(590, 614, '接收反馈 / 推进控制状态', 20, MUTED, max_width=410)
 
-    s.node('runtime',64,1350,906,145,'Runtime / 运行协调与公共后端',('Runner / Jobs + Model / Sandbox / ArtifactStore', '公开端口协调、作业记账与公共后端；策略由 Loop 决定'),INK,'#EAF0F6','#CBD6E3')
-    s.node('snapshot',1010,1350,926,145,'Snapshot / 系统快照',('独立组织组件状态、模型绑定、经验与产物', '保存内容依具体实现；内置实现支持空闲边界恢复'),INK,'#EAF0F6','#CBD6E3')
-    s.text(64,1534,'箭头表示流程或依赖关系；policy、space、learner 等实现可替换，生命周期由所属 Loop 管理。',20,MUTED)
-    s.text(64,1565,'图示展示结构；实现与限制见组件 README，跨组件协同见 ARCHITECTURE.md。',18,MUTED)
+    s.node('exploration-control', 1400, 385, 860, 95, '执行控制 / loop.py', (
+        '接收指令、推进状态；分派执行 / 学习 / 评测，汇总 Feedback',
+    ), GREEN, stroke='#9ACBB6', title_size=25)
+    s.path('M 1400 455 H 1355 V 630 H 1330', AMBER, arrow='amber')
+    s.node('actor-policy', 1400, 540, 390, 140, 'Actor Policy / Context', (
+        'Context ← 本地 history',
+        'Action Space / Tools',
+    ), GREEN, stroke='#9ACBB6', title_size=24)
+    s.node('environment', 1870, 540, 390, 140, 'Environment / 执行', (
+        'reset / step / close',
+        '执行行动并返回结果',
+    ), GREEN, stroke='#9ACBB6', title_size=24)
+    s.path('M 1595 480 V 540', GREEN, arrow='green')
+    s.path('M 1790 610 H 1870', GREEN, arrow='green')
+    s.label(1830, 591, '行动', GREEN, 18)
+    s.node('exploration-memory', 1400, 780, 860, 170, 'Harness-local memory/', (
+        'test-time history / working memory / 长期任务知识',
+        '原始 Actor trajectories 留在本地；供 RL 读取',
+        '自身 Harness 的上下文、任务记忆与执行轨迹',
+    ), GREEN, '#EFF8F3', '#9ACBB6', title_size=26)
+    s.path('M 1510 780 V 680', GREEN, arrow='green')
+    s.label(1510, 736, 'Actor 读取 history', GREEN, 19)
+    s.path('M 2065 680 V 780', GREEN, arrow='green')
+    s.label(2065, 736, '写入 history / 原始轨迹', GREEN, 19)
+    s.node('actor-learner', 1400, 1070, 390, 145, 'Actor Learner / RL', (
+        '从本地 memory 读取轨迹',
+        'SFT / RL 作业与版本更新',
+    ), GREEN, stroke='#9ACBB6', title_size=24)
+    s.node('evaluation', 1870, 1070, 390, 145, 'Evaluation', (
+        '候选模型 / 评测协议',
+        '产出评测反馈与证据引用',
+    ), GREEN, stroke='#9ACBB6', title_size=25)
+    s.path('M 1680 950 V 1070', GREEN, arrow='green')
+    s.label(1680, 1025, 'RL 读取轨迹', GREEN, 19)
+    s.text(1400, 1244, '执行、训练与评测结果由 loop.py 汇总为 Feedback。', 19, MUTED)
+
+    # Only system feedback and improvement knowledge cross into Experience.
+    for x in (570, 1830):
+        s.path(f'M {x} 1260 V 1370', PURPLE, arrow='purple')
+        s.label(x, 1317, '提交系统 / 训练 / 评测反馈、改进方案与结论', PURPLE, 19)
+    s.rect(100, 1370, 2200, 290, '#F2EBFB', '#B89CDC', rx=24)
+    s.text(140, 1416, 'Experience / 两个 Harness 共享的系统反馈', 30, PURPLE, 700)
+    s.text(140, 1453, 'Decision Policy 可查询两个 Loop 的系统反馈，形成改进方案与结论。', 22, PURPLE)
+    s.path('M 100 1450 H 55 V 470 H 140', PURPLE, arrow='purple', dash='9 7')
+    for ident, x, title, lines in [
+        ('system-feedback', 140, '系统运行反馈', ('Decision-making + Exploration', '耗时 / token / errors')),
+        ('training-evaluation-feedback', 860, '训练与评测反馈', ('训练结果 / 评测指标 / 版本关联', '支持比较、分析与改进判断')),
+        ('improvement-evidence', 1580, '改进方案、结论与证据引用', ('方案 / 结论 / 来源关联', 'Feedback.evidence_refs → 系统记录')),
+    ]:
+        s.node(ident, x, 1475, 680, 130, title, lines, PURPLE,
+               stroke='#D7C5EC', title_size=25)
+    s.text(140, 1637, 'Experience 不持有 memory，也不保存原始 Actor 轨迹；history、working memory 与长期任务知识由各 Harness 管理。', 22, MUTED)
+
+    s.node('runtime', 100, 1720, 1050, 145, 'Runtime / 底层共享服务', (
+        'Model / Sandbox / Artifacts；Runner / Jobs 提供运行协调',
+        '执行编排仍在各 Loop；策略、上下文与 memory 属于各 Harness',
+    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
+    s.node('snapshot', 1190, 1720, 1110, 145, 'Snapshot / 分区保存与恢复', (
+        '分别保存 Decision memory / Exploration memory / Experience',
+        '同时组织控制状态、模型绑定与产物引用；由 application 装配',
+    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
+    s.text(100, 1900, '实线：执行或数据流向；紫色虚线：Decision Policy 查询共享反馈。Harness 沿用 Loop 内模块划分，无额外目录或平行类。', 21, MUTED)
     s.save('system-flow.svg')
 
 
 def file_architecture():
-    s=SVG(2000,1630,'RSISys 文件架构图','按两个 loop 组织框架流程与可替换实现，Experience、Snapshot、Runtime 独立。')
-    s.text(64,75,'RSISys / 文件架构',42,weight=750)
-    s.text(64,115,'框架流程与具体实现各有归属 · 共享能力独立维护',24,MUTED)
-    s.chip(1510,48,190,'模块归属','#E3F3EC',GREEN)
-    s.chip(1720,48,216,'实现见 README','#FFF5DD',AMBER)
-    s.rect(64,155,1872,80)
-    s.text(94,190,'src/rsisys/',30,BLUE,700,mono=True)
-    s.text(440,190,'lion:/home/jovyan/projects/RSISys',23,MUTED,mono=True)
-    s.text(94,220,'Policy、Space、Learner 属于各自 Loop；只将真正共享的契约和系统能力提取出来。',21,MUTED)
+    s = SVG(2400, 1900, 'RSISys 文件架构图',
+            '沿用 loops 目录：每个 Loop 的 Harness 包含 policy/context、memory、space/tools 和执行控制；'
+            'learner/evaluation 为 RSI 扩展。contracts/memory.py 和 loops/_memory.py 仅共享协议和工具，'
+            '不构成全局 memory。Experience 仅保存系统反馈与改进记录，Snapshot 分区保存两份 memory 与 Experience。')
+    s.text(100, 80, 'RSISys / 文件架构', 42, weight=750)
+    s.text(100, 126, 'src/rsisys/ · 两个 Loop + 一个共享 Experience · Harness 复用现有模块划分', 25, MUTED)
+    s.chip(1990, 52, 310, '概念归属 / 关键模块', '#E3F3EC', GREEN, 20)
 
-    s.rect(64,270,1180,810,fill='#EFF4FC',stroke='#B9CBE6',rx=24)
-    s.text(100,312,'loops/',29,BLUE,700,mono=True)
-    def panel(ident,x,y,w,h,title,lines,color=INK,fill='#FFFFFF',dash=None):
+    for ident, x, title, color, fill, stroke in [
+        ('decision-dir', 100, 'loops/decision_making/', BLUE, '#EFF5FF', '#BCD1F2'),
+        ('exploration-dir', 870, 'loops/exploration/', GREEN, '#EFF8F3', '#B9DDCF'),
+    ]:
         s.parts.append(f'<g id="{ident}">')
-        s.rect(x,y,w,h,fill=fill,stroke=color,dash=dash)
-        s.text(x+24,y+40,title,25,color,700,mono=True,max_width=w-48)
-        for i,line in enumerate(lines):
-            s.text(x+24,y+81+i*33,line,20,MUTED,mono=True,max_width=w-48)
+        s.rect(x, 210, 730, 910, fill, stroke, rx=24)
+        s.text(x+40, 260, title, 29, color, 700, mono=True, max_width=650)
+        s.text(x+40, 299, 'Loop = Harness + RSI 扩展', 23, MUTED)
+        s.rect(x+25, 330, 680, 540, '#FFFFFF', stroke, rx=20)
+        s.text(x+50, 376, 'Harness / 该 Loop 内的组件整体', 26, color, 700)
+        s.text(x+50, 424, 'policy/ + context  ·  策略与上下文构建', 23, INK)
+        s.node(ident+'-memory', x+50, 455, 630, 170, 'memory/  ·  Harness-local', (
+            '每个 Loop 自有模块与默认实现',
+            'test-time history / working memory / 长期任务知识',
+            'Decision：决策上下文' if x == 100 else 'Exploration：Actor history + 原始轨迹 → RL',
+        ), color, fill, stroke, title_size=25)
+        if x == 100:
+            s.text(x+50, 674, 'decision_space/ + tools', 24, color, 650, mono=True)
+            s.text(x+50, 710, '文献 / 数据 / 策略操作与产物引用', 22, MUTED)
+            s.text(x+50, 763, 'loop.py / state.py  ·  执行编排与控制状态', 23, INK)
+            s.text(x+50, 802, 'receive_feedback：接收反馈、推进控制状态', 22, MUTED)
+            s.text(x+50, 838, 'Policy 可查询两个 Loop 的共享系统反馈', 22, MUTED)
+            s.node(ident+'-rsi', x+25, 910, 680, 170, 'RSI 扩展 / learner/', (
+                'Decision Learner：训练作业控制 / 模型绑定',
+                '改进方案、训练反馈与结论 → Experience',
+            ), color, stroke=stroke, title_size=26)
+        else:
+            s.text(x+50, 674, 'action_space/ + tools + environment/', 24, color, 650, mono=True)
+            s.text(x+50, 710, '行动定义、工具调用与环境执行', 22, MUTED)
+            s.text(x+50, 763, 'loop.py / state.py  ·  执行编排与控制状态', 23, INK)
+            s.text(x+50, 802, '指令生命周期：接收 / 推进 / 检查 / 取消', 22, MUTED)
+            s.text(x+50, 838, 'Actor 从自身 memory 读取 history', 22, MUTED)
+            s.node(ident+'-rsi', x+25, 910, 680, 170, 'RSI 扩展 / learner/ + evaluation/', (
+                'RL 从 Exploration memory 读取原始轨迹',
+                '训练 / 评测反馈与结论 → Experience',
+            ), color, stroke=stroke, title_size=25)
         s.parts.append('</g>')
-    panel('decision-dir',100,345,530,450,'decision_making/',[
-        'loop.py / state.py',
-        'decision.py       结构化决策',
-        'policy/           决策策略',
-        'decision_space/',
-        '  local.py        本地操作',
-        '  literature.py / data.py',
-        '  strategy.py     操作协议',
-        'learner/',
-        '  backends/       训练后端',
-        '准备 → 指令 → 接收反馈'],BLUE,'#EFF5FF')
-    panel('exploration-dir',665,345,543,450,'exploration/',[
-        'loop.py / state.py',
-        'policy/           Actor 策略',
-        'action_space/     环境行动',
-        'environment/      环境接入',
-        'learner/',
-        '  backends/       训练后端',
-        'evaluation/       评测实现',
-        '',
-        'commands.py / rl.py'],GREEN,'#EFF8F3')
-    panel('contracts-dir',100,835,1108,205,'contracts/',[
-        'directive.py / feedback.py / coordination.py',
-        'model_service.py  仅类型与接口，后端实现位于 Runtime',
-        'requests.py / training.py / 引用与状态类型',
-        '共享纯类型与公开端口；实现通过构造函数注入'],AMBER,'#FFF8E8')
 
-    panel('experience-dir',1290,270,646,280,'experience/',[
-        'records.py       四类原始经验',
-        'memory.py        显式记忆',
-        'provenance.py    来源关系类型',
-        'retrieval.py     角色视图接口',
-        'storage.py / sqlite.py',
-        '记录、检索与存储实现分开'],PURPLE,'#F2EBFB')
-    panel('snapshot-dir',1290,585,646,245,'snapshot/',[
-        'manifest.py      系统状态清单',
-        'capture.py / restore.py',
-        'storage.py       存储接口',
-        'local.py / codec.py',
-        '内置组件的空闲边界恢复'],AMBER,'#FFF8E8')
-    panel('runtime-dir',1290,850,646,230,'runtime/',[
-        'runner.py / jobs.py',
-        'model.py         模型调用',
-        'sandbox.py / local_process.py',
-        'artifacts.py     内存 / 文件',
-        '流程和策略仍由 Loop 负责'],INK,'#EAF0F6')
+    s.parts.append('<g id="experience-dir">')
+    s.rect(1640, 210, 660, 910, '#F2EBFB', '#B89CDC', rx=24)
+    s.text(1680, 260, 'experience/', 31, PURPLE, 700, mono=True)
+    s.text(1680, 299, '两个 Harness 共享的系统反馈', 25, PURPLE)
+    for ident, y, title, lines in [
+        ('experience-runtime-feedback', 350, '系统运行反馈', ('两个 Loop 的耗时 / token / errors', '供 Decision Policy 分析和制定改进')),
+        ('experience-learning-feedback', 535, '训练与评测反馈', ('训练结果 / 评测指标 / 版本关联', '支持效果比较与改进判断')),
+        ('experience-improvement', 720, '改进方案与结论', ('方案 / 结论 / 证据引用 / 来源关联', 'Feedback.evidence_refs 引用系统记录')),
+    ]:
+        s.node(ident, 1680, y, 580, 150, title, lines, PURPLE,
+               stroke='#D7C5EC', title_size=27)
+    s.text(1680, 927, '记录 / 检索 / 存储实现', 25, PURPLE, 650)
+    s.text(1680, 971, '不拥有 memory，不保存原始 Actor 轨迹。', 23, MUTED)
+    s.text(1680, 1012, '原始轨迹保留在 Exploration memory。', 23, MUTED)
+    s.text(1680, 1053, '各 Harness 的任务知识由自身 memory 管理。', 22, MUTED)
+    s.parts.append('</g>')
 
-    s.rect(64,1120,1872,395,fill='#FFFFFF',rx=24)
-    s.text(100,1163,'装配、环境与工程文件',27,INK,700)
-    panel('assembly',100,1190,545,280,'装配与入口',[
-        'application.py / config.py',
-        'cli.py           命令逻辑',
-        '__main__.py      薄入口',
-        'configs/         运行配置',
-        '依赖通过构造函数传入',
-        '模型引用支持共享或独立'],BLUE)
-    panel('engineering',685,1190,565,280,'环境与验证',[
-        'pyproject.toml',
-        'pixi.toml / pixi.lock',
-        'tests/           行为验证',
+    s.rect(100, 1170, 2200, 235, '#FFF8E8', '#E4C47F', rx=24)
+    s.text(140, 1217, '跨 Loop 共享契约与复用工具 / 不持有全局 memory 实例', 28, AMBER, 700)
+    s.text(140, 1269, 'loops/contracts/', 26, AMBER, 700, mono=True)
+    s.text(140, 1308, 'Directive / Feedback / coordination；模型、训练与引用协议', 23, MUTED)
+    s.text(140, 1347, 'memory.py：共享 memory 数据类型与协议', 23, MUTED)
+    s.text(1280, 1269, 'loops/_memory.py', 26, AMBER, 700, mono=True)
+    s.text(1280, 1308, '复用存储工具，由各 Loop 的 memory/ 默认实现使用', 23, MUTED)
+    s.text(1280, 1347, '协议与工具不构成第三套 Harness 或共享 memory 系统', 23, MUTED)
+
+    s.node('runtime-dir', 100, 1455, 1040, 325, 'runtime/  ·  底层公共服务', (
+        'Model：模型调用与绑定',
+        'Sandbox：执行环境 / 进程隔离',
+        'Artifacts：产物保存与引用',
+        'Runner / Jobs：运行协调与作业记账',
         '',
-        'pixi run demo',
-        'pixi run test'],GREEN)
-    panel('docs',1290,1190,606,280,'文档与图示',[
-        'README.md',
-        'docs/ARCHITECTURE.md',
-        'docs/GUIDE.md',
-        'docs/diagrams/*.svg',
-        'docs/diagrams/build_diagrams.py',
-        'src/ 各组件维护 README.md'],MUTED)
-    s.text(64,1560,'Policy 决定模型请求；Space 定义操作；Environment 执行行动；Runtime 提供公共后端与生命周期协调。',20,MUTED)
-    s.text(64,1601,'图示说明文件归属；组件职责、接口与实现范围在对应目录 README 中维护。',19,MUTED)
+        '各 Loop 的 loop.py 保留执行编排职责',
+        'Policy、Context、Memory、Space / Tools 归所属 Harness',
+    ), INK, '#EAF0F6', '#CBD6E3', title_size=29)
+    s.node('snapshot-dir', 1180, 1455, 1120, 325, 'snapshot/ + application 装配与持久化', (
+        'Snapshot 分别保存 / 恢复两边 memory 和共享 Experience',
+        '同时组织控制状态、模型绑定与产物引用',
+        '',
+        'Decision Harness memory → decision_memory.json',
+        'Exploration Harness memory → exploration_memory.json',
+        'Experience → 独立保存的反馈、方案、结论与证据引用',
+        'application 负责装配与分别持久化，不合并两份 memory',
+    ), INK, '#EAF0F6', '#CBD6E3', title_size=29)
+    s.text(100, 1833, 'Harness 是 Loop 内现有组件的整体称谓；沿用 loop 目录，不增加 harness/ 目录或平行 Harness 类。', 24, MUTED)
+    s.text(100, 1876, '本图展示模块归属与数据边界；memory 的共享协议 / 存储工具与各 Loop 拥有的 memory 实例分别标示。', 22, MUTED)
     s.save('file-architecture.svg')
-
 
 
 if __name__ == '__main__':

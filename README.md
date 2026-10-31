@@ -1,6 +1,8 @@
 # RSISys
 
-可客制化的双 loop RSI 框架。Decision-making 设计改进策略，Exploration 执行、学习并返回经验；policy、space、learner 等实现通过接口替换。
+可客制化的双 loop RSI 框架。Decision-making 选择优化目标与改进策略，Exploration 执行、学习并返回反馈；policy、space、learner、各 loop 的 memory 等实现通过接口替换。Experience 是共享系统反馈库，不保存原始 test-time history。
+
+每个 loop 目录的组件共同组成对应角色的 harness；loop 负责运行循环和策略流程，memory 是 harness 的子模块。具体映射见[架构](docs/ARCHITECTURE.md)。
 
 ## 快速开始
 
@@ -23,10 +25,10 @@ pixi run test
 
 | 组件 | 内容 |
 |---|---|
-| [Decision-making](src/rsisys/loops/decision_making/README.md) | 决策流程，以及 policy / decision_space / learner 的入口 |
-| [Exploration](src/rsisys/loops/exploration/README.md) | 执行与学习流程，以及 policy / action_space / environment / learner / evaluation 的入口 |
+| [Decision-making](src/rsisys/loops/decision_making/README.md) | 决策流程，以及 policy / memory / decision_space / learner 的入口 |
+| [Exploration](src/rsisys/loops/exploration/README.md) | 执行与学习流程，以及 policy / memory / action_space / environment / learner / evaluation 的入口 |
 | [共享协议](src/rsisys/loops/contracts/README.md) | 指令、反馈、任务、候选与模型引用 |
-| [Experience](src/rsisys/experience/README.md) | 记录、memory、来源和存储 |
+| [Experience](src/rsisys/experience/README.md) | 系统反馈、来源标签、检索和存储 |
 | [Snapshot](src/rsisys/snapshot/README.md) | 保存恢复范围及客制化边界 |
 | [Runtime](src/rsisys/runtime/README.md) | Runner、模型调用、执行后端、作业和产物 |
 

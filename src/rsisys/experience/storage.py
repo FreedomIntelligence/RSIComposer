@@ -2,7 +2,6 @@ from copy import deepcopy
 from typing import Protocol
 
 from .records import ExperienceRecord, Scope
-from .memory import Memory
 
 
 class ExperienceStore(Protocol):
@@ -13,10 +12,6 @@ class ExperienceStore(Protocol):
     def query(self, scope: Scope | None = None, *, limit: int | None = None,
               kinds: tuple[str, ...] = (), text: str | None = None) -> tuple[ExperienceRecord, ...]: ...
 
-    def put_memory(self, memory: Memory) -> None: ...
-
-    def memories(self, scope: Scope | None = None, *, limit: int = 32,
-                 text: str | None = None) -> tuple[Memory, ...]: ...
 
 
 class InMemoryExperienceStore:
@@ -24,7 +19,6 @@ class InMemoryExperienceStore:
 
     def __init__(self):
         self._records: dict[str, ExperienceRecord] = {}
-        self._memories: dict[str, Memory] = {}
 
     def append(self, record: ExperienceRecord) -> None:
         if record.record_id in self._records:
@@ -45,18 +39,3 @@ class InMemoryExperienceStore:
                         and (not kinds or r.kind in kinds)
                         and (not text or text.casefold() in r.summary.casefold()))
         return records[-limit:] if limit else records
-
-    def put_memory(self, memory: Memory) -> None:
-        if any(ref not in self._records for ref in memory.source_record_ids):
-            raise ValueError("Memory evidence does not exist")
-        self._memories.pop(memory.memory_id, None)
-        self._memories[memory.memory_id] = deepcopy(memory)
-
-    def memories(self, scope: Scope | None = None, *, limit: int = 32,
-                 text: str | None = None) -> tuple[Memory, ...]:
-        from .sqlite import validate_query
-        validate_query(scope, limit)
-        items = [m for m in reversed(tuple(self._memories.values()))
-                 if (scope is None or m.scope in (scope, "shared"))
-                 and (not text or text.casefold() in (m.content + " " + m.applicability).casefold())]
-        return tuple(deepcopy(items[:limit]))
