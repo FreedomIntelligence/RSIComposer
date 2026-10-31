@@ -7,16 +7,19 @@ from pathlib import Path
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
-from rsisys.loops.decision_making.decision_space import DemoDecisionSpace
+from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace
+from rsisys.loops.decision_making.harness.tools import DemoDecisionTools
+from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
-from rsisys.loops.decision_making.learner.backends.mock import MockDecisionLearner
-from rsisys.loops.decision_making.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
+from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.exploration.action_space import EchoActionSpace
-from rsisys.loops.exploration.environment import SandboxEchoEnvironment
+from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
 from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.loops.exploration.learner.backends.mock import MockActorLearner
-from rsisys.loops.exploration.evaluation.mock import MockEvaluator
-from rsisys.loops.exploration.policy import ModelActorPolicy
+from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
+from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
+from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.runtime.artifacts import InMemoryArtifactStore
 from rsisys.runtime.model import MockModelBackend
 from rsisys.runtime.runner import Runner
@@ -56,15 +59,20 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False) -> tuple[Runn
     artifacts = InMemoryArtifactStore()
     sandbox = MockSandboxBackend()
     decision_model, actor_model = config.roles["decision_maker"], config.roles["actor"]
+    modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if with_learning else ())
     decision = DecisionMakingLoop(
-        ModelDecisionPolicy(backends[decision_model.backend_id], decision_model),
-        DemoDecisionSpace(sandbox, artifacts), experience,
-        learner=MockDecisionLearner(artifacts) if with_learning else None,
+        DefaultDecisionHarness(
+            ModelDecisionPolicy(backends[decision_model.backend_id], decision_model),
+            DemoDecisionTools(sandbox, artifacts), experience,
+            learner=MockDecisionLearner(artifacts) if with_learning else None,
+        ), DemoDecisionActionSpace(directive_modes=modes),
     )
     exploration = ExplorationLoop(
-        ModelActorPolicy(backends[actor_model.backend_id], actor_model),
-        EchoActionSpace(), SandboxEchoEnvironment(sandbox, artifacts), experience,
-        learner=MockActorLearner(artifacts) if with_learning else None,
-        evaluator=MockEvaluator(artifacts) if with_learning else None,
+        DefaultExplorationHarness(
+            ModelActorPolicy(backends[actor_model.backend_id], actor_model),
+            SandboxEchoEnvironment(sandbox, artifacts), experience,
+            learner=MockActorLearner(artifacts) if with_learning else None,
+            evaluator=MockEvaluator(artifacts) if with_learning else None,
+        ), EchoActionSpace(),
     )
     return Runner(decision, exploration), store

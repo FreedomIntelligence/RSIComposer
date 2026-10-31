@@ -7,9 +7,9 @@ import unittest
 from unittest.mock import patch
 
 from rsisys.loops._memory import MemoryBuffer
-from rsisys.loops.contracts.memory import HistoryEntry, LoopMemory, Memory
-from rsisys.loops.decision_making.memory import DecisionMemory
-from rsisys.loops.exploration.memory import ExplorationMemory
+from rsisys.loops._memory import HistoryEntry, MemoryStore, Memory
+from rsisys.loops.decision_making.harness.memory import DecisionMemory
+from rsisys.loops.exploration.harness.memory import ExplorationMemory
 
 
 def entry(record_id='record', kind='decision', task_id='task', **kwargs):
@@ -68,7 +68,7 @@ class MemoryContractTests(unittest.TestCase):
 
 class MemoryBufferTests(unittest.TestCase):
     def test_loop_and_instance_isolation(self):
-        decision: LoopMemory = DecisionMemory()
+        decision: MemoryStore = DecisionMemory()
         other = DecisionMemory()
         actor = ExplorationMemory()
         decision.append(entry())

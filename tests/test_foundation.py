@@ -14,15 +14,15 @@ import unittest
 from unittest.mock import patch
 
 from rsisys.application import Application, ApplicationConfig
-from rsisys.loops.contracts.memory import Memory
-from rsisys.loops.decision_making.memory import DecisionMemory
-from rsisys.loops.exploration.memory import ExplorationMemory
+from rsisys.loops._memory import Memory
+from rsisys.loops.decision_making.harness.memory import DecisionMemory
+from rsisys.loops.exploration.harness.memory import ExplorationMemory
 from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.loops.contracts.jobs import JobStatus
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef, GenerationRequest
-from rsisys.loops.exploration.learner import ActorTrainingRequest
+from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.local_process import LocalProcessBackend
 from rsisys.runtime.model import RemoteModelBackend, ModelResponseError, ModelTransportError
@@ -186,7 +186,8 @@ class FoundationTests(unittest.TestCase):
     def test_command_environment_exports_files_before_cleanup(self):
         from rsisys.loops.contracts.directive import Directive
         from rsisys.loops.exploration.action_space import ActionProposal
-        from rsisys.loops.exploration.environment.local import CommandActionSpace, LocalProcessEnvironment
+        from rsisys.loops.exploration.action_space.local import CommandActionSpace
+        from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
         artifacts = FileArtifactStore(self.root/'artifacts')
         backend = LocalProcessBackend(self.root/'work')
         environment = LocalProcessEnvironment(backend, artifacts)
@@ -203,7 +204,7 @@ class FoundationTests(unittest.TestCase):
 
     def test_snapshot_refuses_unrecorded_component_reconfiguration(self):
         with Application(self.config()) as app:
-            app.runner.decision_making.policy.allowed_actions = ('different',)
+            app.runner.decision_making.harness.policy.allowed_actions = ('different',)
             with self.assertRaisesRegex(TypeError, 'bindings'):
                 LocalSnapshotCapture(app).capture('unsupported')
 
@@ -290,17 +291,17 @@ class FoundationTests(unittest.TestCase):
             result = app.run()
             self.assertEqual(result.status, 'completed')
             self.assertFalse(any(r.simulated for r in app.store.records()))
-            self.assertEqual(app.runner.decision_making.state.measured_input_tokens, 14)
-            self.assertEqual(app.runner.exploration.state.measured_output_tokens, 3)
-            self.assertEqual(app.runner.exploration.state.calls_with_missing_usage, 0)
+            self.assertEqual(app.runner.decision_making.harness.state.measured_input_tokens, 14)
+            self.assertEqual(app.runner.exploration.harness.state.measured_output_tokens, 3)
+            self.assertEqual(app.runner.exploration.harness.state.calls_with_missing_usage, 0)
             self.assertTrue(all(r.run_id == app.config.run_id for r in app.store.records()))
 
     def test_snapshot_restore_forks_exact_experience_and_memory(self):
         with Application(self.config(execution='local_process')) as app:
             app.run()
             evidence = app.store.records()[0].record_id
-            app.runner.exploration.memory.remember(Memory('m', 'semantic', 'Persist evidence', (evidence,), 'task'))
-            app.runner.decision_making.memory.remember(Memory('m', 'procedural', 'Compare training efficiency'))
+            app.runner.exploration.harness.memory.remember(Memory('m', 'semantic', 'Persist evidence', (evidence,), 'task'))
+            app.runner.decision_making.harness.memory.remember(Memory('m', 'procedural', 'Compare training efficiency'))
             manifest = LocalSnapshotCapture(app).capture('first')
             directory = app.config.data_dir/'snapshots'/manifest.snapshot_id
             saved_count = len(app.store.records())
@@ -309,14 +310,14 @@ class FoundationTests(unittest.TestCase):
             self.assertGreater(len(app.store.records()), saved_count)
         with restore_snapshot(directory, self.root/'restored') as restored:
             self.assertEqual(len(restored.store.records()), saved_count)
-            self.assertEqual(restored.runner.exploration.memory.recall()[0].content, 'Persist evidence')
-            self.assertEqual(restored.runner.decision_making.memory.recall()[0].content, 'Compare training efficiency')
-            self.assertTrue(restored.runner.exploration.memory.history())
-            self.assertTrue(restored.runner.decision_making.memory.history())
+            self.assertEqual(restored.runner.exploration.harness.memory.recall()[0].content, 'Persist evidence')
+            self.assertEqual(restored.runner.decision_making.harness.memory.recall()[0].content, 'Compare training efficiency')
+            self.assertTrue(restored.runner.exploration.harness.memory.history())
+            self.assertTrue(restored.runner.decision_making.harness.memory.history())
             for ref in saved_refs:
                 self.assertTrue(restored.artifacts.get(ref))
             self.assertEqual(restored.run().status, 'completed')
-            self.assertEqual(restored.runner.decision_making.state.completed, 2)
+            self.assertEqual(restored.runner.decision_making.harness.state.completed, 2)
 
     def test_snapshot_preserves_preparation_without_reexecuting_it(self):
         with Application(self.config()) as app:
@@ -327,26 +328,26 @@ class FoundationTests(unittest.TestCase):
         with restore_snapshot(directory, self.root/'resumed') as restored:
             self.assertEqual(restored.run().decision_steps, 1)
             self.assertEqual(len([r for r in restored.artifacts.refs() if r.kind == 'input_data']), 1)
-            self.assertEqual(restored.runner.exploration.state.last_feedback.directive_id,
-                             restored.runner.decision_making.state.last_feedback.directive_id)
+            self.assertEqual(restored.runner.exploration.harness.state.last_feedback.directive_id,
+                             restored.runner.decision_making.harness.state.last_feedback.directive_id)
             self.assertEqual(restored.artifacts.get(refs[0]), b'Inspect a prepared text artifact')
 
     def test_snapshot_preserves_applied_model_binding_but_archives_old_jobs(self):
         with Application(self.config(learning='mock')) as app:
             actor = app.runner.exploration
             data = app.artifacts.put(b'data', kind='training_data')
-            job = actor.submit_learning(ActorTrainingRequest(actor.policy.model, (data,), 'recipe'), idempotency_key='train')
+            job = actor.harness.submit_learning(ActorTrainingRequest(actor.harness.policy.model, (data,), 'recipe'), idempotency_key='train')
             for _ in range(3):
-                result = actor.poll_learning(job)
+                result = actor.harness.poll_learning(job)
                 if result.terminal:
                     break
-            model = actor.apply_learning(job)
+            model = actor.harness.apply_learning(job)
             manifest = LocalSnapshotCapture(app).capture('trained')
             directory = app.config.data_dir/'snapshots'/manifest.snapshot_id
         with restore_snapshot(directory, self.root/'restored') as restored:
-            self.assertEqual(restored.runner.exploration.policy.model, model)
+            self.assertEqual(restored.runner.exploration.harness.policy.model, model)
             with self.assertRaises(ValueError):
-                restored.runner.exploration.poll_learning(job)
+                restored.runner.exploration.harness.poll_learning(job)
             self.assertEqual(restored.run().status, 'completed')
 
     def test_snapshot_rejects_pending_work(self):
@@ -357,7 +358,7 @@ class FoundationTests(unittest.TestCase):
         with Application(self.config('training', learning='mock')) as app:
             actor = app.runner.exploration
             data = app.artifacts.put(b'data', kind='training_data')
-            actor.submit_learning(ActorTrainingRequest(actor.policy.model, (data,), 'recipe'), idempotency_key='train')
+            actor.harness.submit_learning(ActorTrainingRequest(actor.harness.policy.model, (data,), 'recipe'), idempotency_key='train')
             with self.assertRaisesRegex(RuntimeError, 'idle'):
                 LocalSnapshotCapture(app).capture('invalid')
 
@@ -389,13 +390,13 @@ class FoundationTests(unittest.TestCase):
     def test_local_literature_operations_and_memory_reach_policy_context(self):
         with Application(self.config()) as app:
             ref = app.artifacts.put(b'Example paper: reusable training trajectories', kind='literature')
-            from rsisys.loops.decision_making.decision_space import OperationCall
-            result = app.runner.decision_making.space.execute(OperationCall('search_literature', {'query': 'trajectories'}))
+            from rsisys.loops.decision_making.action_space import OperationCall
+            result = app.runner.decision_making.harness.tools.execute(OperationCall('search_literature', {'query': 'trajectories'}))
             matches = json.loads(app.artifacts.get(result.artifacts[0]))
             self.assertEqual(matches[0]['artifact_id'], ref.artifact_id)
             app.experience.record(record('evidence'))
-            app.runner.decision_making.memory.remember(Memory('m', 'procedural', 'Check results', ('evidence',), 'task'))
-            policy = app.runner.decision_making.policy
+            app.runner.decision_making.harness.memory.remember(Memory('m', 'procedural', 'Check results', ('evidence',), 'task'))
+            policy = app.runner.decision_making.harness.policy
             with patch.object(policy, 'decide', wraps=policy.decide) as decide:
                 app.runner.decision_making.step(app.config.objective)
                 self.assertEqual(decide.call_args.args[0].memories[0].memory_id, 'm')

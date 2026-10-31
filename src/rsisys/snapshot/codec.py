@@ -11,17 +11,17 @@ from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, TokenUsage
 from rsisys.loops.contracts.training import TrainingResult
-from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec
-from rsisys.loops.decision_making.decision_space import OperationCall, OperationResult
-from rsisys.loops.decision_making.state import DecisionState
-from rsisys.loops.exploration.state import ExplorationState
-from rsisys.loops.exploration.rl import RLPlan, RLState
-from rsisys.loops.exploration.learner import ActorTrainingRequest
+from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
+from rsisys.loops.decision_making.action_space import OperationCall, OperationResult
+from rsisys.loops.decision_making.harness.state import DecisionState
+from rsisys.loops.exploration.harness.state import ExplorationState
+from rsisys.loops.exploration.harness.rl import RLPlan, RLState
+from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 
 TYPES = {cls.__name__: cls for cls in (
     ArtifactRef, Candidate, Directive, Feedback, JobRef, ModelRef, TokenUsage,
     TrainingResult, OperationCall, OperationResult, DecisionState, ExplorationState,
-    RLPlan, RLState, ActorTrainingRequest, SFTSpec, RLSpec, EvaluationSpec,
+    RLPlan, RLState, ActorTrainingRequest, SFTSpec, RLSpec, EvaluationSpec, PromptSpec,
 )}
 ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus)}
 

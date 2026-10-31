@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rsisys.loops.decision_making.decision import LoopStepResult
+    from rsisys.loops.decision_making.harness.decision import LoopStepResult
 
 from .directive import Directive
 from .feedback import Feedback

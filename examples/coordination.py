@@ -6,7 +6,7 @@ from pathlib import Path
 from rsisys.config import DemoConfig, build_demo
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec
-from rsisys.loops.decision_making.decision import Decision
+from rsisys.loops.decision_making.harness.decision import Decision
 
 
 class ExampleDecisionPolicy:
@@ -35,8 +35,8 @@ class ExampleDecisionPolicy:
 def main():
     config = DemoConfig.load(Path(__file__).resolve().parents[1] / 'configs/demo.json')
     runner, store = build_demo(config, with_learning=True)
-    data = runner.decision_making.space.artifacts.put(b'demonstration data', kind='training_data')
-    runner.decision_making.policy = ExampleDecisionPolicy(data)
+    data = runner.decision_making.harness.tools.artifacts.put(b'demonstration data', kind='training_data')
+    runner.decision_making.harness.policy = ExampleDecisionPolicy(data)
     events = []
     for _ in range(40):
         step = runner.step('Demonstrate loop coordination')
@@ -47,9 +47,9 @@ def main():
     else:
         raise RuntimeError('Demo did not finish within its tick budget')
     print(json.dumps({'simulated': True, 'training_performed': False, 'quality_evaluated': False,
-                      'decision_calls': runner.decision_making.policy.stage,
-                      'directives_completed': runner.decision_making.state.completed,
-                      'actor_model': asdict(runner.exploration.policy.model),
+                      'decision_calls': runner.decision_making.harness.policy.stage,
+                      'directives_completed': runner.decision_making.harness.state.completed,
+                      'actor_model': asdict(runner.exploration.harness.policy.model),
                       'experience_records': len(store.records()), 'events': events}, indent=2))
 
 

@@ -1,6 +1,6 @@
 # Runtime
 
-提供跨 loop 推进与公共基础能力，策略和领域执行流程由各自 loop 负责。配置通过构造函数注入，不使用全局服务注册表。
+提供跨 loop 推进与公共基础能力，策略和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 
 ## Runner 与作业
 
@@ -14,13 +14,13 @@
 
 HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；不支持原生 tool_calls、多模态或流式生成。不跟随重定向，也不自动重试推理请求。密钥仅在调用时从指定环境变量读取，不写入配置或快照。
 
-响应缺少 model_revision 时 revision_verified=false；匹配该字段也不能证明权重不可变。TokenUsage 缺失保持未知，缺失次数由各 loop 记录。
+响应缺少 model_revision 时 revision_verified=false；匹配该字段也不能证明权重不可变。TokenUsage 缺失保持未知，缺失次数由各默认 Harness 记录。
 
 ## 执行后端
 
 [sandbox.py](sandbox.py) 定义创建、执行、查询、取消与释放协议及 Mock；[local_process.py](local_process.py) 提供真实 argv 进程执行、超时、输出限额、独立工作目录与进程组清理。它使用宿主用户权限，不是安全隔离沙箱。
 
-任务语义、输入准备和输出收集属于 [Environment](../loops/exploration/environment/README.md)。替换执行后端时需匹配环境对同步/异步完成的要求。
+任务语义、输入准备和输出收集属于 [Environment](../loops/exploration/harness/environment/README.md)。替换执行后端时需匹配环境对同步/异步完成的要求。
 
 ## 产物与文件
 

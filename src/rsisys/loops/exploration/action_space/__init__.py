@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from typing import Protocol
-from typing import Protocol
 
 from rsisys.loops.contracts.model_service import ModelRef, TokenUsage
 

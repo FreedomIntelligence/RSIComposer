@@ -10,18 +10,22 @@ from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
-from rsisys.loops.decision_making.memory import DecisionMemory
-from rsisys.loops.exploration.memory import ExplorationMemory
-from rsisys.loops.decision_making.policy import ModelDecisionPolicy
-from rsisys.loops.decision_making.decision_space.local import LocalDecisionSpace
-from rsisys.loops.decision_making.learner.backends.mock import MockDecisionLearner
+from rsisys.loops.decision_making.harness.memory import DecisionMemory
+from rsisys.loops.exploration.harness.memory import ExplorationMemory
+from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.action_space import LocalDecisionActionSpace
+from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
+from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
+from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
 from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.loops.exploration.policy import ModelActorPolicy
+from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.loops.exploration.action_space import EchoActionSpace
-from rsisys.loops.exploration.environment import SandboxEchoEnvironment
-from rsisys.loops.exploration.environment.local import CommandActionSpace, LocalProcessEnvironment
-from rsisys.loops.exploration.learner.backends.mock import MockActorLearner
-from rsisys.loops.exploration.evaluation.mock import MockEvaluator
+from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
+from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
+from rsisys.loops.exploration.action_space.local import CommandActionSpace
+from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
+from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -121,19 +125,24 @@ class Application:
                 self.sandbox = MockSandboxBackend()
                 space, environment = EchoActionSpace(), SandboxEchoEnvironment(self.sandbox, self.artifacts)
             dm, actor = config.roles['decision_maker'], config.roles['actor']
+            modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if config.learning == 'mock' else ())
             decision = DecisionMakingLoop(
-                ModelDecisionPolicy(backends[dm.backend_id], dm,
-                                    allowed_actions=tuple(spec.name for spec in space.describe())),
-                LocalDecisionSpace(self.artifacts), self.experience,
-                learner=MockDecisionLearner(self.artifacts) if config.learning == 'mock' else None,
-                experience_limit=config.experience_limit,
-                memory=DecisionMemory(root / "decision_memory.json"), memory_limit=config.memory_limit,
+                DefaultDecisionHarness(
+                    ModelDecisionPolicy(backends[dm.backend_id], dm,
+                                        allowed_actions=tuple(spec.name for spec in space.describe())),
+                    LocalDecisionTools(self.artifacts), self.experience,
+                    learner=MockDecisionLearner(self.artifacts) if config.learning == 'mock' else None,
+                    experience_limit=config.experience_limit,
+                    memory=DecisionMemory(root / "decision_memory.json"), memory_limit=config.memory_limit,
+                ), LocalDecisionActionSpace(directive_modes=modes),
             )
             exploration = ExplorationLoop(
-                ModelActorPolicy(backends[actor.backend_id], actor), space, environment, self.experience,
-                learner=MockActorLearner(self.artifacts) if config.learning == 'mock' else None,
-                evaluator=MockEvaluator(self.artifacts) if config.learning == 'mock' else None,
-                memory=ExplorationMemory(root / "exploration_memory.json"), memory_limit=config.memory_limit,
+                DefaultExplorationHarness(
+                    ModelActorPolicy(backends[actor.backend_id], actor), environment, self.experience,
+                    learner=MockActorLearner(self.artifacts) if config.learning == 'mock' else None,
+                    evaluator=MockEvaluator(self.artifacts) if config.learning == 'mock' else None,
+                    memory=ExplorationMemory(root / "exploration_memory.json"), memory_limit=config.memory_limit,
+                ), space,
             )
             self.runner = Runner(decision, exploration)
             if not _restore:

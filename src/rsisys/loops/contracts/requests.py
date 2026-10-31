@@ -7,6 +7,15 @@ from .model_service import ModelRef
 
 
 @dataclass(frozen=True)
+class PromptSpec:
+    instructions: str
+
+    def __post_init__(self):
+        if not isinstance(self.instructions, str):
+            raise ValueError('Prompt instructions must be a string (empty clears them)')
+
+
+@dataclass(frozen=True)
 class SFTSpec:
     recipe_ref: str
     base: ModelRef | None = None

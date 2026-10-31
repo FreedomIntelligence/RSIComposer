@@ -11,10 +11,12 @@ from uuid import uuid4
 
 from rsisys.runtime.files import atomic_write, json_bytes, sync_directory, sync_tree
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.loops.decision_making.state import DecisionState
-from rsisys.loops.exploration.state import ExplorationState
-from rsisys.loops.decision_making.memory import DecisionMemory
-from rsisys.loops.exploration.memory import ExplorationMemory
+from rsisys.loops.decision_making.harness.state import DecisionState
+from rsisys.loops.exploration.harness.state import ExplorationState
+from rsisys.loops.decision_making.harness.memory import DecisionMemory
+from rsisys.loops.exploration.harness.memory import ExplorationMemory
+from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
 from .codec import encode, decode
 from .manifest import SnapshotManifest
 
@@ -110,22 +112,28 @@ class LocalSnapshotCapture:
         app = self.application
         if app.store is None:
             raise RuntimeError('Application is closed')
-        dm, actor = app.runner.decision_making, app.runner.exploration
+        decision_loop, exploration_loop = app.runner.decision_making, app.runner.exploration
+        dm, actor = decision_loop.harness, exploration_loop.harness
+        if type(dm) is not DefaultDecisionHarness or type(actor) is not DefaultExplorationHarness:
+            raise TypeError('Custom harnesses need explicit snapshot integration')
         if app.runner.busy or actor.command_busy:
             raise RuntimeError('Snapshot requires no pending coordination delivery')
         check_states(dm.state, actor.state)
         if dm.training.busy or actor.training.busy or actor.evaluation.busy or app.sandbox.active_count:
             raise RuntimeError('Snapshot requires all local jobs and sessions to be idle')
-        from rsisys.loops.decision_making.policy import ModelDecisionPolicy
-        from rsisys.loops.exploration.policy import ModelActorPolicy
-        from rsisys.loops.decision_making.decision_space.local import LocalDecisionSpace
-        from rsisys.loops.exploration.environment import SandboxEchoEnvironment
-        from rsisys.loops.exploration.environment.local import LocalProcessEnvironment, CommandActionSpace
+        from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+        from rsisys.loops.exploration.harness.policy import ModelActorPolicy
+        from rsisys.loops.decision_making.action_space import LocalDecisionActionSpace
+        from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
+        from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
+        from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
+        from rsisys.loops.exploration.action_space.local import CommandActionSpace
         from rsisys.loops.exploration.action_space import EchoActionSpace
         expected_env = LocalProcessEnvironment if app.config.execution == 'local_process' else SandboxEchoEnvironment
         expected_space = CommandActionSpace if app.config.execution == 'local_process' else EchoActionSpace
         for component, expected in ((dm.policy, ModelDecisionPolicy), (actor.policy, ModelActorPolicy),
-                                    (dm.space, LocalDecisionSpace), (actor.space, expected_space),
+                                    (dm.tools, LocalDecisionTools), (decision_loop.action_space, LocalDecisionActionSpace),
+                                    (exploration_loop.action_space, expected_space),
                                     (actor.environment, expected_env)):
             if type(component) is not expected:
                 raise TypeError('Custom components must provide their own snapshot integration')
@@ -133,14 +141,18 @@ class LocalSnapshotCapture:
             raise TypeError('Custom loop memories need explicit snapshot integration')
         if dm.experience is not app.experience or actor.experience is not app.experience:
             raise TypeError('Custom experience systems need explicit snapshot integration')
-        if dm.space.artifacts is not app.artifacts or actor.environment.artifacts is not app.artifacts:
+        if dm.tools.artifacts is not app.artifacts or actor.environment.artifacts is not app.artifacts:
             raise TypeError('Custom artifact stores need explicit snapshot integration')
-        if dm.policy.allowed_actions != tuple(spec.name for spec in actor.space.describe()):
+        if dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):
             raise TypeError('Custom decision action bindings need explicit snapshot integration')
+        expected_modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if app.config.learning == 'mock' else ())
+        if (decision_loop.action_space.directive_modes() != expected_modes
+                or decision_loop.action_space.describe() != LocalDecisionActionSpace().describe()):
+            raise TypeError('Custom decision actions need explicit snapshot integration')
         from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
-        from rsisys.loops.decision_making.learner.backends.mock import MockDecisionLearner
-        from rsisys.loops.exploration.learner.backends.mock import MockActorLearner
-        from rsisys.loops.exploration.evaluation.mock import MockEvaluator
+        from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
+        from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
+        from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
         for policy in (dm.policy, actor.policy):
             binding = app.config.backends[policy.model.backend_id]
             expected_backend = MockModelBackend if binding.kind == 'mock' else RemoteModelBackend
@@ -247,10 +259,10 @@ def restore_snapshot(directory, target):
         if staging.exists():
             shutil.rmtree(staging)
     app = Application(config, _restore=True)
-    app.runner.decision_making.state = decision
-    app.runner.exploration.state = actor
-    app.runner.decision_making.experience_limit = runtime['decision_experience_limit']
-    app.runner.decision_making.memory_limit = runtime['memory_limits']['decision_maker']
-    app.runner.exploration.memory_limit = runtime['memory_limits']['actor']
+    app.runner.decision_making.harness.state = decision
+    app.runner.exploration.harness.state = actor
+    app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
+    app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
+    app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
     app.parent_snapshot_id = manifest.snapshot_id
     return app

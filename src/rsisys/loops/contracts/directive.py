@@ -1,12 +1,16 @@
 from dataclasses import dataclass
 
 from .artifacts import ArtifactRef
-from .requests import SFTSpec, RLSpec, EvaluationSpec
+from .requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 
 
 @dataclass(frozen=True)
 class Directive:
-    """An immutable request from the decision-making loop to exploration."""
+    """System instruction sent by a decision-maker or external controller.
+
+    The exploration harness executes the requested mode. allowed_actions only
+    constrains Actor/environment interactions inside execute or RL rollouts.
+    """
 
     directive_id: str
     objective: str
@@ -16,7 +20,7 @@ class Directive:
     allowed_actions: tuple[str, ...] = ("echo",)
     max_steps: int = 4
     simulated: bool = False
-    payload: SFTSpec | RLSpec | EvaluationSpec | None = None
+    payload: SFTSpec | RLSpec | EvaluationSpec | PromptSpec | None = None
 
     def __post_init__(self):
         if not isinstance(self.directive_id, str) or not self.directive_id:
