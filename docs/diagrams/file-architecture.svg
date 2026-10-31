@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1900" viewBox="0 0 2400 1900" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1470" viewBox="0 0 2400 1470" role="img" aria-labelledby="title desc">
 <title id="title">RSISys 文件架构图</title>
-<desc id="desc">两个 Loop 均含 loop.py、harness/ 与 action_space/。默认业务编排在 harness/engine.py，policy、上下文、memory、tools、learner 与 evaluator 属于默认 Harness 内部。Experience 为共享系统反馈库，Runtime 和 Snapshot 保留独立职责。</desc>
+<desc id="desc">DecisionPolicy 位于 decision_making/harness/policy/；Exploration Policy 的代码接口 ActorPolicy 位于 exploration/harness/policy/。每个 Loop 的 Harness 与 Action Space 平级，共享 Experience、跨 Loop 协议、Runtime 和 Snapshot。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -8,117 +8,84 @@
 <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
 <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
 </defs>
-<rect width="2400" height="1900" fill="#F6F8FC"/>
+<rect width="2400" height="1470" fill="#F6F8FC"/>
 <text x="100" y="80" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="42" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 文件架构</text>
-<text x="100" y="126" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="400" fill="#52637B" text-anchor="start">src/rsisys/ · 两个 Loop + 一个共享 Experience · Harness 与 Action Space 平级</text>
-<rect x="1990" y="52" width="310" height="34" rx="17" fill="#E3F3EC" stroke="none" stroke-width="0"/>
-<text x="2145.0" y="76" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="600" fill="#178164" text-anchor="middle">目录归属 / 关键模块</text>
+<text x="100" y="126" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="400" fill="#52637B" text-anchor="start">src/rsisys/ · Policy 位于默认 Harness 内部</text>
 <g id="decision-dir">
-<rect x="100" y="210" width="730" height="910" rx="24" fill="#EFF5FF" stroke="#BCD1F2" stroke-width="1.5"/>
-<text x="140" y="260" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="700" fill="#2365CB" text-anchor="start">loops/decision_making/</text>
-<text x="140" y="303" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="650" fill="#2365CB" text-anchor="start">Loop(harness, action_space)</text>
-<text x="140" y="349" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">loop.py  ·  薄端点与有界推进</text>
-<g id="decision-dir-harness">
-<rect x="125" y="390" width="680" height="395" rx="16" fill="#FFFFFF" stroke="#BCD1F2" stroke-width="1.8"/>
-<text x="149" y="430" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">harness/  ·  可整体替换</text>
-<text x="149" y="464" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：DecisionHarness 协议</text>
-<text x="149" y="493" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">engine.py：DefaultDecisionHarness / 业务编排</text>
-<text x="149" y="522" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">policy/：策略与模型调用</text>
-<text x="149" y="551" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory/ · tools/ · learner/：默认内部组件</text>
-<text x="149" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">decision.py · state.py：决策、上下文与状态</text>
-<text x="149" y="638" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">读取共享反馈，执行准备操作，发布 Directive</text>
-<text x="149" y="667" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">本地操作执行绑定在 harness/tools/</text>
-<text x="149" y="696" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">可整体替换，不要求独立 memory / tools 接口</text>
+<rect x="100" y="170" width="730" height="860" rx="24" fill="#EFF5FF" stroke="#BCD1F2" stroke-width="1.5"/>
+<text x="135" y="220" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="700" fill="#2365CB" text-anchor="start">loops/decision_making/</text>
+<text x="135" y="267" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">loop.py  ·  Harness 与 Action Space 的组合端点</text>
+<rect x="130" y="310" width="670" height="490" rx="18" fill="#FFFFFF" stroke="#BCD1F2" stroke-width="1.5"/>
+<text x="160" y="355" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="650" fill="#2365CB" text-anchor="start">harness/</text>
+<text x="160" y="395" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：Harness 协议</text>
+<g id="decision-dir-policy">
+<rect x="160" y="430" width="610" height="120" rx="16" fill="#EFF5FF" stroke="#BCD1F2" stroke-width="1.8"/>
+<text x="184" y="470" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">policy/  ·  DecisionPolicy</text>
+<text x="184" y="504" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">decide(context) → Decision</text>
 </g>
+<text x="160" y="610" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">engine.py：决策执行编排</text>
+<text x="160" y="661" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">tools/ · learner/ · memory/</text>
+<text x="160" y="712" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">decision.py · state.py</text>
 <g id="decision-dir-action-space">
-<rect x="125" y="840" width="680" height="235" rx="16" fill="#FFFFFF" stroke="#BCD1F2" stroke-width="1.8"/>
-<text x="149" y="880" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#2365CB" text-anchor="start">action_space/  ·  独立定义与校验</text>
-<text x="149" y="914" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：DecisionActionSpace</text>
-<text x="149" y="943" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">research 操作 + 系统指令模式</text>
-<text x="149" y="972" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">execute / sft / rl / evaluate / configure_prompt</text>
-<text x="149" y="1001" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">describe / validate / validate_directive</text>
-<text x="149" y="1030" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">directive_modes 列出模式；不执行工具</text>
+<rect x="130" y="850" width="670" height="120" rx="16" fill="#FFFFFF" stroke="#BCD1F2" stroke-width="1.8"/>
+<text x="154" y="890" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">action_space/</text>
+<text x="154" y="924" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">DecisionActionSpace · 准备操作与系统指令</text>
 </g>
 </g>
 <g id="exploration-dir">
-<rect x="870" y="210" width="730" height="910" rx="24" fill="#EFF8F3" stroke="#B9DDCF" stroke-width="1.5"/>
-<text x="910" y="260" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="700" fill="#178164" text-anchor="start">loops/exploration/</text>
-<text x="910" y="303" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="650" fill="#178164" text-anchor="start">Loop(harness, action_space)</text>
-<text x="910" y="349" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">loop.py  ·  薄端点与有界推进</text>
-<g id="exploration-dir-harness">
-<rect x="895" y="390" width="680" height="395" rx="16" fill="#FFFFFF" stroke="#B9DDCF" stroke-width="1.8"/>
-<text x="919" y="430" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">harness/  ·  可整体替换</text>
-<text x="919" y="464" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：ExplorationHarness 协议</text>
-<text x="919" y="493" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">engine.py：DefaultExplorationHarness / 编排</text>
-<text x="919" y="522" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">policy/ · environment/：Actor 与环境执行</text>
-<text x="919" y="551" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory/ · learner/ · evaluation/：默认内部组件</text>
-<text x="919" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">commands.py · rl.py · state.py：分派与状态</text>
-<text x="919" y="638" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">接收系统 Directive，直接调度学习 / 评测</text>
-<text x="919" y="667" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Actor.act 仅用于 execute episode / RL rollout</text>
-<text x="919" y="696" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">可整体替换，包括不含 memory 的实现</text>
+<rect x="870" y="170" width="730" height="860" rx="24" fill="#EFF8F3" stroke="#B9DDCF" stroke-width="1.5"/>
+<text x="905" y="220" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="700" fill="#178164" text-anchor="start">loops/exploration/</text>
+<text x="905" y="267" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">loop.py  ·  Harness 与 Action Space 的组合端点</text>
+<rect x="900" y="310" width="670" height="490" rx="18" fill="#FFFFFF" stroke="#B9DDCF" stroke-width="1.5"/>
+<text x="930" y="355" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="650" fill="#178164" text-anchor="start">harness/</text>
+<text x="930" y="395" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：Harness 协议</text>
+<g id="exploration-dir-policy">
+<rect x="930" y="430" width="610" height="120" rx="16" fill="#EFF8F3" stroke="#B9DDCF" stroke-width="1.8"/>
+<text x="954" y="470" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">policy/  ·  ActorPolicy</text>
+<text x="954" y="504" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Exploration Policy · act(context)</text>
 </g>
+<text x="930" y="610" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">engine.py · commands.py：执行与指令分派</text>
+<text x="930" y="661" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">environment/ · learner/ · evaluation/ · memory/</text>
+<text x="930" y="712" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">rl.py · state.py</text>
 <g id="exploration-dir-action-space">
-<rect x="895" y="840" width="680" height="235" rx="16" fill="#FFFFFF" stroke="#B9DDCF" stroke-width="1.8"/>
-<text x="919" y="880" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#178164" text-anchor="start">action_space/  ·  独立定义与校验</text>
-<text x="919" y="914" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">__init__.py：ActionSpace</text>
-<text x="919" y="943" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">仅 Actor 环境动作，例如 echo / execute</text>
-<text x="919" y="972" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">describe / validate；环境负责执行</text>
-<text x="919" y="1001" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">SFT / prompt 配置 / 评测绕过 Actor.act</text>
-<text x="919" y="1030" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">系统 Directive 不属于 Actor 动作</text>
+<rect x="900" y="850" width="670" height="120" rx="16" fill="#FFFFFF" stroke="#B9DDCF" stroke-width="1.8"/>
+<text x="924" y="890" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">action_space/</text>
+<text x="924" y="924" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">ActionSpace · Actor 环境动作</text>
 </g>
 </g>
-<g id="experience-dir">
-<rect x="1640" y="210" width="660" height="910" rx="24" fill="#F2EBFB" stroke="#B89CDC" stroke-width="1.5"/>
-<text x="1680" y="260" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="31" font-weight="700" fill="#7445C0" text-anchor="start">experience/</text>
-<text x="1680" y="303" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="400" fill="#7445C0" text-anchor="start">共享系统反馈 / 改进记录</text>
+<rect x="1640" y="170" width="660" height="860" rx="24" fill="#F2EBFB" stroke="#B89CDC" stroke-width="1.5"/>
+<text x="1680" y="220" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="31" font-weight="700" fill="#7445C0" text-anchor="start">experience/</text>
+<text x="1680" y="267" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">跨轮系统反馈与改进证据</text>
 <g id="experience-records">
-<rect x="1680" y="390" width="580" height="165" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
-<text x="1704" y="430" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#7445C0" text-anchor="start">records.py / provenance.py</text>
-<text x="1704" y="464" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">反馈、改进与来源引用类型</text>
-<text x="1704" y="493" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">scope 标记来源，不指定优化对象</text>
+<rect x="1680" y="310" width="580" height="160" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="1704" y="350" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#7445C0" text-anchor="start">records.py · provenance.py</text>
+<text x="1704" y="384" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">记录类型与来源关联</text>
 </g>
 <g id="experience-retrieval">
-<rect x="1680" y="605" width="580" height="165" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
-<text x="1704" y="645" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#7445C0" text-anchor="start">retrieval.py</text>
-<text x="1704" y="679" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">record / retrieve；默认决策查询全部来源</text>
-<text x="1704" y="708" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">系统 evidence_refs 与原始轨迹引用分离</text>
+<rect x="1680" y="530" width="580" height="160" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="1704" y="570" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#7445C0" text-anchor="start">retrieval.py</text>
+<text x="1704" y="604" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">写入与检索接口</text>
 </g>
 <g id="experience-storage">
-<rect x="1680" y="820" width="580" height="165" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
-<text x="1704" y="860" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#7445C0" text-anchor="start">storage.py / sqlite.py</text>
-<text x="1704" y="894" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内存与 SQLite 存储实现</text>
-<text x="1704" y="923" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">不复制原始 history / Actor 轨迹</text>
+<rect x="1680" y="750" width="580" height="160" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="1704" y="790" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#7445C0" text-anchor="start">storage.py · sqlite.py</text>
+<text x="1704" y="824" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内存 / SQLite 存储</text>
 </g>
-<text x="1680" y="1053" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">原始任务上下文由各 Harness 实现管理。</text>
+<g id="contracts-dir">
+<rect x="100" y="1080" width="2200" height="120" rx="16" fill="#FFF8E8" stroke="#E4C47F" stroke-width="1.8"/>
+<text x="124" y="1120" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#A86B13" text-anchor="start">loops/contracts/  ·  跨 Loop 消息与公开端口</text>
+<text x="124" y="1154" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Directive · Feedback · coordination · requests · jobs · model_service · artifacts · candidate · training</text>
 </g>
-<rect x="100" y="1170" width="2200" height="235" rx="24" fill="#FFF8E8" stroke="#E4C47F" stroke-width="1.5"/>
-<text x="140" y="1217" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="700" fill="#A86B13" text-anchor="start">loops/contracts/  ·  跨 Loop 消息与公开端口</text>
-<text x="140" y="1269" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="700" fill="#A86B13" text-anchor="start">Directive / Feedback / coordination</text>
-<text x="140" y="1308" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">Directive：decision policy 或外部系统 → Exploration Harness</text>
-<text x="140" y="1347" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">requests.py：SFT / RL / Evaluation / PromptSpec(instructions)</text>
-<text x="1280" y="1269" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="700" fill="#A86B13" text-anchor="start">作业、模型与产物引用</text>
-<text x="1280" y="1308" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">jobs.py · model_service.py · artifacts.py</text>
-<text x="1280" y="1347" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">定义共享消息；具体后端由 runtime 或自定义实现提供</text>
 <g id="runtime-dir">
-<rect x="100" y="1455" width="1040" height="325" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
-<text x="124" y="1495" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#14243B" text-anchor="start">runtime/  ·  底层公共服务</text>
-<text x="124" y="1529" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py：模型调用与绑定</text>
-<text x="124" y="1558" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">sandbox.py / local_process.py：执行后端</text>
-<text x="124" y="1587" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">artifacts.py / files.py：产物与文件</text>
-<text x="124" y="1616" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runner.py / jobs.py：端点协调与作业记账</text>
-<text x="124" y="1674" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">各 Harness 的 engine.py 负责业务编排</text>
-<text x="124" y="1703" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">默认训练与评测为 Mock，无真实梯度或推理评分</text>
+<rect x="100" y="1250" width="1050" height="170" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
+<text x="124" y="1290" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">runtime/  ·  共享服务与协调</text>
+<text x="124" y="1324" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py · sandbox.py · local_process.py</text>
+<text x="124" y="1353" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">artifacts.py · files.py · jobs.py · runner.py</text>
 </g>
 <g id="snapshot-dir">
-<rect x="1180" y="1455" width="1120" height="325" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
-<text x="1204" y="1495" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#14243B" text-anchor="start">snapshot/ + application.py  ·  装配与持久化</text>
-<text x="1204" y="1529" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">snapshot/：捕获 / 编解码 / 保存 / 恢复内置实现</text>
-<text x="1204" y="1558" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py：本地装配；config.py：内存演示装配</text>
-<text x="1204" y="1616" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">通过 loop.harness 访问控制状态与模型绑定</text>
-<text x="1204" y="1645" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内置记忆分别持久化；Experience 独立保存</text>
-<text x="1204" y="1674" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">空闲边界捕获，禁止在途作业或待写结果</text>
-<text x="1204" y="1703" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">自定义 Harness 需显式集成，不自动获得快照支持</text>
+<rect x="1190" y="1250" width="1110" height="170" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
+<text x="1214" y="1290" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">snapshot/ + 系统装配</text>
+<text x="1214" y="1324" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">snapshot/：捕获 / 编解码 / 保存 / 恢复</text>
+<text x="1214" y="1353" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · config.py：系统装配</text>
 </g>
-<text x="100" y="1833" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">每个 Loop 只展开 Harness 与 Action Space；内置细节通过 loop.harness 访问，不保留 loop.policy / memory / space 旧别名。</text>
-<text x="100" y="1876" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">组件 README 保留默认实现细节；框架允许整体替换 Harness，包括不含 memory 的实现。</text>
 </svg>

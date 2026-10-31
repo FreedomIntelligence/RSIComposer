@@ -27,6 +27,8 @@ src/rsisys/
 
 `DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。业务编排位于各自 `harness/engine.py`；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
 
+Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
+
 内置细节通过 `loop.harness` 访问；Action Space 通过 `loop.action_space` 访问，不保留 `loop.policy`、`loop.memory`、`loop.space` 等旧属性别名。内部组件和默认行为分别见 [Decision Harness](../src/rsisys/loops/decision_making/harness/README.md) 与 [Exploration Harness](../src/rsisys/loops/exploration/harness/README.md)。
 
 ## 两种 Action Space 与系统指令
@@ -52,6 +54,12 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 ## Experience 与持久化
 
+| 概念 | 职责与范围 |
+|---|---|
+| Feedback | 单条 Directive 的终态回执，由 Runner 交付给决策端 |
+| Experience | 跨轮共享的系统证据，记录执行、训练、评测与策略结果 |
+| memory | Harness 内部的任务上下文，默认包含本地 history 与工作记忆；替代 Harness 不必提供 |
+
 Experience 收集 runtime_feedback / training_run / evaluation / improvement / insight。scope 仅标记来源，不限制可见性，也不指定优化对象。默认 Decision policy 可检索全部来源并选择策略；Actor policy 默认只接收 Harness 提供的任务上下文。improvement / insight 是记录接口，不表示已实现自动系统自修改。
 
 默认 Harness 将原始 test-time history 留在自身实现中。每个 Actor episode 写一条 runtime_feedback，`Feedback.evidence_refs` 引用系统记录；RL 的 `trajectory_refs` 则引用默认 Exploration Harness 的本地轨迹，不把原始轨迹复制进 Experience。
@@ -69,6 +77,12 @@ Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务�
 - 待写结果和回执仅在进程内；待补写期间禁止快照，不提供崩溃恢复。
 
 `completed` 表示终态反馈已交付，任务结果看 Feedback；质量提升需真实评测确认。模型绑定、服务部署与候选验收由对应实现或策略负责。
+
+## 尚待定义的边界
+
+- 优化目标可能是 Actor 模型/prompt、决策者自身，或 Harness 配置/代码；当前没有统一的 target 接口。
+- 决策者训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
+- 候选评测与应用尚未形成统一验收机制：SFT 的 `apply_result` 默认 false，RL 每轮应用学习结果，evaluate 不自动部署候选。
 
 ## 图示
 

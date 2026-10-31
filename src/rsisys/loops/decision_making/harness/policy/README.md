@@ -1,10 +1,10 @@
 # Decision policy
 
-负责选择优化目标与决策，不执行准备操作或 Actor 任务。所属流程见 [默认 Decision Harness](../README.md)。
+位于 [默认 Decision Harness](../README.md) 内部。`DecisionPolicy.decide` 选择操作、系统指令、等待或结束；Harness 组织执行与结果处理，[Decision Action Space](../../action_space/README.md) 定义操作参数和指令模式约束。
 
 ## 接口
 
-[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈和 directive_modes。默认 Harness 的 `experience_limit=32` 限制系统反馈条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数。scope 仅标记反馈来源，policy 独立选择优化对象与策略。
+[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈和 directive_modes。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数。scope 仅标记证据来源，不是优化目标接口。
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项，可附 reason。wait 的任务由外部通过 `loop.harness.resume(job, result)` 回填，见 [Harness](../README.md)。
 
@@ -20,6 +20,6 @@ explore 未提供 input_ids 时使用全部当前准备产物；提供时必须�
 
 自定义策略实现 `decide` 并通过默认 Harness 的 policy 参数注入，不要求使用 JSON。需要应用学习结果时，另实现 [ModelUpdatable](../../../contracts/model_service.py) 的 model 与 update_model。
 
-内置 update_model 只更改当前策略的模型引用，拒绝切换 backend_id。explore 的 sft / rl / evaluate 交给 Exploration Harness，仍需配置对应后端；决策者自身训练见 [learner](../learner/README.md)，指令结构见[共享协议](../../../contracts/README.md)。
+内置 update_model 只更改当前策略的模型引用，拒绝切换 backend_id。explore 的系统指令交给 Exploration Harness；训练/评测仍需配置对应后端。`configure_prompt` 使用 PromptSpec(instructions)，空字符串清空 Actor 指令配置，结构见[共享协议](../../../contracts/README.md)。
 
-Decision Action Space 同时声明 execute / sft / rl / evaluate / configure_prompt 系统指令模式。policy 选择 Directive，默认 Harness 校验并交付；这些不是 ActorPolicy.act 的环境动作。`configure_prompt` 使用 PromptSpec(instructions)，instructions 必须为字符串，空字符串清空配置，具体约定见[共享协议](../../../contracts/README.md)。
+决策者自身训练可通过 Harness 本地调用，见 [learner](../learner/README.md)；当前没有自动自优化指令或触发机制，也没有统一接口覆盖 Actor 模型/prompt、决策者自身及 Harness 配置/代码这些优化目标。

@@ -1,6 +1,6 @@
-# Actor policy
+# Exploration policy（ActorPolicy）
 
-根据观察选择行动，交给 [Action space](../../action_space/README.md) 校验，再由环境执行。流程归属 [默认 Exploration Harness](../README.md)。
+Exploration Policy 即现有 `ActorPolicy`，位于 [默认 Exploration Harness](../README.md) 内部。`act` 根据上下文只选择环境动作；[Action Space](../../action_space/README.md) 定义动作及约束，Harness 组织提案校验、环境执行与结果处理。
 
 ## 接口
 
@@ -13,3 +13,5 @@
 需要应用训练结果时，实现 [ModelUpdatable](../../../contracts/model_service.py) 的 `model: ModelRef` 与 `update_model(model)`。内置 update_model 只修改 Actor 的模型引用，并拒绝直接跨 backend 切换；部署和权重加载由后端解决，默认 Harness 的应用条件见 [learner](../learner/README.md)。
 
 ActorPolicy.act 仅参与 execute episode 和 RL rollout。SFT、prompt 配置和评测由 Harness 直接调度；评测中的模型推理由 evaluator 实现，不经过 Actor 环境动作选择。
+
+候选评测与应用尚未形成统一验收机制：SFT 的 `apply_result` 默认 false，RL 每轮应用学习结果，evaluate 不自动部署候选。

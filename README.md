@@ -1,8 +1,10 @@
 # RSISys
 
-可客制化的双 loop RSI 框架。Decision-making 选择优化目标与改进策略，Exploration 接收系统指令并执行、学习或评测；两者共享 Experience 系统反馈库。
+可客制化的双 loop RSI 框架。Decision-making 选择准备操作与系统指令，Exploration 接收指令并执行、学习或评测；两者共享 Experience 系统证据库。
 
 每个 loop 由可整体替换的 **Harness** 和独立的 **Action Space** 组成，`loop.py` 只保留薄端点与有界推进。默认 Harness 封装策略、上下文、记忆、工具及对应的学习/评测流程；替代实现可以不含 memory。目录与消息边界见[架构](docs/ARCHITECTURE.md)。
+
+**Policy 位于默认 Harness 内部**：`DecisionPolicy.decide` 选择操作、系统指令、等待或结束；Exploration Policy 即 `ActorPolicy.act`，只选择环境动作。Harness 组织执行，Action Space 定义可用操作/动作及约束。
 
 ## 快速开始
 
@@ -34,4 +36,4 @@ pixi run test
 
 ## 文档维护
 
-高层文档只展开 Harness 与 Action Space；默认 Harness 的内部组件在各自 README 中说明。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。
+架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy）；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。
