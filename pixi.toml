@@ -1,0 +1,15 @@
+[workspace]
+channels = ["conda-forge"]
+name = "RSISys"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+coordination-demo = { cmd = "python examples/coordination.py", env = { PYTHONPATH = "src" } }
+local-demo = { cmd = "python -m rsisys run --config configs/local.json", env = { PYTHONPATH = "src" } }
+loop-demo = { cmd = "python examples/loop_internals.py", env = { PYTHONPATH = "src" } }
+demo = { cmd = "python -m rsisys demo --config configs/demo.json", env = { PYTHONPATH = "src" } }
+test = { cmd = "python -m unittest discover -s tests -v", env = { PYTHONPATH = "src" } }
+
+[dependencies]
+python = "3.12.*"

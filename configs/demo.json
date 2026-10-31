@@ -1,0 +1,22 @@
+{
+  "mode": "demo",
+  "objective": "Verify preparation, artifact handoff, and actor feedback",
+  "rounds": 2,
+  "backends": {
+    "demo": {
+      "kind": "mock"
+    }
+  },
+  "roles": {
+    "decision_maker": {
+      "backend_id": "demo",
+      "model_id": "shared-demo-model",
+      "revision": "mock-v1"
+    },
+    "actor": {
+      "backend_id": "demo",
+      "model_id": "shared-demo-model",
+      "revision": "mock-v1"
+    }
+  }
+}

@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1630" viewBox="0 0 2000 1630" role="img" aria-labelledby="title desc">
+<title id="title">RSISys 文件架构图</title>
+<desc id="desc">按两个 loop 组织框架流程与可替换实现，Experience、Snapshot、Runtime 独立。</desc>
+<defs>
+<marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
+<marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
+<marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#178164"/></marker>
+<marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
+<marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
+</defs>
+<rect width="2000" height="1630" fill="#F6F8FC"/>
+<text x="64" y="75" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="42" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 文件架构</text>
+<text x="64" y="115" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="400" fill="#52637B" text-anchor="start">框架流程与具体实现各有归属 · 共享能力独立维护</text>
+<rect x="1510" y="48" width="190" height="34" rx="17" fill="#E3F3EC" stroke="none" stroke-width="0"/>
+<text x="1605.0" y="72" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#178164" text-anchor="middle">模块归属</text>
+<rect x="1720" y="48" width="216" height="34" rx="17" fill="#FFF5DD" stroke="none" stroke-width="0"/>
+<text x="1828.0" y="72" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#A86B13" text-anchor="middle">实现见 README</text>
+<rect x="64" y="155" width="1872" height="80" rx="18" fill="#FFFFFF" stroke="#D5DEEA" stroke-width="1.5"/>
+<text x="94" y="190" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="30" font-weight="700" fill="#2365CB" text-anchor="start">src/rsisys/</text>
+<text x="440" y="190" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">lion:/home/jovyan/projects/RSISys</text>
+<text x="94" y="220" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#52637B" text-anchor="start">Policy、Space、Learner 属于各自 Loop；只将真正共享的契约和系统能力提取出来。</text>
+<rect x="64" y="270" width="1180" height="810" rx="24" fill="#EFF4FC" stroke="#B9CBE6" stroke-width="1.5"/>
+<text x="100" y="312" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="29" font-weight="700" fill="#2365CB" text-anchor="start">loops/</text>
+<g id="decision-dir">
+<rect x="100" y="345" width="530" height="450" rx="18" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.5"/>
+<text x="124" y="385" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#2365CB" text-anchor="start">decision_making/</text>
+<text x="124" y="426" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">loop.py / state.py</text>
+<text x="124" y="459" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">decision.py       结构化决策</text>
+<text x="124" y="492" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">policy/           决策策略</text>
+<text x="124" y="525" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">decision_space/</text>
+<text x="124" y="558" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">  local.py        本地操作</text>
+<text x="124" y="591" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">  literature.py / data.py</text>
+<text x="124" y="624" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">  strategy.py     操作协议</text>
+<text x="124" y="657" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">learner/</text>
+<text x="124" y="690" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">  backends/       训练后端</text>
+<text x="124" y="723" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">准备 → 指令 → 接收反馈</text>
+</g>
+<g id="exploration-dir">
+<rect x="665" y="345" width="543" height="450" rx="18" fill="#EFF8F3" stroke="#178164" stroke-width="1.5"/>
+<text x="689" y="385" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#178164" text-anchor="start">exploration/</text>
+<text x="689" y="426" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">loop.py / state.py</text>
+<text x="689" y="459" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">policy/           Actor 策略</text>
+<text x="689" y="492" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">action_space/     环境行动</text>
+<text x="689" y="525" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">environment/      环境接入</text>
+<text x="689" y="558" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">learner/</text>
+<text x="689" y="591" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">  backends/       训练后端</text>
+<text x="689" y="624" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">evaluation/       评测实现</text>
+<text x="689" y="657" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start"></text>
+<text x="689" y="690" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">commands.py / rl.py</text>
+</g>
+<g id="contracts-dir">
+<rect x="100" y="835" width="1108" height="205" rx="18" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.5"/>
+<text x="124" y="875" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#A86B13" text-anchor="start">contracts/</text>
+<text x="124" y="916" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">directive.py / feedback.py / coordination.py</text>
+<text x="124" y="949" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model_service.py  仅类型与接口，后端实现位于 Runtime</text>
+<text x="124" y="982" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">requests.py / training.py / 引用与状态类型</text>
+<text x="124" y="1015" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">共享纯类型与公开端口；实现通过构造函数注入</text>
+</g>
+<g id="experience-dir">
+<rect x="1290" y="270" width="646" height="280" rx="18" fill="#F2EBFB" stroke="#7445C0" stroke-width="1.5"/>
+<text x="1314" y="310" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#7445C0" text-anchor="start">experience/</text>
+<text x="1314" y="351" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">records.py       四类原始经验</text>
+<text x="1314" y="384" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory.py        显式记忆</text>
+<text x="1314" y="417" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">provenance.py    来源关系类型</text>
+<text x="1314" y="450" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">retrieval.py     角色视图接口</text>
+<text x="1314" y="483" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">storage.py / sqlite.py</text>
+<text x="1314" y="516" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">记录、检索与存储实现分开</text>
+</g>
+<g id="snapshot-dir">
+<rect x="1290" y="585" width="646" height="245" rx="18" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.5"/>
+<text x="1314" y="625" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#A86B13" text-anchor="start">snapshot/</text>
+<text x="1314" y="666" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">manifest.py      系统状态清单</text>
+<text x="1314" y="699" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">capture.py / restore.py</text>
+<text x="1314" y="732" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">storage.py       存储接口</text>
+<text x="1314" y="765" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">local.py / codec.py</text>
+<text x="1314" y="798" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内置组件的空闲边界恢复</text>
+</g>
+<g id="runtime-dir">
+<rect x="1290" y="850" width="646" height="230" rx="18" fill="#EAF0F6" stroke="#14243B" stroke-width="1.5"/>
+<text x="1314" y="890" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#14243B" text-anchor="start">runtime/</text>
+<text x="1314" y="931" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runner.py / jobs.py</text>
+<text x="1314" y="964" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py         模型调用</text>
+<text x="1314" y="997" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">sandbox.py / local_process.py</text>
+<text x="1314" y="1030" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">artifacts.py     内存 / 文件</text>
+<text x="1314" y="1063" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">流程和策略仍由 Loop 负责</text>
+</g>
+<rect x="64" y="1120" width="1872" height="395" rx="24" fill="#FFFFFF" stroke="#D5DEEA" stroke-width="1.5"/>
+<text x="100" y="1163" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="27" font-weight="700" fill="#14243B" text-anchor="start">装配、环境与工程文件</text>
+<g id="assembly">
+<rect x="100" y="1190" width="545" height="280" rx="18" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.5"/>
+<text x="124" y="1230" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#2365CB" text-anchor="start">装配与入口</text>
+<text x="124" y="1271" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py / config.py</text>
+<text x="124" y="1304" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">cli.py           命令逻辑</text>
+<text x="124" y="1337" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">__main__.py      薄入口</text>
+<text x="124" y="1370" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">configs/         运行配置</text>
+<text x="124" y="1403" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">依赖通过构造函数传入</text>
+<text x="124" y="1436" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">模型引用支持共享或独立</text>
+</g>
+<g id="engineering">
+<rect x="685" y="1190" width="565" height="280" rx="18" fill="#FFFFFF" stroke="#178164" stroke-width="1.5"/>
+<text x="709" y="1230" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#178164" text-anchor="start">环境与验证</text>
+<text x="709" y="1271" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">pyproject.toml</text>
+<text x="709" y="1304" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">pixi.toml / pixi.lock</text>
+<text x="709" y="1337" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">tests/           行为验证</text>
+<text x="709" y="1370" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start"></text>
+<text x="709" y="1403" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">pixi run demo</text>
+<text x="709" y="1436" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">pixi run test</text>
+</g>
+<g id="docs">
+<rect x="1290" y="1190" width="606" height="280" rx="18" fill="#FFFFFF" stroke="#52637B" stroke-width="1.5"/>
+<text x="1314" y="1230" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="25" font-weight="700" fill="#52637B" text-anchor="start">文档与图示</text>
+<text x="1314" y="1271" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">README.md</text>
+<text x="1314" y="1304" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">docs/ARCHITECTURE.md</text>
+<text x="1314" y="1337" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">docs/GUIDE.md</text>
+<text x="1314" y="1370" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">docs/diagrams/*.svg</text>
+<text x="1314" y="1403" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">docs/diagrams/build_diagrams.py</text>
+<text x="1314" y="1436" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">src/ 各组件维护 README.md</text>
+</g>
+<text x="64" y="1560" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Policy 决定模型请求；Space 定义操作；Environment 执行行动；Runtime 提供公共后端与生命周期协调。</text>
+<text x="64" y="1601" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">图示说明文件归属；组件职责、接口与实现范围在对应目录 README 中维护。</text>
+</svg>

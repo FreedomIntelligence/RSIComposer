@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1580" viewBox="0 0 2000 1580" role="img" aria-labelledby="title desc">
+<title id="title">RSISys 系统流程图</title>
+<desc id="desc">两个 loop 拥有各自流程与可替换实现，共享 Experience；Runtime 协调，Snapshot 独立。</desc>
+<defs>
+<marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
+<marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
+<marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#178164"/></marker>
+<marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
+<marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
+</defs>
+<rect width="2000" height="1580" fill="#F6F8FC"/>
+<text x="64" y="75" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="42" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 系统流程</text>
+<text x="64" y="116" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">两个 Loop 定义执行流程 · 模型、沙箱与产物后端通过依赖注入接入</text>
+<rect x="1530" y="48" width="180" height="34" rx="17" fill="#E3F3EC" stroke="none" stroke-width="0"/>
+<text x="1620.0" y="72" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#178164" text-anchor="middle">流程与职责</text>
+<rect x="1730" y="48" width="206" height="34" rx="17" fill="#FFF5DD" stroke="none" stroke-width="0"/>
+<text x="1833.0" y="72" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#A86B13" text-anchor="middle">实现见 README</text>
+<rect x="64" y="155" width="1872" height="92" rx="18" fill="#FFFFFF" stroke="#D5DEEA" stroke-width="1.5"/>
+<text x="94" y="192" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="700" fill="#2365CB" text-anchor="start">ModelBackend / 模型调用接口</text>
+<text x="94" y="225" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#52637B" text-anchor="start">backend_id + model_id + revision；角色可共享或独立绑定，具体调用方式由后端实现。</text>
+<rect x="64" y="290" width="776" height="740" rx="24" fill="#EFF5FF" stroke="#BCD1F2" stroke-width="1.5"/>
+<rect x="1160" y="290" width="776" height="740" rx="24" fill="#EFF8F3" stroke="#B9DDCF" stroke-width="1.5"/>
+<text x="100" y="338" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="30" font-weight="700" fill="#2365CB" text-anchor="start">01  Decision-making Loop</text>
+<text x="1200" y="338" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="30" font-weight="700" fill="#178164" text-anchor="start">02  Exploration Loop</text>
+<path d="M 760 247 V 385" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<path d="M 1180 247 V 590 H 1200" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<g id="decision-policy">
+<rect x="104" y="385" width="692" height="100" rx="16" fill="#FFFFFF" stroke="#9FBEEB" stroke-width="1.8"/>
+<text x="128" y="425" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#2365CB" text-anchor="start">Decision Policy</text>
+<text x="128" y="459" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">结构化 Decision：invoke / explore / wait / finish</text>
+</g>
+<g id="command-lifecycle">
+<rect x="1200" y="385" width="692" height="100" rx="16" fill="#FFFFFF" stroke="#9ACBB6" stroke-width="1.8"/>
+<text x="1224" y="425" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#178164" text-anchor="start">指令生命周期</text>
+<text x="1224" y="459" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">accept / advance / inspect / cancel / acknowledge</text>
+</g>
+<g id="decision-space">
+<rect x="104" y="540" width="692" height="115" rx="16" fill="#F2EBFB" stroke="#B89CDC" stroke-width="1.8"/>
+<text x="128" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#7445C0" text-anchor="start">Decision Space</text>
+<text x="128" y="614" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">describe / execute：独立执行决策操作</text>
+<text x="128" y="643" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">文献 / 数据 / 策略操作 → 结果与 ArtifactRef</text>
+</g>
+<path d="M 450 485 V 540" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<rect x="410.42" y="504" width="79.16" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="450" y="520" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#2365CB" text-anchor="middle">invoke</text>
+<g id="directive">
+<rect x="880" y="540" width="240" height="110" rx="16" fill="#FFF5DD" stroke="#E4C47F" stroke-width="1.8"/>
+<text x="904" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#A86B13" text-anchor="start">Directive</text>
+<text x="904" y="614" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">目标 / 输入 / 策略</text>
+<text x="904" y="643" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">执行 / 学习 / 评测</text>
+</g>
+<path d="M 796 435 H 855 V 592 H 880" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<rect x="880.49" y="419" width="89.02" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="925" y="435" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#2365CB" text-anchor="middle">explore</text>
+<path d="M 796 592 H 818 V 465 H 796" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<path d="M 1120 592 H 1140 V 435 H 1200" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<g id="action-space">
+<rect x="1200" y="540" width="310" height="115" rx="16" fill="#F2EBFB" stroke="#B89CDC" stroke-width="1.8"/>
+<text x="1224" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#7445C0" text-anchor="start">Policy + Space</text>
+<text x="1224" y="614" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Actor 选择行动</text>
+<text x="1224" y="643" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Action Space 校验</text>
+</g>
+<g id="environment">
+<rect x="1582" y="540" width="310" height="115" rx="16" fill="#FFFFFF" stroke="#9ACBB6" stroke-width="1.8"/>
+<text x="1606" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#178164" text-anchor="start">Environment</text>
+<text x="1606" y="614" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">reset / step / close</text>
+<text x="1606" y="643" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">执行行动并返回结果</text>
+</g>
+<path d="M 1355 485 V 540" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<path d="M 1510 594 H 1582" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<rect x="1519.0" y="564" width="54" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="1546" y="580" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#178164" text-anchor="middle">行动</text>
+<g id="feedback">
+<rect x="880" y="720" width="240" height="110" rx="16" fill="#FFF5DD" stroke="#E4C47F" stroke-width="1.8"/>
+<text x="904" y="760" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#A86B13" text-anchor="start">Feedback</text>
+<text x="904" y="794" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">结果 / 经验引用</text>
+<text x="904" y="823" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">模拟标记 / 指标</text>
+</g>
+<path d="M 1737 655 V 775 H 1120" fill="none" stroke="#A86B13" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-amber)"/>
+<rect x="1385.0" y="744" width="190" height="28" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="1480" y="761" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#A86B13" text-anchor="middle">汇总结果与证据</text>
+<g id="observe">
+<rect x="104" y="720" width="692" height="110" rx="16" fill="#FFFFFF" stroke="#9FBEEB" stroke-width="1.8"/>
+<text x="128" y="760" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#2365CB" text-anchor="start">Observe / 接收反馈</text>
+<text x="128" y="794" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">关联当前指令，记录 Decision Episode</text>
+<text x="128" y="823" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">反馈进入下一轮决策上下文</text>
+</g>
+<path d="M 880 775 H 796" fill="none" stroke="#A86B13" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-amber)"/>
+<path d="M 104 775 H 84 V 435 H 104" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<rect x="104" y="880" width="692" height="100" rx="18" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.5"/>
+<text x="124" y="919" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#2365CB" text-anchor="start">Decision Learner</text>
+<text x="124" y="953" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">提交 / 查询 / 取消 / 模型绑定</text>
+<rect x="1200" y="880" width="310" height="100" rx="18" fill="#FFFFFF" stroke="#178164" stroke-width="1.5"/>
+<text x="1220" y="919" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#178164" text-anchor="start">Actor Learner</text>
+<text x="1220" y="953" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">SFT / RL 作业控制</text>
+<rect x="1582" y="880" width="310" height="100" rx="18" fill="#FFFFFF" stroke="#178164" stroke-width="1.5"/>
+<text x="1602" y="919" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#178164" text-anchor="start">Evaluation</text>
+<text x="1602" y="953" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">候选与评测协议</text>
+<path d="M 1855 485 H 1915 V 850 H 1355 V 880" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<path d="M 1737 850 V 880" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<rect x="1455.0" y="834" width="190" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="1550" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#178164" text-anchor="middle">学习 / 评测指令</text>
+<path d="M 1355 980 V 995 H 1145 V 800 H 1120" fill="none" stroke="#A86B13" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-amber)"/>
+<path d="M 1737 980 V 995 H 1355" fill="none" stroke="#A86B13" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="1200" y="1020" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">RL 在一条指令内部推进多次采样与版本更新</text>
+<text x="104" y="1010" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#52637B" text-anchor="start">各自拥有 Policy / Space / Learner</text>
+<rect x="64" y="1080" width="1872" height="230" rx="24" fill="#F2EBFB" stroke="#B89CDC" stroke-width="1.5"/>
+<text x="100" y="1121" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="700" fill="#7445C0" text-anchor="start">Experience System / 两个 Loop 共用</text>
+<path d="M 450 1030 V 1080" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+<path d="M 1546 1030 V 1080" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+<g id="experience-100">
+<rect x="100" y="1145" width="570" height="110" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="124" y="1185" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="650" fill="#7445C0" text-anchor="start">Records / 经验记录</text>
+<text x="124" y="1219" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Trajectory · Decision Episode</text>
+<text x="124" y="1248" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Training Run · Evaluation Record</text>
+</g>
+<g id="experience-710">
+<rect x="710" y="1145" width="570" height="110" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="734" y="1185" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="650" fill="#7445C0" text-anchor="start">Evidence &amp; Provenance</text>
+<text x="734" y="1219" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">证据 / 产物引用 / 版本</text>
+<text x="734" y="1248" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">来源与关联关系</text>
+</g>
+<g id="experience-1320">
+<rect x="1320" y="1145" width="576" height="110" rx="16" fill="#FFFFFF" stroke="#D7C5EC" stroke-width="1.8"/>
+<text x="1344" y="1185" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="650" fill="#7445C0" text-anchor="start">Memory / 可复用记忆</text>
+<text x="1344" y="1219" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Episodic · Semantic · Procedural</text>
+<text x="1344" y="1248" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">适用条件 / 来源 / 验证状态</text>
+</g>
+<text x="100" y="1290" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">记录、来源引用与显式 Memory 共用；存储和检索实现可替换。</text>
+<rect x="391.21" y="1048" width="117.58" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="450" y="1064" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#7445C0" text-anchor="middle">记录 / 查询</text>
+<rect x="1487.21" y="1048" width="117.58" height="27" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="1546" y="1064" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="17" font-weight="400" fill="#7445C0" text-anchor="middle">记录 / 查询</text>
+<g id="runtime">
+<rect x="64" y="1350" width="906" height="145" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
+<text x="88" y="1390" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#14243B" text-anchor="start">Runtime / 运行协调与公共后端</text>
+<text x="88" y="1424" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Runner / Jobs + Model / Sandbox / ArtifactStore</text>
+<text x="88" y="1453" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">公开端口协调、作业记账与公共后端；策略由 Loop 决定</text>
+</g>
+<g id="snapshot">
+<rect x="1010" y="1350" width="926" height="145" rx="16" fill="#EAF0F6" stroke="#CBD6E3" stroke-width="1.8"/>
+<text x="1034" y="1390" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#14243B" text-anchor="start">Snapshot / 系统快照</text>
+<text x="1034" y="1424" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">独立组织组件状态、模型绑定、经验与产物</text>
+<text x="1034" y="1453" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">保存内容依具体实现；内置实现支持空闲边界恢复</text>
+</g>
+<text x="64" y="1534" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">箭头表示流程或依赖关系；policy、space、learner 等实现可替换，生命周期由所属 Loop 管理。</text>
+<text x="64" y="1565" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#52637B" text-anchor="start">图示展示结构；实现与限制见组件 README，跨组件协同见 ARCHITECTURE.md。</text>
+</svg>

@@ -1,0 +1,13 @@
+{
+  "mode": "local",
+  "objective": "Execute an echo task and persist its evidence",
+  "data_dir": "../runs/local",
+  "execution": "local_process",
+  "learning": "none",
+  "rounds": 1,
+  "backends": {"demo": {"kind": "mock"}},
+  "roles": {
+    "decision_maker": {"backend_id": "demo", "model_id": "demo-model", "revision": "mock-v1"},
+    "actor": {"backend_id": "demo", "model_id": "demo-model", "revision": "mock-v1"}
+  }
+}

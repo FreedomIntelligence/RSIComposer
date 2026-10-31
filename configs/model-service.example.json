@@ -1,0 +1,20 @@
+{
+  "mode": "local",
+  "objective": "Prepare a small text dataset and inspect it using a local command",
+  "data_dir": "../runs/model-service",
+  "execution": "local_process",
+  "learning": "none",
+  "rounds": 1,
+  "backends": {
+    "inference": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:8000/v1",
+      "timeout_seconds": 60,
+      "json_mode": true
+    }
+  },
+  "roles": {
+    "decision_maker": {"backend_id": "inference", "model_id": "YOUR_SERVED_MODEL", "revision": "deployment-label"},
+    "actor": {"backend_id": "inference", "model_id": "YOUR_SERVED_MODEL", "revision": "deployment-label"}
+  }
+}
