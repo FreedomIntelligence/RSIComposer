@@ -144,7 +144,7 @@ class Runner:
             raise ValueError('Exploration feedback belongs to another directive')
 
     def step(self, objective: str) -> RunnerStep:
-        """At most one decision and one exploration phase/poll; never sleeps."""
+        """One decision/review flow and exploration phase/poll; reviews may query tools."""
         self._recover()
         self._update_execution()
         decision_steps = 0

@@ -8,7 +8,17 @@
 
 [LocalDecisionTools](local.py) 接收 FileArtifactStore：prepare_data 保存 text 为 input_data；search_literature 对已显式导入、kind=literature 的 UTF-8 文本作不区分大小写的子串检索，最多 20 条，保存 literature_results；store_strategy 保存 strategy。三者均为同步本地操作，simulated=False，不包含联网检索或 PDF 解析。
 
-`DemoDecisionTools(sandbox, artifacts)` 只支持 prepare_data：在 sandbox 中执行 echo 并轮询一次，成功后保存 demo_input，simulated 取自后端；失败抛异常，最终释放 sandbox。
+`DemoDecisionTools(sandbox, artifacts)` 内置 prepare_data：在 sandbox 中执行 echo 并轮询一次，成功后保存 demo_input，simulated 取自后端；失败抛异常，最终释放 sandbox。Demo/Local tools 均接受可选 `extra_bindings`，不能覆盖内置操作。
+
+## 只读查询
+
+[QueryTools](queries.py) 只通过显式 `QueryProvider.describe_queries()` / `query(request)` 访问提供者，不反射其内部状态。`QueryTools(provider, artifacts=None)` 暴露 `specs`、`definitions` 和 `bindings`；装配把 definitions 加入 Action Space、bindings 加入原 tools，保留 `tools.query_tools` 供绑定校验。没有查询能力的外部 Harness 不广告查询。
+
+默认提供 `query_exploration_status/metrics/tasks/logs/candidates/model/artifacts/experience`。参数为 `filters`、`limit`（1–100，默认20）和 `cursor`（上一页返回的 offset，最高10000）；未知字段或能力会拒绝。全部定义 `read_only=True`，不提交、poll、取消作业或应用模型。任务列表是进程内回执；logs 只提供已有本地 history 摘要，不能访问远端后端日志时明确说明。Experience 返回有限摘要和证据引用，不展开任意原始配置。
+
+OperationResult.data 包含完整 QueryResult：`name/source/observed_at/version/data/refs/next_cursor/simulated`。`observed_at` 是查询读取时间；`data.items[].job_progress.observed_at` 才是后端样本时间，未知时为 None。exploration 的 version 是返回页内容摘要，不是全系统版本。分页查询实时视图，不保证跨页快照一致；数据窗口和来源未知不能推断为完整历史。返回 JSON 最大128 KiB，refs 最多100个。
+
+传入 artifacts 后额外提供 `query_exploration_artifact_read`，filters 必须携带已知引用的 artifact_id/kind/uri，以及存在的 version/digest。只由注册 store 验证和读取，不打开任意远程 URI。文本按1000字符分块，每页最多16块；二进制或超过1 MiB的产物只返回引用和不可用原因。FileArtifactStore 使用公开 resolve 验证（摘要扫描为流式）和有界读取；通用 get-only store 的 get 可能全量载入，输入内存边界由 store 负责，适配器只限制返回内容。artifact_read 的 version 是内容摘要。
 
 ## 扩展与回填
 

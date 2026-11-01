@@ -2,6 +2,7 @@
 from .action_space import ActionSpace
 from .harness import ExplorationHarness
 from rsisys.loops.contracts.coordination import ExecutionView
+from rsisys.loops.contracts.queries import QueryProvider
 
 
 class ExplorationLoop:
@@ -30,3 +31,11 @@ class ExplorationLoop:
     def execution_view(self):
         view = getattr(self.harness, 'execution_view', None)
         return view() if view is not None else ExecutionView(progress=self.pending())
+
+    def describe_queries(self):
+        return self.harness.describe_queries() if isinstance(self.harness, QueryProvider) else ()
+
+    def query(self, request):
+        if not isinstance(self.harness, QueryProvider):
+            raise NotImplementedError('This exploration harness does not support queries')
+        return self.harness.query(request)

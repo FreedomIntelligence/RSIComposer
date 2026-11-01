@@ -76,6 +76,19 @@ class _PendingReviewRecord:
 
 
 @dataclass
+class _ReviewSession:
+    objective: str
+    directive_id: str
+    context: DecisionContext
+    tool_limit: int
+    queries_used: int = 0
+    query_refs: list[str] = field(default_factory=list)
+    simulated: bool = False
+    pending_entry: HistoryEntry | None = None
+    pending_result: OperationResult | None = None
+
+
+@dataclass
 class DecisionState:
     issued: int = 0
     completed: int = 0
@@ -102,3 +115,4 @@ class DecisionState:
     directive_provenance: dict[str, DirectiveProvenance] = field(default_factory=dict)
     candidate_evaluations: dict[str, CandidateEvaluation] = field(default_factory=dict)
     pending_review_record: _PendingReviewRecord | None = None
+    review_session: _ReviewSession | None = None

@@ -9,7 +9,7 @@ from .lifecycle import ExecutionStatus
 
 from .directive import Directive
 from .feedback import Feedback
-from .jobs import JobRef
+from .jobs import JobRef, JobProgress
 from .model_service import ModelRef, TokenUsage
 
 
@@ -20,8 +20,11 @@ class OperationResult:
     simulated: bool
     status: ExecutionStatus = ExecutionStatus.COMPLETED
     error: str | None = None
+    data: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self):
+        if not isinstance(self.data, dict):
+            raise TypeError('Operation result data must be a dict')
         if self.status not in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
             raise ValueError("An operation result must be terminal")
         if self.status == ExecutionStatus.FAILED and not self.error:
@@ -54,6 +57,7 @@ class ExplorationProgress:
     feedback: Feedback | None = None
     metrics: dict[str, float] = field(default_factory=dict)
     elapsed_seconds: float | None = None
+    job_progress: JobProgress | None = None
 
     def __post_init__(self):
         if self.directive_id != self.directive.directive_id:

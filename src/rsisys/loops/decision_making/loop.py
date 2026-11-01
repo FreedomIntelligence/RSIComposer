@@ -24,6 +24,9 @@ class DecisionMakingLoop:
             update(view)
 
     def review(self, objective, progress):
+        with_tools = getattr(self.harness, 'review_with_tools', None)
+        if callable(with_tools):
+            return with_tools(objective, progress, self.action_space)
         review = getattr(self.harness, 'review', None)
         return review(objective, progress) if review is not None else ReviewDecision()
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
+from rsisys.loops.contracts.queries import QueryProvider
 from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace, LocalDecisionActionSpace
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
@@ -15,6 +16,7 @@ from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import DemoDecisionTools
 from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
+from rsisys.loops.decision_making.harness.tools.queries import QueryTools
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
 from rsisys.loops.exploration.action_space import EchoActionSpace
 from rsisys.loops.exploration.action_space.local import CommandActionSpace
@@ -131,12 +133,17 @@ def _decision_directives(context: AssemblyContext, exploration: ExplorationLoop)
 
 def build_default_decision(context: AssemblyContext, exploration: ExplorationLoop) -> DecisionMakingLoop:
     directives, modes = _decision_directives(context, exploration)
+    query_tools = (QueryTools(exploration, artifacts=context.artifacts)
+                   if isinstance(exploration, QueryProvider) and exploration.describe_queries() else None)
+    definitions = query_tools.definitions if query_tools is not None else ()
+    bindings = query_tools.bindings if query_tools is not None else {}
     if context.data_dir is None:
-        tools = DemoDecisionTools(context.sandbox, context.artifacts)
-        space = DemoDecisionActionSpace(directive_modes=modes, directives=directives)
+        tools = DemoDecisionTools(context.sandbox, context.artifacts, extra_bindings=bindings)
+        space = DemoDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions)
     else:
-        tools = LocalDecisionTools(context.artifacts)
-        space = LocalDecisionActionSpace(directive_modes=modes, directives=directives)
+        tools = LocalDecisionTools(context.artifacts, extra_bindings=bindings)
+        space = LocalDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions)
+    tools.query_tools = query_tools
     model = context.roles["decision_maker"]
     memory_path = context.data_dir / "decision_memory.json" if context.data_dir is not None else None
     return DecisionMakingLoop(

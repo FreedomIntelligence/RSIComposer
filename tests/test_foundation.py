@@ -208,6 +208,26 @@ class FoundationTests(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, 'bindings'):
                 LocalSnapshotCapture(app).capture('unsupported')
 
+    def test_snapshot_restores_query_result_and_rebinds_provider(self):
+        from rsisys.loops.decision_making.action_space import OperationCall
+        from rsisys.loops.decision_making.harness.decision import Decision
+        with Application(self.config()) as app:
+            dm = app.runner.decision_making.harness
+            call = OperationCall('query_exploration_model', {})
+            with patch.object(dm.policy, 'decide', return_value=Decision('invoke', operation=call)):
+                app.runner.step(app.config.objective)
+            observed = dm.state.operation_results[-1].data
+            manifest = LocalSnapshotCapture(app).capture('query-result')
+            directory = app.config.data_dir / 'snapshots' / manifest.snapshot_id
+            dm.tools._bindings[call.name] = lambda args: None
+            with self.assertRaisesRegex(TypeError, 'bindings'):
+                LocalSnapshotCapture(app).capture('custom-query')
+        with restore_snapshot(directory, self.root / 'query-restored') as restored:
+            dm = restored.runner.decision_making.harness
+            self.assertEqual(dm.state.operation_results[-1].data, observed)
+            self.assertIs(dm.tools.query_tools.provider, restored.runner.exploration)
+            self.assertEqual(dm.tools.execute(call).data['data']['items'], observed['data']['items'])
+
     def test_local_paths_reject_traversal_and_symlink_escape(self):
         backend = LocalProcessBackend(self.root/'work')
         session = backend.create(SandboxSpec('local'))
@@ -298,6 +318,7 @@ class FoundationTests(unittest.TestCase):
 
     def test_snapshot_restore_forks_exact_experience_and_memory(self):
         with Application(self.config(execution='local_process')) as app:
+            app.runner.decision_making.harness.review_tool_limit = 2
             app.run()
             evidence = app.store.records()[0].record_id
             app.runner.exploration.harness.memory.remember(Memory('m', 'semantic', 'Persist evidence', (evidence,), 'task'))
@@ -309,6 +330,7 @@ class FoundationTests(unittest.TestCase):
             app.run()
             self.assertGreater(len(app.store.records()), saved_count)
         with restore_snapshot(directory, self.root/'restored') as restored:
+            self.assertEqual(restored.runner.decision_making.harness.review_tool_limit, 2)
             self.assertEqual(len(restored.store.records()), saved_count)
             self.assertEqual(restored.runner.exploration.harness.memory.recall()[0].content, 'Persist evidence')
             self.assertEqual(restored.runner.decision_making.harness.memory.recall()[0].content, 'Compare training efficiency')

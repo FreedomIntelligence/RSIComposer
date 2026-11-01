@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+import math
 from typing import Generic, TypeVar
 
 
@@ -23,14 +24,53 @@ TERMINAL_STATUSES = frozenset({JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.
 
 
 @dataclass(frozen=True)
+class JobProgress:
+    """Latest backend observation, not an estimate of the enclosing workflow.
+
+    Missing values are unknown. Metrics are the latest reported numeric values,
+    not necessarily logged at ``step``. ``observed_at`` is the backend's sample
+    time in Unix seconds, never a controller poll timestamp.
+    """
+
+    step: int | None = None
+    total_steps: int | None = None
+    metrics: dict[str, float] = field(default_factory=dict)
+    elapsed_seconds: float | None = None
+    observed_at: float | None = None
+
+    def __post_init__(self):
+        for name, minimum in (('step', 0), ('total_steps', 1)):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value < minimum):
+                raise ValueError(f'{name} must be an integer >= {minimum} or None')
+        if self.step is not None and self.total_steps is not None and self.step > self.total_steps:
+            raise ValueError('step cannot exceed total_steps')
+        for name in ('elapsed_seconds', 'observed_at'):
+            value = getattr(self, name)
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+                raise ValueError(f'{name} must be finite and nonnegative or None')
+        if not isinstance(self.metrics, dict) or any(
+                not isinstance(key, str) or not key.strip()
+                or type(value) not in (int, float) or not math.isfinite(value)
+                for key, value in self.metrics.items()):
+            raise ValueError('Progress metrics must have nonempty names and finite numeric values')
+        object.__setattr__(self, 'metrics', dict(self.metrics))
+
+
+@dataclass(frozen=True)
 class JobOutcome(Generic[T]):
     job: JobRef
     status: JobStatus
     result: T | None = None
     error: str | None = None
     simulated: bool = False
+    progress: JobProgress | None = None
 
     def __post_init__(self):
+        if self.progress is not None:
+            if not isinstance(self.progress, JobProgress):
+                raise TypeError('progress must be JobProgress or None')
+            self.progress.__post_init__()
         if not isinstance(self.status, JobStatus):
             raise TypeError("status must be a JobStatus")
         if (self.status == JobStatus.SUCCEEDED) != (self.result is not None):

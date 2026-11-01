@@ -30,7 +30,9 @@ explore 未提供 input_ids 时使用全部当前准备产物；提供时必须�
 
 指令的 simulated 标记合并模型响应与实际选中输入的来源标记；未选中的模拟准备产物不会污染真实输入，模拟反馈中的已选产物也不会丢失标记。
 
-explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`ModelDecisionPolicy.review(context)` 使用独立请求读取当前执行视图，解析 `{"action":"continue","next_review_seconds":30,"reason":"..."}`；仅允许 continue / cancel，None 停止自动复查。自定义 policy 可选择实现 review，也可只保留 decide。调用时机、反馈归因和写入重试由 [Harness](../README.md) / [Runner](../../../../runtime/README.md) 管理。
+explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`ModelDecisionPolicy.review(context)` 使用独立请求读取当前执行视图，可返回 `{"kind":"invoke","operation":name,"arguments":{...}}` 调用 context.operations 中的只读查询。Harness 将结果追加到 operation_results，其中 data 是结构化内容、artifacts 是引用，然后再次调用 policy。工具为空时必须直接判断，不允许编造工具或下发新指令。
+
+最终判断为 `{"action":"continue","next_review_seconds":30,"reason":"..."}`；仅允许 continue / cancel，None 停止自动复查。自定义 policy 返回相应的 Decision 或 ReviewDecision，也可只保留 decide。查询次数预算、调用时机、反馈归因和写入重试由 [Harness](../README.md) / [Runner](../../../../runtime/README.md) 管理。
 
 自定义策略实现 `decide` 并通过默认 Harness 的 policy 参数注入，不要求使用 JSON。需要应用学习结果时，另实现 [ModelUpdatable](../../../contracts/model_service.py) 的 model 与 update_model。
 

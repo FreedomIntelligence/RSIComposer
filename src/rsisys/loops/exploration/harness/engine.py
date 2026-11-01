@@ -73,6 +73,14 @@ class DefaultExplorationHarness:
         model = getattr(self.policy, 'model', None)
         return ExecutionView(model if isinstance(model, ModelRef) else None, self.pending())
 
+    def describe_queries(self):
+        from .queries import ExplorationQueries
+        return ExplorationQueries(self).describe_queries()
+
+    def query(self, request):
+        from .queries import ExplorationQueries
+        return ExplorationQueries(self).query(request)
+
     def cancel(self, directive_id):
         return self.commands.cancel(directive_id)
 

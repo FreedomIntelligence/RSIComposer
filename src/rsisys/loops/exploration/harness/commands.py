@@ -12,7 +12,7 @@ from rsisys.experience.records import ExperienceRecord
 from rsisys.loops.contracts.coordination import ExplorationProgress
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
-from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobOutcome
+from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobOutcome, JobProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
@@ -44,6 +44,7 @@ class CommandState:
     started: bool = False
     started_at: float | None = None
     elapsed_seconds: float | None = None
+    job_progress: JobProgress | None = None
 
     @property
     def idempotency_key(self) -> str:
@@ -190,9 +191,10 @@ class ExplorationCommands:
             elapsed = monotonic() - state.started_at
         feedback = state.feedback
         metrics = ({**feedback.training_metrics, **feedback.quality_metrics, **feedback.execution_metrics}
-                   if feedback is not None else {})
+                   if feedback is not None else state.job_progress.metrics if state.job_progress is not None else {})
         return deepcopy(ExplorationProgress(directive_id, state.phase, state.directive, state.job, feedback,
-                                            metrics=metrics, elapsed_seconds=elapsed))
+                                            metrics=metrics, elapsed_seconds=elapsed,
+                                            job_progress=state.job_progress))
 
     def _finish(self, state, feedback):
         if not isinstance(feedback, Feedback) or feedback.directive_id != state.directive.directive_id:
@@ -301,6 +303,8 @@ class ExplorationCommands:
                 jobs=(exc.job,), error=f'{type(exc).__name__}: {exc}',
             ))
             raise
+        if outcome.progress is not None:
+            state.job_progress = deepcopy(outcome.progress)
         if not outcome.terminal:
             return
         result = outcome.result

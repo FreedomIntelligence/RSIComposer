@@ -44,6 +44,7 @@ def check_states(decision, actor):
     if (decision.pending_directive_id is not None or decision.pending_directive is not None
             or decision.pending_job is not None or decision.pending_operation_record is not None
             or decision.pending_review_record is not None
+            or decision.review_session is not None
             or actor.active_directive_id is not None
             or actor.pending_episode is not None):
         raise RuntimeError('Snapshot requires a boundary with no pending directive or operation')
@@ -130,6 +131,7 @@ class LocalSnapshotCapture:
         from rsisys.loops.exploration.harness.policy import ModelActorPolicy
         from rsisys.loops.decision_making.action_space import LocalDecisionActionSpace
         from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
+        from rsisys.loops.decision_making.harness.tools.queries import QueryTools, ArtifactReader
         from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
         from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
         from rsisys.loops.exploration.action_space.local import CommandActionSpace
@@ -154,8 +156,22 @@ class LocalSnapshotCapture:
         if dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):
             raise TypeError('Custom decision action bindings need explicit snapshot integration')
         expected_modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if app.config.learning == 'mock' else ())
+        query_tools = getattr(dm.tools, 'query_tools', None)
+        expected_queries = QueryTools(exploration_loop, artifacts=app.artifacts)
+        if (type(query_tools) is not QueryTools or query_tools.provider is not exploration_loop
+                or query_tools.artifacts is not app.artifacts or type(query_tools.reader) is not ArtifactReader
+                or query_tools.reader.artifacts is not app.artifacts
+                or query_tools.specs != expected_queries.specs):
+            raise TypeError('Custom query bindings need explicit snapshot integration')
+        expected_bindings = {
+            'prepare_data': dm.tools._prepare_data, 'search_literature': dm.tools._search_literature,
+            'store_strategy': dm.tools._store_strategy, **query_tools.bindings,
+        }
+        if dm.tools._bindings != expected_bindings:
+            raise TypeError('Custom tool bindings need explicit snapshot integration')
         if (decision_loop.action_space.directive_modes() != expected_modes
-                or decision_loop.action_space.describe() != LocalDecisionActionSpace().describe()):
+                or decision_loop.action_space.describe() != LocalDecisionActionSpace(
+                    extra_definitions=expected_queries.definitions).describe()):
             raise TypeError('Custom decision actions need explicit snapshot integration')
         from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
         from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
@@ -184,6 +200,7 @@ class LocalSnapshotCapture:
             atomic_write(staging / 'runtime.json', json_bytes({
                 'python': list(sys.version_info[:2]),
                 'decision_experience_limit': dm.experience_limit,
+                'review_tool_limit': dm.review_tool_limit,
                 'memory_limits': {'decision_maker': dm.memory_limit, 'actor': actor.memory_limit},
             }))
             app.store.backup(staging / 'experience.sqlite3')
@@ -244,6 +261,8 @@ def restore_snapshot(directory, target):
         raise ValueError('Invalid restored memory limits')
     if type(runtime['decision_experience_limit']) is not int or runtime['decision_experience_limit'] < 1:
         raise ValueError('Invalid restored experience limit')
+    if type(runtime['review_tool_limit']) is not int or runtime['review_tool_limit'] < 0:
+        raise ValueError('Invalid restored review tool limit')
     # Validate both owners and payloads before creating the restore target.
     DecisionMemory(directory / 'decision_memory.json')
     ExplorationMemory(directory / 'exploration_memory.json')
@@ -270,6 +289,7 @@ def restore_snapshot(directory, target):
     app.runner.decision_making.harness.state = decision
     app.runner.exploration.harness.state = actor
     app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
+    app.runner.decision_making.harness.review_tool_limit = runtime['review_tool_limit']
     app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
     app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
     app.parent_snapshot_id = manifest.snapshot_id

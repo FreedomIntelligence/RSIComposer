@@ -2,6 +2,14 @@
 
 两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。协同顺序与交付规则见[系统架构](../../../../docs/ARCHITECTURE.md)。
 
+## 实验查询
+
+[QueryProvider / QuerySpec / QueryRequest / QueryResult](queries.py) 是可选的只读查询边界。能力由 provider 显式声明，返回来源、读取时间、内容版本、结构化数据、ArtifactRef 和分页游标。默认实现提供本地状态、指标、任务、日志摘要、候选、模型、产物引用和经验摘要；外部 Harness 可以提供其他查询。列表查询为实时视图，不是跨页事务快照。
+
+[OperationResult](coordination.py) 的可选 data 字段让工具结果直接进入 researcher 上下文；大内容通过引用按需读取。查询权限不要求把所有信息一次性送入模型，也不改变终态 Feedback 的交付职责。
+
+[JobProgress](jobs.py) 可附在 JobOutcome 上，包含 step、total_steps、metrics、elapsed_seconds 和可选的后端样本时间 observed_at（Unix 秒）。默认命令将它暴露在 ExplorationProgress.job_progress 中，非终态 metrics 同步提供最近的后端指标；没有新样本时保留旧样本和原时间，不推算进度。查询结果 observed_at 是读取时间，两者含义不同。
+
 ## 指令与反馈
 
 [Directive](directive.py) 包含身份、目标、策略、输入、允许行动、步数上限、模拟标记和 payload；payload 支持 JSON 数据及值相等的 dataclass，构造时校验可深复制、复制前后值相等及 JSON 序列化能力（拒绝 NaN/Infinity）；它是可扩展的数据对象，内置 payload 定义在 [requests.py](requests.py)。

@@ -37,6 +37,7 @@ from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
 from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+from rsisys.loops.decision_making.harness.tools.queries import QueryTools
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
 from rsisys.loops.exploration.action_space import ActionProposal, EchoActionSpace
 from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
@@ -152,6 +153,9 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
         raise ValueError('Model failed bounded decision validation attempts')
 
     def review(self, context):
+        from rsisys.loops.contracts.coordination import ReviewDecision
+        from rsisys.loops.decision_making.harness.decision import Decision
+
         progress = context.execution.progress
         if progress is None or progress.terminal or progress.directive.mode != 'train':
             raise ValueError('Toy review requires a running SFT directive')
@@ -160,9 +164,18 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
                                directive_id=progress.directive_id, attempt=attempt + 1)
             try:
                 reviewed = super().review(replace(context, objective=context.objective +
-                    '\nReview only the running SFT job. Continue if no failure or cancellation is reported; '
-                    'cancel only for an observed failure or explicit cancellation. '
+                    '\nReview only the running SFT job. Query available experiment evidence if needed. '
+                    'Use observed progress, metrics and failures to decide whether to continue or cancel; '
+                    'missing measurements alone do not imply failure. '
+                    'You may invoke available read-only research tools before deciding. '
                     'Use next_review_seconds=null for a single review. Do not propose a new directive.'))
+                if isinstance(reviewed, Decision) and reviewed.kind == 'invoke':
+                    # The harness validates read-only access and executes the call,
+                    # retaining the model response's usage and simulated marker.
+                    return reviewed
+                if not isinstance(reviewed, ReviewDecision):
+                    raise TypeError('Review requires a read-only invocation or final ReviewDecision')
+                reviewed.__post_init__()
                 entry = {'source': 'llm', 'round': self.round, 'action': reviewed.action,
                          'next_review_seconds': reviewed.next_review_seconds,
                          'directive_id': progress.directive_id,
@@ -262,16 +275,18 @@ def run(args):
                                        review_after_seconds=args.review_after_seconds)
         store = SQLiteExperienceStore(root / 'experience.sqlite3')
         experience = BasicExperienceSystem(store, run_id=root.name)
-        decision = DefaultDecisionHarness(policy, BoundDecisionTools({}), experience,
-            memory=DecisionMemory(root / 'decision_memory.json'), memory_limit=1, experience_limit=1)
         actor_policy = ParityActorPolicy(models, base)
         environment = ParityEnvironment(FileArtifactStore(root / 'artifacts'))
         exploration = DefaultExplorationHarness(actor_policy, environment, experience, learner=trainer,
             evaluator=evaluator, model_activator=WorkerActivator(models),
             memory=ExplorationMemory(root / 'exploration_memory.json'),
             command_handlers={'train': TrainingCommandHandler(), 'apply_candidate': ApplyCandidateHandler()})
-        runner = Runner(DecisionMakingLoop(decision, ModularDecisionActionSpace((), directives=catalog)),
-                        ExplorationLoop(exploration, EchoActionSpace()))
+        exploration_loop = ExplorationLoop(exploration, EchoActionSpace())
+        queries = QueryTools(exploration_loop, artifacts=environment.artifacts)
+        decision = DefaultDecisionHarness(policy, BoundDecisionTools(queries.bindings), experience,
+            memory=DecisionMemory(root / 'decision_memory.json'), memory_limit=1, experience_limit=1)
+        runner = Runner(DecisionMakingLoop(decision,
+                            ModularDecisionActionSpace(queries.definitions, directives=catalog)), exploration_loop)
         status, error_code, remote_may_run = 'running', None, False
         cancel_attempted, cancel_requested, cancellation_confirmed = False, False, False
         service_devices = {}

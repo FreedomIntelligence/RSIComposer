@@ -45,6 +45,20 @@ PYTHONPATH=src pixi run python -m rsisys run \
 
 需要鉴权时 credential_env 填环境变量名，启动前设置对应环境变量。不支持 JSON response_format 的服务可将 json_mode 设为 false，但内置模型 policy 仍要求回复合法 JSON。传输能力、版本验证和本地进程限制见 [Runtime](../src/rsisys/runtime/README.md)。
 
+## Researcher 查询实验
+
+默认装配会将 Exploration 的可用查询注册到 Decision Action Space，名称为 `query_exploration_<name>`。researcher 可在普通决策或运行中 review 中调用；review 只开放 read_only 操作，默认最多查询 4 次，再作 continue / cancel 判断。训练继续由后端执行，控制器的同步查询应由对应后端设置超时。
+
+```json
+{"kind":"invoke","operation":"query_exploration_metrics","arguments":{"filters":{"directive_id":"实际指令ID"}}}
+```
+
+模型在下一次调用的 `operation_results` 中读到结果，`data` 包含来源、读取时间、内容版本、正文和引用。默认可查 status、metrics、tasks、logs、candidates、model、artifacts、experience；提供本地 ArtifactStore 时还有 artifact_read，可按已知引用分页读取小型文本。logs 是已记录的本地摘要，不是未接入的远程训练日志。指标来自最近一次后端轮询，查询不会触发训练推进；后端提供时保留原始样本时间，未知时间保持未知。
+
+外部 Harness 可实现 [QueryProvider](../src/rsisys/loops/contracts/queries.py) 的 `describe_queries()` 和 `query(request)` 来暴露其他实验信息；未实现时不广告这些能力。自定义装配可使用 [QueryTools](../src/rsisys/loops/decision_making/harness/tools/queries.py) 的 definitions 和 bindings 分别注入 Action Space 与 tools。协议只统一查询封装，不转换训练数据格式，也不要求把执行历史搬进 Experience。
+
+Qwen toy 已绑定同样的查询入口。`tests/test_researcher_integration.py` 使用 CPU HTTP fixture 验证「后端训练进度 → researcher 查询 → 模型判断 → 实验继续完成」；该测试不加载真实 Qwen 权重。
+
 ## 使用 Python 接入组件
 
 [Application](../src/rsisys/application.py) 和 [build_demo](../src/rsisys/config.py) 接受可选的 `exploration_factory(context)` 与 `decision_factory(context, exploration)`，分别返回 ExplorationLoop 与 DecisionMakingLoop。先构造 exploration，再构造 decision；未传入的一侧使用 [assembly.py](../src/rsisys/assembly.py) 的 `build_default_exploration` / `build_default_decision`，也可在自定义工厂内直接调用这两个函数。默认 decision 的 allowed_actions 从已构造的 exploration.action_space 读取；directive_modes 根据实际未被覆盖的内置 command handlers，以及 learner/evaluator、模型和 rollout 能力推导，不从 with_learning 猜测。

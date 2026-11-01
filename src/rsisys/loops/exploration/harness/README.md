@@ -1,5 +1,7 @@
 # Exploration Harness
 
+默认 Harness 通过 `describe_queries()` / `query(QueryRequest)` 提供显式只读查询，具体实现在 [queries.py](queries.py)。查询只查看当前模型、已有 inspect 进展、任务回执、本地 history、候选及 Experience 摘要和产物引用；不会 poll 或触发外部执行。返回数据有页数和大小限制，远端日志没有显式来源时标记不可用。ExplorationLoop 只转发 QueryProvider 能力，其他 Harness 可不实现；不支持时发现结果为空，调用 query 明确抛 NotImplementedError。完整参数与正文读取入口见 [Decision query tools](../../decision_making/harness/tools/README.md#只读查询)。
+
 [ExplorationHarness](__init__.py) 是系统指令执行边界，提供 `accept(directive)`、`advance(directive_id, action_space)`、`inspect`、`cancel` 和 `acknowledge`，由 [ExplorationLoop](../README.md) 委托。它接收 decision policy 或外部系统的 Directive；协议不要求暴露 Actor policy、memory 或工具。
 
 ## 默认实现与分派

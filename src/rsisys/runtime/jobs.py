@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Generic, Protocol, TypeVar
 from uuid import uuid4
 
@@ -36,6 +36,10 @@ class JobHandle(Generic[T]):
         outcome = self._poll(self.job)
         if outcome.job != self.job:
             raise ValueError('Job outcome does not match the requested job')
+        # A status-only poll (including cancellation/failure) does not erase the
+        # last observation. Never synthesize steps or advance its sample time.
+        if outcome.progress is None and self.outcome is not None:
+            outcome = replace(outcome, progress=self.outcome.progress)
         self.outcome = deepcopy(outcome)
         return deepcopy(outcome)
 

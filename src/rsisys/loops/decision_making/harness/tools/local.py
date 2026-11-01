@@ -8,13 +8,17 @@ from . import BoundDecisionTools
 
 
 class LocalDecisionTools(BoundDecisionTools):
-    def __init__(self, artifacts: FileArtifactStore):
+    def __init__(self, artifacts: FileArtifactStore, *, extra_bindings=None):
         self.artifacts = artifacts
-        super().__init__({
+        bindings = {
             "prepare_data": self._prepare_data,
             "search_literature": self._search_literature,
             "store_strategy": self._store_strategy,
-        })
+        }
+        if set(bindings).intersection(extra_bindings or {}):
+            raise ValueError('Extra tool bindings must not replace built-in operations')
+        super().__init__({**bindings, **(extra_bindings or {})})
+        self.query_tools = None
 
     def _prepare_data(self, arguments: dict[str, object]) -> OperationResult:
         ref = self.artifacts.put(arguments["text"].encode(), kind="input_data")

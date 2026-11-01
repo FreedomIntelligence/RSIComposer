@@ -1,5 +1,7 @@
 # Decision Action Space
 
+操作的 `OperationSpec.read_only` 默认 false。运行中 researcher review 只允许显式标记为只读的操作；这是接入者的行为声明，具体执行仍由 Harness tools 负责。[QueryActionDefinition](queries.py) 将 Exploration 广告的查询转换为只读操作，默认装配自动注入。两个默认 Action Space 可通过 `extra_definitions=()` 添加这些定义，自定义操作仍使用同一验证接口。
+
 独立于 [Decision Harness](../harness/README.md) 的动作定义与校验边界。覆盖本地 research 操作和发往 Exploration Harness 的系统指令；实际操作由 Harness 的 [tools](../harness/tools/README.md) 执行。
 
 ## 接口

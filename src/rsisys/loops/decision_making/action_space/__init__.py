@@ -15,6 +15,11 @@ class OperationSpec:
     name: str
     description: str
     input_schema: dict[str, object]
+    read_only: bool = False
+
+    def __post_init__(self):
+        if type(self.read_only) is not bool:
+            raise TypeError('read_only must be a bool')
 
 
 @dataclass(frozen=True)
@@ -114,19 +119,22 @@ class _StringArgumentDefinition:
 
 class DemoDecisionActionSpace(ModularDecisionActionSpace):
     def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
-                 directives: DirectiveDefinitions | None = None):
+                 directives: DirectiveDefinitions | None = None,
+                 extra_definitions: Iterable[DecisionActionDefinition] = ()):
         super().__init__((_StringArgumentDefinition(
             "prepare_data", "Prepare a demonstration input artifact", "text",
-        ),), directive_modes=directive_modes, directives=directives)
+        ), *extra_definitions), directive_modes=directive_modes, directives=directives)
 
 
 class LocalDecisionActionSpace(ModularDecisionActionSpace):
     def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
-                 directives: DirectiveDefinitions | None = None):
+                 directives: DirectiveDefinitions | None = None,
+                 extra_definitions: Iterable[DecisionActionDefinition] = ()):
         super().__init__((
             _StringArgumentDefinition("prepare_data", "Store text as a reusable input artifact", "text"),
             _StringArgumentDefinition("search_literature", "Search explicitly imported text literature",
                                       "query", nonempty=True),
             _StringArgumentDefinition("store_strategy", "Save an explicit strategy as an artifact",
                                       "strategy", nonempty=True),
+            *extra_definitions,
         ), directive_modes=directive_modes, directives=directives)

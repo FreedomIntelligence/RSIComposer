@@ -53,13 +53,15 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 1. Decision Harness 读取上下文、完成本地准备，policy 发出 Directive；Action Space 校验操作和指令模式。
 2. Runner 将 Directive 交给 Exploration 端点，Harness 接收、校验 payload 并推进对应流程。外部系统也可直接通过同一端点提交 Directive。
-3. 遇到 waiting，Runner 返回调用方，下次推进继续原任务。指令可指定首次复查间隔；到期时 Decision Harness 根据当前执行视图复查，选择继续、取消和下一次复查间隔。
+3. 遇到 waiting，Runner 返回调用方，下次推进继续原任务。指令可指定首次复查间隔；到期时 Decision Harness 可在有限查询预算内按需读取实验信息，再选择继续、取消和下一次复查间隔。
 4. Exploration Harness 汇总终态 Feedback；Runner 通过 Decision 的 `receive_feedback` 交付。默认 Decision Harness 将策略结果记为 improvement，供下一次决策使用。
 5. 反馈交付成功后 acknowledge，释放探索流程占用。
 
 当前一次只有一个未完成交付的指令；一条 RL 指令内部可以多次采样和更新 Actor。后端轮询由调用方驱动，决策复查由 Directive / ReviewDecision 设定频率，两者不绑定。时间/token 自训练触发、多 Actor 并发及共享模型更新事务尚未实现。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
 
 运行中的控制先支持 continue / cancel，不修改已提交指令。换策略需确认旧指令终态并完成交付后，再发送新 ID 的指令。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
+
+Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。运行中 review 只开放声明为 read_only 的操作，普通决策可使用完整 Action Space。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。
 
 默认 Decision 上下文另含当前 Exploration 模型/进度、Decision 模型、发出指令时的版本归因，以及每个候选最近一次评测的协议、输入引用、结果和证据。这些事实不依赖有限长度的任务 history；完整评测档案仍由 Experience 保存。
 
@@ -80,7 +82,7 @@ Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务�
 
 ## 交付与失败边界
 
-- Runner.step 最多调用一次决策并推进一个探索阶段；run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数。
+- Runner.step 最多调用一次普通决策或一次复查流程，并推进一个探索阶段；复查内部允许有界的模型/查询往返。run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数。
 - 新决策使用新 ID；同 ID 同内容重复接收返回原进度，内容不同则拒绝。指令交付确认前独占探索流程。
 - 取消只提出请求，后续推进确认终态；取消与训练成功竞速时不自动应用候选。同步环境调用不能由下一 tick 中途抢占。
 - 提交响应丢失后保留请求与幂等键，不重新生成任务。后端须兑现幂等提交；非终态查询或记录异常允许后续推进重试。

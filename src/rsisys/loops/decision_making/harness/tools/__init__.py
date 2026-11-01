@@ -44,9 +44,13 @@ class BoundDecisionTools:
 class DemoDecisionTools(BoundDecisionTools):
     """Prepare demonstration data through injected sandbox and artifact APIs."""
 
-    def __init__(self, sandbox: SandboxBackend, artifacts: ArtifactStore):
+    def __init__(self, sandbox: SandboxBackend, artifacts: ArtifactStore, *, extra_bindings=None):
         self.sandbox, self.artifacts = sandbox, artifacts
-        super().__init__({"prepare_data": self._prepare_data})
+        bindings = {"prepare_data": self._prepare_data}
+        if set(bindings).intersection(extra_bindings or {}):
+            raise ValueError('Extra tool bindings must not replace built-in operations')
+        super().__init__({**bindings, **(extra_bindings or {})})
+        self.query_tools = None
 
     def _prepare_data(self, arguments: dict[str, object]) -> OperationResult:
         sandbox = self.sandbox.create(SandboxSpec())

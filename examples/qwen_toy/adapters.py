@@ -17,7 +17,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
-from rsisys.loops.contracts.jobs import JobOutcome, JobRef, JobStatus
+from rsisys.loops.contracts.jobs import JobOutcome, JobRef, JobStatus, JobProgress
 from rsisys.loops.contracts.model_service import GenerationRequest, GenerationResponse, ModelRef, TokenUsage
 from rsisys.loops.contracts.training import TrainingResult
 from rsisys.loops.exploration.harness.evaluation import EvaluationResult
@@ -226,10 +226,6 @@ class WorkerJobs:
             raise ValueError('Worker job identity mismatch')
         status = JobStatus(raw['status'])
         result = self.convert(self.requests[job], raw['result']) if status == JobStatus.SUCCEEDED else None
-        outcome = JobOutcome(job, status, result,
-                             error='Worker job failed; inspect worker logs' if status == JobStatus.FAILED else None)
-        if outcome.terminal:
-            self.outcomes[job] = deepcopy(outcome)
         # Progress belongs to this training job, not a later evaluation/application.
         # Missing fields remain missing, including on successful or queued jobs.
         progress = {}
@@ -247,6 +243,18 @@ class WorkerJobs:
                            and type(value) in (int, float) and math.isfinite(value)}
                 if metrics:
                     progress['metrics'] = metrics
+        # Keep the existing monitor event unchanged; the same observed fields
+        # now also travel through the job contract into exploration/review.
+        job_progress = dict(progress)
+        observed_at = raw.get('observed_at')
+        if (self.kind == 'train' and status != JobStatus.QUEUED
+                and type(observed_at) in (int, float) and math.isfinite(observed_at) and observed_at >= 0):
+            job_progress['observed_at'] = observed_at
+        outcome = JobOutcome(job, status, result,
+                             error='Worker job failed; inspect worker logs' if status == JobStatus.FAILED else None,
+                             progress=JobProgress(**job_progress) if job_progress else None)
+        if outcome.terminal:
+            self.outcomes[job] = deepcopy(outcome)
         self.notify('job', job_id=job.job_id, kind=self.kind, status=status.value, **progress)
         return outcome
 
