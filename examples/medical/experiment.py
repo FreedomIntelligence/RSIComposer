@@ -74,6 +74,7 @@ class ExperimentSettings:
     max_seq_length: int = 2048
     max_train_steps: int = 64
     private_exclusions: tuple[Path, ...] = ()
+    decision_thinking: bool = False
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -89,6 +90,8 @@ class ExperimentSettings:
         if not isinstance(self.private_exclusions, tuple) or any(
                 not isinstance(path, Path) for path in self.private_exclusions):
             raise TypeError('private_exclusions must be a tuple of Paths')
+        if type(self.decision_thinking) is not bool:
+            raise TypeError('decision_thinking must be boolean')
 
 
 class JournalMonitor(Monitor):
@@ -115,7 +118,8 @@ class DecisionBackend:
         self.calls += 1
         write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit})
         self.monitor.event('model_decision_requested', call=self.calls)
-        response = self.serving.generate(replace(request, max_output_tokens=1024))
+        response = self.serving.generate(replace(request,
+            max_output_tokens=8192 if getattr(self.serving, 'decision_thinking', False) else 1024))
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
             stream.write(encoded({'call': self.calls, 'response': asdict(response)}) + b'\n')
         self.check_deadline()
@@ -476,6 +480,20 @@ class ResearchPolicy(ModelDecisionPolicy):
         self.train_ref = train_ref
         self.finish_reason: str | None = None
 
+    def _generate_decision(self, context):
+        # Keep the full archives in Harness/Experience, but avoid injecting the
+        # same objective/directive bodies through several history streams.
+        keep = {'status', 'error', 'quality_metrics', 'training_metrics', 'execution_metrics',
+                'metrics', 'mode', 'candidate_id', 'evaluation'}
+        def digest(record):
+            return replace(record, summary=record.summary[:600],
+                           details={k: v for k, v in record.details.items() if k in keep})
+        view = replace(context, history=tuple(digest(row) for row in context.history[-8:]),
+            experience=tuple(digest(row) for row in context.experience[-6:]), directive_provenance=(),
+            context_summary={**context.context_summary,
+                'policy_view': 'Recent record summaries; full history/experience remains in research_archive.'})
+        return super()._generate_decision(view)
+
     def _parse_decision(self, response, context):
         """Resolve envelope spelling only when an allowed action has one owner.
 
@@ -639,7 +657,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         monitor.write()
         serving = (serving_factory or LocalTransformerServing)(str(settings.model_path.resolve()), actor_model=base,
             decision_model=base, artifacts=artifacts, native_model_class='image_text_to_text',
-            device='cuda:0', dtype='bfloat16', max_context_tokens=32768)
+            device='cuda:0', dtype='bfloat16', max_context_tokens=32768,
+            decision_thinking=settings.decision_thinking)
         learner = RecipeLearner(root / 'training', artifacts, converter, base, settings.model_path.resolve(), monitor,
             serving.release_memory, max_trainings=settings.max_trainings, max_steps=settings.max_train_steps,
             process_backend=process_backend)
@@ -793,6 +812,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--max-seq-length', type=int, default=2048)
     result.add_argument('--max-train-steps', type=int, default=64)
     result.add_argument('--private-exclusions', type=Path, action='append', default=[])
+    result.add_argument('--decision-thinking', action='store_true',
+                        help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
     return result
 
 

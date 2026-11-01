@@ -145,6 +145,40 @@ class RuntimeTests(unittest.TestCase):
         code = 'import examples.medical.transformers_runtime; import sys; assert not set(("torch","transformers","peft")) & sys.modules.keys()'
         subprocess.run([sys.executable, '-c', code], check=True)
 
+    def test_researcher_thinking_returns_final_only_and_keeps_actor_greedy(self):
+        flags = []
+        class ThinkingTokenizer(Tokenizer):
+            def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, enable_thinking):
+                flags.append(enable_thinking)
+                return super().apply_chat_template(messages, tokenize=tokenize,
+                    add_generation_prompt=add_generation_prompt, enable_thinking=False)
+        log = self.log
+        class ThinkingModel(Model):
+            def generate(self, *, input_ids, attention_mask, **kwargs):
+                log.append(('fixture', kwargs))
+                value = 'fixture private text</think>\n{"kind":"finish","reason":"fixture"}' if flags[-1] else 'A'
+                return Tensor([input_ids.rows[0] + list(map(ord, value))])
+        serving = self.runtime(decision_thinking=True)
+        serving.runtime_loader = lambda s: (self.torch, ThinkingTokenizer(), ThinkingModel(log), Peft)
+        response = serving.generate(replace(self.request(DECISION, 'decision_maker'), max_output_tokens=8192))
+        self.assertEqual(json.loads(response.text)['kind'], 'finish')
+        self.assertNotIn('private text', response.text)
+        self.assertGreater(response.usage.output_tokens, len(response.text))
+        self.assertTrue(log[-1][1]['do_sample'])
+        self.assertEqual(log[-1][1]['temperature'], .6)
+        self.assertEqual(serving.generate(self.request()).text, 'A')
+        self.assertFalse(log[-1][1]['do_sample'])
+        self.assertEqual(flags, [True, False])
+
+    def test_incomplete_thinking_never_becomes_an_executable_final(self):
+        class ThinkingTokenizer(Tokenizer):
+            def apply_chat_template(self, messages, **kwargs):
+                return super().apply_chat_template(messages, **{**kwargs, 'enable_thinking': False})
+        serving = self.runtime(decision_thinking=True)
+        serving.runtime_loader = lambda s: (self.torch, ThinkingTokenizer(), Model(self.log), Peft)
+        with self.assertRaisesRegex(ValueError, 'thinking did not complete'):
+            serving.generate(self.request(DECISION, 'decision_maker'))
+
     def test_candidate_requires_preparation_before_any_load(self):
         system, _ = self.candidate()
         with self.assertRaisesRegex(ValueError, 'prepare_inference'):

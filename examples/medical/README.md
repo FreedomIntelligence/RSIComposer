@@ -125,6 +125,13 @@ There is no subcommand or separate backend/settings/recipe JSON for this entry.
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.
+Optional `--decision-thinking` enables the Qwen researcher thinking template with
+an 8192-token response limit and sampling (temperature 0.6, top-p 0.95, top-k 20).
+Only the final answer after the reasoning delimiter reaches the decision parser;
+incomplete reasoning is rejected. Token usage includes reasoning. Actor scoring
+and completion-only SFT remain non-thinking, with greedy actor inference.
+The policy sends recent history/experience summaries while preserving current
+feedback, candidate measurements, operation results and the full readable archives.
 It uses **LoRA SFT, not full-parameter training or RL**. The researcher chooses
 data subsets, bounded recipes, prompt experiments, evaluation and application;
 there is no fixed three-round research script. Defaults allow 90 minutes of

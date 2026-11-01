@@ -49,11 +49,11 @@ def _messages(prompt, system):
         {'role': 'user', 'content': prompt}]
 
 
-def _render(tokenizer, messages, *, generation):
+def _render(tokenizer, messages, *, generation, thinking=False):
     if not tokenizer.chat_template:
         raise ValueError('An official chat_template is required; no plain-text fallback')
     return tokenizer.apply_chat_template(messages, tokenize=False,
-        add_generation_prompt=generation, enable_thinking=False)
+        add_generation_prompt=generation, enable_thinking=thinking)
 
 
 class _MedicalTokenizer:
@@ -155,7 +155,7 @@ def tokenize_factory(model_name_or_path, *, max_length, padding=False, revision=
 class LocalTransformerServing:
     def __init__(self, model_name_or_path, *, actor_model, decision_model, artifacts,
                  native_model_class, device='cuda:0', dtype='bfloat16',
-                 max_context_tokens=None, runtime_loader=None):
+                 max_context_tokens=None, runtime_loader=None, decision_thinking=False):
         if native_model_class not in ('causal_lm', 'image_text_to_text'):
             raise ValueError('native_model_class must be causal_lm or image_text_to_text')
         if (actor_model.model_id, actor_model.revision) != (decision_model.model_id, decision_model.revision):
@@ -164,6 +164,9 @@ class LocalTransformerServing:
             raise ValueError('max_context_tokens must be a positive integer')
         if dtype not in ('bfloat16', 'float32', 'float16'):
             raise ValueError('dtype must be bfloat16, float32 or float16')
+        if type(decision_thinking) is not bool:
+            raise TypeError('decision_thinking must be boolean')
+        self.decision_thinking = decision_thinking
         self.model_name_or_path = str(Path(model_name_or_path).expanduser().resolve())
         self.actor_model, self.decision_model, self.artifacts = actor_model, decision_model, artifacts
         self.native_model_class, self.device, self.dtype = native_model_class, device, dtype
@@ -330,7 +333,9 @@ class LocalTransformerServing:
             if adapter is not None:
                 self._model.set_adapter(adapter)
             context = self._model.disable_adapter() if self._has_adapters and not candidate else nullcontext()
-            prompt = _render(self._tokenizer, _messages(request.prompt, request.system), generation=True)
+            thinking = request.role == 'decision_maker' and self.decision_thinking
+            prompt = _render(self._tokenizer, _messages(request.prompt, request.system),
+                             generation=True, thinking=thinking)
             inputs = self._tokenizer(prompt, add_special_tokens=False, truncation=False, return_tensors='pt')
             count = inputs['input_ids'].shape[-1]
             limit = self._context_limit()
@@ -342,11 +347,19 @@ class LocalTransformerServing:
             if pad is None:
                 pad = self._tokenizer.eos_token_id
             with context, self._torch.inference_mode():
+                sampling = {'do_sample': True, 'temperature': .6, 'top_p': .95, 'top_k': 20} if thinking else {'do_sample': False}
                 output = self._model.generate(**inputs, max_new_tokens=request.max_output_tokens,
-                    do_sample=False, pad_token_id=pad, use_cache=True)
+                    **sampling, pad_token_id=pad, use_cache=True)
             tokens = output[0, count:]
             self.generation_count += 1
-            return GenerationResponse(self._tokenizer.decode(tokens, skip_special_tokens=True),
+            text = self._tokenizer.decode(tokens, skip_special_tokens=True)
+            if thinking:
+                if '</think>' not in text:
+                    raise ValueError('Decision thinking did not complete; no partial proposal will be executed')
+                text = text.rsplit('</think>', 1)[1].strip()
+                if not text:
+                    raise ValueError('Decision thinking returned no final proposal')
+            return GenerationResponse(text,
                 request.model, False, TokenUsage(count, len(tokens)),
                 self.model_name_or_path + '#sha256=' + self.actual_weight_sha256[request.model],
                 revision_verified=True)

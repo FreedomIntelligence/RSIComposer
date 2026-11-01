@@ -218,6 +218,11 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertTrue(any(job['kind'] == 'evaluate' and job['step'] == 1 for job in monitor['jobs']))
         self.assertEqual(self.read('systems.json')['current']['version'], self.serving.activated[0].version)
         self.assertTrue(self.read('experience.json'))
+        view = self.serving.contexts[-1]
+        self.assertIn('research_archive', view['context_summary']['policy_view'])
+        self.assertTrue(all('directive' not in row['details'] and 'objective' not in row['details']
+                            for row in view['history']))
+        self.assertTrue(view['candidate_evaluations'])
         native_request, native_key = next(iter(self.process.requests.values()))
         receipt = next(iter(self.read('training/budget.json').values()))
         self.assertTrue(native_key.startswith(receipt['recipe_ref']+':directive:'))
