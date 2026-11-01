@@ -431,7 +431,18 @@
             "eval_samples": 128
           }
         }
-      ]
+      ],
+      "models": {
+        "decision_maker": {
+          "model_id": "reasoner-small",
+          "revision": "dm-r002"
+        },
+        "actor": {
+          "model_id": "actor-base",
+          "revision": "actor-r001"
+        }
+      }
     }
-  ]
+  ],
+  "parent_run_id": "example-baseline-001"
 }

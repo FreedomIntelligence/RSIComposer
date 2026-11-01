@@ -54,3 +54,14 @@ class ProjectTests(unittest.TestCase):
             project = RunStore(root, config).projects()[0]
             self.assertEqual(project['runs'][0]['status'], 'unavailable')
             self.assertEqual(project['runs'][0]['project']['project_id'], 'p')
+
+    def test_cross_run_references_are_passed_through_without_inference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for ident, extra in [('a', {}), ('b', {'parent_run_id': 'a', 'source_run_ids': ['a', 'absent', {}]})]:
+                (root / ident).mkdir()
+                (root / ident / 'monitor.json').write_text(json.dumps({'schema_version': 1, **extra}))
+            rows = {r['run_id']: r for r in RunStore(root).list()}
+            self.assertNotIn('parent_run_id', rows['a'])
+            self.assertEqual(rows['b']['parent_run_id'], 'a')
+            self.assertEqual(rows['b']['source_run_ids'], ['a', 'absent'])

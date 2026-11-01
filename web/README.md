@@ -45,17 +45,19 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- 首页展示项目（RSI 系统对象）及其多次运行入口，选择运行后展示已记录脉络。仅请求 `/api/projects` 的运行元信息和选中的一个运行快照；不批量下载其他快照。可用 `?project=<id>&run=<id>` 直达，运行 ID 优先定位归属项目。
-- 图使用原生 HTML 节点与 SVG 连线，支持滚动、按钮或 Ctrl/⌘ + 滚轮缩放、适应全部节点、恢复 100%。点击节点查看原文、反馈、数值指标和关联依据；Tab 聚焦节点，左右键 / Home / End 移动，Enter / 空格选择。刷新保留缩放、滚动位置和所选节点；切换运行重置。
-- 实线只连接同一快照中明确的 `parent_decision_id` / `source_decision_ids`（允许多父）或唯一的同 `directive_id` 原始指令与实验反馈。复查记录不充当实验指令源。缺失、悬空、重复而歧义的父 ID 不创建占位节点或连线；引用保留在详情中。候选缺少可验证的指令关联时独立展示。跨运行不自动连接因果，也不根据相同目标、轮次、版本或候选名推断父子关系。
-- 相邻决策只有在时间已报告且范围严格先后时才画虚线；相同或缺失时间不补造先后。连线箭头标示方向，图与报告均注明当前快照范围（API 最多 300 条决策），不宣称完整历史。
+- 首页是一个项目的一张圆点思维导图：项目 root → 所有 run。点击运行圆点在原位展开 / 收起该 run 的 decision、job 和 candidate 分支；多个 run 可以同时展开，运行锚点保持不动。右侧展示所选节点详情，不跳至独立 run 图。旧 `?run=<id>` 或 `?project=<id>&run=<id>` 链接会定位归属项目并在项目画布内展开该 run。
+- 首屏只请求 `/api/projects` 的项目与运行元信息；展开时按需请求 `/api/runs/<id>`。按真实 / demo、项目、run 分层缓存；收起后再展开复用缓存，刷新只重新读取已展开 run。每个请求独立显示读取中 / 读取失败，失败保留上次快照并提供重试。切项目、切 demo、收起 pending run 会 Abort；请求序号与当前项目校验同时拦截迟到响应，避免相同 decision / directive / job ID 跨 run 或项目混入。
+- 图使用原生 HTML 圆点与 SVG 连线，无额外依赖。默认 100%，支持滚动、拖动空白平移、按钮或 Ctrl/⌘ + 滚轮缩放、适应全部节点、恢复 100%。长 run 会扩大可滚动画布，“适应”可能把长图缩得很小，可恢复 100% 浏览。Tab 聚焦节点，左右键 / Home / End 移动，Enter / 空格选择。自动 / 手动刷新保留展开集合、选中节点、缩放和滚动位置；同一页面内切回项目也恢复项目自己的状态。
+- run 间虚线仅按已报告、严格先后的 `updated_at` 排列，标记“记录更新时间顺序，不表示继承”；相同或无效时间不补造先后。跨 run 实线只使用显式 `parent_run_id` / `source_run_ids`，仅连接本项目唯一可解析的 run ID；自引用、缺失、歧义引用不画线。历史未报告这些字段时没有继承线，不根据不同 run 的 baseline、模型 revision、名称、目标或候选名推断继承。浅线表示项目归属或运行内记录，不表示继承。
+- run 内实线只连接同一快照中明确的 `parent_decision_id` / `source_decision_ids`（允许多父）或唯一同 `directive_id` 的原始指令与实验反馈。复查记录不充当实验指令源。悬空、重复而歧义的父 ID 保留在详情，不创建占位节点或猜测连线。相邻决策仅在时间已报告且范围严格先后时画虚线；图中数据来自当前快照（API 最多 300 条决策），不宣称完整历史。
+- run 节点详情展示 models 中的决策者 / actor model_id 与 revision、候选记录和导出此 run 报告。点击 decision / job / candidate 圆点查看原文、反馈、关联依据；job 详情包含真实训练指标曲线。下方“所选运行 · 训练指标与报告”是次级折叠区，保留当前执行、完整指标、筛选、事件和候选结果。导出仅针对所选 run。
 - 下方列表按决策时间倒序排列，每项并排展示中文动作与对应反馈。直接使用决策的公开 `metrics`，同时兼容按 `job_id` / `directive_id` 精确关联任务指标；存在但未找到的 job_id 不回退关联其他任务，多任务歧义时不猜测。复查记录不把任务当前指标冒充复查时点指标。
 - 连续、同理由、同轮次、同状态和版本的重复 finish 聚合为一项，保留数量及每条原始记录。finish 统一称为「结束本轮研究」，不推断整个运行已经停止。
 - 动作、指标名称使用中文友好映射。未知操作显示「其他操作」，原始名称保留在详情；技术 ID、模型绑定与事件收进详情。reason / strategy 原文保留在可展开区，不替换 candidate、baseline 或协议名称，不调用模型翻译。
 - 当前执行只在 step / total_steps 均有效时显示百分比；训练 100% 不代表评测、应用、整个运行或目标验证完成。
 - 训练任务展示原生 SVG 损失与学习率图，无图表库或外部资源。支持鼠标查看最近采样点、聚焦图表后用左右键逐点查看，Home / End 跳到首尾；一个历史点只画一个点，无历史时明确显示当前指标或空态。
 - 候选比较、轮次结果与原始事件默认折叠，保留状态筛选、搜索、加载更多和指标详情。对比差值只表示候选减基线，不自动判断优劣。
-- 默认每 5 秒刷新，可暂停或手动刷新；后台页面暂停轮询。请求超时为 8 秒；断连保留旧快照并明确提示，活跃运行超过 2 分钟未更新会提示过期。切换运行清除上一运行数据；刷新保留筛选和详情展开状态。
+- 默认每 5 秒刷新，可暂停或手动刷新；后台页面暂停轮询。请求超时为 8 秒；断连保留旧快照并明确提示，选择运行只更新选中 run 的次级详情，不清空其他 run 的图上分支；刷新保留筛选和详情展开状态。
 
 ### 训练历史协议
 
@@ -138,6 +140,8 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 
 只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持的版本保留为带 `error` 的 unavailable 清单项。
 
+运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；前端仅凭这些显式字段绘制跨 run 父引用线。
+
 `GET /api/runs/<id>`：返回协议字段的只读投影，包含 `project: {project_id, name, description, system_id}`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
 建议生产端在同一目录写临时文件，再原子替换 `monitor.json`。服务不会监听或读数据库、训练样本、配置、日志、模型文件。
@@ -156,10 +160,10 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 ```sh
 python3 -m unittest discover -s tests -p test_monitor.py -v
 node --check web/static/app.js
-node --test web/static/lineage.test.js
+node --test web/static/lineage.test.js web/static/project.test.js
 ```
 
-服务测试覆盖读取摘要、缺省字段、flat worker metrics、空目录、损坏快照恢复、协议版本、大小限制、路径穿越、目录／文件符号链接、FIFO、字段过滤、Host／跨站防护及只读方法。关系专项测试覆盖多父关联、悬空 / 歧义 ID、时间边、精确指令关联、重复 finish 聚合和空快照；测试文件不在静态服务白名单内。Node 只用于前端语法检查和测试，运行服务不依赖 Node。
+服务测试覆盖读取摘要、缺省字段、flat worker metrics、空目录、损坏快照恢复、协议版本、大小限制、路径穿越、目录／文件符号链接、FIFO、字段过滤、Host／跨站防护及只读方法。关系专项测试覆盖多父关联、悬空 / 歧义 ID、时间边、精确指令关联、重复 finish 聚合和空快照；项目图专项测试覆盖多 run 原位展开、相同 ID 跨 run 隔离、显式运行父引用、旧深链接、按需并发加载、切项目 / 收起请求取消及迟到响应、错误重试、刷新保留展开 / 选中 / 缩放 / 滚动、demo 多 run 同画布；测试文件不在静态服务白名单内。Node 只用于前端语法检查和测试，运行服务不依赖 Node。
 
 视觉参考：[Claude 官方博客](https://claude.com/blog)、[Anthropic News](https://www.anthropic.com/news)。使用暖白纸面、深棕文字、低饱和陶土橙；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 

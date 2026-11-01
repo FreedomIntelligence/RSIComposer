@@ -115,6 +115,10 @@ def project_snapshot(raw, run_id):
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
     result = pick(raw, ("objective", "status", "updated_at"))
     result.update(schema_version=1, run_id=run_id)
+    if isinstance(raw.get("parent_run_id"), str):
+        result["parent_run_id"] = raw["parent_run_id"][:128]
+    if isinstance(raw.get("source_run_ids"), list):
+        result["source_run_ids"] = [v[:128] for v in raw["source_run_ids"][:100] if isinstance(v, str)]
     project = raw.get("project")
     if isinstance(project, dict) and isinstance(project.get("project_id"), str) and RUN_ID.fullmatch(project["project_id"]):
         result["project"] = pick(project, ("project_id", "name", "description", "system_id"))
@@ -259,6 +263,9 @@ class RunStore:
                     snapshot = self.read(name, root_fd)
                     row = pick(snapshot, ("schema_version", "run_id", "objective", "status", "updated_at"))
                     row["project"] = snapshot["project"]
+                    for field in ("parent_run_id", "source_run_ids"):
+                        if field in snapshot:
+                            row[field] = snapshot[field]
                     row["counts"] = {key: len(snapshot[key]) for key in ("jobs", "candidates", "events")}
                 except SnapshotError as error:
                     if error.status == 404:

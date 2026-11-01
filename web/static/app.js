@@ -4,7 +4,7 @@ const state = {
   demo: false, runId: "", realRunId: "", snapshot: null, controller: null,
   epoch: 0, timer: null, auto: true, eventLimit: 30, decisionLimit: 30,
   openEvents: new Set(), openDecisions: new Set(), openJobs: new Set(), queryApplied: false,
-  projects: [], projectId: "", realProjectId: "",
+  projects: [], projectId: "", realProjectId: "", scopes: new Map(), activeScope: null, demoSnapshots: new Map(),
 };
 const ACTIVE = new Set(["running", "active", "training", "evaluating", "queued", "pending", "starting", "submitted", "in_progress"]);
 const DONE = new Set(["completed", "complete", "succeeded", "success", "done", "finished"]);
@@ -164,7 +164,7 @@ function graphDetail(node, model, s) {
     content.append(records);
   } else {
     content.append(metricsDetail(node.row.metrics));
-    if (node.type === "job") content.append(progressView(node.row.step, node.row.total_steps), el("p", "quiet-note", `训练历史：${historyRows(node.row).length} 个采样点；曲线见下方训练与评测。`));
+    if (node.type === "job") content.append(progressView(node.row.step, node.row.total_steps), el("p", "quiet-note", `训练历史：${historyRows(node.row).length} 个采样点。`));
     content.append(rawFields(node.row));
   }
   const incoming = model.edges.filter(e => e.to === node.key && e.kind !== "time");
@@ -177,13 +177,13 @@ function graphDetail(node, model, s) {
 // A scrollable HTML plane with SVG lines; node labels and details always remain plain text.
 function renderGraph(host, model, key, onSelect, detailFor) {
   const previous = host.graphView, same = previous?.key === key;
-  const view = same ? previous : { key, scale: 1, selected: "", left: 0, top: 0 };
+  const view = same ? previous : { key, scale: 1, selected: model.nodes.find(n => n.selected)?.key || model.nodes.find(n => n.type === "project")?.key || "", left: 0, top: 0 };
   if (!detailFor) view.selected = model.nodes.find(n => n.selected)?.key || "";
   if (same) { view.left = previous.viewport.scrollLeft; view.top = previous.viewport.scrollTop; }
   const focusedKey = host.contains(document.activeElement) ? document.activeElement.dataset.nodeKey : null;
   const controls = el("div", "graph-controls"), zoomLabel = el("span", "quiet-note"), viewport = el("div", "graph-viewport"), extent = el("div", "graph-extent"), plane = el("div", "graph-plane");
   viewport.tabIndex = 0; viewport.setAttribute("role", "region"); viewport.setAttribute("aria-label", "脉络图，滚动浏览，Ctrl 或 Command 加滚轮缩放");
-  const width = Math.max(300, ...model.nodes.map(n => n.x + 268)), height = Math.max(184, ...model.nodes.map(n => n.y + 148));
+  const width = Math.max(300, ...model.nodes.map(n => n.x + 130)), height = Math.max(184, ...model.nodes.map(n => n.y + 120));
   plane.style.width = `${width}px`; plane.style.height = `${height}px`;
   const lines = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   lines.setAttribute("width", width); lines.setAttribute("height", height); lines.setAttribute("aria-hidden", "true");
@@ -193,10 +193,15 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const byKey = new Map(model.nodes.map(n => [n.key, n]));
   for (const edge of model.edges) {
     const a = byKey.get(edge.from), b = byKey.get(edge.to), path = document.createElementNS(lines.namespaceURI, "path");
-    const vertical = a.x === b.x, x1 = a.x + (vertical ? 120 : 240), y1 = a.y + (vertical ? 124 : 62), x2 = b.x + (vertical ? 120 : 0), y2 = b.y + (vertical ? 0 : 62);
-    const adjacent = Math.abs(a.x - b.x) <= 280;
-    path.setAttribute("d", vertical ? `M${x1},${y1} C${x1},${y1 + 32} ${x2},${y2 - 32} ${x2},${y2}` : adjacent ? `M${x1},${y1} C${x1 + 20},${y1} ${x2 - 20},${y2} ${x2},${y2}` : `M${x1},${y1} C${x1 + 38},8 ${x2 - 38},8 ${x2},${y2}`);
-    path.setAttribute("class", `graph-edge ${edge.kind === "time" ? "temporal" : "linked"}`);
+    const x1 = a.x + 52, y1 = a.y + 24, x2 = b.x + 52, y2 = b.y + 24;
+    const vertical = a.x === b.x;
+    const d = edge.kind === "membership" && a.type === "project"
+      ? `M${x1},${y1 - 20} C${x1},12 ${x2},12 ${x2},${y2 - 20}`
+      : edge.kind === "run-parent" ? `M${x1},${y1 - 20} C${x1},48 ${x2},48 ${x2},${y2 - 20}`
+      : vertical ? `M${x1},${y1 + 18} C${x1},${y1 + 52} ${x2},${y2 - 52} ${x2},${y2 - 18}`
+      : `M${x1 + (x2 > x1 ? 18 : -18)},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2 + (x2 > x1 ? -18 : 18)},${y2}`;
+    path.setAttribute("d", d);
+    path.setAttribute("class", `graph-edge ${edge.kind === "time" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}`);
     path.setAttribute("marker-end", `url(#${marker.id})`);
     const title = document.createElementNS(lines.namespaceURI, "title"); title.textContent = edge.evidence.join("、"); path.append(title); lines.append(path);
   }
@@ -213,7 +218,12 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     const button = el("button", `graph-node ${node.type}`); button.type = "button"; button.dataset.nodeKey = node.key;
     button.style.left = `${node.x}px`; button.style.top = `${node.y}px`;
     button.setAttribute("aria-pressed", String(node.key === view.selected || node.selected === true));
-    button.append(el("span", "node-kind", node.label), el("strong", "", node.title), el("span", "node-summary", node.summary), el("span", "node-status", `${statusText(node.status)}${node.rows?.length > 1 ? ` · 重复 ${node.rows.length} 次` : ""}`));
+    button.append(el("span", "node-dot"), el("span", "node-label", node.title));
+    if (node.type === "run") {
+      button.setAttribute("aria-expanded", String(node.expanded));
+      button.setAttribute("aria-label", `${node.title} · ${node.runId} · ${node.expanded ? "收起" : "展开"}`);
+      button.append(el("span", "node-state", node.loadStatus === "pending" ? "读取中…" : node.loadStatus === "error" ? "读取失败" : node.expanded ? "−" : "+"));
+    }
     button.title = `${node.title} · ${asText(node.summary, "")}`;
     button.addEventListener("click", () => select(node)); buttons.set(node.key, button); plane.append(button);
   }
@@ -228,6 +238,15 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   }
   controls.append(zoomLabel, el("span", "graph-hint quiet-note", "滚动浏览 · Ctrl/⌘ + 滚轮缩放"));
   viewport.addEventListener("wheel", e => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); scaleTo(view.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  let drag = null;
+  viewport.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    drag = { x: e.clientX, y: e.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+    viewport.setPointerCapture(e.pointerId); viewport.classList.add("panning");
+  });
+  viewport.addEventListener("pointermove", e => { if (drag) { viewport.scrollLeft = drag.left - e.clientX + drag.x; viewport.scrollTop = drag.top - e.clientY + drag.y; } });
+  const endDrag = () => { drag = null; viewport.classList.remove("panning"); };
+  viewport.addEventListener("pointerup", endDrag); viewport.addEventListener("pointercancel", endDrag);
   viewport.addEventListener("keydown", e => {
     if (!e.target.dataset.nodeKey || !["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
     e.preventDefault(); const keys = [...buttons.keys()], index = keys.indexOf(e.target.dataset.nodeKey), next = e.key === "Home" ? 0 : e.key === "End" ? keys.length - 1 : Math.max(0, Math.min(keys.length - 1, index + (e.key === "ArrowRight" ? 1 : -1)));
@@ -238,12 +257,6 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   host.replaceChildren(controls, layout); view.viewport = viewport; host.graphView = view; scaleTo(view.scale, false); viewport.scrollLeft = view.left; viewport.scrollTop = view.top;
   if (byKey.has(view.selected) && details) select(byKey.get(view.selected), false);
   if (focusedKey) buttons.get(focusedKey)?.focus({ preventScroll: true });
-}
-function renderLineage(s) {
-  const model = lineageModel(s);
-  $("lineage-count").textContent = `${model.nodes.length} 个节点 · ${list(s.decisions).length} 条决策`;
-  if (!model.nodes.length) { $("run-graph").replaceChildren(empty("当前快照尚无决策、任务或候选，无法绘制脉络。")); $("run-graph").graphView = null; return; }
-  renderGraph($("run-graph"), model, `${state.demo ? "demo" : "real"}:${state.runId}`, null, node => graphDetail(node, model, s));
 }
 const sameId = (a, b) => present(a) && present(b) && a === b;
 function linkedJob(row, s) {
@@ -424,7 +437,7 @@ function renderRounds(s) {
 const eventLabels={job:"任务状态更新",progress:"执行进度更新",phase:"运行阶段更新",inference:"模型推理",feedback:"执行反馈",model_decision_requested:"请求模型决策",model_decision_validated:"决策通过校验",model_decision_rejected:"决策未通过校验",training_review_requested:"请求训练复查",training_review_completed:"训练复查完成",activation_verified:"候选验证通过","training.started":"训练开始","evaluation.completed":"评测完成","candidate.accepted":"候选已采纳","candidate.rejected":"候选未采纳","model.bound":"模型绑定更新","run.started":"运行开始"};
 function updateEventTypes(){const select=$("event-filter"),previous=select.value,types=[...new Set(list(state.snapshot?.events).map(e=>asText(e.kind,"未分类")))].sort();select.replaceChildren(...[["all","全部类型"],...types.map(t=>[t,eventLabels[t]||"其他事件"])].map(([v,t])=>{const o=el("option","",t);o.value=v;return o;}));select.value=types.includes(previous)?previous:"all";}
 function renderEvents(){if(!state.snapshot)return;const rows=list(state.snapshot.events),query=$("event-search").value.trim().toLowerCase(),filter=$("event-filter").value,shown=rows.filter(e=>(filter==="all"||e.kind===filter)&&JSON.stringify(e).toLowerCase().includes(query)).slice().sort((a,b)=>(Date.parse(b.timestamp)||0)-(Date.parse(a.timestamp)||0));$("event-count").textContent=`${shown.length} 条`;$("more-events").hidden=shown.length<=state.eventLimit;$("event-list").replaceChildren(...(shown.length?shown.slice(0,state.eventLimit).map(e=>{const row=el("article","event"),content=el("div","event-content");content.append(el("p","",eventLabels[e.kind]||"其他事件"),retainedDetails(JSON.stringify(e),state.openEvents,"事件详情",rawFields({...e,...object(e.details)})));row.append(el("time","event-time",dateText(e.timestamp)),content);return row;}):[empty(rows.length?"没有符合筛选条件的事件。":"尚无事件。") ]));}
-function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;$("objective").textContent=publicText(s.objective,"运行目标未报告");$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?"示例时间":"更新"} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?"执行模型":"决策模型"),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?"探索循环":"决策循环"),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();renderLineage(s);$("run-label").textContent=`${projectMeta(s.project).name} / 当前运行`;}
+function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;$("objective").textContent=publicText(s.objective,"运行目标未报告");$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?"示例时间":"更新"} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?"执行模型":"决策模型"),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?"探索循环":"决策循环"),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();$("run-label").textContent=`${projectMeta(s.project).name} / 当前运行`;}
 // Pure snapshot-to-Markdown conversion: no model call, network request or upload.
 const md = value => asText(value, "未报告").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
 function reportMetrics(metrics) {
@@ -486,63 +499,223 @@ function clearRun() {
   $("dashboard").hidden = true;
   state.openEvents.clear(); state.openDecisions.clear(); state.openJobs.clear();
   state.decisionLimit = 30; state.eventLimit = 30;
-  $("run-graph").graphView = null;
+
 }
 function projectMeta(value) {
   const p = object(value), id = identifier(p.project_id) ? p.project_id : "unassigned";
   return { project_id: id, name: id === "unassigned" ? "未归属" : asText(p.name, id), description: asText(p.description, ""), system_id: asText(p.system_id, "") };
 }
 function runRows(project) {
-  return list(project?.runs).filter(r => identifier(r.run_id)).slice().sort((a, b) =>
-    Number(!b.error && b.status !== "unavailable") - Number(!a.error && a.status !== "unavailable") ||
-    (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0) || a.run_id.localeCompare(b.run_id));
+  return list(project?.runs).filter(r => identifier(r.run_id)).slice().sort((a, b) => {
+    const at = Date.parse(a.updated_at), bt = Date.parse(b.updated_at);
+    return (Number.isFinite(at) ? at : Infinity) - (Number.isFinite(bt) ? bt : Infinity) || a.run_id.localeCompare(b.run_id);
+  });
 }
 function selectedProject() { return state.projects.find(p => p.project_id === state.projectId); }
-function renderProject() {
-  const project = selectedProject();
-  $("projects").hidden = !project;
-  if (!project) return;
-  const runs = runRows(project);
-  $("project-name").textContent = project.name;
-  $("project-description").textContent = project.description || "项目说明未报告。";
-  $("project-system").textContent = project.system_id ? `系统 ${project.system_id}` : "系统标识未报告";
-  $("project-run-count").textContent = `${runs.length} 次运行`;
-  $("project-overview").hidden = !state.runId;
-  const nodes = runs.map((row, i) => ({ key: row.run_id, type: "run", row, label: `运行 ${i + 1} · ${dateText(row.updated_at)}`,
-    title: row.objective || "运行目标未报告", summary: row.run_id, status: row.status,
-    x: 20 + i % 3 * 280, y: 20 + Math.floor(i / 3) * 150, selected: row.run_id === state.runId }));
-  if (nodes.length) renderGraph($("project-graph"), { nodes, edges: [] }, `project:${state.demo}:${project.project_id}`, node => selectRun(node.row.run_id));
-  else { $("project-graph").replaceChildren(empty("该项目尚无可读取的运行快照。")); $("project-graph").graphView = null; }
+function runParentIds(row) {
+  return [...new Set([row.parent_run_id, ...(Array.isArray(row.source_run_ids) ? row.source_run_ids : [])].filter(identifier))];
 }
-function chooseProjects(input) {
-  state.projects = list(input).map(p => ({ ...projectMeta(p), runs: list(p.runs) }));
-  if (!state.demo && !state.queryApplied) {
-    const params = new URLSearchParams(location.search), run = params.get("run"), project = params.get("project");
-    const owner = state.projects.find(p => list(p.runs).some(r => r.run_id === run));
-    if (owner) { state.projectId = owner.project_id; state.runId = run; }
-    else if (state.projects.some(p => p.project_id === project)) state.projectId = project;
-    state.queryApplied = true;
+function abortEntry(entry) {
+  entry.controller?.abort(); entry.controller = null; entry.token = (entry.token || 0) + 1;
+  if (entry.status === "pending") entry.status = entry.snapshot ? "ready" : "idle";
+}
+function activateProject() {
+  const key = JSON.stringify([state.demo, state.projectId]);
+  if (state.activeScope?.key === key) return state.activeScope;
+  if (state.activeScope) {
+    state.activeScope.view = $("project-graph").graphView;
+    for (const entry of state.activeScope.cache.values()) abortEntry(entry);
   }
-  if (!selectedProject()) { state.projectId = state.projects[0]?.project_id || ""; state.runId = ""; clearRun(); }
-  const runs = runRows(selectedProject());
-  if (state.runId && !runs.some(r => r.run_id === state.runId)) { state.runId = ""; clearRun(); }
-  const projects = state.projects.map(p => { const option = el("option", "", p.name); option.value = p.project_id; return option; });
-  if (!projects.length) { const option = el("option", "", "暂无项目"); option.value = ""; projects.push(option); }
-  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
-  const all = el("option", "", "项目总览"); all.value = "";
-  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", `运行 ${i + 1} · ${dateText(r.updated_at)} · ${statusText(r.status)}`); option.value = r.run_id; return option; }));
-  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
-  renderProject();
+  let scope = state.scopes.get(key);
+  if (!scope) { scope = { key, expanded: new Set(), cache: new Map(), selected: "project-root", runId: "", view: null }; state.scopes.set(key, scope); }
+  state.activeScope = scope; $("project-graph").graphView = scope.view;
+  state.runId = scope.runId; clearRun();
+  return scope;
 }
-function selectRun(id) {
-  if (state.runId === id && state.snapshot) { $("lineage").scrollIntoView({ block: "start" }); return; }
-  state.runId = id; clearRun();
+// Run anchors never move when branches expand. Each run owns a vertical lane.
+function projectModel(project, scope) {
+  const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: project.name, label: "项目", x: 20, y: 90 }], edges = [];
+  const ids = new Map();
+  runs.forEach((row, i) => {
+    const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
+    const n = { key, type: "run", row, runId: row.run_id, title: `运行 ${i + 1}`, label: "运行", summary: row.run_id,
+      x: 200 + i * 300, y: 90, expanded: scope.expanded.has(row.run_id), loadStatus: entry?.status,
+      missing: [], ambiguous: [] };
+    nodes.push(n); const matches = ids.get(row.run_id) || []; matches.push(n); ids.set(row.run_id, matches);
+    edges.push({ from: "project-root", to: key, kind: "membership", evidence: ["项目归属"] });
+  });
+  const runNodes = nodes.slice(1);
+  for (const node of runNodes) {
+    const snapshot = scope.cache.get(node.runId)?.snapshot;
+    // A loaded snapshot is authoritative, including absence of optional parents.
+    for (const id of runParentIds(snapshot || node.row)) {
+      const matches = ids.get(id);
+      if (!matches) node.missing.push(id);
+      else if (matches.length !== 1) node.ambiguous.push(id);
+      else if (matches[0] !== node) edges.push({ from: matches[0].key, to: node.key, kind: "run-parent", evidence: [`显式运行引用 ${id}`] });
+    }
+  }
+  for (let i = 1; i < runNodes.length; i++) {
+    const a = runNodes[i - 1], b = runNodes[i], at = Date.parse(a.row.updated_at), bt = Date.parse(b.row.updated_at);
+    if (Number.isFinite(at) && Number.isFinite(bt) && at < bt)
+      edges.push({ from: a.key, to: b.key, kind: "time", evidence: ["记录更新时间顺序，不表示继承"] });
+  }
+  for (const run of runNodes) {
+    if (!run.expanded) continue;
+    const entry = scope.cache.get(run.runId);
+    if (!entry?.snapshot) {
+      const status = entry?.status === "error" ? "读取失败 · 重试" : "正在读取…";
+      const key = JSON.stringify([run.runId, "load"]);
+      nodes.push({ key, type: "load", title: status, label: status, row: {}, runId: run.runId, x: run.x, y: 230 });
+      edges.push({ from: run.key, to: key, kind: "membership", evidence: [status] }); continue;
+    }
+    const branch = lineageModel(entry.snapshot), local = new Map(), decisions = branch.nodes.filter(n => n.type === "decision");
+    decisions.forEach((n, i) => local.set(n.key, { ...n, x: run.x, y: 230 + i * 110 }));
+    let detached = 0;
+    for (const n of branch.nodes.filter(n => n.type !== "decision")) {
+      const parent = branch.edges.find(e => e.to === n.key && e.kind === "directive"), origin = parent && local.get(parent.from);
+      const prior = [...local.values()].filter(v => v.type !== "decision" && v.origin === parent?.from).length;
+      local.set(n.key, { ...n, x: run.x + 136, y: origin ? origin.y + prior * 90 : 230 + (decisions.length + detached++) * 110, origin: parent?.from });
+    }
+    const incoming = new Set(branch.edges.map(e => e.to));
+    for (const n of local.values()) {
+      const key = JSON.stringify([run.runId, n.key]);
+      nodes.push({ ...n, key, localKey: n.key, runId: run.runId, snapshot: entry.snapshot, branch });
+      if (!incoming.has(n.key)) edges.push({ from: run.key, to: key, kind: "membership", evidence: ["运行内记录"] });
+    }
+    for (const e of branch.edges) edges.push({ ...e, from: JSON.stringify([run.runId, e.from]), to: JSON.stringify([run.runId, e.to]) });
+  }
+  return { nodes, edges };
+}
+function runDetail(node, scope) {
+  const entry = scope.cache.get(node.runId), s = entry?.snapshot, box = el("div");
+  box.append(el("p", "eyebrow", "运行详情"), el("h3", "", node.title), badge(s?.status || node.row.status), fieldList([["运行", node.runId], ["记录更新", dateText(s?.updated_at || node.row.updated_at)]]));
+  box.append(el("p", "decision-reason", s?.objective || node.row.objective || "目标未报告"));
+  if (entry?.status === "pending") box.append(el("p", "load-message", s ? "正在刷新，保留上次快照。" : "正在读取决策与反馈…"));
+  if (entry?.status === "error") {
+    box.append(el("p", "load-message error", `${s ? "保留上次快照。" : ""}读取失败：${entry.error}`));
+    const retry = el("button", "", "重试读取"); retry.addEventListener("click", () => loadRun(node.runId, scope, true)); box.append(retry);
+  }
+  if (s) {
+    for (const [role, model] of Object.entries(object(s.models))) {
+      box.append(el("h4", "", role === "actor" ? "执行模型 / actor" : role === "decision_maker" ? "决策者 / decision maker" : role), rawFields(model));
+    }
+    if (!Object.keys(object(s.models)).length) box.append(empty("模型 revision 未报告。"));
+    box.append(el("h4", "", `候选记录 · ${list(s.candidates).length}`));
+    for (const c of list(s.candidates)) box.append(rawFields(c), metricsDetail(c.metrics));
+    if (!list(s.candidates).length) box.append(empty("未报告候选。"));
+    box.append(el("p", "quiet-note", `当前快照：${list(s.decisions).length} 条决策（API 最多 300 条）。`));
+    const report = el("button", "", "导出此运行报告"); report.addEventListener("click", () => { setSelectedRun(node.runId, scope); downloadReport(); }); box.append(report);
+  }
+  const parents = runParentIds(s || node.row);
+  box.append(el("h4", "", "运行关联依据"), el("p", "quiet-note", parents.length ? `显式引用：${parents.join("、")}` : "未报告显式父运行。"));
+  if (node.missing.length) box.append(el("p", "quiet-note", `父引用不在本项目：${node.missing.join("、")}`));
+  if (node.ambiguous.length) box.append(el("p", "quiet-note", `父 ID 歧义，未连线：${node.ambiguous.join("、")}`));
+  return box;
+}
+function projectDetail(node, model, scope) {
+  if (node.type === "project") {
+    const box = el("div"); box.append(el("p", "eyebrow", "项目"), el("h3", "", node.title), el("p", "", node.row.description || "项目说明未报告。"), el("p", "quiet-note", "点击运行圆点展开或收起；可同时展开多个运行。")); return box;
+  }
+  if (node.type === "run") return runDetail(node, scope);
+  if (node.type === "load") { const box = el("div"); box.append(el("p", "", scope.cache.get(node.runId)?.error || "正在读取运行快照…")); return box; }
+  const box = graphDetail({ ...node, key: node.localKey }, node.branch, node.snapshot);
+  box.prepend(el("p", "quiet-note", node.runId));
+  if (node.type === "job") { const charts = el("div"); charts.append(chartView(node.row, lossKeys, "损失"), chartView(node.row, lrKeys, "学习率")); box.append(charts); }
+  return box;
+}
+function setSelectedRun(id, scope) {
+  scope.runId = id; state.runId = id;
+  const s = scope.cache.get(id)?.snapshot;
+  if (s) renderSnapshot(s); else clearRun();
+  $("run-select").value = id;
   if (!state.demo) {
     const url = new URL(location.href); url.searchParams.set("project", state.projectId);
     if (id) url.searchParams.set("run", id); else url.searchParams.delete("run");
     history.replaceState(null, "", url);
   }
-  refresh();
+}
+function renderProject() {
+  const project = selectedProject(); $("projects").hidden = !project;
+  if (!project) return;
+  const scope = state.activeScope || activateProject(), model = projectModel(project, scope);
+  $("project-name").textContent = project.name; $("project-description").textContent = project.description || "";
+  $("project-system").textContent = project.system_id ? `系统 ${project.system_id}` : "";
+  $("project-run-count").textContent = `${runRows(project).length} 次运行 · ${scope.expanded.size} 已展开`;
+  $("project-overview").hidden = false;
+  if (!model.nodes.some(n => n.key === scope.selected)) scope.selected = scope.runId ? JSON.stringify(["run", scope.runId]) : "project-root";
+  if ($("project-graph").graphView) $("project-graph").graphView.selected = scope.selected;
+  for (const n of model.nodes) n.selected = n.key === scope.selected;
+  renderGraph($("project-graph"), model, scope.key, node => {
+    scope.selected = node.key;
+    if (node.type === "run") selectRun(node.runId, true);
+    else if (node.type === "load") loadRun(node.runId, scope, true);
+    else if (node.runId) setSelectedRun(node.runId, scope);
+    else { setSelectedRun("", scope); }
+  }, node => projectDetail(node, model, scope));
+  scope.view = $("project-graph").graphView;
+  $("empty").hidden = true;
+}
+function chooseProjects(input) {
+  state.projects = list(input).map(p => ({ ...projectMeta(p), runs: list(p.runs) }));
+  let deepRun = "";
+  if (!state.demo && !state.queryApplied) {
+    const params = new URLSearchParams(location.search), run = params.get("run"), project = params.get("project");
+    const owner = state.projects.find(p => list(p.runs).some(r => r.run_id === run));
+    if (owner) { state.projectId = owner.project_id; deepRun = run; }
+    else if (state.projects.some(p => p.project_id === project)) state.projectId = project;
+    state.queryApplied = true;
+  }
+  if (!selectedProject()) state.projectId = state.projects[0]?.project_id || "";
+  const scope = activateProject(), runs = runRows(selectedProject()), valid = new Set(runs.map(r => r.run_id));
+  for (const id of scope.expanded) if (!valid.has(id)) { scope.expanded.delete(id); const entry = scope.cache.get(id); if (entry) abortEntry(entry); scope.cache.delete(id); }
+  if (scope.runId && !valid.has(scope.runId)) { scope.runId = ""; state.runId = ""; clearRun(); }
+  if (deepRun) { scope.expanded.add(deepRun); scope.runId = deepRun; state.runId = deepRun; scope.selected = JSON.stringify(["run", deepRun]); }
+  const projects = state.projects.map(p => { const option = el("option", "", p.name); option.value = p.project_id; return option; });
+  if (!projects.length) { const option = el("option", "", "暂无项目"); option.value = ""; projects.push(option); }
+  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
+  const all = el("option", "", "选择运行 · 图内展开"); all.value = "";
+  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", `运行 ${i + 1} · ${r.run_id}`); option.value = r.run_id; return option; }));
+  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
+  if (scope.runId) setSelectedRun(scope.runId, scope);
+  renderProject();
+}
+function selectRun(id, toggle = false) {
+  const scope = activateProject();
+  if (!id) { scope.selected = "project-root"; setSelectedRun("", scope); renderProject(); return; }
+  if (!runRows(selectedProject()).some(r => r.run_id === id)) return;
+  scope.selected = JSON.stringify(["run", id]);
+  if (toggle && scope.expanded.has(id)) {
+    scope.expanded.delete(id); const entry = scope.cache.get(id); if (entry) abortEntry(entry);
+  } else scope.expanded.add(id);
+  setSelectedRun(id, scope); renderProject();
+  if (scope.expanded.has(id)) loadRun(id, scope);
+}
+async function loadRun(id, scope, force = false) {
+  if (scope !== state.activeScope) return;
+  let entry = scope.cache.get(id);
+  if (!entry) { entry = { status: "idle", snapshot: null, token: 0 }; scope.cache.set(id, entry); }
+  if (entry.status === "pending" || (!force && entry.snapshot && entry.status !== "error")) return;
+  const controller = new AbortController(), token = ++entry.token;
+  entry.controller = controller; entry.status = "pending"; entry.error = ""; renderProject();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const current = () => scope === state.activeScope && entry.token === token;
+  try {
+    const s = state.demo ? state.demoSnapshots.get(id) : await fetchJSON(`/api/runs/${encodeURIComponent(id)}`, controller.signal);
+    if (!current() || controller.signal.aborted) return;
+    if (s?.schema_version !== 1 || s.run_id !== id) throw new Error("运行快照协议或 ID 不匹配。");
+    entry.snapshot = s; entry.status = "ready";
+  } catch (error) {
+    if (!current()) return;
+    entry.status = "error"; entry.error = controller.signal.aborted ? "请求超时。" : asText(error.message, "无法连接服务。");
+  } finally {
+    clearTimeout(timeout);
+    if (current()) {
+      entry.controller = null;
+      if (scope.runId === id && entry.snapshot) renderSnapshot(entry.snapshot);
+      renderProject();
+    }
+  }
 }
 async function fetchJSON(url, signal) {
   const response = await fetch(url, {
@@ -566,94 +739,44 @@ function schedule() {
     state.timer = setTimeout(refresh, 5000);
 }
 async function refresh() {
-  clearTimeout(state.timer);
-  state.controller?.abort();
-  const epoch = ++state.epoch,
-    controller = new AbortController();
-  state.controller = controller;
-  let listConnected = false;
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  $("refresh").disabled = true;
+  clearTimeout(state.timer); state.controller?.abort();
+  const epoch = ++state.epoch, controller = new AbortController(); state.controller = controller;
+  const timeout = setTimeout(() => controller.abort(), 8000); $("refresh").disabled = true;
   try {
     if (state.demo) {
       const s = await fetchJSON("/demo.json", controller.signal);
       if (epoch !== state.epoch) return;
-      const examples = list(s.demo_runs);
-      const snapshots = [s, ...examples];
-      const selected = snapshots.find(r => r.run_id === state.runId);
-      const demoProject = projectMeta(s.project);
-      chooseProjects([{ ...demoProject, runs: snapshots }]);
-      if (selected) renderSnapshot(selected);
-      else showEmpty("选择一次示例运行", "点击运行节点，查看决策、实验反馈与调整。");
-      connection("示例数据", "demo");
-      notice("示例数据 · 静态演示，不代表真实运行。");
-      $("footer-source").textContent = "示例数据 · 静态快照";
-      return;
+      const snapshots = [s, ...list(s.demo_runs)]; state.demoSnapshots = new Map(snapshots.map(r => [r.run_id, r]));
+      chooseProjects([{ ...projectMeta(s.project), runs: snapshots }]);
+      connection("示例数据", "demo"); notice("示例数据 · 静态演示，不代表真实运行。"); $("footer-source").textContent = "示例数据 · 静态快照";
+    } else {
+      const data = await fetchJSON("/api/projects", controller.signal);
+      if (epoch !== state.epoch) return;
+      if (!Array.isArray(data.projects)) throw new Error("项目清单格式无效。");
+      chooseProjects(data.projects); connection("已连接", "online"); notice(""); $("footer-source").textContent = "本地监控 · 只读";
     }
-    const data = await fetchJSON("/api/projects", controller.signal);
-    if (epoch !== state.epoch) return;
-    if (!Array.isArray(data.projects)) throw new Error("项目清单格式无效。");
-    listConnected = true;
-    chooseProjects(data.projects);
-    connection("已连接", "online");
-    $("footer-source").textContent = "本地监控 · 只读";
-    if (!state.runId) {
-      state.snapshot = null;
-    $("export-report").disabled = true;
-      notice("");
-      showEmpty(
-        state.projects.length ? "选择一次运行" : "等待第一个项目",
-        state.projects.length ? "点击上方运行节点，查看已记录脉络。" : "尚无项目或运行快照；有数据后将自动显示。",
-      );
-      return;
-    }
-    if (!state.snapshot)
-      showEmpty("正在读取运行", "正在加载所选运行的监控快照。");
-    const s = await fetchJSON(
-      `/api/runs/${encodeURIComponent(state.runId)}`,
-      controller.signal,
-    );
-    if (epoch !== state.epoch) return;
-    if (s.schema_version !== 1) throw new Error("不支持的监控协议版本。");
-    renderSnapshot(s);
-    const age = Date.now() - Date.parse(s.updated_at);
-    notice(
-      ACTIVE.has(statusKey(s.status)) && age > 120000
-        ? "快照已超过 2 分钟未更新；当前显示的是最近一次报告的状态。"
-        : "",
-    );
+    clearTimeout(timeout);
+    const scope = state.activeScope;
+    if (scope.runId) setSelectedRun(scope.runId, scope);
+    await Promise.allSettled([...scope.expanded].map(id => loadRun(id, scope, true)));
+    if (!state.projects.length) showEmpty("等待第一个项目", "尚无项目或运行快照；有数据后将自动显示。");
   } catch (error) {
     if (epoch !== state.epoch) return;
-    const networkFailure =
-      error instanceof TypeError || controller.signal.aborted;
-    connection(
-      listConnected && !networkFailure ? "快照不可用" : "连接中断",
-      "offline",
-    );
-    const reason = controller.signal.aborted
-      ? "请求超时。"
-      : error instanceof TypeError
-        ? "无法连接本地监控服务。"
-        : asText(error.message, "暂时无法连接。");
-    notice(
-      `${state.demo ? "示例数据 · " : ""}${state.snapshot ? "保留上次成功读取的快照；数据未更新。" : "暂时无法读取监控快照。"} ${reason}`,
-      true,
-    );
-    if (!state.snapshot)
-      showEmpty(
-        "暂时无法读取运行",
-        "请检查本地监控服务；恢复后将自动重新读取。",
-      );
+    connection("连接中断", "offline"); notice(`保留已读取的项目图与快照。${controller.signal.aborted ? "请求超时。" : asText(error.message, "无法连接监控服务。")}`, true);
+    if (!selectedProject()) showEmpty("暂时无法读取项目", "请检查本地监控服务；恢复后将自动重新读取。");
   } finally {
     clearTimeout(timeout);
-    if (epoch === state.epoch) {
-      $("refresh").disabled = false;
-      state.controller = null;
-      schedule();
-    }
+    if (epoch === state.epoch) { $("refresh").disabled = false; state.controller = null; schedule(); }
   }
 }
 function switchDemo() {
+  if (state.activeScope) {
+    state.activeScope.view = $("project-graph").graphView;
+    for (const entry of state.activeScope.cache.values()) abortEntry(entry);
+    state.activeScope = null;
+  }
+  $("project-graph").graphView = null;
+
   if (!state.demo) state.realProjectId = state.projectId;
   state.realRunId = state.demo ? state.realRunId : state.runId;
   state.demo = !state.demo;
@@ -694,7 +817,7 @@ $("auto-refresh").addEventListener("change", () => {
   schedule();
 });
 $("run-select").addEventListener("change", () => selectRun($("run-select").value));
-$("project-select").addEventListener("change", () => { state.projectId = $("project-select").value; selectRun(""); });
+$("project-select").addEventListener("change", () => { state.controller?.abort(); ++state.epoch; state.projectId = $("project-select").value; activateProject(); chooseProjects(state.projects); refresh(); });
 $("project-overview").addEventListener("click", () => selectRun(""));
 $("job-filter").addEventListener("change", renderJobs);
 $("candidate-filter").addEventListener("change", renderCandidates);

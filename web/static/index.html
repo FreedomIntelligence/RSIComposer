@@ -13,7 +13,7 @@
   <a class="skip" href="#main">跳至内容</a>
   <header class="masthead">
     <a class="wordmark" href="/" aria-label="RSISys 首页">RSISys<span>.</span></a>
-    <nav aria-label="页面导航"><a href="#projects">项目</a><a href="#lineage">已记录脉络</a><a href="#jobs">指标</a></nav>
+    <nav aria-label="页面导航"><a href="#projects">项目</a><a href="#project-graph">项目图</a><a href="#jobs">指标</a></nav>
     <span class="read-only">只读</span>
   </header>
   <main id="main">
@@ -23,15 +23,15 @@
         <span id="connection" class="connection" role="status">连接中</span>
         <label class="auto"><input id="auto-refresh" type="checkbox" checked />自动刷新</label>
         <button id="refresh" aria-label="立即刷新" title="立即刷新">刷新</button>
-        <button id="export-report" disabled>导出报告</button>
+        <button id="export-report" disabled>导出所选运行</button>
         <button id="demo" aria-pressed="false">查看示例</button>
       </div>
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
     <section id="projects" aria-labelledby="project-name" hidden>
       <div class="project-heading"><p class="eyebrow">RSI 系统 · 项目</p><h1 id="project-name"></h1><p id="project-description"></p><p id="project-system" class="quiet-note"></p></div>
-      <div class="section-heading"><h2>运行入口 <span id="project-run-count"></span></h2><button id="project-overview">项目总览</button></div>
-      <p class="quiet-note graph-caption">各运行独立展示，点击进入当前快照。</p>
+      <div class="section-heading"><h2>项目脉络 <span id="project-run-count"></span></h2><button id="project-overview">项目详情</button></div>
+      <p class="quiet-note graph-caption">虚线：记录更新时间顺序，不表示继承。实线：显式父引用；浅线：项目 / 运行内记录。</p>
       <div id="project-graph"></div>
     </section>
     <section id="empty" class="empty-state" hidden>
@@ -39,15 +39,10 @@
       <p id="empty-description">尚无运行快照。</p>
       <button id="empty-demo">浏览示例数据</button>
     </section>
-    <div id="dashboard" hidden>
+    <details id="dashboard" class="secondary-section" hidden><summary>所选运行 · 训练指标与报告</summary>
       <section id="overview" aria-labelledby="objective">
         <div class="run-heading"><div><p id="run-label" class="eyebrow"></p><h2 id="objective"></h2></div><div class="run-meta"><span id="run-status"></span><p id="updated"></p></div></div>
         <section id="execution" aria-labelledby="execution-title"><div class="section-heading"><h2 id="execution-title">当前执行</h2><span id="workflow-summary"></span></div><div id="current-execution"></div></section>
-      </section>
-      <section id="lineage" class="section" aria-labelledby="lineage-title">
-        <div class="section-heading"><h2 id="lineage-title">已记录脉络 <span id="lineage-count"></span></h2></div>
-        <p class="quiet-note graph-caption">当前快照（最多 300 条决策）；虚线仅表示时间先后，实线表示显式父决策或指令关联。</p>
-        <div id="run-graph"></div>
       </section>
       <section id="decisions" class="section" aria-labelledby="decisions-title">
         <div class="section-heading"><h2 id="decisions-title">决策与反馈 <span id="decision-count"></span></h2>
@@ -67,7 +62,7 @@
         <div id="run-info"></div>
         <section id="events" class="section" aria-labelledby="events-title"><div class="section-heading"><h2 id="events-title">事件 <span id="event-count"></span></h2><div class="event-tools"><input id="event-search" type="search" placeholder="搜索事件" aria-label="搜索事件" /><select id="event-filter" aria-label="事件类型"><option value="all">全部类型</option></select></div></div><div id="event-list"></div><button id="more-events" class="more-button" hidden>显示更多事件</button></section>
       </details>
-    </div>
+    </details>
   </main>
   <footer><span>RSISys</span><span id="footer-source">本地监控 · 只读</span></footer>
   <noscript><p class="notice">请启用 JavaScript 以读取监控状态。</p></noscript>
