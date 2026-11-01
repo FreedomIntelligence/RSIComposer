@@ -1,4 +1,5 @@
 "use strict";
+const { t } = RSII18n;
 const $ = (id) => document.getElementById(id);
 const state = {
   demo: false, runId: "", realRunId: "", snapshot: null, controller: null,
@@ -35,21 +36,26 @@ const object = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 const number = (v) => typeof v === "number" && Number.isFinite(v);
 const present = (v) => v !== undefined && v !== null && v !== "";
 const statusKey = (v) => asText(v, "unknown").toLowerCase();
-const statusText = (v) => labels[statusKey(v)] || "状态未报告或未归类";
-const actionText = (v) => actionLabels[asText(v, "")] || "其他操作";
-const metricText = (v) => metricLabels[v] || "其他指标";
+const statusText = (v) => t(labels[statusKey(v)]) || t("状态未报告或未归类");
+const actionText = (v) => t(actionLabels[asText(v, "")]) || t("其他操作");
+const metricText = (v) => t(metricLabels[v]) || asText(v, t("其他指标"));
 function el(tag, className = "", text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = asText(text); return e; }
 function badge(v) { const k = statusKey(v); return el("span", `badge ${FAILED.has(k) || REJECTED.has(k) ? "failure" : DONE.has(k) || ACCEPTED.has(k) ? "success" : ACTIVE.has(k) ? "active" : ""}`, statusText(v)); }
 function empty(text) { return el("p", "subtle-empty", text); }
-function dateText(v, withDate = true) { if (!v) return "时间未报告"; const d = new Date(v); if (Number.isNaN(d.getTime())) return "时间未报告"; return new Intl.DateTimeFormat("zh-CN", { ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d); }
-function secondsText(v) { if (!number(v) || v < 0) return "未报告"; if (v > 0 && v < 1) return "不足 1 秒"; const s = Math.floor(v); return [s >= 3600 ? `${Math.floor(s / 3600)} 小时` : "", s >= 60 ? `${Math.floor(s % 3600 / 60)} 分` : "", `${s % 60} 秒`].filter(Boolean).join(" "); }
+function dateText(v, withDate = true) { if (!v) return t("时间未报告"); const d = new Date(v); if (Number.isNaN(d.getTime())) return t("时间未报告"); return new Intl.DateTimeFormat(RSII18n.getLanguage() === "zh" ? "zh-CN" : "en-US", { ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d); }
+function secondsText(v) { if (!number(v) || v < 0) return t("未报告"); if (v > 0 && v < 1) return t("不足 1 秒"); const s = Math.floor(v); return [s >= 3600 ? t("{p0} 小时", {p0: Math.floor(s / 3600)}) : "", s >= 60 ? t("{p0} 分", {p0: Math.floor(s % 3600 / 60)}) : "", t("{p0} 秒", {p0: s % 60})].filter(Boolean).join(" "); }
 function fmt(v) { if (!number(v)) return "—"; if (v !== 0 && (Math.abs(v) < .0001 || Math.abs(v) >= 1e9)) return v.toExponential(4); return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(v); }
-function connection(text, tone = "") { $("connection").textContent = text; $("connection").className = `connection ${tone}`; }
-function notice(text, error = false) { $("notice").textContent = text; $("notice").hidden = !text; $("notice").className = `notice${error ? " error" : ""}`; }
-function showEmpty(title, text) { $("dashboard").hidden = true; $("empty").hidden = false; $("empty-title").textContent = title; $("empty-description").textContent = text; $("export-report").disabled = !state.snapshot; }
+const chrome = { connection: () => t("连接中"), tone: "", notice: "", noticeError: false,
+  emptyTitle: () => t("等待第一次运行"), emptyDescription: () => t("尚无运行快照。") };
+const copy = value => typeof value === "function" ? value() : value;
+function uiError(key, params = {}) { return Object.assign(new Error(t(key, params)), { uiKey: key, uiParams: params }); }
+function errorText(error, fallback = "无法连接服务。") { return error?.uiKey ? t(error.uiKey, error.uiParams) : asText(error?.message || error?.error, t(fallback)); }
+function connection(text, tone = "") { chrome.connection=text;chrome.tone=tone;$("connection").textContent = copy(text); $("connection").className = `connection ${tone}`; }
+function notice(text, error = false) { chrome.notice=text;chrome.noticeError=error;const value=copy(text);$("notice").textContent = value; $("notice").hidden = !value; $("notice").className = `notice${error ? " error" : ""}`; }
+function showEmpty(title, text) { chrome.emptyTitle=title;chrome.emptyDescription=text; $("dashboard").hidden = true; $("empty").hidden = false; $("empty-title").textContent = copy(title); $("empty-description").textContent = copy(text); $("export-report").disabled = !state.snapshot; }
 // Keep reported prose verbatim. Identifiers and long text live in disclosures.
-const publicText = (value, fallback = "未报告") => asText(value, fallback);
-function proseView(value, title = "决策原文") {
+const publicText = (value, fallback = t("未报告")) => asText(value, fallback);
+function proseView(value, title = t("决策原文")) {
   const details=el("details","record-details");details.append(el("summary","",title),el("p","decision-reason",asText(value)));return details;
 }
 function fieldList(entries) { const dl = el("dl", "detail-grid"); for (const [k, v] of entries.filter(([, v]) => present(v))) dl.append(el("dt", "", k), el("dd", "", asText(v))); return dl; }
@@ -64,15 +70,15 @@ function flattenMetrics(source, prefix = "", output = {}, depth = 0) {
 }
 function metricStrip(metrics, raw = false) {
   const dl = el("dl", "metric-strip");
-  for (const [key, value] of Object.entries(flattenMetrics(metrics)).filter(([k]) => raw || metricLabels[k])) { const item = el("div", "metric-chip"); item.append(el("dt", "", raw ? `${metricText(key)} · ${key}` : metricText(key)), el("dd", "", fmt(value))); dl.append(item); } return dl;
+  for (const [key, value] of Object.entries(flattenMetrics(metrics))) { const item = el("div", "metric-chip"); const label=el("dt", "", metricText(key));label.title=key;item.append(label, el("dd", "", fmt(value))); dl.append(item); } return dl;
 }
-function metricsDetail(metrics) { const m = metricStrip(metrics, true); return m.childElementCount ? m : empty("尚无指标。"); }
+function metricsDetail(metrics) { const m = metricStrip(metrics, true); return m.childElementCount ? m : empty(t("尚无指标。")); }
 function progressView(step, total) {
   const wrap = el("div", "step-progress");
   if (Number.isInteger(step) && step >= 0 && Number.isInteger(total) && total > 0 && step <= total) {
-    const label = el("div", "progress-label"); label.append(el("span", "", `${step} / ${total} 步`), el("span", "", `${Number((step / total * 100).toFixed(1))}%`));
-    const bar = el("progress"); bar.max = total; bar.value = step; bar.setAttribute("aria-label", "任务步骤进度"); wrap.append(label, bar);
-  } else wrap.append(el("p", "progress-unknown", Number.isInteger(step) && step >= 0 ? `已报告 ${step} 步；总步数未报告或待核对` : "步骤进度未报告"));
+    const label = el("div", "progress-label"); label.append(el("span", "", t("{p0} / {p1} 步", {p0: step, p1: total})), el("span", "", `${Number((step / total * 100).toFixed(1))}%`));
+    const bar = el("progress"); bar.max = total; bar.value = step; bar.setAttribute("aria-label", t("任务步骤进度")); wrap.append(label, bar);
+  } else wrap.append(el("p", "progress-unknown", Number.isInteger(step) && step >= 0 ? t("已报告 {p0} 步；总步数未报告或待核对", {p0: step}) : t("步骤进度未报告")));
   return wrap;
 }
 function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation; return row.mode || row.action || (row.kind === "finish" ? "finish" : undefined); }
@@ -188,8 +194,8 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const view = same ? previous : { key, autoFit: true, scale: 1, selected: model.nodes.find(n => n.selected)?.key || "project-root", left: 0, top: 0 };
   if (same) { view.left = previous.viewport.scrollLeft; view.top = previous.viewport.scrollTop; }
   const focusedKey = host.contains(document.activeElement) ? document.activeElement?.dataset.nodeKey : null;
-  const controls = el("div","graph-controls"), zoomLabel = el("span","quiet-note"), viewport = el("div","graph-viewport"), extent = el("div","graph-extent"), plane = el("div","graph-plane");
-  viewport.tabIndex = 0; viewport.setAttribute("role","region"); viewport.setAttribute("aria-label","关系图谱，拖拽节点或空白平移，Ctrl 或 Command 加滚轮缩放");
+  const controls = el("div","graph-controls"), zoomLabel = el("button","zoom-reset"), viewport = el("div","graph-viewport"), extent = el("div","graph-extent"), plane = el("div","graph-plane");
+  viewport.tabIndex = 0; viewport.setAttribute("role","region"); viewport.setAttribute("aria-label",t("关系图谱，拖拽节点或空白平移，Ctrl 或 Command 加滚轮缩放"));
   const bounds = () => ({ left: Math.min(...model.nodes.map(n=>n.x))-65, top: Math.min(...model.nodes.map(n=>n.y))-45,
     right: Math.max(...model.nodes.map(n=>n.x))+65, bottom: Math.max(...model.nodes.map(n=>n.y))+65 });
   let frame = same && !view.autoFit && view.frame ? {...view.frame} : bounds();
@@ -203,12 +209,12 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     if (!byKey.has(edge.from) || !byKey.has(edge.to)) continue;
     const path = svgEl("path",{ class:`graph-edge ${edge.kind === "time" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}` });
     if (["explicit","run-parent","directive"].includes(edge.kind)) path.setAttribute("marker-end",`url(#${host.id}-arrow)`);
-    path.append(svgEl("title",{},edge.evidence.join("、"))); const item={edge,path}; paths.push(item); draw(item); lines.append(path);
+    path.append(svgEl("title",{},edge.evidence.join(t("、")))); const item={edge,path}; paths.push(item); draw(item); lines.append(path);
     for (const k of [edge.from,edge.to]) { const entries=incident.get(k)||[]; entries.push(item); incident.set(k,entries); }
   }
   plane.append(lines);
   const details = detailFor ? el("section","graph-detail") : null;
-  if (details) details.setAttribute("aria-label","所选节点的执行流程与结果");
+  if (details) details.setAttribute("aria-label",t("所选节点的执行流程与结果"));
   const highlight = key => {
     const neighbors=graphNeighborhood(model,key);
     for (const [id,button] of buttons) button.setAttribute("data-related",neighbors.has(id)?"true":"false");
@@ -324,10 +330,15 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     scaleTo(Math.min((viewport.clientWidth-20)/width,(viewport.clientHeight-20)/height,1.25),false);
     view.autoFit=true;viewport.scrollLeft=0;viewport.scrollTop=0;
   };
-  for(const [label,title,action] of [["−","缩小",()=>scaleTo(view.scale/1.25)],["+","放大",()=>scaleTo(view.scale*1.25)],["适应","适应全部节点",fit],["100%","恢复原始大小",()=>scaleTo(1)],["重排","自动调整节点布局",()=>{ const scope=state.activeScope;if(scope?.key!==key)return;scope.pinned.clear();scope.needsRelax=true;view.autoFit=true;renderProject(); }]]){
-    const button=el("button","",label);button.type="button";button.setAttribute("aria-label",title);button.addEventListener("click",action);controls.append(button);
+  const zoomGroup=el("div","graph-control-group"),layoutGroup=el("div","graph-control-group");
+  zoomGroup.setAttribute("role","group");zoomGroup.setAttribute("aria-label",t("缩放"));
+  layoutGroup.setAttribute("role","group");layoutGroup.setAttribute("aria-label",t("布局"));
+  zoomLabel.type="button";zoomLabel.setAttribute("aria-label",t("恢复原始大小"));zoomLabel.title=t("恢复原始大小");zoomLabel.addEventListener("click",()=>scaleTo(1));
+  for(const [label,title,action,group] of [["−",t("缩小"),()=>scaleTo(view.scale/1.25),zoomGroup],["+",t("放大"),()=>scaleTo(view.scale*1.25),zoomGroup],[t("适应"),t("适应全部节点"),fit,layoutGroup],[t("重排"),t("自动调整节点布局"),()=>{ const scope=state.activeScope;if(scope?.key!==key)return;scope.pinned.clear();scope.needsRelax=true;view.autoFit=true;renderProject(); },layoutGroup]]){
+    const button=el("button","",label);button.type="button";button.title=title;button.setAttribute("aria-label",title);button.addEventListener("click",action);group.append(button);
+    if(label==="−")group.append(zoomLabel);
   }
-  controls.append(zoomLabel,el("span","graph-hint quiet-note","拖拽节点 · 空白平移 · Ctrl/⌘ + 滚轮缩放"));
+  controls.append(zoomGroup,layoutGroup);
   viewport.addEventListener("wheel",e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();scaleTo(view.scale*(e.deltaY<0?1.1:1/1.1));}},{passive:false});
   let pan=null;
   viewport.addEventListener("pointerdown",e=>{
@@ -343,7 +354,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     buttons.get(keys[next]).focus();
   });
   extent.append(plane);viewport.append(extent);const layout=el("div","graph-layout");layout.append(viewport);if(details)layout.append(details);
-  host.replaceChildren(controls,layout);view.viewport=viewport;host.graphView=view;resize();
+  $("graph-tools").replaceChildren(controls);host.replaceChildren(layout);view.viewport=viewport;host.graphView=view;resize();
   if(!same || view.autoFit || model.topologyChanged)fit();else{viewport.scrollLeft=view.left;viewport.scrollTop=view.top;}
   if(typeof ResizeObserver !== "undefined") {
     let lastWidth=viewport.clientWidth,lastHeight=viewport.clientHeight;
@@ -367,13 +378,13 @@ function linkedJob(row, s) {
 }
 function relatedResults(row,s) {
   const results=[],job=linkedJob(row,s);
-  if(job)results.push({type:"job",row:job,evidence:present(row.job_id)?"明确任务 ID 关联；结果为当前快照。":"唯一指令 ID 关联；结果为当前快照。"});
+  if(job)results.push({type:"job",row:job,evidence:present(row.job_id)?t("明确任务 ID 关联；结果为当前快照。"):t("唯一指令 ID 关联；结果为当前快照。")});
   const candidates=list(s.candidates),matches=present(row.candidate_id)?candidates.filter(c=>sameId(c.candidate_id,row.candidate_id)):[];
-  if(matches.length===1)results.push({type:"candidate",row:matches[0],evidence:"明确候选 ID 关联；结果为当前快照。"});
+  if(matches.length===1)results.push({type:"candidate",row:matches[0],evidence:t("明确候选 ID 关联；结果为当前快照。")});
   // Original directives can report multiple resulting candidates; reviews never
   // become origins and repeated directive IDs cannot claim each other's results.
   if(!present(row.candidate_id)&&row.kind==="directive"&&identifier(row.directive_id)&&list(s.decisions).filter(d=>d.kind==="directive"&&sameId(d.directive_id,row.directive_id)).length===1){
-    for(const c of candidates.filter(c=>sameId(c.directive_id,row.directive_id)))results.push({type:"candidate",row:c,evidence:"唯一原始指令关联；结果为当前快照。"});
+    for(const c of candidates.filter(c=>sameId(c.directive_id,row.directive_id)))results.push({type:"candidate",row:c,evidence:t("唯一原始指令关联；结果为当前快照。")});
   }
   return results;
 }
@@ -390,58 +401,58 @@ function feedbackFor(row, s) {
   let status = feedback.status || row.status;
   if (!status && job) status = job.status;
   let text;
-  if (row.kind === "review") text = row.action === "cancel" ? "已请求取消；任务是否停止以任务回报为准。" : row.action === "continue" ? "复查决定继续执行。" : "复查结果未报告。";
-  else if (decisionAction(row) === "finish") text = "模型提出结束本轮研究。";
-  else if (FAILED.has(statusKey(status))) text = "执行失败或已取消。";
-  else if (DONE.has(statusKey(status))) text = "执行已完成。";
-  else if (ACTIVE.has(statusKey(status))) text = "执行中，等待最终反馈。";
-  else if (status === "proposed") text = "已提出，尚未报告执行结果。";
-  else text = "尚未报告执行反馈。";
-  if (candidate && row.kind !== "review" && decisionAction(row) !== "train") text += ` 候选${ACCEPTED.has(statusKey(candidate.status)) ? "已采纳" : REJECTED.has(statusKey(candidate.status)) ? "未采纳" : "状态尚未确定"}（当前快照）。`;
+  if (row.kind === "review") text = row.action === "cancel" ? t("已请求取消；任务是否停止以任务回报为准。") : row.action === "continue" ? t("复查决定继续执行。") : t("复查结果未报告。");
+  else if (decisionAction(row) === "finish") text = t("模型提出结束本轮研究。");
+  else if (FAILED.has(statusKey(status))) text = t("执行失败或已取消。");
+  else if (DONE.has(statusKey(status))) text = t("执行已完成。");
+  else if (ACTIVE.has(statusKey(status))) text = t("执行中，等待最终反馈。");
+  else if (status === "proposed") text = t("已提出，尚未报告执行结果。");
+  else text = t("尚未报告执行反馈。");
+  if (candidate && row.kind !== "review" && decisionAction(row) !== "train") text += t(" 候选{p0}（当前快照）。", {p0: ACCEPTED.has(statusKey(candidate.status)) ? t("已采纳") : REJECTED.has(statusKey(candidate.status)) ? t("未采纳") : t("状态尚未确定")});
   const explicit = feedback.summary || row.feedback_summary;
-  if (explicit) text = "已报告执行反馈，见详情。";
-  return { text, metrics, job, status, source: row.kind === "review" ? "复查记录" : "当前公开快照" };
+  if (explicit) text = t("已报告执行反馈，见详情。");
+  return { text, metrics, job, status, source: row.kind === "review" ? t("复查记录") : t("当前公开快照") };
 }
 function renderExecution(s) {
   const current = object(s.current), workflow = object(s.workflow);
   const ended = DONE.has(statusKey(current.status)) || FAILED.has(statusKey(current.status)) || current.status === "stopped";
-  $("execution-title").textContent = ended ? "最近执行" : "当前执行";
-  $("workflow-summary").textContent = [number(workflow.round) ? `第 ${workflow.round} 轮` : "", number(workflow.elapsed_seconds) ? `耗时 ${secondsText(workflow.elapsed_seconds)}` : ""].filter(Boolean).join(" · ");
-  if (!Object.keys(current).length) { $("current-execution").replaceChildren(empty("尚未报告当前执行。")); return; }
+  $("execution-title").textContent = ended ? t("最近执行") : t("当前执行");
+  $("workflow-summary").textContent = [number(workflow.round) ? t("第 {p0} 轮", {p0: workflow.round}) : "", number(workflow.elapsed_seconds) ? t("耗时 {p0}", {p0: secondsText(workflow.elapsed_seconds)}) : ""].filter(Boolean).join(" · ");
+  if (!Object.keys(current).length) { $("current-execution").replaceChildren(empty(t("尚未报告当前执行。"))); return; }
   const card = el("div", "execution-card"), head = el("div", "execution-head"), body = el("div", "execution-content");
   head.append(el("h3", "", actionText(current.operation || current.mode || current.phase)), badge(current.status));
-  if (present(current.strategy)) body.append(proseView(current.strategy, "执行原文"));
+  if (present(current.strategy)) body.append(proseView(current.strategy, t("执行原文")));
   const job = linkedJob(current, s), telemetry = el("div");
   if (present(current.step) || present(job?.step)) telemetry.append(progressView(current.step ?? job?.step, current.total_steps ?? job?.total_steps));
   telemetry.append(metricStrip({ ...object(job?.metrics), ...object(current.metrics) }));
-  if (number(current.next_review_seconds) && current.next_review_seconds >= 0) telemetry.append(el("p", "execution-timing", `下次复查：${secondsText(current.next_review_seconds)}后（快照）`));
-  body.append(telemetry); card.append(head, body, retainedDetails("current", state.openJobs, "执行详情", rawFields(current))); $("current-execution").replaceChildren(card);
+  if (number(current.next_review_seconds) && current.next_review_seconds >= 0) telemetry.append(el("p", "execution-timing", t("下次复查：{p0}后（快照）", {p0: secondsText(current.next_review_seconds)})));
+  body.append(telemetry); card.append(head, body, retainedDetails("current", state.openJobs, t("执行详情"), rawFields(current))); $("current-execution").replaceChildren(card);
 }
 function renderDecisions() {
   if (!state.snapshot) return;
   const s = state.snapshot, filter = $("decision-filter").value, query = $("decision-search").value.trim().toLowerCase();
   const groups = decisionGroups(s).filter(g => (filter === "all" || g.row.kind === filter) && g.rows.some(row => `${JSON.stringify(row)} ${actionText(decisionAction(row))} ${JSON.stringify(feedbackFor(row,s).metrics)} ${feedbackFor(row,s).text}`.toLowerCase().includes(query)));
   const records = groups.reduce((n, g) => n + g.rows.length, 0);
-  $("decision-count").textContent = `${groups.length} 项${records !== groups.length ? ` · ${records} 条记录` : ""}`;
+  $("decision-count").textContent = t("{p0} 项{p1}", {p0: groups.length, p1: records !== groups.length ? t(" · {p0} 条记录", {p0: records}) : ""});
   $("more-decisions").hidden = groups.length <= state.decisionLimit;
   $("decision-list").replaceChildren(...(groups.length ? groups.slice(0, state.decisionLimit).map(g => {
     const row = g.row, card = el("article", "decision-card"), meta = el("div", "decision-meta"), body = el("div", "decision-body"), action = el("div"), feedback = el("div", "feedback"), f = feedbackFor(row,s);
     const time = el("time", "", dateText(row.timestamp)); if (Number.isFinite(Date.parse(row.timestamp))) time.dateTime = row.timestamp;
-    meta.append(time); if (number(row.round)) meta.append(el("span", "", `第 ${row.round} 轮`)); if (row.kind === "review") meta.append(el("span", "", "复查"));
-    if (g.rows.length > 1) meta.append(el("span", "repeat-count", `重复报告 ${g.rows.length} 次`));
+    meta.append(time); if (number(row.round)) meta.append(el("span", "", t("第 {p0} 轮", {p0: row.round}))); if (row.kind === "review") meta.append(el("span", "", t("复查")));
+    if (g.rows.length > 1) meta.append(el("span", "repeat-count", t("重复报告 {p0} 次", {p0: g.rows.length})));
     action.append(el("h3", "", actionText(decisionAction(row))));
     if (present(row.reason) || present(row.strategy)) action.append(proseView(row.reason || row.strategy));
-    feedback.append(el("h4", "", "反馈"), el("p", "", f.text));
+    feedback.append(el("h4", "", t("反馈")), el("p", "", f.text));
     const metrics = metricStrip(f.metrics); if (metrics.childElementCount) feedback.append(metrics);
     if (f.job && row.kind !== "review" && present(f.job.step)) feedback.append(progressView(f.job.step, f.job.total_steps));
-    if (f.job && row.kind === "review") feedback.append(el("p", "quiet-note", `关联任务当前${statusText(f.job.status)}；不代表复查当时状态。`));
-    if (decisionAction(row) === "finish") feedback.append(el("p", "quiet-note", `运行当前${statusText(s.status)}。`));
+    if (f.job && row.kind === "review") feedback.append(el("p", "quiet-note", t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
+    if (decisionAction(row) === "finish") feedback.append(el("p", "quiet-note", t("运行当前{p0}。", {p0: statusText(s.status)})));
     body.append(action, feedback); card.append(meta, body);
     const detail = el("div");
     for (const record of g.rows) { const raw = el("div", "raw-record"); raw.append(rawFields(record)); const m = feedbackFor(record,s).metrics; if (Object.keys(flattenMetrics(m)).length) raw.append(metricsDetail(m)); detail.append(raw); }
-    card.append(retainedDetails(`decision:${decisionKey(g.rows[g.rows.length-1])}`, state.openDecisions, g.rows.length > 1 ? `展开 ${g.rows.length} 条记录与详情` : "决策与反馈详情", detail));
+    card.append(retainedDetails(`decision:${decisionKey(g.rows[g.rows.length-1])}`, state.openDecisions, g.rows.length > 1 ? t("展开 {p0} 条记录与详情", {p0: g.rows.length}) : t("决策与反馈详情"), detail));
     return card;
-  }) : [empty(list(s.decisions).length ? "没有符合筛选条件的决策。" : "尚无决策记录。未报告的决策与反馈不会补全。") ]));
+  }) : [empty(list(s.decisions).length ? t("没有符合筛选条件的决策。") : t("尚无决策记录。未报告的决策与反馈不会补全。")) ]));
 }
 function jobGroup(j) { const k = statusKey(j.status); return ACTIVE.has(k) ? "active" : DONE.has(k) ? "completed" : FAILED.has(k) ? "failed" : "other"; }
 function historyRows(j) {
@@ -466,8 +477,8 @@ function seriesFor(j, keys) {
 function chartView(j, keys, title) {
   const figure = el("figure", "chart"), heading = el("div", "chart-heading"), series = seriesFor(j,keys), points = series.rows.filter(p => number(p.y));
   const latest = metricValue(flattenMetrics(j.metrics), keys) ?? [...series.history].reverse().map(p => metricValue(p.metrics,keys)).find(number);
-  heading.append(el("h4", "", title), el("span", "chart-value", number(latest) ? fmt(latest) : "未报告")); figure.append(heading);
-  if (!points.length) { figure.append(el("div", "chart-empty", number(latest) ? "仅有当前指标，未记录可绘图的历史。" : "尚未报告该指标的历史。")); return figure; }
+  heading.append(el("h4", "", title), el("span", "chart-value", number(latest) ? fmt(latest) : t("未报告"))); figure.append(heading);
+  if (!points.length) { figure.append(el("div", "chart-empty", number(latest) ? t("仅有当前指标，未记录可绘图的历史。") : t("尚未报告该指标的历史。"))); return figure; }
   const width = 480, height = 205, left = 82, right = 18, top = 18, bottom = 34;
   const ys = points.map(p=>p.y), xs = points.map(p=>p.x), ymin = Math.min(...ys), ymax = Math.max(...ys), xmin = Math.min(...xs), xmax = Math.max(...xs);
   // Scale before subtraction to keep even extreme finite inputs inside the SVG.
@@ -475,11 +486,11 @@ function chartView(j, keys, title) {
   const ylo = ymin / yunit, yhi = ymax / yunit, yspan = yhi - ylo, ypad = yspan ? yspan * .12 : .1;
   const py = v => top + (yhi + ypad - v / yunit) / (yspan + 2 * ypad) * (height - top - bottom);
   const px = v => xmax === xmin ? (left + width - right) / 2 : left + ((v / xunit - xmin / xunit) / (xmax / xunit - xmin / xunit)) * (width - left - right);
-  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", tabindex: "0", "aria-label": `${title}，${points.length} 个历史点；左右方向键逐点查看，Home 和 End 查看首尾。` });
-  svg.append(svgEl("title", {}, `${title} · ${series.axis === "step" ? "步数" : "耗时（秒）"}`));
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", tabindex: "0", "aria-label": t("{p0}，{p1} 个历史点；左右方向键逐点查看，Home 和 End 查看首尾。", {p0: title, p1: points.length}) });
+  svg.append(svgEl("title", {}, `${title} · ${series.axis === "step" ? t("步数") : t("耗时（秒）")}`));
   const ticks = ymin === ymax ? [ymin] : [ymax, ymin / 2 + ymax / 2, ymin];
   for (const v of ticks) { svg.append(svgEl("line", { x1: left, x2: width-right, y1: py(v), y2: py(v), class: "chart-grid" }), svgEl("text", { x: left - 8, y: py(v)+4, "text-anchor": "end", class: "chart-axis" }, fmt(v))); }
-  const xLabel = series.axis === "step" ? "步" : "秒";
+  const xLabel = series.axis === "step" ? t("步") : t("秒");
   svg.append(svgEl("text", { x: left, y: height-9, class: "chart-axis" }, `${fmt(xmin)} ${xLabel}`));
   if (xmin !== xmax) svg.append(svgEl("text", { x: width-right, y: height-9, "text-anchor": "end", class: "chart-axis" }, `${fmt(xmax)} ${xLabel}`));
   let path = "", connected = false;
@@ -488,7 +499,7 @@ function chartView(j, keys, title) {
   // Keep an honest single dot for one-point history. The inspection marker follows real samples.
   const marker = svgEl("circle", { cx: px(points[points.length-1].x), cy: py(points[points.length-1].y), r: 4, class: "chart-point" }); svg.append(marker);
   const readout = el("p", "chart-readout"); let selected = points.length-1;
-  const inspect = index => { selected = Math.max(0,Math.min(points.length-1,index)); const p = points[selected]; marker.setAttribute("cx",px(p.x)); marker.setAttribute("cy",py(p.y)); readout.textContent = `${number(p.step) ? `第 ${p.step} 步` : `${fmt(p.x)} 秒`} · ${title} ${fmt(p.y)}${number(p.elapsed) ? ` · 耗时 ${secondsText(p.elapsed)}` : ""}${points.length === 1 ? " · 仅 1 个历史点" : ""}`; };
+  const inspect = index => { selected = Math.max(0,Math.min(points.length-1,index)); const p = points[selected]; marker.setAttribute("cx",px(p.x)); marker.setAttribute("cy",py(p.y)); readout.textContent = `${number(p.step) ? t("第 {p0} 步", {p0: p.step}) : t("{p0} 秒", {p0: fmt(p.x)})} · ${title} ${fmt(p.y)}${number(p.elapsed) ? t(" · 耗时 {p0}", {p0: secondsText(p.elapsed)}) : ""}${points.length === 1 ? t(" · 仅 1 个历史点") : ""}`; };
   inspect(selected);
   svg.addEventListener("pointermove", event => { const bounds = svg.getBoundingClientRect(); const x = (event.clientX - bounds.left) / bounds.width * width; let index = 0; for (let i=1; i<points.length; i++) if (Math.abs(px(points[i].x)-x) < Math.abs(px(points[index].x)-x)) index=i; inspect(index); });
   svg.addEventListener("keydown", event => { const actions = { ArrowLeft: selected-1, ArrowRight: selected+1, Home: 0, End: points.length-1 }; if (Object.hasOwn(actions,event.key)) { event.preventDefault(); inspect(actions[event.key]); } });
@@ -496,28 +507,28 @@ function chartView(j, keys, title) {
 }
 function historyDetail(j) {
   const rows = historyRows(j), wrap = el("div");
-  if (!rows.length) { wrap.append(empty("未记录历史；当前指标不能还原训练曲线。")); return wrap; }
+  if (!rows.length) { wrap.append(empty(t("未记录历史；当前指标不能还原训练曲线。"))); return wrap; }
   const table = el("table", "metric-table"), head = el("thead"), hr = el("tr"), body = el("tbody");
-  for (const name of ["步数", "耗时（秒）", "已报告指标"]) { const th = el("th", "", name); th.scope = "col"; hr.append(th); } head.append(hr);
-  for (const p of rows) { const row = el("tr"); row.append(el("td", "", fmt(p.step)),el("td", "", fmt(p.elapsed_seconds)), el("td", "", Object.entries(p.metrics).map(([k,v])=>`${k}: ${fmt(v)}`).join("；") || "未报告")); body.append(row); }
+  for (const name of [t("步数"), t("耗时（秒）"), t("已报告指标")]) { const th = el("th", "", name); th.scope = "col"; hr.append(th); } head.append(hr);
+  for (const p of rows) { const row = el("tr"); row.append(el("td", "", fmt(p.step)),el("td", "", fmt(p.elapsed_seconds)), el("td", "", Object.entries(p.metrics).map(([k,v])=>`${k}: ${fmt(v)}`).join(t("；")) || t("未报告"))); body.append(row); }
   table.append(head,body); wrap.append(table); return wrap;
 }
 function renderJobs() {
   if (!state.snapshot) return;
   const rows = list(state.snapshot.jobs), shown = rows.filter(j => $("job-filter").value === "all" || jobGroup(j) === $("job-filter").value);
-  $("jobs-count").textContent = `${shown.length} 项`;
+  $("jobs-count").textContent = t("{p0} 项", {p0: shown.length});
   $("job-list").replaceChildren(...(shown.length ? shown.map(j => {
     const card = el("article", "job-record"), heading = el("div", "job-heading"), meta = el("p", "job-sub");
     heading.append(el("h3", "", actionText(j.kind)), badge(j.status));
-    meta.textContent = [number(j.round) ? `第 ${j.round} 轮` : "", number(j.elapsed_seconds) ? `耗时 ${secondsText(j.elapsed_seconds)}` : ""].filter(Boolean).join(" · "); card.append(heading,meta);
+    meta.textContent = [number(j.round) ? t("第 {p0} 轮", {p0: j.round}) : "", number(j.elapsed_seconds) ? t("耗时 {p0}", {p0: secondsText(j.elapsed_seconds)}) : ""].filter(Boolean).join(" · "); card.append(heading,meta);
     const telemetry = el("div", "job-telemetry"); if (present(j.step) || present(j.total_steps)) telemetry.append(progressView(j.step,j.total_steps)); telemetry.append(metricStrip(j.metrics)); card.append(telemetry);
     const history = historyRows(j), isTraining = /train|sft|finetun|fine_tun/.test(asText(j.kind,"")) || history.some(p => number(metricValue(p.metrics,lossKeys)) || number(metricValue(p.metrics,lrKeys))) || number(metricValue(object(j.metrics),lossKeys));
-    if (isTraining) { const charts = el("div", "charts"); charts.append(chartView(j,lossKeys,"损失"), chartView(j,lrKeys,"学习率")); card.append(charts); }
+    if (isTraining) { const charts = el("div", "charts"); charts.append(chartView(j,lossKeys,t("损失")), chartView(j,lrKeys,t("学习率"))); card.append(charts); }
     const detail = el("div"); detail.append(rawFields(j), metricsDetail(j.metrics));
-    const historyDisclosure = el("details", "record-details"); historyDisclosure.append(el("summary", "", `历史指标 · ${history.length} 点`));
+    const historyDisclosure = el("details", "record-details"); historyDisclosure.append(el("summary", "", t("历史指标 · {p0} 点", {p0: history.length})));
     let loaded = false; historyDisclosure.addEventListener("toggle", () => { if (historyDisclosure.open && !loaded) { historyDisclosure.append(historyDetail(j)); loaded = true; } }); detail.append(historyDisclosure);
-    card.append(retainedDetails(`job:${asText(j.job_id,JSON.stringify([j.kind,j.round,j.directive_id]))}`,state.openJobs,"指标与任务详情",detail)); return card;
-  }) : [empty(rows.length ? "没有符合筛选条件的任务。" : "尚无任务记录；无法确认是否执行了训练或评测。") ]));
+    card.append(retainedDetails(`job:${asText(j.job_id,JSON.stringify([j.kind,j.round,j.directive_id]))}`,state.openJobs,t("指标与任务详情"),detail)); return card;
+  }) : [empty(rows.length ? t("没有符合筛选条件的任务。") : t("尚无任务记录；无法确认是否执行了训练或评测。")) ]));
 }
 const baseAliases = ["baseline", "base", "before", "old"], newAliases = ["candidate", "new", "after", "current"];
 function metricRows(source) {
@@ -531,81 +542,82 @@ function metricRows(source) {
 }
 function comparisonView(metrics) {
   const wrap = el("div"), { pairs } = metricRows(metrics);
-  if (!pairs.length) { const strip=metricStrip(metrics); wrap.append(strip.childElementCount ? strip : empty("评测指标未报告。")); return wrap; }
+  if (!pairs.length) { const strip=metricStrip(metrics); wrap.append(strip.childElementCount ? strip : empty(t("评测指标未报告。"))); return wrap; }
   const table=el("table","metric-table"), head=el("thead"), hr=el("tr"), body=el("tbody");
-  for (const name of ["指标","基线","候选","候选 − 基线"]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
+  for (const name of [t("指标"),t("基线"),t("候选"),t("候选 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);return wrap;
 }
 function candidateGroup(c) { const k=statusKey(c.status);return ACCEPTED.has(k)?"accepted":REJECTED.has(k)?"rejected":PENDING.has(k)?"pending":"other"; }
 function renderCandidates() {
-  if(!state.snapshot)return;const rows=list(state.snapshot.candidates),shown=rows.filter(c=>$("candidate-filter").value==="all"||candidateGroup(c)===$("candidate-filter").value);$("candidate-count").textContent=`${shown.length} 项`;
-  $("candidate-list").replaceChildren(...(shown.length?shown.map(c=>{const card=el("article","candidate-card"),head=el("div","candidate-top");head.append(el("h3","",`候选 ${rows.indexOf(c)+1}`),badge(c.status));card.append(head,comparisonView(c.metrics));const content=el("div");content.append(rawFields(c),metricsDetail(c.metrics));card.append(retainedDetails(`candidate:${asText(c.candidate_id,rows.indexOf(c))}`,state.openJobs,"候选与指标详情",content));return card;}):[empty(rows.length?"没有符合筛选条件的候选。":"尚无候选记录。") ]));
+  if(!state.snapshot)return;const rows=list(state.snapshot.candidates),shown=rows.filter(c=>$("candidate-filter").value==="all"||candidateGroup(c)===$("candidate-filter").value);$("candidate-count").textContent=t("{p0} 项", {p0: shown.length});
+  $("candidate-list").replaceChildren(...(shown.length?shown.map(c=>{const card=el("article","candidate-card"),head=el("div","candidate-top");head.append(el("h3","",t("候选 {p0}", {p0: rows.indexOf(c)+1})),badge(c.status));card.append(head,comparisonView(c.metrics));const content=el("div");content.append(rawFields(c),metricsDetail(c.metrics));card.append(retainedDetails(`candidate:${asText(c.candidate_id,rows.indexOf(c))}`,state.openJobs,t("候选与指标详情"),content));return card;}):[empty(rows.length?t("没有符合筛选条件的候选。"):t("尚无候选记录。")) ]));
 }
 function renderRounds(s) {
-  const rows=list(s.round_results).slice().sort((a,b)=>(b.round||0)-(a.round||0));$("round-count").textContent=`${rows.length} 轮`;
-  $("round-list").replaceChildren(...(rows.length?rows.map(row=>{const card=el("article","round-card"),head=el("div","round-heading");head.append(el("h3","",number(row.round)?`第 ${row.round} 轮`:"轮次未报告"),el("span","badge",row.applied===true?"已应用":row.applied===false?"未应用":"应用状态未报告"));card.append(head,el("p","",row.answer_correct===true?"答案验证正确":row.answer_correct===false?"答案验证不正确":"答案验证未报告"),comparisonView(row.metrics));const detail=el("div");detail.append(rawFields(row),metricsDetail(row.metrics));card.append(retainedDetails(`round:${row.round}`,state.openJobs,"轮次详情",detail));return card;}):[empty("尚无轮次结果；不能据此推断是否完成过执行。") ]));
+  const rows=list(s.round_results).slice().sort((a,b)=>(b.round||0)-(a.round||0));$("round-count").textContent=t("{p0} 轮", {p0: rows.length});
+  $("round-list").replaceChildren(...(rows.length?rows.map(row=>{const card=el("article","round-card"),head=el("div","round-heading");head.append(el("h3","",number(row.round)?t("第 {p0} 轮", {p0: row.round}):t("轮次未报告")),el("span","badge",row.applied===true?t("已应用"):row.applied===false?t("未应用"):t("应用状态未报告")));card.append(head,el("p","",row.answer_correct===true?t("答案验证正确"):row.answer_correct===false?t("答案验证不正确"):t("答案验证未报告")),comparisonView(row.metrics));const detail=el("div");detail.append(rawFields(row),metricsDetail(row.metrics));card.append(retainedDetails(`round:${row.round}`,state.openJobs,t("轮次详情"),detail));return card;}):[empty(t("尚无轮次结果；不能据此推断是否完成过执行。")) ]));
 }
 const eventLabels={job:"任务状态更新",progress:"执行进度更新",phase:"运行阶段更新",inference:"模型推理",feedback:"执行反馈",model_decision_requested:"请求模型决策",model_decision_validated:"决策通过校验",model_decision_rejected:"决策未通过校验",training_review_requested:"请求训练复查",training_review_completed:"训练复查完成",activation_verified:"候选验证通过","training.started":"训练开始","evaluation.completed":"评测完成","candidate.accepted":"候选已采纳","candidate.rejected":"候选未采纳","model.bound":"模型绑定更新","run.started":"运行开始"};
-function updateEventTypes(){const select=$("event-filter"),previous=select.value,types=[...new Set(list(state.snapshot?.events).map(e=>asText(e.kind,"未分类")))].sort();select.replaceChildren(...[["all","全部类型"],...types.map(t=>[t,eventLabels[t]||"其他事件"])].map(([v,t])=>{const o=el("option","",t);o.value=v;return o;}));select.value=types.includes(previous)?previous:"all";}
-function renderEvents(){if(!state.snapshot)return;const rows=list(state.snapshot.events),query=$("event-search").value.trim().toLowerCase(),filter=$("event-filter").value,shown=rows.filter(e=>(filter==="all"||e.kind===filter)&&JSON.stringify(e).toLowerCase().includes(query)).slice().sort((a,b)=>(Date.parse(b.timestamp)||0)-(Date.parse(a.timestamp)||0));$("event-count").textContent=`${shown.length} 条`;$("more-events").hidden=shown.length<=state.eventLimit;$("event-list").replaceChildren(...(shown.length?shown.slice(0,state.eventLimit).map(e=>{const row=el("article","event"),content=el("div","event-content");content.append(el("p","",eventLabels[e.kind]||"其他事件"),retainedDetails(JSON.stringify(e),state.openEvents,"事件详情",rawFields({...e,...object(e.details)})));row.append(el("time","event-time",dateText(e.timestamp)),content);return row;}):[empty(rows.length?"没有符合筛选条件的事件。":"尚无事件。") ]));}
-function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;$("objective").textContent=publicText(s.objective,"运行目标未报告");$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?"示例时间":"更新"} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?"执行模型":"决策模型"),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?"探索循环":"决策循环"),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();$("run-label").textContent=`${projectMeta(s.project).name} / 当前运行`;}
+function updateEventTypes(){const select=$("event-filter"),previous=select.value,types=[...new Set(list(state.snapshot?.events).map(e=>asText(e.kind,"unclassified")))].sort();select.replaceChildren(...[["all",t("全部类型")],...types.map(kind=>[kind,t(eventLabels[kind])||t("其他事件")])].map(([v,t])=>{const o=el("option","",t);o.value=v;return o;}));select.value=types.includes(previous)?previous:"all";}
+function renderEvents(){if(!state.snapshot)return;const rows=list(state.snapshot.events),query=$("event-search").value.trim().toLowerCase(),filter=$("event-filter").value,shown=rows.filter(e=>(filter==="all"||asText(e.kind,"unclassified")===filter)&&JSON.stringify(e).toLowerCase().includes(query)).slice().sort((a,b)=>(Date.parse(b.timestamp)||0)-(Date.parse(a.timestamp)||0));$("event-count").textContent=t("{p0} 条", {p0: shown.length});$("more-events").hidden=shown.length<=state.eventLimit;$("event-list").replaceChildren(...(shown.length?shown.slice(0,state.eventLimit).map(e=>{const row=el("article","event"),content=el("div","event-content");content.append(el("p","",t(eventLabels[e.kind])||t("其他事件")),retainedDetails(JSON.stringify(e),state.openEvents,t("事件详情"),rawFields({...e,...object(e.details)})));row.append(el("time","event-time",dateText(e.timestamp)),content);return row;}):[empty(rows.length?t("没有符合筛选条件的事件。"):t("尚无事件。")) ]));}
+function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;updateMetricsNavigation();$("objective").textContent=publicText(s.objective,t("运行目标未报告"));$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?t("示例时间"):t("更新")} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?t("执行模型"):t("决策模型")),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?t("探索循环"):t("决策循环")),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();$("run-label").textContent=t("{p0} / 当前运行", {p0: projectName(projectMeta(s.project))});}
 // Pure snapshot-to-Markdown conversion: no model call, network request or upload.
-const md = value => asText(value, "未报告").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
+const md = value => asText(value, t("未报告")).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
 function reportMetrics(metrics) {
   const entries = Object.entries(flattenMetrics(metrics));
-  return entries.length ? entries.map(([key,v]) => `- ${md(metricText(key))}（${md(key)}）：${fmt(v)}`).join("\n") : "未报告指标。";
+  return entries.length ? entries.map(([key,v]) => t("- {p0}（{p1}）：{p2}", {p0: md(metricText(key)), p1: md(key), p2: fmt(v)})).join("\n") : t("未报告指标。");
 }
 function reportDetails(row) {
-  const lines = Object.entries(object(row)).filter(([,v])=>["string","number","boolean"].includes(typeof v)).map(([k,v])=>`- ${md(k)}：${md(v)}`);
-  if (parentIds(row).length) lines.push(`- 显式父决策：${parentIds(row).map(md).join("、")}`);
-  return `<details>\n<summary>技术详情与原始记录</summary>\n\n${lines.join("\n")}\n\n</details>`;
+  const lines = Object.entries(object(row)).filter(([,v])=>["string","number","boolean"].includes(typeof v)).map(([k,v])=>t("- {p0}：{p1}", {p0: md(k), p1: md(v)}));
+  if (parentIds(row).length) lines.push(t("- 显式父决策：{p0}", {p0: parentIds(row).map(md).join(t("、"))}));
+  return t("<details>\n<summary>技术详情与原始记录</summary>\n\n{p0}\n\n</details>", {p0: lines.join("\n")});
 }
 function reportMarkdown(s) {
   const jobs=list(s.jobs), decisions=list(s.decisions), candidates=list(s.candidates), rounds=list(s.round_results);
-  const lines=["# RSISys 运行报告", "", state.demo ? "> 示例数据 · 静态演示，不代表真实运行。" : "> 来自当前公开快照；不调用模型，不上传数据。", "", `项目：${md(projectMeta(s.project).name)}`, `系统：${md(projectMeta(s.project).system_id || "未报告")}`, `目标：${md(s.objective)}`, "", `运行状态：${md(statusText(s.status))}`, `快照时间：${md(s.updated_at)}`, `导出时间：${md(new Date().toISOString())}`, "", "本报告反映已读取的快照。缺失字段不代表零、成功或未执行；结束本轮研究不等于停止整个运行。"];
-  if($("connection").classList.contains("offline")) lines.push("","> 连接中断：本报告使用上次成功读取的快照，数据未更新。");
-  if(!state.demo && ACTIVE.has(statusKey(s.status)) && Date.now()-Date.parse(s.updated_at)>120000) lines.push("","> 快照超过 2 分钟未更新。");
-  lines.push("", "## 决策与反馈", "");
-  if(!decisions.length)lines.push("未报告决策记录，无法重建决策或反馈。");
+  const lines=[t("# RSISys 运行报告"), "", state.demo ? t("> 示例数据 · 静态演示，不代表真实运行。") : t("> 来自当前公开快照；不调用模型，不上传数据。"), "", t("项目：{p0}", {p0: md(projectName(projectMeta(s.project)))}), t("系统：{p0}", {p0: md(projectMeta(s.project).system_id || t("未报告"))}), t("目标：{p0}", {p0: md(s.objective)}), "", t("运行状态：{p0}", {p0: md(statusText(s.status))}), t("快照时间：{p0}", {p0: md(s.updated_at)}), t("导出时间：{p0}", {p0: md(new Date().toISOString())}), "", t("本报告反映已读取的快照。缺失字段不代表零、成功或未执行；结束本轮研究不等于停止整个运行。")];
+  if($("connection").classList.contains("offline")) lines.push("",t("> 连接中断：本报告使用上次成功读取的快照，数据未更新。"));
+  if(!state.demo && ACTIVE.has(statusKey(s.status)) && Date.now()-Date.parse(s.updated_at)>120000) lines.push("",t("> 快照超过 2 分钟未更新。"));
+  lines.push("", t("## 决策与反馈"), "");
+  if(!decisions.length)lines.push(t("未报告决策记录，无法重建决策或反馈。"));
   for(const g of decisionGroups(s)) {
     const r=g.row,f=feedbackFor(r,s);
-    lines.push(`### ${md(actionText(decisionAction(r)))}${g.rows.length>1?` · 重复报告 ${g.rows.length} 次`:""}`, "", `${md(dateText(r.timestamp))}${number(r.round)?` · 第 ${r.round} 轮`:""}`, "", `反馈：${md(f.text)}`, "",reportMetrics(f.metrics),"");
-    if(r.kind==="review" && f.job)lines.push(`关联任务当前${md(statusText(f.job.status))}；不代表复查当时状态。`,"");
-    if(decisionAction(r)==="finish")lines.push(`运行当前${md(statusText(s.status))}。`,"");
-    if(present(r.reason)||present(r.strategy))lines.push("决策原文：", "", md(r.reason||r.strategy), "");
-    lines.push(`<details>\n<summary>全部 ${g.rows.length} 条原始记录</summary>\n`,...g.rows.map(record=>reportDetails(record)),"\n</details>","");
+    lines.push(`### ${md(actionText(decisionAction(r)))}${g.rows.length>1?t(" · 重复报告 {p0} 次", {p0: g.rows.length}):""}`, "", `${md(dateText(r.timestamp))}${number(r.round)?t(" · 第 {p0} 轮", {p0: r.round}):""}`, "", t("反馈：{p0}", {p0: md(f.text)}), "",reportMetrics(f.metrics),"");
+    if(r.kind==="review" && f.job)lines.push(t("关联任务当前{p0}；不代表复查当时状态。", {p0: md(statusText(f.job.status))}),"");
+    if(decisionAction(r)==="finish")lines.push(t("运行当前{p0}。", {p0: md(statusText(s.status))}),"");
+    if(present(r.reason)||present(r.strategy))lines.push(t("决策原文："), "", md(r.reason||r.strategy), "");
+    lines.push(t("<details>\n<summary>全部 {p0} 条原始记录</summary>\n", {p0: g.rows.length}),...g.rows.map(record=>reportDetails(record)),"\n</details>","");
   }
-  lines.push("## 训练与评测", "");
-  if(!jobs.length)lines.push("未报告任务，无法确认是否执行过训练或评测。未补造训练曲线。", "");
+  lines.push(t("## 训练与评测"), "");
+  if(!jobs.length)lines.push(t("未报告任务，无法确认是否执行过训练或评测。未补造训练曲线。"), "");
   for(const [i,j] of jobs.entries()) {
-    lines.push(`### 任务 ${i+1} · ${md(actionText(j.kind))}`,"",`状态：${md(statusText(j.status))}`,`耗时：${secondsText(j.elapsed_seconds)}`,`步骤：${number(j.step)?j.step:"未报告"} / ${number(j.total_steps)?j.total_steps:"未报告"}`,"",reportMetrics(j.metrics),"");
-    if(["queued","pending","proposed","submitted"].includes(statusKey(j.status)))lines.push("尚未报告实际开始执行。","");
-    const history=historyRows(j);lines.push(`快照历史：${history.length} 点（最多 1000 点）。`);
-    if(!history.length)lines.push("无历史数据；当前指标不能还原训练过程。");
-    for(const [keys,title] of [[lossKeys,"损失"],[lrKeys,"学习率"]]) {
+    lines.push(t("### 任务 {p0} · {p1}", {p0: i+1, p1: md(actionText(j.kind))}),"",t("状态：{p0}", {p0: md(statusText(j.status))}),t("耗时：{p0}", {p0: secondsText(j.elapsed_seconds)}),t("步骤：{p0} / {p1}", {p0: number(j.step)?j.step:t("未报告"), p1: number(j.total_steps)?j.total_steps:t("未报告")}),"",reportMetrics(j.metrics),"");
+    if(["queued","pending","proposed","submitted"].includes(statusKey(j.status)))lines.push(t("尚未报告实际开始执行。"),"");
+    const history=historyRows(j);lines.push(t("快照历史：{p0} 点（最多 1000 点）。", {p0: history.length}));
+    if(!history.length)lines.push(t("无历史数据；当前指标不能还原训练过程。"));
+    for(const [keys,title] of [[lossKeys,t("损失")],[lrKeys,t("学习率")]]) {
       const values=history.map(p=>metricValue(p.metrics,keys)).filter(number);
-      if(!values.length)lines.push(`${title}：未报告历史。`);
-      else lines.push(`${title}：${values.length} 个数值点；首点 ${fmt(values[0])}，末点 ${fmt(values[values.length-1])}，范围 ${fmt(Math.min(...values))} 至 ${fmt(Math.max(...values))}${values.length===1?"；仅单点，无法判断趋势":""}。`);
+      if(!values.length)lines.push(t("{p0}：未报告历史。", {p0: title}));
+      else lines.push(t("{p0}：{p1} 个数值点；首点 {p2}，末点 {p3}，范围 {p4} 至 {p5}{p6}。", {p0: title, p1: values.length, p2: fmt(values[0]), p3: fmt(values[values.length-1]), p4: fmt(Math.min(...values)), p5: fmt(Math.max(...values)), p6: values.length===1?t("；仅单点，无法判断趋势"):""}));
     }
     lines.push("",reportDetails(j),"");
   }
-  lines.push("## 候选与轮次", "");
-  if(!candidates.length)lines.push("未报告候选记录。", "");
-  for(const [i,c] of candidates.entries()) lines.push(`### 候选 ${i+1}`,"",`状态：${md(statusText(c.status))}`,"",reportMetrics(c.metrics),"",reportDetails(c),"");
-  if(!rounds.length)lines.push("未报告轮次结果，无法确认是否执行或应用候选。", "");
-  for(const r of rounds)lines.push(`### 第 ${number(r.round)?r.round:"未知"} 轮`,"",r.applied===true?"已应用候选。":r.applied===false?"未应用候选。":"是否应用：未报告。",r.answer_correct===true?"答案验证正确。":r.answer_correct===false?"答案验证不正确。":"答案验证：未报告。","",reportMetrics(r.metrics),"",reportDetails(r),"");
-  lines.push("## 数据范围", "", "仅包含当前公开快照（API 最多返回 300 条决策），不代表完整实验历史。数值为上报指标；差值的定义以生产端为准，不自动判定改善。缺失指标不补零。旧运行没有历史时不生成趋势。", "",reportDetails({run_id:s.run_id,status:s.status,updated_at:s.updated_at}),"");
+  lines.push(t("## 候选与轮次"), "");
+  if(!candidates.length)lines.push(t("未报告候选记录。"), "");
+  for(const [i,c] of candidates.entries()) lines.push(t("### 候选 {p0}", {p0: i+1}),"",t("状态：{p0}", {p0: md(statusText(c.status))}),"",reportMetrics(c.metrics),"",reportDetails(c),"");
+  if(!rounds.length)lines.push(t("未报告轮次结果，无法确认是否执行或应用候选。"), "");
+  for(const r of rounds)lines.push(t("### 第 {p0} 轮", {p0: number(r.round)?r.round:t("未知")}),"",r.applied===true?t("已应用候选。"):r.applied===false?t("未应用候选。"):t("是否应用：未报告。"),r.answer_correct===true?t("答案验证正确。"):r.answer_correct===false?t("答案验证不正确。"):t("答案验证：未报告。"),"",reportMetrics(r.metrics),"",reportDetails(r),"");
+  lines.push(t("## 数据范围"), "", t("仅包含当前公开快照（API 最多返回 300 条决策），不代表完整实验历史。数值为上报指标；差值的定义以生产端为准，不自动判定改善。缺失指标不补零。旧运行没有历史时不生成趋势。"), "",reportDetails({run_id:s.run_id,status:s.status,updated_at:s.updated_at}),"");
   return lines.join("\n");
 }
 function downloadReport() {
   if(!state.snapshot)return;
   const blob=new Blob([reportMarkdown(state.snapshot)],{type:"text/markdown;charset=utf-8"}),url=URL.createObjectURL(blob),a=el("a");
-  a.href=url;a.download=`RSISys-${state.demo?"示例-":""}报告-${new Date().toISOString().replace(/[:.]/g,"-")}.md`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  a.href=url;a.download=t("RSISys-{p0}报告-{p1}.md", {p0: state.demo?t("示例-"):"", p1: new Date().toISOString().replace(/[:.]/g,"-")});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 $("export-report").addEventListener("click",downloadReport);
 
 function clearRun() {
   state.snapshot = null;
+  updateMetricsNavigation();
   $("export-report").disabled = true;
   $("dashboard").hidden = true;
   state.openEvents.clear(); state.openDecisions.clear(); state.openJobs.clear();
@@ -622,6 +634,7 @@ function runRows(project) {
     return (Number.isFinite(at) ? at : Infinity) - (Number.isFinite(bt) ? bt : Infinity) || a.run_id.localeCompare(b.run_id);
   });
 }
+const projectName = p => p?.project_id === "unassigned" ? t("未归属") : asText(p?.name);
 function selectedProject() { return state.projects.find(p => p.project_id === state.projectId); }
 function runParentIds(row) {
   return [...new Set([row.parent_run_id, ...(Array.isArray(row.source_run_ids) ? row.source_run_ids : [])].filter(identifier))];
@@ -647,15 +660,15 @@ function activateProject() {
 }
 // Build only evidenced relationships; geometry is handled separately by networkLayout.
 function projectModel(project, scope) {
-  const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: `0 · ${project.name}`, label: "项目", x: 20, y: 90 }], edges = [];
+  const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: `0 · ${projectName(project)}`, label: t("项目"), x: 20, y: 90 }], edges = [];
   const ids = new Map();
   runs.forEach((row, i) => {
     const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
-    const n = { key, type: "run", row, runId: row.run_id, title: `运行 ${i + 1}`, label: "运行", summary: statusText(row.status),
+    const n = { key, type: "run", row, runId: row.run_id, title: t("运行 {p0}", {p0: i + 1}), label: t("运行"), summary: statusText(row.status),
        layoutOrder: i, loadStatus: entry?.status,
       missing: [], ambiguous: [] };
     nodes.push(n); const matches = ids.get(row.run_id) || []; matches.push(n); ids.set(row.run_id, matches);
-    edges.push({ from: "project-root", to: key, kind: "membership", evidence: ["项目归属"] });
+    edges.push({ from: "project-root", to: key, kind: "membership", evidence: [t("项目归属")] });
   });
   const runNodes = nodes.slice(1);
   for (const node of runNodes) {
@@ -665,7 +678,7 @@ function projectModel(project, scope) {
       const matches = ids.get(id);
       if (!matches) node.missing.push(id);
       else if (matches.length !== 1) node.ambiguous.push(id);
-      else if (matches[0] !== node) edges.push({ from: matches[0].key, to: node.key, kind: "run-parent", evidence: [`显式运行引用 ${id}`] });
+      else if (matches[0] !== node) edges.push({ from: matches[0].key, to: node.key, kind: "run-parent", evidence: [t("显式运行引用 {p0}", {p0: id})] });
     }
   }
   const signature = JSON.stringify([nodes.map(n => [n.key,n.layoutOrder]).sort(), edges.map(e => [e.from,e.to,e.kind]).sort()]);
@@ -687,9 +700,9 @@ function executionGroups(s) {
 function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),heading=el("div","section-heading"),groups=executionGroups(s);
-  heading.append(el("h4","", "执行流程"),el("span","quiet-note",`${groups.length} 步 · ${list(s.decisions).length} 条记录`));section.append(heading);
-  const ordering=el("details","record-details");ordering.append(el("summary","","流程顺序说明"),el("p","quiet-note","按已报告时间从早到晚展示，不表示因果。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。"));section.append(ordering);
-  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label","运行内执行步骤");section.append(navigation);
+  heading.append(el("h4","", t("执行流程")),el("span","quiet-note",t("{p0} 步", {p0: groups.length})));section.append(heading);
+
+  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label",t("运行内执行步骤"));section.append(navigation);
   const entries=el("ol","flow-steps");section.append(entries);
   const fill=(restoreFocus=false)=>{
     let selectedButton;
@@ -702,7 +715,7 @@ function executionSequence(s, scope) {
     for(const [i,g] of groups.slice(0,limit).entries()){
       const row=g.row,f=feedbackFor(row,s),key=keyOf(g,i),item=el("li","flow-map-item"),button=el("button","flow-choice");
       button.type="button";button.setAttribute("aria-pressed",String(key===selected));
-      button.setAttribute("aria-label",`步骤 ${i+1} · ${actionText(decisionAction(row))}`);
+      button.setAttribute("aria-label",t("步骤 {p0} · {p1}", {p0: i+1, p1: actionText(decisionAction(row))}));
       button.append(el("span","flow-number",String(i+1).padStart(2,"0")),el("span","",actionText(decisionAction(row))));
       if(g.rows.length>1)button.append(el("span","quiet-note",`×${g.rows.length}`));
       button.addEventListener("click",()=>{scope.flowSelected.set(s.run_id,key);fill(true);});item.append(button);navigation.append(item);
@@ -710,56 +723,57 @@ function executionSequence(s, scope) {
       selectedButton=button;
       const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
-      const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?` · 第 ${row.round} 轮`:""}`);
-      decision.append(el("p","flow-label","决策"),el("h4","",actionText(decisionAction(row))),meta);
-      if(g.rows.length>1)decision.append(el("p","repeat-count",`重复报告 ${g.rows.length} 次`));
-      if(present(row.reason)||present(row.strategy))decision.append(retainedDetails(JSON.stringify([s.run_id,"reason",decisionKey(row)]),scope.flowOpen,"决策原文",el("p","decision-reason",row.reason||row.strategy)));
-      feedback.append(el("p","flow-label","执行反馈"),el("p","",object(row.feedback).summary||row.feedback_summary||f.text));
-      if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",`关联任务当前${statusText(f.job.status)}；不代表复查当时状态。`));
+      const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
+      decision.append(el("p","flow-label",t("决策")),el("h4","",actionText(decisionAction(row))),meta);
+      if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
+      if(present(row.reason)||present(row.strategy))decision.append(retainedDetails(JSON.stringify([s.run_id,"reason",decisionKey(row)]),scope.flowOpen,t("决策原文"),el("p","decision-reason",row.reason||row.strategy)));
+      feedback.append(el("p","flow-label",t("执行反馈")),el("p","",object(row.feedback).summary||row.feedback_summary||f.text));
+      if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
       if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
-      metrics.append(el("p","flow-label",row.kind==="review"?"复查时已报告指标":"已报告指标 · 当前快照"),metricsDetail(f.metrics));
+      metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),metricsDetail(f.metrics));
       const records=el("div");for(const record of g.rows)records.append(rawFields(record));
-      feedback.append(retainedDetails(JSON.stringify([s.run_id,"step",decisionKey(row)]),scope.flowOpen,`记录详情（${g.rows.length} 条）`,records));
+      feedback.append(retainedDetails(JSON.stringify([s.run_id,"step",decisionKey(row)]),scope.flowOpen,t("记录详情（{p0} 条）", {p0: g.rows.length}),records));
       step.append(index,decision,feedback,metrics);entries.append(step);
     }
     more.hidden=groups.length<=limit;
     if(restoreFocus)selectedButton?.focus({preventScroll:true});
   };
-  const more=el("button","more-button","显示更多执行步骤");more.addEventListener("click",()=>{scope.flowLimits.set(s.run_id,(scope.flowLimits.get(s.run_id)||30)+30);fill();});
-  section.append(more);fill();if(!groups.length)section.append(empty("尚无决策记录，不能重建执行流程。"));
+  const more=el("button","more-button",t("显示更多执行步骤"));more.addEventListener("click",()=>{scope.flowLimits.set(s.run_id,(scope.flowLimits.get(s.run_id)||30)+30);fill();});
+  section.append(more);fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
   return section;
 }
 function runDetail(node, scope) {
   const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail");
   const heading=el("div","detail-heading"),identity=el("div");
-  identity.append(el("p","eyebrow","所选运行 · 执行流程与结果"),el("h3","",node.title));
+  identity.append(el("h3","",node.title));
   heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
-  box.append(el("p","detail-objective",s?.objective||node.row.objective||"目标未报告"));
-  if(entry?.status==="pending")box.append(el("p","load-message",s?"正在刷新，保留上次快照。":"正在读取决策与反馈…"));
+  box.append(el("p","detail-objective",s?.objective||node.row.objective||t("目标未报告")));
+  if(entry?.status==="pending")box.append(el("p","load-message",s?t("正在刷新，保留上次快照。"):t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
-    box.append(el("p","load-message error",`${s?"保留上次快照。":""}读取失败：${entry.error}`));
-    const retry=el("button","","重试读取");retry.addEventListener("click",()=>loadRun(node.runId,scope,true));box.append(retry);
+    box.append(el("p","load-message error",t("{p0}读取失败：{p1}", {p0: s?t("保留上次快照。"):"", p1: errorText(entry.errorInfo || {error:entry.error})})));
+    const retry=el("button","",t("重试读取"));retry.addEventListener("click",()=>loadRun(node.runId,scope,true));box.append(retry);
   }
   if(s){
     box.append(executionSequence(s,scope));
     if(list(s.candidates).length){
-      const candidates=el("details","record-details");candidates.append(el("summary","",`候选结果 · ${list(s.candidates).length}`));
-      list(s.candidates).forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",`候选 ${i+1}`),badge(c.status),comparisonView(c.metrics),rawFields(c));candidates.append(card);});box.append(candidates);
+      const candidates=el("details","record-details");candidates.append(el("summary","",t("候选结果 · {p0}", {p0: list(s.candidates).length})));
+      list(s.candidates).forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics),rawFields(c));candidates.append(card);});box.append(candidates);
     }
-    const report=el("button","","导出此运行报告");report.addEventListener("click",()=>{setSelectedRun(node.runId,scope);downloadReport();});box.append(report);
+
   }
-  const technical=el("details","record-details");technical.append(el("summary","","运行详情与关联依据"),fieldList([["运行",node.runId],["记录更新",dateText(s?.updated_at||node.row.updated_at)]]));
-  for(const [role,model] of Object.entries(object(s?.models))){technical.append(el("h4","",role==="actor"?"执行模型":role==="decision_maker"?"决策模型":role),rawFields(model));}
-  if(s&&!Object.keys(object(s.models)).length)technical.append(empty("模型 revision 未报告。"));
+  const technical=el("details","record-details");technical.append(el("summary","",t("运行详情")),fieldList([[t("运行"),node.runId],[t("记录更新"),dateText(s?.updated_at||node.row.updated_at)]]));
+  for(const [role,model] of Object.entries(object(s?.models))){technical.append(el("h4","",role==="actor"?t("执行模型"):role==="decision_maker"?t("决策模型"):role),rawFields(model));}
+  if(s&&!Object.keys(object(s.models)).length)technical.append(empty(t("模型 revision 未报告。")));
   const parents=runParentIds(s||node.row);
-  technical.append(el("h4","","运行关联依据"),el("p","quiet-note",parents.length?`显式引用：${parents.join("、")}`:"未报告显式父运行。"));
-  if(node.missing.length)technical.append(el("p","quiet-note",`父引用不在本项目：${node.missing.join("、")}`));
-  if(node.ambiguous.length)technical.append(el("p","quiet-note",`父 ID 歧义，未连线：${node.ambiguous.join("、")}`));
+  technical.append(el("h4","",t("运行关联依据")),el("p","quiet-note",parents.length?t("显式引用：{p0}", {p0: parents.join(t("、"))}):t("未报告显式父运行。")));
+  if(node.missing.length)technical.append(el("p","quiet-note",t("父引用不在本项目：{p0}", {p0: node.missing.join(t("、"))})));
+  if(node.ambiguous.length)technical.append(el("p","quiet-note",t("父 ID 歧义，未连线：{p0}", {p0: node.ambiguous.join(t("、"))})));
+  technical.append(el("h4","",t("流程顺序说明")),el("p","quiet-note",t("按已报告时间从早到晚展示，不表示因果。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。")));
   box.append(technical);return box;
 }
 function projectDetail(node, model, scope) {
   if (node.type === "project") {
-    const box = el("div"); box.append(el("p", "eyebrow", "项目"), el("h3", "", node.title), el("p", "", node.row.description || "项目说明未报告。"), el("p", "quiet-note", "选择运行，查看下方执行流程与结果。")); return box;
+    const box = el("div"); box.append(el("p", "eyebrow", t("项目")), el("h3", "", node.title), el("p", "", node.row.description || t("项目说明未报告。"))); const technical=el("details","record-details");technical.append(el("summary","",t("关系说明")),el("p","quiet-note",t("深灰：项目；灰色：运行。实线箭头：显式运行引用；浅线：项目归属。左右顺序按记录更新时间排列，不表示继承或实际开始时间；时间缺失时按运行标识稳定排序。")),el("p","quiet-note",t("图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。")));box.append(technical);return box;
   }
   if (node.type === "run") return runDetail(node, scope);
   return el("div");
@@ -781,9 +795,9 @@ function renderProject() {
   const project = selectedProject(); $("projects").hidden = !project;
   if (!project) return;
   const scope = state.activeScope || activateProject(), model = projectModel(project, scope);
-  $("project-name").textContent = project.name; $("project-description").textContent = project.description || "";
+  $("project-name").textContent = projectName(project); $("project-description").textContent = project.description || "";
   $("project-system").textContent = "";
-  $("project-run-count").textContent = `${runRows(project).length} 次运行`;
+  $("project-run-count").textContent = t("{p0} 次运行", {p0: runRows(project).length});
   $("project-overview").hidden = false;
   if (!model.nodes.some(n => n.key === scope.selected)) scope.selected = scope.runId ? JSON.stringify(["run", scope.runId]) : "project-root";
   if ($("project-graph").graphView) $("project-graph").graphView.selected = scope.selected;
@@ -812,15 +826,20 @@ function chooseProjects(input) {
   for (const [id, entry] of scope.cache) if (!valid.has(id)) { abortEntry(entry); scope.cache.delete(id); }
   if (scope.runId && !valid.has(scope.runId)) { scope.runId = ""; state.runId = ""; clearRun(); }
   if (deepRun) { scope.runId = deepRun; state.runId = deepRun; scope.selected = JSON.stringify(["run", deepRun]); }
-  const projects = state.projects.map(p => { const option = el("option", "", p.name); option.value = p.project_id; return option; });
-  if (!projects.length) { const option = el("option", "", "暂无项目"); option.value = ""; projects.push(option); }
-  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
-  const all = el("option", "", "选择运行"); all.value = "";
-  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", `运行 ${i + 1} · ${statusText(r.status)}`); option.value = r.run_id; return option; }));
-  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
+  renderSelectors();
   if (scope.runId) setSelectedRun(scope.runId, scope);
   renderProject();
 }
+function renderSelectors() {
+  const runs = runRows(selectedProject());
+  const projects = state.projects.map(p => { const option = el("option", "", projectName(p)); option.value = p.project_id; return option; });
+  if (!projects.length) { const option = el("option", "", t("暂无项目")); option.value = ""; projects.push(option); }
+  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
+  const all = el("option", "", t("选择运行")); all.value = "";
+  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", t("运行 {p0} · {p1}", {p0: i + 1, p1: statusText(r.status)})); option.value = r.run_id; return option; }));
+  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
+}
+
 function selectRun(id) {
   const scope = activateProject();
   if (id && !runRows(selectedProject()).some(r => r.run_id === id)) return;
@@ -843,11 +862,11 @@ async function loadRun(id, scope, force = false) {
   try {
     const s = state.demo ? state.demoSnapshots.get(id) : await fetchJSON(`/api/runs/${encodeURIComponent(id)}`, controller.signal);
     if (!current() || controller.signal.aborted) return;
-    if (s?.schema_version !== 1 || s.run_id !== id) throw new Error("运行快照协议或 ID 不匹配。");
+    if (s?.schema_version !== 1 || s.run_id !== id) throw uiError("运行快照协议或 ID 不匹配。");
     entry.snapshot = s; entry.status = "ready";
   } catch (error) {
     if (!current()) return;
-    entry.status = "error"; entry.error = controller.signal.aborted ? "请求超时。" : asText(error.message, "无法连接服务。");
+    entry.status = "error"; entry.errorInfo = controller.signal.aborted ? uiError("请求超时。") : error; entry.error = errorText(entry.errorInfo);
   } finally {
     clearTimeout(timeout);
     if (current()) {
@@ -867,10 +886,10 @@ async function fetchJSON(url, signal) {
   try {
     data = await response.json();
   } catch {
-    throw new Error("监控服务返回了无效响应。");
+    throw uiError("监控服务返回了无效响应。");
   }
   if (!response.ok)
-    throw new Error(asText(data.error, `请求失败 (${response.status})`));
+    throw (present(data.error) ? new Error(asText(data.error)) : uiError("请求失败 ({p0})", {p0: response.status}));
   return data;
 }
 function schedule() {
@@ -888,22 +907,22 @@ async function refresh() {
       if (epoch !== state.epoch) return;
       const snapshots = [s, ...list(s.demo_runs)]; state.demoSnapshots = new Map(snapshots.map(r => [r.run_id, r]));
       chooseProjects([{ ...projectMeta(s.project), runs: snapshots }]);
-      connection("示例数据", "demo"); notice("示例数据 · 静态演示，不代表真实运行。"); $("footer-source").textContent = "示例数据 · 静态快照";
+      connection(() => t("示例数据"), "demo"); notice(() => t("示例数据 · 静态演示，不代表真实运行。")); $("footer-source").textContent = t("示例数据 · 静态快照");
     } else {
       const data = await fetchJSON("/api/projects", controller.signal);
       if (epoch !== state.epoch) return;
-      if (!Array.isArray(data.projects)) throw new Error("项目清单格式无效。");
-      chooseProjects(data.projects); connection("已连接", "online"); notice(""); $("footer-source").textContent = "本地监控 · 只读";
+      if (!Array.isArray(data.projects)) throw uiError("项目清单格式无效。");
+      chooseProjects(data.projects); connection(() => t("已连接"), "online"); notice(""); $("footer-source").textContent = t("本地监控 · 只读");
     }
     clearTimeout(timeout);
     const scope = state.activeScope;
     if (scope.runId) setSelectedRun(scope.runId, scope);
     if (scope.runId) await loadRun(scope.runId, scope, true);
-    if (!state.projects.length) showEmpty("等待第一个项目", "尚无项目或运行快照；有数据后将自动显示。");
+    if (!state.projects.length) showEmpty(() => t("等待第一个项目"), () => t("尚无项目或运行快照；有数据后将自动显示。"));
   } catch (error) {
     if (epoch !== state.epoch) return;
-    connection("连接中断", "offline"); notice(`保留已读取的项目图与快照。${controller.signal.aborted ? "请求超时。" : asText(error.message, "无法连接监控服务。")}`, true);
-    if (!selectedProject()) showEmpty("暂时无法读取项目", "请检查本地监控服务；恢复后将自动重新读取。");
+    connection(() => t("连接中断"), "offline"); notice(() => t("保留已读取的项目图与快照。{p0}", {p0: controller.signal.aborted ? t("请求超时。") : errorText(error,"无法连接监控服务。")}), true);
+    if (!selectedProject()) showEmpty(() => t("暂时无法读取项目"), () => t("请检查本地监控服务；恢复后将自动重新读取。"));
   } finally {
     clearTimeout(timeout);
     if (epoch === state.epoch) { $("refresh").disabled = false; state.controller = null; schedule(); }
@@ -934,7 +953,7 @@ function switchDemo() {
   state.openJobs.clear();
   state.decisionLimit = 30;
   state.eventLimit = 30;
-  $("demo").textContent = state.demo ? "返回真实运行" : "查看示例";
+  $("demo").textContent = state.demo ? t("返回") : t("示例");
   $("demo").setAttribute("aria-pressed", String(state.demo));
   $("auto-refresh").checked = state.demo ? false : state.auto;
   $("auto-refresh").disabled = state.demo;
@@ -985,4 +1004,28 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(state.timer); $("project-graph").graphView?.stopSimulation?.(); }
   else if (state.auto && !state.demo) refresh();
 });
+function updateMetricsNavigation() {
+  const link=$("nav-metrics");if(!link)return;
+  link.hidden=!state.runId || !state.snapshot;
+  link.setAttribute("aria-disabled",String(link.hidden));
+}
+function renderLanguage() {
+  RSII18n.applyStatic(document);
+  for(const lang of ["zh","en"])$("lang-"+lang)?.setAttribute("aria-pressed",String(RSII18n.getLanguage()===lang));
+  $("demo").textContent=state.demo?t("返回"):t("示例");
+  connection(chrome.connection,chrome.tone);notice(chrome.notice,chrome.noticeError);
+  $("empty-title").textContent=copy(chrome.emptyTitle);$("empty-description").textContent=copy(chrome.emptyDescription);
+  $("footer-source").textContent=state.demo?t("示例数据 · 静态快照"):t("本地监控 · 只读");
+  if(!state.snapshot)$("execution-title").textContent=t("当前执行");
+  if(state.projects.length || state.activeScope)renderSelectors();
+  if(state.snapshot)renderSnapshot(state.snapshot);
+  renderProject();updateMetricsNavigation();
+}
+$("nav-metrics")?.addEventListener("click",event=>{
+  if(!state.runId || !state.snapshot){event.preventDefault();return;}
+  $("dashboard").open=true;
+});
+for(const lang of ["zh","en"])$("lang-"+lang)?.addEventListener("click",()=>RSII18n.setLanguage(lang));
+RSII18n.subscribe(renderLanguage);
+renderLanguage();
 refresh();

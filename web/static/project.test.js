@@ -3,6 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const i18nSource = fs.readFileSync(`${__dirname}/i18n.js`, "utf8");
 const source = fs.readFileSync(`${__dirname}/app.js`, "utf8");
 class Element {
   constructor(tag = "div") { this.tagName = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {}; this.listeners = {}; this.scrollLeft = 0; this.scrollTop = 0; this.clientWidth = 900; this.clientHeight = 660; this.value = "all"; this.isConnected = true; this.classList = { add() {}, remove() {}, contains: () => false }; }
@@ -35,7 +36,7 @@ function fakeRAF() {
     },
   };
 }
-function harness(fetcher = async () => { throw new Error("unexpected fetch"); }, search = "", { raf = false } = {}) {
+function harness(fetcher = async () => { throw new Error("unexpected fetch"); }, search = "", { raf = false, fullSnapshot = false } = {}) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) { const e = new Element(); e.id = id; elements.set(id, e); } return elements.get(id); };
   const observers = [];
@@ -48,8 +49,10 @@ function harness(fetcher = async () => { throw new Error("unexpected fetch"); },
   const frames = raf ? fakeRAF() : null;
   const ctx = vm.createContext({ ResizeObserver, document, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher,
     ...(frames ? { requestAnimationFrame: callback => frames.request(callback), cancelAnimationFrame: id => frames.cancel(id) } : {}) });
+  vm.runInContext(i18nSource, ctx);
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
-  vm.runInContext('state.auto = false; renderSnapshot = function(s) { state.snapshot = s; };', ctx);
+  vm.runInContext('state.auto = false;', ctx);
+  if (!fullSnapshot) vm.runInContext('renderSnapshot = function(s) { state.snapshot = s; };', ctx);
   return { ctx, get, observers, frames, document, documentListeners, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
 }
 const run = (id, extra = {}) => ({ schema_version: 1, run_id: id, updated_at: "2026-11-01T00:00:00Z", ...extra });
@@ -379,7 +382,7 @@ test("automatic layout control clears manual pins, relaxes positions and fits th
   const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
   h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:1800,y:1200}); state.activeScope.pinned.add(JSON.stringify(["run","a"])); $("project-graph").graphView.autoFit=false; renderProject()');
   const before = model(h).nodes.find(n => n.runId === "a");
-  const control = descendants(h.get("project-graph")).find(n => n.attributes["aria-label"] === "自动调整节点布局");
+  const control = descendants(h.get("graph-tools")).find(n => n.attributes["aria-label"] === "自动调整节点布局");
   control.listeners.click();
   assert.equal(h.run("state.activeScope.pinned.size"), 0);
   const after = model(h).nodes.find(n => n.runId === "a");
@@ -592,7 +595,8 @@ test("run execution subview follows the graph viewport and never inserts interna
   assert.equal(findClass(layout.children[0], "flow-choice").length, 0);
   assert.equal(findClass(layout.children[1], "execution-sequence").length, 1);
   assert.equal(findClass(layout.children[1], "candidate-card").length, 1);
-  assert.match(textOf(layout.children[1]), /导出此运行报告/);
+  assert.doesNotMatch(textOf(layout.children[1]), /导出此运行报告/);
+  assert.equal(typeof h.get("export-report").listeners.click, "function");
 });
 
 test("execution navigation pages all steps, shows one detail and retains selection across repeated run clicks", () => {

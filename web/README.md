@@ -41,6 +41,22 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 
 首页默认读取真实接口。无快照时显示空态，点击「查看示例」才加载明确标记「示例数据」的静态 fixture；「返回真实运行」恢复接口。示例不会写入 runs，也不会出现在真实运行列表中。
 
+## 界面语言 / Interface language
+
+右上角「中 / EN」切换完整界面语言，默认中文。选择保存在浏览器 localStorage 的 `rsisys-language`（`zh` / `en`），重载后恢复；存储不可用时保留当前页面内的选择。按钮、状态、空态、筛选、指标名、图表提示、流程和详情标题及导出报告均跟随语言；日期使用相应 locale。
+
+切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，不重置所选运行、执行步骤、筛选、分页、图谱缩放、平移或节点位置。拖拽与 RAF 松弛期间，图谱沿用原有延后重绘机制。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
+
+无外部依赖或翻译 API。`/i18n.js` 必须先于 `/app.js` 以 `defer` 加载，并加入静态服务白名单。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态节点。
+
+Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected run, execution step, filters and graph view. Reported model text and logs stay verbatim. Exported reports follow the selected interface language.
+
+验证语言覆盖、持久化、原文保留、无额外请求、错误与空态、筛选、图工具、导航和 RAF 期间切换：
+
+```sh
+node --test web/static/i18n.test.js web/static/project.test.js
+```
+
 ## 数据与交互
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
