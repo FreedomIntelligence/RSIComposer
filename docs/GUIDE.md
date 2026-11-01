@@ -151,7 +151,47 @@ exploration = ExplorationLoop(
 
 默认 Harness 的本地 RL 请求使用 trajectory_refs 引用 Actor 本地 history；Feedback.evidence_refs 引用系统记录。两侧训练请求均为后端中立：method / recipe_ref 是非空字符串，base 为 ModelRef，引用要求正确类型的 tuple，但允许为空。DecisionTrainingRequest 保留 `(base, experience_refs, recipe_ref)` 位置参数，追加 `data_refs=()` 与 `method="sft"`；可使用系统反馈 experience_refs、外部数据 data_refs，或由后端根据 recipe 获取数据。
 
-调用 runner.step(objective) 推进一步，或 runner.run(objective, rounds=1) 推进到轮次完成、等待或结束；waiting 后由调用方安排下一次推进。Runner 通过 decision_making.receive_feedback(directive, feedback) 交付反馈。取消用 runner.cancel()，之后继续推进直到终态。协同语义见[系统架构](ARCHITECTURE.md)。
+调用 runner.step(objective) 推进一步，或 runner.run(objective, rounds=1) 推进到本次反馈交付额度完成、等待或结束；waiting 后由调用方安排下一次推进。Runner 通过 decision_making.receive_feedback(directive, feedback) 交付反馈。取消用 runner.cancel()，之后继续推进直到终态。协同语义见[系统架构](ARCHITECTURE.md)。
+
+## 选择运行策略
+
+Python 装配的 `Runner`、`build_demo` 和 `Application` 均接受 `run_policy=` 与 `cleanup_timeout_seconds=30`。下例复用前面构造的 decision / exploration；省略参数即使用 `ResearcherRunPolicy()`，研究者 finish 后停止。时间模式允许研究者提前 finish 后再开启一轮，持续到指定时限：
+
+```python
+from rsisys.runtime.runner import Runner
+from rsisys.runtime.run_policy import TimeRunPolicy
+
+runner = Runner(
+    decision, exploration,
+    run_policy=TimeRunPolicy(seconds=600, restart_delay_seconds=1),
+    cleanup_timeout_seconds=30,
+)
+result = runner.run("改进 Actor 并评测候选", rounds=1)
+```
+
+`rounds=1` 限制本次调用交付的指令数量，不表示研究轮次数或运行策略已完成；`completed` 也不证明目标达成。保留同一 Runner，在 `waiting` 后由事件循环或调度器安排后续 `step()` / `run()`；返回 `finished` 后检查 `shutdown_complete` 与 `run_stop` 中的未确认任务，清理到限不等于全部任务已终结。Runner 不在轮次间 sleep；新轮次通过 `restart_research` 显式开启，保留 memory、经验和候选。自定义 Decision 端点要支持此重启接口，才能接入跨轮次继续研究。
+
+目标模式使用 `GoalRunPolicy(goal, restart_delay_seconds=1, max_seconds=None)`，其中 goal 是可替换的 `goal(context) -> bool` callable，读取 RunContext 中已交付的 outcomes。可用 `MetricGoal` 表达绑定评测协议的指标阈值目标，默认不接受 Mock 评测；复杂目标可自行验证证据。`max_seconds=None` 表示没有目标模式的运行时限；需要时间兜底时显式传入秒数。例如复用已有配置、按验证集 accuracy 目标装配：
+
+```python
+from rsisys.config import build_demo
+from rsisys.runtime.run_policy import GoalRunPolicy, MetricGoal
+
+# protocol_ref 须对应 evaluator 实际使用的评测协议。
+goal = MetricGoal("accuracy", 0.8, protocol_ref="validation-v1")
+runner, store = build_demo(
+    demo_config,
+    run_policy=GoalRunPolicy(goal, max_seconds=600),
+    cleanup_timeout_seconds=30,
+)
+with runner:
+    result = runner.run(demo_config.objective, rounds=1)
+    # 持续运行时，在此资源作用域内由调用方调度后续 step / run。
+```
+
+上例阈值与协议由调用方选择；默认 Mock evaluator 不能满足该目标。损失等越低越好的指标使用 `higher_is_better=False`；`allow_simulated=True` 仅显式允许模拟结果参与判断。`Application(config, run_policy=..., cleanup_timeout_seconds=30)` 使用相同注入方式。
+
+停止后的 drain / cancel 由 policy decision 指定；超时默认 cancel，清理另受 `cleanup_timeout_seconds`（默认 30 秒）限制。停止禁止新实验，但继续确认与交付已有反馈；未确认任务不会被记为成功。收尾异常原样抛给调用方，保留状态供后续 `step()` 重试；时限检查依赖调用方继续推进，不会自动硬杀后端。完整接口、结果与同步调用限制见 [Runtime](../src/rsisys/runtime/README.md#运行策略与研究轮次)。
 
 ## 系统指令与 Actor 动作
 
@@ -204,7 +244,7 @@ PYTHONPATH=src pixi run python -m rsisys resume \
   --snapshot <快照目录> --data-dir runs/restored --rounds 1
 ```
 
-恢复目标必须是新目录，原目录不被修改。快照保存内置 Harness 的控制状态、两份 memory 和共享 Experience；整体替换 Harness 或更换其持久化组件后，需显式集成保存恢复。旧快照受源码版本精确匹配约束，不提供自动迁移。保存内容、版本一致性要求及自定义组件边界统一见 [Snapshot](../src/rsisys/snapshot/README.md)。
+恢复目标必须是新目录，原目录不被修改。快照保存内置 Harness 的控制状态、两份 memory 和共享 Experience；内置快照仅兼容默认 ResearcherRunPolicy 和默认清理预算；time / goal、自定义运行策略或清理预算会被明确拒绝，需显式集成保存恢复。整体替换 Harness 或替换持久化组件也需单独集成。旧快照受源码版本精确匹配约束，不提供自动迁移。保存内容、版本一致性要求及自定义组件边界统一见 [Snapshot](../src/rsisys/snapshot/README.md)。
 
 CLI 不是常驻作业服务：waiting 时不会保存快照，resume 不能找回在途任务。需要持续推进异步任务时使用进程内 Runner。
 

@@ -17,7 +17,7 @@ src/rsisys/
 │   │   └── action_space/  # Actor 环境动作的描述/校验
 │   └── contracts/         # 消息、引用与公开端口
 ├── experience/            # 共享系统反馈库
-├── runtime/               # Runner 与公共后端
+├── runtime/               # Runner、可替换 RunPolicy 与公共后端
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── application.py         # 本地持久化装配
@@ -28,7 +28,7 @@ src/rsisys/
 
 `DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。`harness/engine.py` 负责默认装配、状态协调和公开入口；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
 
-Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
+Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
 
 默认执行职责落在现有组件中，不新增平级系统：
 
@@ -76,6 +76,12 @@ Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration
 
 默认 Decision 上下文另含当前 Exploration 模型/进度、Decision 模型、发出指令时的版本归因，以及每个候选最近一次评测的协议、输入引用、结果和证据。这些事实不依赖有限长度的任务 history；完整评测档案仍由 Experience 保存。
 
+## 外部运行控制
+
+运行是否继续由 runtime 的 [RunPolicy](../src/rsisys/runtime/run_policy.py) 决定，接口为 `evaluate(RunContext) -> RunDecision`；Runner 接收 `run_policy=` 并执行决定。它与 Harness 内决定研究步骤的 DecisionPolicy、选择环境动作的 ActorPolicy 分开：默认 researcher 模式接受研究者 finish，time 模式运行到时限，goal 模式在目标未达时继续。可替换 goal callable 根据已交付 outcomes 判断；MetricGoal 提供绑定评测协议的指标阈值判断，默认不接受 Mock 结果，达标不等于部署候选。
+
+研究者 finish 后，继续运行的策略通过显式 `restart_research` 开启新研究轮次，保留 memory、Experience 和候选。轮次间隔由后续 tick 驱动，`run()` 在 waiting 时返回，不阻塞 sleep。策略停止后 Runner 禁止新实验，执行 decision 指定的 `shutdown='drain'` 或 `'cancel'`，继续终态反馈交付。超时默认 cancel，另设 `cleanup_timeout_seconds=30` 的清理上限；未确认任务明确记录，不能视为成功或已取消。收尾异常原样交给调用方，保留状态供下次 step 重试；超时检查仍需调用方持续推进，不自动硬杀后端。接口、上下文和清理语义见 [Runtime](../src/rsisys/runtime/README.md)，装配见[使用指南](GUIDE.md#选择运行策略)。
+
 ## Experience 与持久化
 
 | 概念 | 职责与范围 |
@@ -89,11 +95,11 @@ Experience 收集 runtime_feedback / training_run / evaluation / improvement / i
 
 默认 Harness 将原始 test-time history 留在自身实现中。每个 Actor episode 写一条 runtime_feedback，`Feedback.evidence_refs` 引用系统记录；RL 的 `trajectory_refs` 则引用默认 Exploration Harness 的本地轨迹，不把原始轨迹复制进 Experience。
 
-Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务编排属于 Harness。Snapshot 在空闲边界保存内置 Harness 状态、模型绑定、共享 Experience 及产物，当前不自动适配替代 Harness、并行装配或自定义反馈提取器。
+Runtime 提供运行策略、模型、作业、产物、执行后端与 Runner 协调；实验业务编排属于 Harness。Snapshot 在空闲边界保存内置 Harness 状态、模型绑定、共享 Experience 及产物；运行策略仅兼容默认 ResearcherRunPolicy，其他策略、替代 Harness、并行装配或自定义反馈提取器需显式集成。
 
 ## 交付与失败边界
 
-- 串行 Runner.step 最多调用一次普通决策或一次复查流程，并推进一个探索阶段；并行 tick 可调用一次普通决策并推进一个实验，该实验到期时可额外复查。复查内部允许有界的模型/查询往返。run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数。
+- 串行 Runner.step 最多调用一次普通决策或一次复查流程，并推进一个探索阶段；并行 tick 可调用一次普通决策并推进一个实验，该实验到期时可额外复查。复查内部允许有界的模型/查询往返。run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数，与 RunContext.research_round 的研究轮次不同；一次有界 run 返回不等于运行策略已结束。
 - 新决策使用新 ID；同 ID 同内容重复接收返回原进度，内容不同则拒绝。串行默认实现中，指令交付确认前独占探索流程；并行装配中占用对应实验实例。
 - 取消只提出请求，后续推进确认终态；取消与训练成功竞速时不自动应用候选。同步环境调用不能由下一 tick 中途抢占。
 - 提交响应丢失后保留请求与幂等键，不重新生成任务。后端须兑现幂等提交；非终态查询或记录异常允许后续推进重试。

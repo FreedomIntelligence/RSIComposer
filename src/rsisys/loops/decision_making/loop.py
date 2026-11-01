@@ -4,6 +4,7 @@ from .action_space.access import authorized_space
 from .harness import DecisionHarness
 from .harness.decision import DecisionRunResult
 from rsisys.loops.contracts.coordination import ReviewDecision
+from rsisys.loops.contracts.jobs import JobRef
 
 
 class DecisionMakingLoop:
@@ -12,6 +13,45 @@ class DecisionMakingLoop:
 
     def step(self, objective: str):
         return self.harness.step(objective, self.action_space)
+
+    def step_guarded(self, objective, before_action):
+        return self.harness.step(objective, _GuardedActionSpace(
+            authorized_space(self.action_space, 'decision'), before_action))
+
+    def review_guarded(self, objective, progress, before_action):
+        with_tools = getattr(self.harness, 'review_with_tools', None)
+        if callable(with_tools):
+            result = with_tools(objective, progress, _GuardedActionSpace(
+                authorized_space(self.action_space, 'review'), before_action))
+        else:
+            result = self.review(objective, progress)
+        before_action()
+        return result
+
+    def pending_records(self):
+        pending = getattr(self.harness, 'pending_records', None)
+        return pending() if callable(pending) else False
+
+    def flush_pending_records(self):
+        flush = getattr(self.harness, 'flush_pending_records', None)
+        if callable(flush):
+            flush()
+
+    def restart_research(self, context: dict[str, object]) -> None:
+        restart = getattr(self.harness, 'restart_research', None)
+        if not callable(restart):
+            raise NotImplementedError('This decision harness does not support restart_research')
+        return restart(context)
+
+    def update_run_control(self, context: dict[str, object]) -> None:
+        update = getattr(self.harness, 'update_run_control', None)
+        if not callable(update):
+            raise NotImplementedError('This decision harness does not support update_run_control')
+        return update(context)
+
+    def pending_research_job(self) -> JobRef | None:
+        pending = getattr(self.harness, 'pending_research_job', None)
+        return pending() if callable(pending) else None
 
     def can_step(self):
         ready = getattr(self.harness, 'can_step', None)
@@ -64,3 +104,28 @@ class DecisionMakingLoop:
             if result.kind != "progressed":
                 return DecisionRunResult(result.kind, tuple(steps))
         return DecisionRunResult("step_limit", tuple(steps))
+
+
+class _GuardedActionSpace:
+    """Preserve capability authorization while checking an external action boundary."""
+    def __init__(self, source, before_action):
+        self.source, self.before_action = source, before_action
+
+    @property
+    def permissions(self):
+        return self.source.permissions
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+    def validate(self, call):
+        self.before_action()
+        return self.source.validate(call)
+
+    def validate_directive(self, directive):
+        self.before_action()
+        return self.source.validate_directive(directive)
+
+    def validate_review(self, result):
+        self.before_action()
+        return self.source.validate_review(result)

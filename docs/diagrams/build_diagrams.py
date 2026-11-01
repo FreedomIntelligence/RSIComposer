@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate editable SVGs for two loop-local Harnesses and shared Experience."""
+"""Generate native SVGs for two Harnesses, runtime RunPolicy and Experience."""
 from pathlib import Path
 from html import escape
 import unicodedata
@@ -104,7 +104,8 @@ def system_flow():
             'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
             'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
             'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
-            'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。')
+            'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。'
+            'runtime 中的 RunPolicy 可替换，支持 researcher、time、goal；停止后保留反馈交付。')
     s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
     s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
     legend(s)
@@ -198,14 +199,19 @@ def system_flow():
     s.path('M 1175 330 V 410')
     s.path('M 960 710 H 1045 V 465 H 1060', BLUE, arrow='blue')
     s.path('M 1290 465 H 1390', BLUE, arrow='blue')
-    s.node('runner', 1060, 680, 230, 180, 'Runner', (
-        '框架协同 / 交付', '串行 / 可选并行', '推进·控制·交付',
+    s.node('runner', 1060, 620, 230, 145, 'Runner', (
+        '串行 / 可选并行', '推进·停止·交付',
     ), INK, '#EAF0F6', LINE, title_size=26)
-    s.node('feedback', 1060, 960, 230, 120, 'Feedback', (
+    s.node('run-policy', 1060, 805, 230, 155, 'RunPolicy', (
+        'researcher', 'time / goal',
+    ), BLUE, '#EFF5FF', BLUE, title_size=26,
+        tag='runtime · 实现可换', dash='8 5')
+    s.path('M 1175 805 V 765', BLUE, arrow='blue')
+    s.node('feedback', 1060, 1010, 230, 120, 'Feedback', (
         '状态 / 指标', '候选 / 证据引用',
     ), INK, '#EAF0F6', LINE, title_size=26)
-    s.path('M 1350 1020 H 1290')
-    s.path('M 1060 1020 H 1020 V 505 H 960')
+    s.path('M 1350 1070 H 1290')
+    s.path('M 1060 1070 H 1020 V 505 H 960')
 
     for x in (600, 1810):
         s.path(f'M {x} 1380 V 1450', PURPLE, arrow='purple')
@@ -219,10 +225,10 @@ def system_flow():
 
     replaceable(s, 'runtime-backends', 100, 1660, 1050, 165, 'Runtime / 共享后端', (
         'Model · Sandbox · Artifact 后端',
-        '通过公开端口接入；Runner 协同见框架骨架',
+        '通过公开端口接入；Runner / RunPolicy 见中央运行控制',
     ), BLUE, '#EFF5FF', title_size=28)
     replaceable(s, 'snapshot', 1190, 1660, 1110, 165, 'Snapshot / 保存与恢复', (
-        '内置实现在空闲边界捕获与恢复',
+        '内置空闲边界 · 仅默认 researcher 运行策略',
         '自定义模块需显式适配保存 / 恢复 / 引用一致性',
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
     s.text(100, 1875, '虚线框内部展示默认组合；整体替换 Harness 不要求保留相同内部结构。默认训练 / 评测后端为 Mock。', 22, MUTED)
@@ -230,11 +236,12 @@ def system_flow():
 
 
 def file_architecture():
-    s = SVG(2400, 1840, 'RSISys 文件架构图',
+    s = SVG(2400, 1920, 'RSISys 文件架构图',
             '两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。'
             'Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。'
             'step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。'
-            '跨 Loop 协议与 Runner 是框架骨架。Experience 与服务后端可换，Snapshot 自定义模块需显式适配。')
+            '跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。'
+            'Experience 与服务后端可换，Snapshot 仅兼容默认 researcher 策略，自定义模块需显式适配。')
     s.text(100, 80, 'RSISys / 文件架构', 42, weight=750)
     s.text(100, 126, 'src/rsisys/ · 默认组合与替换边界', 26, MUTED)
     legend(s)
@@ -312,15 +319,24 @@ def file_architecture():
         'loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training',
         'runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较',
     ), INK, '#EAF0F6', LINE, title_size=28)
-    replaceable(s, 'runtime-dir', 100, 1570, 1050, 170, 'runtime/ · 共享后端', (
-        'model.py · sandbox.py · local_process.py · artifacts.py',
-        'Model / Sandbox / Artifact 实现可换；files.py · jobs.py 配套',
-    ), BLUE, '#EFF5FF', title_size=28)
-    replaceable(s, 'snapshot-dir', 1190, 1570, 1110, 170, 'snapshot/ · 保存与恢复', (
+    s.parts.append('<g id="runtime-dir">')
+    s.node('runtime-boundary', 100, 1570, 1050, 255, 'runtime/ · 运行控制与共享后端',
+           color=BLUE, fill='#EFF5FF', title_size=28)
+    replaceable(s, 'runtime-run-policy', 130, 1640, 510, 155, 'run_policy.py · RunPolicy', (
+        'evaluate(RunContext) → RunDecision',
+        'researcher / time / goal',
+    ), BLUE, title_size=25)
+    replaceable(s, 'runtime-backend-files', 655, 1640, 465, 155, 'Model / Sandbox / Artifact', (
+        'model.py · sandbox.py · artifacts.py',
+        'local_process.py · jobs.py',
+    ), BLUE, title_size=24)
+    s.parts.append('</g>')
+    replaceable(s, 'snapshot-dir', 1190, 1570, 1110, 255, 'snapshot/ · 保存与恢复', (
         'capture.py · restore.py · storage.py / local.py · codec.py · manifest.py',
-        '内置实现限空闲边界；自定义模块需显式适配保存 / 恢复 / 引用一致性',
+        '内置空闲边界 · 仅默认 researcher 运行策略',
+        'time / goal 与自定义组件需显式适配保存 / 恢复 / 引用一致性',
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    s.text(100, 1798, '装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。', 22, MUTED)
+    s.text(100, 1878, '装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。', 22, MUTED)
     s.save('file-architecture.svg')
 
 

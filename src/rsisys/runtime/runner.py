@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from time import monotonic
 from typing import Callable, Literal
 
@@ -12,6 +12,8 @@ from rsisys.loops.contracts.coordination import (
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
+from .run_policy import (RunPolicy, ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy,
+                         RunContext, RunDecision, ExperimentOutcome, MetricGoal, positive)
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,8 @@ class RunResult:
     events: list[dict[str, object]]
     waiting_job: JobRef | None = None
     waiting_directive_id: str | None = None
+    stop_reason: str | None = None
+    shutdown_complete: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -33,11 +37,34 @@ class RunnerStep:
     directive_id: str | None = None
 
 
+class _RunStopping(BaseException):
+    """Internal control signal; tool-error recovery must not swallow a run stop."""
+
+
 class Runner:
     def __init__(self, decision_making: DecisionEndpoint, exploration: ExplorationEndpoint,
-                 *, clock: Callable[[], float] = monotonic, parallel: bool = False):
+                 *, clock: Callable[[], float] = monotonic, parallel: bool = False,
+                 run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
         if type(parallel) is not bool:
             raise TypeError('parallel must be boolean')
+        self.run_policy = run_policy if run_policy is not None else ResearcherRunPolicy()
+        if not callable(getattr(self.run_policy, 'evaluate', None)):
+            raise TypeError('run_policy must implement evaluate(context)')
+        positive(cleanup_timeout_seconds, 'cleanup_timeout_seconds')
+        self.cleanup_timeout_seconds = cleanup_timeout_seconds
+        self._run_started = None
+        self._research_round = 1
+        self._researcher_finished = False
+        self._restart_at = None
+        self._restart_context = None
+        self._stop_decision = None
+        self._stop_started = None
+        self._terminal_step = None
+        self._outcomes = {}
+        self._on_outcome = self._record_outcome
+        self._quiescing = False
+        self._guard_actions = type(self.run_policy) is not ResearcherRunPolicy
+        self._action_guard = self._guard_run
         self.parallel = parallel
         if parallel and any(not callable(getattr(endpoint, 'pending_all', None))
                             for endpoint in (decision_making, exploration)):
@@ -54,6 +81,166 @@ class Runner:
         self._review_result: ReviewDecision | None = None
         self._review_pending = False
         self._pending_cancel = False
+
+    def _guard_run(self, objective):
+        if self._run_started is None:
+            return
+        if self._stop_decision is None:
+            decision = self._evaluate_run(self._run_context(objective))
+            if decision.action == 'stop':
+                self._begin_stop(decision)
+        if self._stop_decision is not None:
+            raise _RunStopping('Run stopping before a new action')
+
+    def _decision_step(self, objective):
+        guarded = getattr(self.decision_making, 'step_guarded', None)
+        if self._guard_actions and callable(guarded):
+            return guarded(objective, lambda: self._action_guard(objective))
+        return self.decision_making.step(objective)
+
+    def _pending_records(self):
+        pending = getattr(self.decision_making, 'pending_records', None)
+        return pending() if callable(pending) else False
+
+    def _record_outcome(self, directive, feedback):
+        outcome = ExperimentOutcome(deepcopy(directive), deepcopy(feedback))
+        previous = self._outcomes.get(directive.directive_id)
+        if previous is not None and previous != outcome:
+            raise ValueError('Conflicting delivered run outcome')
+        self._outcomes[directive.directive_id] = outcome
+
+    def _run_context(self, objective):
+        return RunContext(objective, max(0.0, self._clock() - self._run_started),
+                          self._research_round, self._researcher_finished or self._decision_finished,
+                          deepcopy(tuple(self._outcomes.values())))
+
+    def _control_context(self, context):
+        policy = self.run_policy
+        seconds = policy.seconds if isinstance(policy, TimeRunPolicy) else getattr(policy, 'max_seconds', None)
+        mode = ('researcher' if type(policy) is ResearcherRunPolicy else
+                'time' if type(policy) is TimeRunPolicy else 'goal' if type(policy) is GoalRunPolicy else 'custom')
+        return {'research_round': context.research_round, 'mode': mode,
+                'elapsed_seconds': context.elapsed_seconds,
+                'remaining_seconds': max(0.0, seconds - context.elapsed_seconds) if seconds is not None else None,
+                'researcher_finish_ends_run': type(policy) is ResearcherRunPolicy,
+                'goal': asdict(policy.goal) if isinstance(policy, GoalRunPolicy) and isinstance(policy.goal, MetricGoal) else None}
+
+    def _research_job(self):
+        pending = getattr(self.decision_making, 'pending_research_job', None)
+        return pending() if callable(pending) else None
+
+    def _evaluate_run(self, context):
+        decision = self.run_policy.evaluate(context)
+        if not isinstance(decision, RunDecision):
+            raise TypeError('RunPolicy must return RunDecision')
+        decision.__post_init__()
+        if decision.action == 'restart' and not context.researcher_finished:
+            raise ValueError('RunPolicy can restart only after researcher finish')
+        return deepcopy(decision)
+
+    def _begin_stop(self, decision):
+        if self._stop_decision is None:
+            self._stop_decision, self._stop_started = decision, self._clock()
+        self._quiescing = True
+
+    def _stop_step(self, objective, original=None):
+        if self.parallel:
+            self._recover_parallel()
+            pending = tuple(self._slots)
+        else:
+            self._recover()
+            pending = (self._directive.directive_id,) if self._directive else ()
+        research_job = self._research_job()
+        pending_records = self._pending_records()
+        complete = not pending and research_job is None and not pending_records
+        expired = self._clock() - self._stop_started >= self.cleanup_timeout_seconds
+        stop = {'reason': self._stop_decision.reason, 'shutdown': self._stop_decision.shutdown,
+                'evidence_refs': list(self._stop_decision.evidence_refs),
+                'shutdown_complete': complete, 'cleanup_timed_out': bool(expired and not complete),
+                'unresolved_directives': list(pending),
+                'unresolved_research_job': asdict(research_job) if research_job else None,
+                'unresolved_records': bool(pending_records)}
+        if complete or expired:
+            event = {**(original.event if original else {}), 'run_stop': stop}
+            if original is not None and original.kind == 'completed':
+                # Preserve the final feedback event; the next tick reports run termination.
+                self._terminal_step = RunnerStep('finished', {'run_stop': stop})
+                return replace(original, event=event)
+            self._terminal_step = RunnerStep('finished', event, original.decision_steps if original else 0)
+            return deepcopy(self._terminal_step)
+        if original is not None:
+            return replace(original, event={**original.event, 'run_stop': stop})
+        if pending_records and not pending:
+            flush = getattr(self.decision_making, 'flush_pending_records', None)
+            if callable(flush):
+                flush()
+            if not self._pending_records():
+                return self._stop_step(objective, RunnerStep('progressed', {'run_control': 'records_flushed'}))
+        if not pending:
+            return RunnerStep('waiting', {'run_stop': stop}, job=research_job)
+        # Cancel/drain one experiment per tick. Failures keep their outbox and
+        # are reported while other experiments still get a fair cleanup turn.
+        ident = self._rotation[0] if self.parallel else pending[0]
+        try:
+            if self._stop_decision.shutdown == 'cancel':
+                self.cancel(ident)
+            result = self._transport_step(objective)
+        except Exception as exc:
+            if self.parallel and self._rotation and self._rotation[0] == ident:
+                self._rotation.rotate(-1)
+            raise
+        return self._stop_step(objective, result)
+
+    def step(self, objective: str) -> RunnerStep:
+        """Apply external run control around one bounded transport tick; never sleep."""
+        if self._terminal_step is not None:
+            return deepcopy(self._terminal_step)
+        if self._run_started is None:
+            self._run_started = self._clock()
+        if self._stop_decision is not None:
+            return self._stop_step(objective)
+        context = self._run_context(objective)
+        decision = self._evaluate_run(context)
+        if decision.action == 'stop':
+            self._begin_stop(decision)
+            return self._stop_step(objective)
+        if context.researcher_finished and not self.busy and self._research_job() is None:
+            if decision.action != 'restart':
+                return RunnerStep('waiting', {'run_control': 'researcher_finished'})
+            if self._restart_at is None:
+                self._restart_at = self._clock() + decision.restart_delay_seconds
+            if self._clock() < self._restart_at:
+                return RunnerStep('waiting', {'run_control': 'restart_wait',
+                    'retry_after_seconds': self._restart_at - self._clock()})
+            restart = getattr(self.decision_making, 'restart_research', None)
+            if not callable(restart):
+                raise NotImplementedError('Continued research requires restart_research(context)')
+            if self._restart_context is None:
+                self._restart_context = self._control_context(replace(context, research_round=self._research_round + 1))
+            restart(deepcopy(self._restart_context))
+            self._research_round += 1
+            self._researcher_finished = self._decision_finished = False
+            self._restart_at = self._restart_context = None
+            return RunnerStep('progressed', {'run_control': 'research_restarted', 'research_round': self._research_round})
+        update = getattr(self.decision_making, 'update_run_control', None)
+        if callable(update) and type(self.run_policy) is not ResearcherRunPolicy:
+            update(self._control_context(context))
+        try:
+            result = self._transport_step(objective)
+        except _RunStopping:
+            return self._stop_step(objective, RunnerStep('waiting',
+                {'run_control': 'stopping_before_action'}, decision_steps=1))
+        if result.kind == 'finished' or self._decision_finished:
+            self._researcher_finished = True
+        decision = self._evaluate_run(self._run_context(objective))
+        if decision.action == 'stop':
+            self._begin_stop(decision)
+            return self._stop_step(objective, result)
+        if result.kind == 'finished':
+            if decision.action == 'restart' and self._restart_at is None:
+                self._restart_at = self._clock() + decision.restart_delay_seconds
+            return replace(result, kind='waiting', event={**result.event, 'run_control': 'researcher_finished'})
+        return result
 
     def _exploration_pending(self):
         discover = getattr(self.exploration, 'pending', None)
@@ -99,6 +286,8 @@ class Runner:
         update(deepcopy(view))
 
     def _review(self, objective, progress, event):
+        if self._quiescing:
+            return progress, 0
         if self._review_at is None or self._clock() < self._review_at:
             return progress, 0
         review = getattr(self.decision_making, 'review', None)
@@ -109,7 +298,11 @@ class Runner:
         if self._review_result is None:
             self._review_pending = True
             self._update_execution(progress)
-            result = review(objective, deepcopy(progress))
+            guarded = getattr(self.decision_making, 'review_guarded', None)
+            if self._guard_actions and callable(guarded):
+                result = guarded(objective, deepcopy(progress), lambda: self._action_guard(objective))
+            else:
+                result = review(objective, deepcopy(progress))
             if not isinstance(result, ReviewDecision):
                 raise TypeError('review() must return ReviewDecision')
             result.__post_init__()
@@ -148,6 +341,7 @@ class Runner:
         # Retain the outbox until both delivery and acknowledgement succeed.
         self.decision_making.receive_feedback(deepcopy(self._directive), deepcopy(self._feedback))
         self.exploration.acknowledge(self._directive.directive_id)
+        self._on_outcome(self._directive, self._feedback)
         self._directive = None
         self._feedback = None
         self._review_directive_id = None
@@ -166,7 +360,7 @@ class Runner:
         if progress.feedback is not None and progress.feedback.directive_id != progress.directive_id:
             raise ValueError('Exploration feedback belongs to another directive')
 
-    def step(self, objective: str) -> RunnerStep:
+    def _transport_step(self, objective: str) -> RunnerStep:
         """One decision/review flow and exploration phase/poll; reviews may query tools."""
         if self.parallel:
             return self._parallel_step(objective)
@@ -174,7 +368,7 @@ class Runner:
         self._update_execution()
         decision_steps = 0
         if self._directive is None:
-            result = self.decision_making.step(objective)
+            result = self._decision_step(objective)
             event = asdict(result)
             decision_steps = 1
             if result.kind != 'dispatch':
@@ -184,6 +378,11 @@ class Runner:
         else:
             event = {'kind': 'dispatch', 'directive': asdict(self._directive)}
         directive_id = self._directive.directive_id
+        if self._run_started is not None and not self._quiescing:
+            control = self._evaluate_run(self._run_context(objective))
+            if control.action == 'stop':
+                self._begin_stop(control)
+                return RunnerStep('waiting', event, decision_steps, directive_id=directive_id)
         if self._feedback is None:
             try:
                 progress = self.exploration.accept(self._directive)
@@ -267,6 +466,9 @@ class Runner:
             if ident not in self._slots:
                 slot = Runner(_DecisionSlot(self.decision_making, ident),
                               _ExplorationSlot(self.exploration, ident), clock=self._clock)
+                slot._guard_actions = self._guard_actions
+                slot._action_guard = self._action_guard
+                slot._on_outcome = self._record_outcome
                 slot._directive = deepcopy(directive)
                 self._slots[ident] = slot
                 self._rotation.append(ident)
@@ -295,13 +497,18 @@ class Runner:
         retrying_delivery = any(slot._feedback is not None for slot in self._slots.values())
         result = None
         ready = getattr(self.decision_making, 'can_step', None)
-        if not self._decision_finished and not retrying_delivery and (ready is None or ready()):
-            result = self.decision_making.step(objective)
+        if not self._quiescing and not self._decision_finished and not retrying_delivery and (ready is None or ready()):
+            result = self._decision_step(objective)
             event['decision'] = asdict(result)
             decision_steps = 1
             self._decision_finished = result.kind == 'finished'
             self._recover_parallel()
             if result.kind == 'dispatch':
+                if self._run_started is not None:
+                    control = self._evaluate_run(self._run_context(objective))
+                    if control.action == 'stop':
+                        self._begin_stop(control)
+                        return RunnerStep('waiting', event, decision_steps, directive_id=result.directive.directive_id)
                 progress = self.exploration.accept(deepcopy(result.directive))
                 self._slots[result.directive.directive_id]._validate_progress(progress)
                 self._slots[result.directive.directive_id]._update_execution(progress)
@@ -312,7 +519,8 @@ class Runner:
         self._rotation.append(ident)  # Rotate before I/O so a failing target cannot starve peers.
         slot = self._slots[ident]
         try:
-            progress = slot.step(objective)
+            slot._quiescing = self._quiescing
+            progress = slot._transport_step(objective)
         finally:
             # Delivery/ack can succeed before a view-notification callback fails.
             # A cleared outbox must not leave a dead slot that resubmits or tries
@@ -339,8 +547,12 @@ class Runner:
             result = self.step(objective)
             events.append(result.event)
             decision_steps += result.decision_steps
+            if result.kind == 'finished' and 'feedback' in result.event:
+                completed += 1
             if result.kind in ('waiting', 'finished'):
-                return RunResult(result.kind, completed, decision_steps, events, result.job, result.directive_id)
+                return RunResult(result.kind, completed, decision_steps, events, result.job, result.directive_id,
+                                 result.event.get('run_stop', {}).get('reason'),
+                                 result.event.get('run_stop', {}).get('shutdown_complete'))
             if result.kind == 'completed':
                 completed += 1
                 if completed == rounds:
@@ -367,6 +579,10 @@ class _DecisionSlot:
     def review(self, objective, progress):
         review = getattr(self.endpoint, 'review', None)
         return review(objective, progress) if review is not None else ReviewDecision()
+
+    def review_guarded(self, objective, progress, before_action):
+        review = getattr(self.endpoint, 'review_guarded', None)
+        return review(objective, progress, before_action) if callable(review) else self.review(objective, progress)
 
     def authorize_review(self, result):
         authorize = getattr(self.endpoint, 'authorize_review', None)

@@ -1,6 +1,6 @@
 # Runtime
 
-提供跨 loop 推进与公共基础能力，策略和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
+提供跨 loop 推进、外部运行策略与公共基础能力；研究步骤和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 
 ## Runner 与作业
 
@@ -13,6 +13,32 @@ Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 
 取消响应不确定时保留复查结果，通常重试取消不重新问模型。若 Decision 端点提供 authorize_review，Runner 在实际取消及每次重试前重新授权；权限撤销后丢弃旧模型意图，下一次复查读取新权限。已被后端接收的请求不会被撤回。外部调用 Runner.cancel 属于操作者控制，不受模型的取消权限配置限制。默认串行模式只有一个在途指令；可选并行模式隔离管理多个实验，并通过显式版本化 update 请求调用后端支持的控制。不支持替换原始 Directive、通用 pause/resume 或并发修改同一模型绑定。决策者按时间/token 自训练的触发器仍未实现。
 
 [jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。记账仅在进程内，不保证重启恢复；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
+
+## 运行策略与研究轮次
+
+策略与目标判定应有界、无副作用；同一 tick 可在执行前后多次检查。计时从当前 Runner 第一次 `step()` 开始，outcomes 只包含它已经完成交付的实验结果。
+
+[run_policy.py](run_policy.py) 定义 `RunPolicy.evaluate(RunContext) -> RunDecision`，通过 `Runner(..., run_policy=...)` 注入；Python 装配入口 `build_demo` / `Application` 同样接受 `run_policy=` 和 `cleanup_timeout_seconds=30`。RunPolicy 管运行是否继续、何时重启研究及如何停止；Harness 内的 DecisionPolicy 仍选择研究操作和实验，ActorPolicy 仍选择环境动作。替换运行规则无需把时间或目标控制塞进 Harness。
+
+| 内置策略 | 继续与停止条件 |
+|---|---|
+| `ResearcherRunPolicy()` | 默认策略，研究者 finish 后停止，默认 drain |
+| `TimeRunPolicy(seconds, restart_delay_seconds=1)` | 研究者 finish 后继续新一轮，直到运行时限，默认 cancel |
+| `GoalRunPolicy(goal, restart_delay_seconds=1, max_seconds=None)` | 目标未达时继续；达标默认 drain，可选时限到达则 cancel，默认没有运行时限 |
+
+RunContext 包含 `objective`、`elapsed_seconds`、`research_round`、`researcher_finished` 与已交付 `outcomes`；每个 `ExperimentOutcome` 包含对应的 directive 和 feedback。RunDecision 的 action 为 `continue` / `restart` / `stop`，并携带 reason、shutdown、restart_delay_seconds 与 evidence_refs。`research_round` 是研究轮次，区别于 `run(rounds=...)` 的本次反馈交付额度。持续驱动同一个 Runner 时，时间策略覆盖跨调用的运行时间与轮次间等待；单次 run 因 waiting、调用额度或决策步数上限返回，不代表 RunPolicy 已经结束。
+
+GoalRunPolicy 的 goal 是可替换 `goal(context) -> bool` callable。内置 `MetricGoal(metric, threshold, protocol_ref, higher_is_better=True, allow_simulated=False)` 要求绑定评测协议；默认按指标大于等于阈值判断，反向指标用 `higher_is_better=False`。它仅读取已交付、成功完成的评测结果，拒绝缺失或非有限指标，默认不接受 Mock 等 simulated 结果。同一候选、协议与输入的较新评测覆盖旧结果；不同验证集应使用不同协议标识。训练进度和未确认指标不参与达标判断。目标达成只控制运行停止，候选采纳和模型部署仍由相应业务策略负责。字段和构造参数以 [run_policy.py](run_policy.py) 为准。
+
+默认 Decision loop 的 `step_guarded` / `review_guarded` 在 Action Space 校验边界再次检查运行条件，避免模型返回时预算已耗尽却仍启动工具或实验。整体替换端点时，需实现等效执行前检查；纯传输端点的同步调用仍只能在调用前后检查。`pending_records` / `flush_pending_records` 支持停止时补写既有回执，不能重跑工具或发起新研究。
+
+研究者 finish 后，如果策略要求继续，Runner 通过 Decision 端点的显式 `restart_research` 开启新轮次；默认实现保留 memory、共享经验和候选，不重新装配 Harness。自定义端点需实现此能力。`restart_delay_seconds` 默认 1 秒，到期前返回 waiting，由调用方后续驱动；Runner 不阻塞 sleep、不后台轮询。接入示例见[使用指南](../../../docs/GUIDE.md#选择运行策略)。
+
+RunDecision 指定停止时的 `shutdown='drain'` 或 `'cancel'`：drain 继续推进已有任务到终态；cancel 请求取消并继续确认。两者都禁止新实验，保留已有反馈的交付与 acknowledge；已请求取消不等于后端已确认取消。运行超时默认 cancel，清理另由 Runner 的 `cleanup_timeout_seconds=30` 限制，不把运行时限当成无限清理预算。清理到限仍未确认的任务必须明确记录，不报告清理成功或已完成取消；待交付反馈也不能被伪装成交付成功。收尾中的异常保留原异常并交给调用方，状态保留供后续 `step()` 重试。
+
+结果中的 `stop_reason` 区分 `researcher_finished`、`budget_exhausted`、`goal_reached` 等停止原因，`shutdown_complete` 单独表示收尾是否确认完成。事件的 `run_stop` 保留 `cleanup_timed_out`、`unresolved_directives`、`unresolved_research_job` 与 `unresolved_records`；即使返回 finished，也须检查这些字段。研究者 finish、时间耗尽和目标达成是不同结论，目标已达也不证明清理已完成。
+
+运行时限与清理上限在调用方驱动的 tick 中检查，停止调用就不会自动触发超时或硬杀后端。同步模型、环境或后端调用仍需自身设置超时，Runner 不能中途抢占这些调用。快照仅兼容默认 researcher 策略及默认清理预算；time / goal、自定义策略或预算明确拒绝，需要对计时、目标 callable 和运行状态做[显式快照集成](../snapshot/README.md)。
 
 ## 模型调用
 
@@ -52,7 +78,7 @@ FileArtifactStore 的 put_file 分块写入，resolve 校验后返回路径，ge
 并行端点通过 `pending_all()` 恢复所有在途指令，按 `directive_id` 路由生命周期；
 `cancel(directive_id)` 只取消目标，多任务时省略 ID 会拒绝。每个实验保留独立 outbox、
 review 定时器和取消意图，终态反馈或 ack 丢失只重试交付，不重新提交或执行。
-恢复 Runner 是同进程端点接管，不是可持久化并行 checkpoint；本地 snapshot 明确拒绝并行配置。
+恢复 Runner 是同进程端点接管，不是可持久化并行 checkpoint；本地 snapshot 明确拒绝并行配置。RunPolicy 的计时、轮次、目标反馈视图与收尾状态属于当前 Runner，不会随这种端点接管恢复；重建 Runner 会开启新的运行预算，跨重建保留预算需显式集成。
 
 `runner.update(DirectiveUpdate(id, expected_version, idempotency_key, changes))` 返回
 `UpdateReceipt(request, version)`。版本冲突、幂等键内容冲突和不支持的 backend 都会明确报错。

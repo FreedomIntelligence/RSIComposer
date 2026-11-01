@@ -64,3 +64,10 @@
 `feedback_selector=None` 默认使用 `RecentFeedbackSelector`。
 `_context` 调用 `select(experience, objective, limit=...)` 并复制输出，避免自定义 selector
 把可变记录引用直接暴露给 policy。
+
+外部运行控制通过 `update_run_control(context)` 提供预算、模式与轮次提示，模型从
+`DecisionContext.run_control` 读取；它不改写研究目标。`restart_research(context)`
+只在研究者已 finish 且全部指令、工具作业和待写反馈已收尾时开启下一轮，保留
+历史、记忆、模型、候选和累计计数。以 `research_round` 和完整 context 做幂等校验，
+响应丢失时重试同一请求。`pending_research_job()` 只报告等待外部 resume 的工具作业，
+不声称能够取消任意工具。是否续跑及停止条件由 [RunPolicy](../../../runtime/README.md) 决定。

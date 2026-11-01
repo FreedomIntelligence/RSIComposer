@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1840" viewBox="0 0 2400 1840" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1920" viewBox="0 0 2400 1920" role="img" aria-labelledby="title desc">
 <title id="title">RSISys 文件架构图</title>
-<desc id="desc">两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。跨 Loop 协议与 Runner 是框架骨架。Experience 与服务后端可换，Snapshot 自定义模块需显式适配。</desc>
+<desc id="desc">两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。Experience 与服务后端可换，Snapshot 仅兼容默认 researcher 策略，自定义模块需显式适配。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -8,7 +8,7 @@
 <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
 <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
 </defs>
-<rect width="2400" height="1840" fill="#F6F8FC"/>
+<rect width="2400" height="1920" fill="#F6F8FC"/>
 <text x="100" y="80" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="42" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 文件架构</text>
 <text x="100" y="126" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="400" fill="#52637B" text-anchor="start">src/rsisys/ · 默认组合与替换边界</text>
 <rect x="100" y="158" width="42" height="26" rx="6" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.5"/>
@@ -121,18 +121,32 @@
 <text x="124" y="1483" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较</text>
 </g>
 <g id="runtime-dir">
-<rect x="100" y="1570" width="1050" height="170" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
-<text x="124" y="1595" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
-<text x="124" y="1634" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">runtime/ · 共享后端</text>
-<text x="124" y="1668" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py · sandbox.py · local_process.py · artifacts.py</text>
-<text x="124" y="1697" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Model / Sandbox / Artifact 实现可换；files.py · jobs.py 配套</text>
+<g id="runtime-boundary">
+<rect x="100" y="1570" width="1050" height="255" rx="16" fill="#EFF5FF" stroke="#D5DEEA" stroke-width="1.8"/>
+<text x="124" y="1610" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">runtime/ · 运行控制与共享后端</text>
+</g>
+<g id="runtime-run-policy">
+<rect x="130" y="1640" width="510" height="155" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
+<text x="154" y="1665" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
+<text x="154" y="1704" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#2365CB" text-anchor="start">run_policy.py · RunPolicy</text>
+<text x="154" y="1738" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">evaluate(RunContext) → RunDecision</text>
+<text x="154" y="1767" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">researcher / time / goal</text>
+</g>
+<g id="runtime-backend-files">
+<rect x="655" y="1640" width="465" height="155" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
+<text x="679" y="1665" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
+<text x="679" y="1704" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#2365CB" text-anchor="start">Model / Sandbox / Artifact</text>
+<text x="679" y="1738" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py · sandbox.py · artifacts.py</text>
+<text x="679" y="1767" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">local_process.py · jobs.py</text>
+</g>
 </g>
 <g id="snapshot-dir">
-<rect x="1190" y="1570" width="1110" height="170" rx="16" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.8" stroke-dasharray="8 5"/>
+<rect x="1190" y="1570" width="1110" height="255" rx="16" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="1214" y="1595" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#A86B13" text-anchor="start">可换 · 需适配</text>
 <text x="1214" y="1634" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#A86B13" text-anchor="start">snapshot/ · 保存与恢复</text>
 <text x="1214" y="1668" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">capture.py · restore.py · storage.py / local.py · codec.py · manifest.py</text>
-<text x="1214" y="1697" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内置实现限空闲边界；自定义模块需显式适配保存 / 恢复 / 引用一致性</text>
+<text x="1214" y="1697" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内置空闲边界 · 仅默认 researcher 运行策略</text>
+<text x="1214" y="1726" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">time / goal 与自定义组件需显式适配保存 / 恢复 / 引用一致性</text>
 </g>
-<text x="100" y="1798" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。</text>
+<text x="100" y="1878" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。</text>
 </svg>

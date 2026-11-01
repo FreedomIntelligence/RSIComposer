@@ -113,6 +113,17 @@ class DecisionEndpoint(Protocol):
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None: ...
 
 
+class ResearchCycleDecisionEndpoint(DecisionEndpoint, Protocol):
+    """Optional explicit research cycles and external hints, independent of the objective."""
+    def restart_research(self, context: dict[str, object]) -> None: ...
+    def update_run_control(self, context: dict[str, object]) -> None: ...
+
+
+class PendingResearchJobEndpoint(DecisionEndpoint, Protocol):
+    """Optional observation of a tool job awaiting external completion handoff."""
+    def pending_research_job(self) -> JobRef | None: ...
+
+
 class RecoverableExplorationEndpoint(ExplorationEndpoint, Protocol):
     """Optional discovery of the command still owned by the exploration side."""
     def pending(self) -> ExplorationProgress | None: ...

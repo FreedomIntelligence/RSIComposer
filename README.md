@@ -4,7 +4,9 @@
 
 每个 loop 由可整体替换的 **Harness** 和独立的 **Action Space** 组成，`loop.py` 只保留薄端点与有界推进。默认 Harness 封装策略、上下文、记忆、工具及对应的学习/评测流程；替代实现可以不含 memory。目录与消息边界见[架构](docs/ARCHITECTURE.md)。
 
-**Policy 位于默认 Harness 内部**：`DecisionPolicy.decide` 选择操作、系统指令、等待或结束；Exploration Policy 即 `ActorPolicy.act`，只选择环境动作。Harness 组织执行，Action Space 定义可用操作/动作及约束。
+**Decision／Actor Policy 位于默认 Harness 内部**：`DecisionPolicy.decide` 选择操作、系统指令、等待或结束；Exploration Policy 即 `ActorPolicy.act`，只选择环境动作。Harness 组织执行，Action Space 定义可用操作/动作及约束。
+
+外部运行控制由 runtime 的可替换 **RunPolicy** 负责：默认 `researcher` 在研究者 finish 后停止；`time` 持续到时限；`goal` 在目标未达时继续研究。后两种模式可显式开启新研究轮次，保留 memory、经验与候选。停止后禁止新实验，按策略 drain 或 cancel 并保留反馈交付；接入见[使用指南](docs/GUIDE.md#选择运行策略)，清理边界见 [Runtime](src/rsisys/runtime/README.md)。
 
 Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策侧定义与探索侧 handler 映射扩展，无需修改核心分派。接入方式见[使用指南](docs/GUIDE.md#使用-python-接入组件)。
 
@@ -49,4 +51,4 @@ pixi run test
 
 ## 文档维护
 
-架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy），以及协调层和具体执行组件的边界；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。
+架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy）、runtime 中可替换的 RunPolicy，以及协调层和具体执行组件的边界；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。

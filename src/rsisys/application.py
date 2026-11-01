@@ -15,6 +15,7 @@ from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
+from rsisys.runtime.run_policy import RunPolicy
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -83,7 +84,8 @@ class ApplicationConfig:
 class Application:
     def __init__(self, config: ApplicationConfig, *, decision_factory: DecisionFactory | None = None,
                  exploration_factory: ExplorationFactory | None = None,
-                 action_permissions: ActionPermissions | None = None, _restore: bool = False):
+                 action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
+                 cleanup_timeout_seconds: float = 30, _restore: bool = False):
         if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         self.config = config
@@ -136,7 +138,8 @@ class Application:
             self._resources.callback(self.assembly.close)
             exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(self.assembly)
             decision = (decision_factory if decision_factory is not None else build_default_decision)(self.assembly, exploration)
-            self.runner = Runner(decision, exploration)
+            self.runner = Runner(decision, exploration, run_policy=run_policy,
+                                 cleanup_timeout_seconds=cleanup_timeout_seconds)
             if not _restore:
                 atomic_write(root / 'run.json', json_bytes({'run_id': config.run_id, 'objective': config.objective}))
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))

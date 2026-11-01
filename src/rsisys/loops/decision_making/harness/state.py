@@ -57,6 +57,7 @@ class DecisionContext:
     review_actions: tuple[str, ...] = ('continue', 'cancel')
     outstanding: tuple[Directive, ...] = ()
     executions: dict[str, ExecutionView] = field(default_factory=dict)
+    run_control: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -127,3 +128,5 @@ class DecisionState:
     candidate_bases: dict[str, ModelRef] = field(default_factory=dict)
     review_sessions: dict[str, _ReviewSession] = field(default_factory=dict)
     review_records: dict[str, _PendingReviewRecord] = field(default_factory=dict)
+    run_control: dict[str, object] = field(default_factory=dict)
+    research_cycles: dict[int, dict[str, object]] = field(default_factory=dict)

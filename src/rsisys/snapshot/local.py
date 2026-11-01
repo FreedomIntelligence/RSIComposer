@@ -135,6 +135,11 @@ class LocalSnapshotCapture:
                     (actor.local_rl.episodes, actor.episodes), (actor.local_rl.learning, actor.learning))
         if any(actual is not expected for actual, expected in bindings):
             raise TypeError('Custom execution component bindings need explicit snapshot integration')
+        from rsisys.runtime.run_policy import ResearcherRunPolicy
+        if (type(app.runner.run_policy) is not ResearcherRunPolicy
+                or app.runner.run_policy != ResearcherRunPolicy()
+                or app.runner.cleanup_timeout_seconds != 30):
+            raise TypeError('Custom run policies/budgets need explicit snapshot integration')
         if app.runner.parallel or dm.max_outstanding != 1:
             raise TypeError('Concurrent decisions need explicit snapshot integration')
         from rsisys.experience.retrieval import RecentFeedbackSelector

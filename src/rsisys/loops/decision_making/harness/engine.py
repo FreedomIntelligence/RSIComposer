@@ -57,6 +57,71 @@ class DefaultDecisionHarness:
         self.state = DecisionState()
         self.training = JobBook[DecisionTrainingRequest, TrainingResult](learner)
 
+    @staticmethod
+    def _copy_run_control(context: dict[str, object]) -> dict[str, object]:
+        if not isinstance(context, dict) or any(not isinstance(key, str) for key in context):
+            raise TypeError('Run control context must be a dict with string keys')
+        return deepcopy(context)
+
+    def update_run_control(self, context: dict[str, object]) -> None:
+        """Replace external running hints without changing research state or objectives."""
+        self.state.run_control = self._copy_run_control(context)
+
+    def pending_research_job(self) -> JobRef | None:
+        """Report work awaiting external resume, without polling or cancelling it."""
+        return self.state.pending_job
+
+    def pending_records(self) -> bool:
+        """Include unfinished reviews even when their tool receipts are recorded."""
+        return bool(self.state.pending_operation_record is not None
+                    or self.state.pending_review_record is not None
+                    or self.state.review_session is not None
+                    or self.state.review_records or self.state.review_sessions)
+
+    def flush_pending_records(self) -> None:
+        """Retry existing receipts only; never decide, execute tools or finish a review."""
+        if self.state.pending_operation_record is not None:
+            self._flush_operation_record()
+        self._flush_review_query()
+        if self.state.pending_review_record is not None:
+            self._flush_review_record()
+        for ident in tuple(dict.fromkeys((*self.state.review_sessions, *self.state.review_records))):
+            with self._review_scope(ident):
+                self._flush_review_query()
+                if self.state.pending_review_record is not None:
+                    self._flush_review_record()
+
+    def restart_research(self, context: dict[str, object]) -> None:
+        """Reopen a finished, drained cycle; retries of accepted rounds are no-ops."""
+        context = self._copy_run_control(context)
+        research_round = context.get('research_round')
+        if type(research_round) is not int or research_round < 1:
+            raise ValueError('research_round must be a positive integer')
+        previous = self.state.research_cycles.get(research_round)
+        if previous is not None:
+            if previous != context:
+                raise ValueError('Research round context differs from its original request')
+            return
+        if not self.state.finished:
+            raise RuntimeError('Research can restart only from a finished state')
+        if (self.state.pending_directive_id is not None
+                or self.state.pending_directive is not None
+                or self.state.outstanding
+                or self.state.feedback_record_id is not None
+                or self.state.feedback_record_ids
+                or self.state.pending_job is not None
+                or self.state.pending_operation is not None
+                or self.state.pending_operation_record is not None
+                or self.state.pending_review_record is not None
+                or self.state.review_session is not None
+                or self.state.review_sessions
+                or self.state.review_records):
+            raise RuntimeError('Cannot restart research with pending directives, jobs, operations or reviews')
+        run_control = deepcopy(context)
+        self.state.research_cycles[research_round] = context
+        self.state.run_control = run_control
+        self.state.finished = False
+
     def _record_operation(self, call: OperationCall | None, result: OperationResult,
                           *, elapsed_seconds: float | None = None,
                           resume_result: OperationResult | None = None) -> None:
@@ -109,6 +174,7 @@ class DefaultDecisionHarness:
             directive_provenance=deepcopy(tuple(self.state.directive_provenance.values())),
             candidate_evaluations=deepcopy(tuple(self.state.candidate_evaluations.values())),
             outstanding=self.pending_all(), executions=deepcopy(self.state.executions),
+            run_control=deepcopy(self.state.run_control),
         )
 
     def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
@@ -176,7 +242,8 @@ class DefaultDecisionHarness:
             self.state.review_session = session
         elif session.objective != objective or session.directive_id != progress.directive_id:
             raise ValueError('Review differs from the pending research session')
-        session.context = replace(session.context, execution=deepcopy(self.state.execution))
+        session.context = replace(session.context, execution=deepcopy(self.state.execution),
+                                  run_control=deepcopy(self.state.run_control))
         self._flush_review_query()
         review = getattr(self.policy, 'review', None)
         while True:

@@ -30,6 +30,7 @@ from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLear
 from rsisys.loops.exploration.harness.memory import ExplorationMemory
 from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.loops.exploration.loop import ExplorationLoop
+from rsisys.runtime.run_policy import RunPolicy
 from rsisys.runtime.artifacts import ArtifactStore
 from rsisys.runtime.runner import Runner
 from rsisys.runtime.sandbox import SandboxBackend
@@ -166,8 +167,10 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
 class AssemblyRunner(Runner):
     """Demo runner owning its assembly callbacks; close explicitly or use with."""
 
-    def __init__(self, decision: DecisionMakingLoop, exploration: ExplorationLoop, assembly: AssemblyContext):
-        super().__init__(decision, exploration)
+    def __init__(self, decision: DecisionMakingLoop, exploration: ExplorationLoop, assembly: AssemblyContext,
+                 *, run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
+        super().__init__(decision, exploration, run_policy=run_policy,
+                         cleanup_timeout_seconds=cleanup_timeout_seconds)
         self.assembly = assembly
 
     def close(self) -> None:

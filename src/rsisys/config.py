@@ -12,6 +12,7 @@ from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
+from rsisys.runtime.run_policy import RunPolicy
 from rsisys.runtime.artifacts import InMemoryArtifactStore
 from rsisys.runtime.model import MockModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -44,7 +45,8 @@ class DemoConfig:
 def build_demo(config: DemoConfig, *, with_learning: bool = False,
                decision_factory: DecisionFactory | None = None,
                exploration_factory: ExplorationFactory | None = None,
-               action_permissions: ActionPermissions | None = None) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
+               action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
+               cleanup_timeout_seconds: float = 30) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
     if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
         raise TypeError('Expected ActionPermissions')
     if any(binding.kind != "mock" for binding in config.backends.values()):
@@ -67,7 +69,8 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False,
     try:
         exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(context)
         decision = (decision_factory if decision_factory is not None else build_default_decision)(context, exploration)
-        return AssemblyRunner(decision, exploration, context), store
+        return AssemblyRunner(decision, exploration, context, run_policy=run_policy,
+                              cleanup_timeout_seconds=cleanup_timeout_seconds), store
     except BaseException as exc:
         try:
             context.close()
