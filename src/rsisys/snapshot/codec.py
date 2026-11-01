@@ -21,7 +21,27 @@ from rsisys.loops.exploration.harness.state import ExplorationState
 from rsisys.loops.exploration.harness.rl import RLPlan, RLState
 from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 
+from rsisys.loops.decision_making.harness.decision import Decision
+from rsisys.runtime.runner import RunnerStep
+from rsisys.runtime.run_policy import RunDecision, ExperimentOutcome
+from rsisys.loops.contracts.jobs import JobOutcome
+from rsisys.loops.contracts.coordination import DirectiveUpdate, UpdateReceipt
+from rsisys.experience.records import ExperienceRecord
+from rsisys.loops._memory import Memory, HistoryEntry
+from rsisys.loops.decision_making.harness.state import (
+    DecisionContext, _PendingOperationRecord, _PendingReviewRecord, _ReviewSession,
+)
+from rsisys.loops.decision_making.action_space import OperationSpec
+from rsisys.loops.decision_making.harness.learner import DecisionTrainingRequest
+from rsisys.loops.exploration.harness.commands import CommandState
+from rsisys.loops.exploration.harness.state import PendingEpisode
+from rsisys.loops.exploration.harness.evaluation import EvaluationRequest, EvaluationResult
+
 TYPES = {cls.__name__: cls for cls in (
+    Decision, RunnerStep, RunDecision, ExperimentOutcome, JobOutcome, DirectiveUpdate, UpdateReceipt,
+    ExperienceRecord, Memory, HistoryEntry, DecisionContext, OperationSpec,
+    _PendingOperationRecord, _PendingReviewRecord, _ReviewSession, DecisionTrainingRequest,
+    CommandState, PendingEpisode, EvaluationRequest, EvaluationResult,
     ArtifactRef, Candidate, Directive, Feedback, JobRef, ModelRef, TokenUsage,
     ExecutionView, ExplorationProgress, ReviewDecision, JobProgress,
     DirectiveProvenance, CandidateEvaluation,

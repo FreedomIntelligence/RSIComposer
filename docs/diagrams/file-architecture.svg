@@ -33,15 +33,15 @@
 <text x="184" y="579" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">policy/ · Decision Policy</text>
 <text x="184" y="613" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">DecisionPolicy · decide / review</text>
 </g>
-<text x="160" y="700" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">engine.py · decision.py · state.py</text>
+<text x="160" y="700" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">engine.py · dsh.py · decision.py · state.py</text>
 <g id="decision-dir-internals">
 <rect x="160" y="740" width="610" height="150" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="184" y="765" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
 <text x="184" y="804" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#2365CB" text-anchor="start">tools/ · learner/ · memory/</text>
 <text x="184" y="838" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">tools/__init__.py：step / review 共享操作执行</text>
-<text x="184" y="867" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">execute_operation · record_operation</text>
+<text x="184" y="867" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">context.py · research.py：摘要 / 计划 / 修订</text>
 </g>
-<text x="160" y="945" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#2365CB" text-anchor="start">step 等待作业；review 接收提交回执</text>
+<text x="160" y="945" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#2365CB" text-anchor="start">默认 / DSH 可换；动作经 Action Space 执行</text>
 <g id="decision-dir-action-space">
 <rect x="130" y="1050" width="670" height="220" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="154" y="1075" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">整体可换</text>
@@ -118,7 +118,7 @@
 <rect x="100" y="1380" width="2200" height="140" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="124" y="1420" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">框架骨架 / Loop protocol + Runner 协同</text>
 <text x="124" y="1454" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training</text>
-<text x="124" y="1483" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较</text>
+<text x="124" y="1483" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runner.py：串行 / 并行协同；recovery.py：串行运行恢复；control.py：查询 / 取消 / 更新 / 比较</text>
 </g>
 <g id="runtime-dir">
 <g id="runtime-boundary">
@@ -137,7 +137,7 @@
 <text x="679" y="1665" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
 <text x="679" y="1704" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#2365CB" text-anchor="start">Model / Sandbox / Artifact</text>
 <text x="679" y="1738" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">model.py · sandbox.py · artifacts.py</text>
-<text x="679" y="1767" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">local_process.py · jobs.py</text>
+<text x="679" y="1767" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">jobs.py · recovery.py：检查点 / 核对</text>
 </g>
 </g>
 <g id="snapshot-dir">

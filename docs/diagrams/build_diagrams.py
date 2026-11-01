@@ -105,7 +105,7 @@ def system_flow():
             'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
             'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
             'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。'
-            'runtime 中的 RunPolicy 可替换，支持 researcher、time、goal；停止后保留反馈交付。')
+            'runtime 中的 RunPolicy 可替换，支持 researcher、time、goal；Recovery 保存运行检查点。默认上下文压缩与长期议程可替换，可选 DSH 持久会话。')
     s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
     s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
     legend(s)
@@ -117,7 +117,7 @@ def system_flow():
 
     s.parts.append('<g id="decision-harness">')
     s.rect(130, 330, 870, 780, '#EFF5FF', BLUE, dash='8 5')
-    s.text(170, 379, 'Decision Harness', 29, BLUE, 650)
+    s.text(170, 379, 'Decision Harness · 默认 / DSH', 29, BLUE, 650)
     s.chip(815, 352, 145, '整体可换', '#DCE9FC', BLUE)
     replaceable(s, 'decision-policy', 170, 425, 790, 155, 'Decision Policy', (
         'decide(context) → Decision · review(context)',
@@ -132,7 +132,7 @@ def system_flow():
     s.path('M 170 750 H 150 V 505 H 170', BLUE, arrow='blue', dash='7 6')
     for ident, x, w, title, line in [
         ('decision-tools', 170, 250, 'tools', '现有操作绑定'),
-        ('decision-memory', 440, 250, 'memory', '本地工作记忆'),
+        ('decision-memory', 440, 250, '研究记忆', '摘要 / 计划 / 原文'),
         ('decision-learner', 710, 250, 'learner', '显式自身学习'),
     ]:
         replaceable(s, ident, x, 910, w, 130, title, (line,), title_size=26)
@@ -225,7 +225,7 @@ def system_flow():
 
     replaceable(s, 'runtime-backends', 100, 1660, 1050, 165, 'Runtime / 共享后端', (
         'Model · Sandbox · Artifact 后端',
-        '通过公开端口接入；Runner / RunPolicy 见中央运行控制',
+        'Recovery：运行检查点 / 回执；未知效果须核对',
     ), BLUE, '#EFF5FF', title_size=28)
     replaceable(s, 'snapshot', 1190, 1660, 1110, 165, 'Snapshot / 保存与恢复', (
         '内置空闲边界 · 仅默认 researcher 运行策略',
@@ -263,12 +263,12 @@ def file_architecture():
         replaceable(s, ident+'-policy', x+60, 515, 610, 130, 'policy/ · '+policy,
                     (interface,), color, title_size=28)
         if ident == 'decision-dir':
-            s.text(x+60, 700, 'engine.py · decision.py · state.py', 23, MUTED)
+            s.text(x+60, 700, 'engine.py · dsh.py · decision.py · state.py', 23, MUTED)
             replaceable(s, ident+'-internals', x+60, 740, 610, 150, 'tools/ · learner/ · memory/', (
                 'tools/__init__.py：step / review 共享操作执行',
-                'execute_operation · record_operation',
+                'context.py · research.py：摘要 / 计划 / 修订',
             ), color, title_size=26)
-            s.text(x+60, 945, 'step 等待作业；review 接收提交回执', 22, color)
+            s.text(x+60, 945, '默认 / DSH 可换；动作经 Action Space 执行', 22, color)
             lines = ('access.py：外部权限过滤 / 执行检查',
                      'capabilities.py：显式定义 / 外部 provider 发现',
                      'directives.py · queries.py：指令与查询定义',
@@ -317,7 +317,7 @@ def file_architecture():
 
     s.node('framework', 100, 1380, 2200, 140, '框架骨架 / Loop protocol + Runner 协同', (
         'loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training',
-        'runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较',
+        'runner.py：串行 / 并行协同；recovery.py：串行运行恢复；control.py：查询 / 取消 / 更新 / 比较',
     ), INK, '#EAF0F6', LINE, title_size=28)
     s.parts.append('<g id="runtime-dir">')
     s.node('runtime-boundary', 100, 1570, 1050, 255, 'runtime/ · 运行控制与共享后端',
@@ -328,7 +328,7 @@ def file_architecture():
     ), BLUE, title_size=25)
     replaceable(s, 'runtime-backend-files', 655, 1640, 465, 155, 'Model / Sandbox / Artifact', (
         'model.py · sandbox.py · artifacts.py',
-        'local_process.py · jobs.py',
+        'jobs.py · recovery.py：检查点 / 核对',
     ), BLUE, title_size=24)
     s.parts.append('</g>')
     replaceable(s, 'snapshot-dir', 1190, 1570, 1110, 255, 'snapshot/ · 保存与恢复', (

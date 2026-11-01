@@ -53,6 +53,11 @@ class DecisionMakingLoop:
         pending = getattr(self.harness, 'pending_research_job', None)
         return pending() if callable(pending) else None
 
+    def cancel_research(self):
+        """Optional idempotent inference cancellation; does not cancel arbitrary tools/jobs."""
+        cancel = getattr(self.harness, 'cancel_research', None)
+        return cancel() if callable(cancel) else False
+
     def can_step(self):
         ready = getattr(self.harness, 'can_step', None)
         return ready() if ready is not None else True

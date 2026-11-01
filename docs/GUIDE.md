@@ -246,7 +246,28 @@ PYTHONPATH=src pixi run python -m rsisys resume \
 
 恢复目标必须是新目录，原目录不被修改。快照保存内置 Harness 的控制状态、两份 memory 和共享 Experience；内置快照仅兼容默认 ResearcherRunPolicy 和默认清理预算；time / goal、自定义运行策略或清理预算会被明确拒绝，需显式集成保存恢复。整体替换 Harness 或替换持久化组件也需单独集成。旧快照受源码版本精确匹配约束，不提供自动迁移。保存内容、版本一致性要求及自定义组件边界统一见 [Snapshot](../src/rsisys/snapshot/README.md)。
 
-CLI 不是常驻作业服务：waiting 时不会保存快照，resume 不能找回在途任务。需要持续推进异步任务时使用进程内 Runner。
+CLI 的 `resume --snapshot` 仍只处理空闲快照。持续研究可使用 Python 的运行恢复入口：
+
+```python
+from pathlib import Path
+from rsisys.application import Application, ApplicationConfig
+from rsisys.runtime.run_policy import TimeRunPolicy
+
+config = ApplicationConfig.load(Path("configs/local.json"))
+with Application(config, durable=True, run_policy=TimeRunPolicy(3600)) as app:
+    app.runner.step(config.objective)
+
+# 重新打开原工作目录；不刷新已经消耗的时间预算。
+with Application.resume(config.data_dir) as app:
+    app.runner.step(app.config.objective)
+```
+
+每个 Runner `step/cancel/update` 前记录意图，结束后原子保存回执、控制状态与运行策略。
+离线时间也计入已开始的时间预算。内置恢复覆盖串行默认组合、Mock 训练/评测作业、反馈交付，
+不重建活跃 shell、GPU 进程或并行实验。外部组件用 `RecoveryContract.capture/restore` 显式
+保存并重新关联真实 job；恢复不能再次提交作业。发生未确认操作时，运行被标记为
+`RecoveryRequired`，需根据回执调用 `app.recovery.reconcile(repair, evidence=...)`；
+它没有盲目重试或清除未知状态的快捷入口。完整边界见 [Runtime](../src/rsisys/runtime/README.md)。
 
 ## 自主研究与并行实验
 
@@ -257,3 +278,62 @@ CLI 不是常驻作业服务：waiting 时不会保存快照，resume 不能找�
 `ExperimentControls(exploration_loop, decision_loop)` 的 definitions / bindings 接入普通 Action Space / tools，可供模型调用 inspect、cancel、update、compare，沿用外部权限。动态更新只对实现 validate_update / update 的后端开放；它不是任意训练参数热更新。比较与候选应用仍检查来源、协议和版本，不隐式改动其他实验的模型。
 
 反馈提取可通过 `DefaultDecisionHarness(..., feedback_selector=...)` 替换；接口和默认实现见 [Experience](../src/rsisys/experience/README.md)。工作区基础读取见 [tools](../src/rsisys/loops/decision_making/harness/tools/README.md)，宿主资源隔离由沙箱/部署层实现。
+
+
+## 默认长程研究能力
+
+默认 Harness 的 `ContextCompactor.compact(context, recent_limit=...)` 可替换；
+`BasicContextCompactor` 以字符预算保留近期完整记录，对超出的历史生成带来源与摘要哈希的摘录导航，
+完整历史仍可查询。它不是语义推理模型，也不是整个模型输入的 token 上限；目标、能力 schema、
+候选和运行控制字段不被静默裁剪。`IdentityContextCompactor` 可用于已有自己上下文管理的策略。
+
+`ResearchAgenda` 保存模型维护的 agenda、todo、stage_summary；默认装配注册
+`research_read`、`research_patch`、`research_archive`。模型按稳定 ID 增量修改，带 expected_revision
+避免覆盖更新，分页读取完整档案；短上下文只显示导航。没有要求先写计划再训练，也不把模型笔记
+当作已验证结论。这些能力遵循相同的外部权限设置，组件说明见
+[Decision Harness](../src/rsisys/loops/decision_making/harness/README.md)。
+
+## 使用 DSH Harness
+
+可选依赖固定为测试过的 SDK / runtime 版本，默认安装不引入 Node 或 DSH：
+
+```bash
+python -m pip install -e '.[dsh]'
+PYTHONPATH=src python examples/dsh_smoke.py
+```
+
+smoke 启动真实 DSH runtime 和本地确定性 HTTP 响应服务，验证会话恢复及 RSISys 指令链路；
+不使用真实大模型，不训练真实 Actor。
+
+```python
+from pathlib import Path
+from rsisys.application import Application, ApplicationConfig
+from rsisys.loops.decision_making.harness.dsh import DSHConfig, dsh_decision_factory
+
+config = ApplicationConfig.load(Path("configs/local.json"))
+dsh = DSHConfig(
+    home=Path("/absolute/path/to/dsh-home"),
+    workspace=Path("/absolute/path/to/research-workspace"),
+    model="deepseek-v4-flash", session_id="research-001",
+    api_key_env="DEEPSEEK_API_KEY",  # 只存环境变量名
+)
+with Application(config, decision_factory=dsh_decision_factory(dsh), durable=True) as app:
+    app.runner.step(config.objective)  # waiting 时由调用者稍后继续 step
+```
+
+DSH 维护持久会话、模型调用及原生压缩；适配器复用默认回执协调，通过异步 worker 提出结构化
+Decision。真正的操作仍在 Runner 线程执行，每次重新检查 Action Space 权限和 RunPolicy。
+DSH 自身 turn 完成只产生一个提案；`finish` 是否结束整个 RSI 由外部 RunPolicy 决定。
+原生 shell / 文件操作在附带的 sdk-minimal patch 中关闭，所有研究能力经 RSISys 提交。
+这不是操作系统隔离，也尚未提供任意 DSH native tool 与 RSISys 权限之间的自动映射。
+
+`base_url` 由该 DSH provider 解释；验证过的 rc2 `deepseek-official` 请求使用 `/v1/messages`，
+不能假定任意只实现 `/v1/chat/completions` 的服务可直接使用。模型身份记录为 provider-managed，
+不宣称验证了远端权重版本；未取得的 token 用量保持未知。SDK 官方接口见
+[DeepSeek Harness Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/README.md)。
+
+恢复 DSH 装配时需向 `Application.resume(..., decision_factory=同一工厂)` 提供原配置。
+已缓存的完整提案可恢复；未完成的推理会保留为待核对状态，不自动重复请求。
+`harness.resume_interrupted_inference(evidence=...)` 显式恢复原生会话、记录核对说明并丢弃未确认建议，
+不发送新模型输入；若 Runner journal 同时中断，应在 `app.recovery.reconcile` 回调中调用。
+`DSHConfig(resume=True)` 单独只恢复 DSH 原生会话，不等于恢复 RSISys 实验或外部进程。

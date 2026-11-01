@@ -85,11 +85,18 @@ class Application:
     def __init__(self, config: ApplicationConfig, *, decision_factory: DecisionFactory | None = None,
                  exploration_factory: ExplorationFactory | None = None,
                  action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
-                 cleanup_timeout_seconds: float = 30, _restore: bool = False):
+                 cleanup_timeout_seconds: float = 30, durable: bool = False,
+                 recovery_contract=None, _restore: bool = False, _resume: bool = False):
         if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
+        if type(durable) is not bool:
+            raise TypeError('durable must be boolean')
+        if recovery_contract is not None and not durable:
+            raise ValueError('recovery_contract requires durable=True')
         self.config = config
         self.custom_assembly = decision_factory is not None or exploration_factory is not None
+        self.custom_exploration = exploration_factory is not None
+        self.recovery = None
         self.assembly: AssemblyContext | None = None
         self._resources = ExitStack()
         self._closed = False
@@ -113,7 +120,7 @@ class Application:
                 raise RuntimeError('This workspace is already open in another process') from None
             contents = {p.name for p in root.iterdir()} - {'.lock'}
             if contents and not _restore:
-                raise ValueError('Workspace is not empty; resume a snapshot into a new directory')
+                raise ValueError('Workspace is not empty; use Application.resume for durable runs or restore a snapshot')
             if _restore:
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
@@ -143,12 +150,36 @@ class Application:
             if not _restore:
                 atomic_write(root / 'run.json', json_bytes({'run_id': config.run_id, 'objective': config.objective}))
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))
+            if durable:
+                from rsisys.runtime.recovery import DurableRecovery
+                self.recovery = DurableRecovery(self, recovery_contract)
+                if _resume:
+                    self.recovery.load(run_policy)
+                else:
+                    self.recovery.initialize()
+                self.runner.recovery = self.recovery
         except BaseException as exc:
             try:
                 self.close()
             except BaseException as cleanup_error:
                 exc.add_note(f"Application cleanup also failed: {cleanup_error}")
             raise
+
+    @classmethod
+    def resume(cls, data_dir, *, decision_factory=None, exploration_factory=None,
+               recovery_contract=None, run_policy=None):
+        """Reopen the same durable workspace; uncertain effects remain blocked.
+
+        Factories must reconstruct resources without starting work. The workspace
+        lock is acquired before checkpoint state is read/applied by the constructor.
+        """
+        root = Path(data_dir).resolve()
+        config = ApplicationConfig.load(root / 'config.json')
+        if config.data_dir.resolve() != root:
+            raise ValueError('Resume uses the original workspace; recovery is not a portable snapshot')
+        return cls(config, decision_factory=decision_factory, exploration_factory=exploration_factory,
+                   recovery_contract=recovery_contract, run_policy=run_policy,
+                   durable=True, _restore=True, _resume=True)
 
     def run(self, *, rounds: int | None = None, max_decision_steps: int | None = None):
         if self._closed:

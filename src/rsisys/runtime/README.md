@@ -6,17 +6,17 @@
 
 [runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../docs/ARCHITECTURE.md)。
 
-支持可选的探索侧 `pending()` 发现未确认指令，Runner 重建时先核对两侧所有权、补交反馈和确认，再允许新决策。默认 Harness 实现此接口；只实现基础端口的外部 Harness 仍能运行，但不具备该恢复能力。此机制依赖仍存活的端点状态，不是跨进程崩溃恢复。
+支持可选的探索侧 `pending()` 发现未确认指令，Runner 重建时先核对两侧所有权、补交反馈和确认，再允许新决策。默认 Harness 实现此接口；只实现基础端口的外部 Harness 仍能运行，但不具备该恢复能力。单独重建 Runner 的此机制依赖仍存活的端点状态。跨进程恢复使用下述显式启用的 durable Application。
 
-Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 到期时调用可选的 Decision `review`，由其返回 `ReviewDecision('continue' | 'cancel', next_review_seconds=...)`；None 停止后续自动复查。模型调用次数与后端轮询次数独立；串行模式每 tick 最多一次普通决策或一次复查流程；并行模式一次普通决策后，还可执行当前轮询实验的一次到期复查。复查内部可执行有限次权限允许的工具查询和模型调用。Runner 的 decision_steps 按流程计数，模型 token usage 由 Harness 逐次累计。Runner 不 sleep、不自行创建后台线程，实际复查发生在截止时间之后的下一次 tick。调用方负责轮询间隔，重建 Runner 后从恢复时刻重新计算首次复查时间。
+Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 到期时调用可选的 Decision `review`，由其返回 `ReviewDecision('continue' | 'cancel', next_review_seconds=...)`；None 停止后续自动复查。模型调用次数与后端轮询次数独立；串行模式每 tick 最多一次普通决策或一次复查流程；并行模式一次普通决策后，还可执行当前轮询实验的一次到期复查。复查内部可执行有限次权限允许的工具查询和模型调用。Runner 的 decision_steps 按流程计数，模型 token usage 由 Harness 逐次累计。Runner 不 sleep、不自行创建后台线程，实际复查发生在截止时间之后的下一次 tick。调用方负责轮询间隔，单独重建 Runner 后从恢复时刻重新计算首次复查时间；durable Application 则恢复原截止时间并计入停机时间。
 
 取消响应不确定时保留复查结果，通常重试取消不重新问模型。若 Decision 端点提供 authorize_review，Runner 在实际取消及每次重试前重新授权；权限撤销后丢弃旧模型意图，下一次复查读取新权限。已被后端接收的请求不会被撤回。外部调用 Runner.cancel 属于操作者控制，不受模型的取消权限配置限制。默认串行模式只有一个在途指令；可选并行模式隔离管理多个实验，并通过显式版本化 update 请求调用后端支持的控制。不支持替换原始 Directive、通用 pause/resume 或并发修改同一模型绑定。决策者按时间/token 自训练的触发器仍未实现。
 
-[jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。记账仅在进程内，不保证重启恢复；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
+[jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。独立使用时记账仅在进程内；durable Application 显式保存内置 Mock 队列、JobBook、幂等键、取消标记及终态缓存，外部后端需恢复契约；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
 
 ## 运行策略与研究轮次
 
-策略与目标判定应有界、无副作用；同一 tick 可在执行前后多次检查。计时从当前 Runner 第一次 `step()` 开始，outcomes 只包含它已经完成交付的实验结果。
+策略与目标判定应有界、无副作用；同一 tick 可在执行前后多次检查。计时从当前运行第一次 `step()` 开始，outcomes 只包含已经完成交付的实验结果；durable 恢复延续原计时与 outcomes。
 
 [run_policy.py](run_policy.py) 定义 `RunPolicy.evaluate(RunContext) -> RunDecision`，通过 `Runner(..., run_policy=...)` 注入；Python 装配入口 `build_demo` / `Application` 同样接受 `run_policy=` 和 `cleanup_timeout_seconds=30`。RunPolicy 管运行是否继续、何时重启研究及如何停止；Harness 内的 DecisionPolicy 仍选择研究操作和实验，ActorPolicy 仍选择环境动作。替换运行规则无需把时间或目标控制塞进 Harness。
 
@@ -38,7 +38,76 @@ RunDecision 指定停止时的 `shutdown='drain'` 或 `'cancel'`：drain 继续�
 
 结果中的 `stop_reason` 区分 `researcher_finished`、`budget_exhausted`、`goal_reached` 等停止原因，`shutdown_complete` 单独表示收尾是否确认完成。事件的 `run_stop` 保留 `cleanup_timed_out`、`unresolved_directives`、`unresolved_research_job` 与 `unresolved_records`；即使返回 finished，也须检查这些字段。研究者 finish、时间耗尽和目标达成是不同结论，目标已达也不证明清理已完成。
 
-运行时限与清理上限在调用方驱动的 tick 中检查，停止调用就不会自动触发超时或硬杀后端。同步模型、环境或后端调用仍需自身设置超时，Runner 不能中途抢占这些调用。快照仅兼容默认 researcher 策略及默认清理预算；time / goal、自定义策略或预算明确拒绝，需要对计时、目标 callable 和运行状态做[显式快照集成](../snapshot/README.md)。
+运行时限与清理上限在调用方驱动的 tick 中检查，停止调用就不会自动触发超时或硬杀后端。同步模型、环境或后端调用仍需自身设置超时，Runner 不能中途抢占这些调用。可搬迁的空闲快照仅兼容默认 researcher 策略及默认清理预算；其 time / goal、自定义策略或预算仍明确拒绝。原目录 durable 恢复支持内置运行策略与清理预算，区别见下一节与[快照说明](../snapshot/README.md)。
+
+## 原目录重启恢复
+
+[recovery.py](recovery.py) 提供显式启用的 `Application(config, durable=True)` 与
+`Application.resume(data_dir)`。恢复使用原目录和原 run_id，不要求研究已经空闲；
+不创建调度线程，调用方继续驱动 `runner.step()` / `run()`。
+
+```python
+from rsisys.application import Application
+from rsisys.runtime.run_policy import TimeRunPolicy
+
+with Application(config, durable=True, run_policy=TimeRunPolicy(3600)) as app:
+    result = app.run()  # 可以在 waiting 时退出进程
+
+with Application.resume(config.data_dir) as app:
+    result = app.run()  # 继续原运行与剩余预算
+```
+
+每次 `step`、`cancel`、`update` 前原子写入并 fsync 一个 journal 意图，成功后用新一代
+checkpoint 提交完整本地控制状态。checkpoint 是提交点；不会重放 journal 中的调用。
+串行 Runner 的内嵌 cancel 共用外层边界。Application 保持原有目录排他锁。
+仅通过这些 Runner 入口执行受保护的动作；直接调用 Harness、后端或修改对象不会自动成为持久边界。
+
+保存内容包括两个 Harness 的状态、模型绑定、操作/反馈回执、探索 command receipts、
+Runner outbox、RunPolicy、已交付 outcomes、研究轮次、结束/停止状态、复查与重启等待。
+内置 Mock 训练/评测保留原 JobRef、请求、幂等键、剩余轮询数、取消意图及终态结果；
+重启后轮询原任务，不重复执行已提交任务。重新构造的是明确支持的模拟队列，不能据此恢复远端进程。
+Decision agenda 全量 revision archive 与 context compactor 配置单独保存；memory、Experience
+SQLite 和 artifacts 保留原目录中的持久记录，不会用旧 checkpoint 回滚这些证据。
+
+内置 `ResearcherRunPolicy`、`TimeRunPolicy` 和 `GoalRunPolicy(MetricGoal(...))` 可直接恢复。
+时间偏移重绑到新进程的 monotonic clock，并计入 checkpoint 后的墙钟停机时间；
+运行时限、清理截止、首次 tick 中断、restart delay 和 review deadline 都不会重新获得预算。
+墙钟回拨的停机增量按零处理；机器时钟应可靠。自定义策略/goal callable 需显式恢复契约。
+恢复要求相同源码指纹、Python 主/次版本和配置；不动态导入或反序列化任意 Python 对象。
+
+进程若在动作中途退出、异常后状态写入失败或效果无法确认，
+`app.recovery.intervention` 保留边界描述，后续 Runner 写操作抛出 `RecoveryRequired`。
+仍存活时尽量保存当前回执和 outbox；硬崩溃只能保留最后 checkpoint 与未提交意图，
+不声称掌握未返回的外部结果。即使工具可能尚未执行，也不会自动重试。
+恢复不重建本地子进程、任意远端任务、模型权重或优化器。
+
+操作者/适配器先检查已有作业、外部幂等键、SQLite/产物及回执，再调用：
+
+```python
+app.recovery.reconcile(repair, evidence="经核实的任务/回执标识与处理依据")
+# repair(app, intervention) 修复控制状态并返回 None：挂接已有结果/任务，或明确标记失败。
+```
+
+reconcile 自身也写前置意图并保存 evidence；中断或校验失败继续阻止执行。
+没有通用的“清空标记并重跑”功能。已有终态反馈/ack 可在确认回执后恢复幂等交付。
+处于 intervention 的运行不能通过空闲快照绕过检查。
+
+外部组合通过 `recovery_contract=` 显式提供 `contract_id`、`capture(app)`、
+`restore(app, state)`；重新打开时再次传入同一 contract、原工厂以及需要的 custom RunPolicy。
+capture 必须观察性地导出 codec 支持的数据，restore 只挂接已有状态，不执行工具或提交作业。
+契约负责自定义策略配置/状态、外部稳定 ID、幂等与不确定结果处理；不支持的状态必须拒绝。
+并行 Runner 暂不支持此本地恢复路径。
+
+`DefaultDecisionHarness` 子类也可通过稳定 `recovery_id`、`export_recovery_state()`、
+`restore_recovery_state(state)` 保存扩展状态；继承状态、训练记账、memory/agenda 绑定由内置恢复负责。
+需通过原 `decision_factory` 重建，探索侧仍为内置组合；未声明的替换明确拒绝。
+DSH 用这些 hook 保存 session 身份和已完成提案；未完成推理恢复为需要核对的标记。
+DSH 原生 session 的恢复与 RSI checkpoint 是独立契约，不能把 session_id 当成推理已恢复。
+见 [DSH Harness](../loops/decision_making/harness/README.md)。
+
+停止策略为 cancel 时，可选 Decision `cancel_research()` 请求取消其自己拥有的研究推理。
+Runner 每轮重新观察 `pending_research_job()`，仍有引用就继续等待或到清理截止；
+不根据 hook 的返回值声称已取消，也不假定它能取消任意工具/训练任务。
 
 ## 模型调用
 
@@ -78,7 +147,7 @@ FileArtifactStore 的 put_file 分块写入，resolve 校验后返回路径，ge
 并行端点通过 `pending_all()` 恢复所有在途指令，按 `directive_id` 路由生命周期；
 `cancel(directive_id)` 只取消目标，多任务时省略 ID 会拒绝。每个实验保留独立 outbox、
 review 定时器和取消意图，终态反馈或 ack 丢失只重试交付，不重新提交或执行。
-恢复 Runner 是同进程端点接管，不是可持久化并行 checkpoint；本地 snapshot 明确拒绝并行配置。RunPolicy 的计时、轮次、目标反馈视图与收尾状态属于当前 Runner，不会随这种端点接管恢复；重建 Runner 会开启新的运行预算，跨重建保留预算需显式集成。
+恢复 Runner 是同进程端点接管，不是可持久化并行 checkpoint；本地 snapshot 明确拒绝并行配置。RunPolicy 的计时、轮次、目标反馈视图与收尾状态属于当前 Runner，不会随这种端点接管恢复；重建 Runner 会开启新的运行预算，跨进程保留预算可用上述串行 durable Application；并行恢复仍需单独实现。
 
 `runner.update(DirectiveUpdate(id, expected_version, idempotency_key, changes))` 返回
 `UpdateReceipt(request, version)`。版本冲突、幂等键内容冲突和不支持的 backend 都会明确报错。

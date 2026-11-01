@@ -81,7 +81,7 @@ class ResearchQueriesTests(unittest.TestCase):
         self.assertIs(tools.query_tools.provider, self.actor)
         self.assertIs(tools.query_tools.artifacts, self.runner.assembly.artifacts)
         specs = self.decision.action_space.describe()
-        self.assertEqual(len([spec for spec in specs if spec.read_only]), 9)
+        self.assertEqual(len([spec for spec in specs if spec.read_only]), 11)
         self.assertEqual(self.operation('model').data['data']['items'][0]['model'],
                          asdict(self.actor.harness.policy.model))
         self.assertFalse(self.operation('logs').data['data']['available'])
@@ -95,7 +95,8 @@ class ResearchQueriesTests(unittest.TestCase):
         self.runner.assembly.exploration_directives = DirectiveDefinitions(
             definition for definition in builtin_directives() if definition.spec.mode == 'execute')
         decision = build_default_decision(self.runner.assembly, loop)
-        self.assertFalse(any(spec.read_only for spec in decision.action_space.describe()))
+        self.assertEqual({spec.name for spec in decision.action_space.describe() if spec.read_only},
+                         {'research_read', 'research_archive'})
         self.assertIsNone(decision.harness.tools.query_tools)
 
     def test_task_pagination_logs_and_refs_are_detached_without_new_side_effects(self):

@@ -12,6 +12,7 @@ from rsisys.loops.contracts.coordination import (
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
+from .recovery import durable_mutation
 from .run_policy import (RunPolicy, ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy,
                          RunContext, RunDecision, ExperimentOutcome, MetricGoal, positive)
 
@@ -151,6 +152,11 @@ class Runner:
             self._recover()
             pending = (self._directive.directive_id,) if self._directive else ()
         research_job = self._research_job()
+        if research_job is not None and self._stop_decision.shutdown == 'cancel':
+            cancel_research = getattr(self.decision_making, 'cancel_research', None)
+            if callable(cancel_research):
+                cancel_research()
+                research_job = self._research_job()  # an acknowledgement alone is not completion
         pending_records = self._pending_records()
         complete = not pending and research_job is None and not pending_records
         expired = self._clock() - self._stop_started >= self.cleanup_timeout_seconds
@@ -191,6 +197,7 @@ class Runner:
             raise
         return self._stop_step(objective, result)
 
+    @durable_mutation
     def step(self, objective: str) -> RunnerStep:
         """Apply external run control around one bounded transport tick; never sleep."""
         if self._terminal_step is not None:
@@ -420,6 +427,7 @@ class Runner:
         self._deliver()
         return RunnerStep('completed', event, decision_steps, directive_id=directive_id)
 
+    @durable_mutation
     def cancel(self, directive_id: str | None = None):
         """Request cancellation; step/run subsequently confirms and delivers the outcome."""
         if self.parallel:
@@ -444,6 +452,7 @@ class Runner:
             return progress
         return self._request_cancel(progress)
 
+    @durable_mutation
     def update(self, request: DirectiveUpdate):
         """Forward versioned control; unsupported backends must reject explicitly."""
         if not isinstance(request, DirectiveUpdate):

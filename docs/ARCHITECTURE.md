@@ -17,7 +17,7 @@ src/rsisys/
 │   │   └── action_space/  # Actor 环境动作的描述/校验
 │   └── contracts/         # 消息、引用与公开端口
 ├── experience/            # 共享系统反馈库
-├── runtime/               # Runner、可替换 RunPolicy 与公共后端
+├── runtime/               # Runner、RunPolicy、运行恢复与公共后端
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── application.py         # 本地持久化装配
@@ -29,6 +29,12 @@ src/rsisys/
 `DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。`harness/engine.py` 负责默认装配、状态协调和公开入口；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
 
 Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
+
+默认 Decision Harness 的 `context.py` 做可替换上下文投影，`research.py` 保存模型维护的长期议程与修订；操作绑定仍在 tools 中。完整记录属于 Harness，本地短摘要与共享 Experience 不混为同一存储。
+
+可选 `harness/dsh.py` 接入持久 DSH 会话，复用默认回执生命周期，异步生成研究提案；`dsh.patch.yml` 保留原生压缩并关闭原生副作用工具，提案通过现有 Action Space 执行。整体替换其他 Harness 仍不要求继承默认实现。
+
+`runtime/recovery.py` 保存运行中协同状态；空闲 `snapshot/` 负责独立可移交快照。前者在同一工作目录继续，后者恢复到新目录。运行恢复按意图 / 回执边界处理，中断且结果不明时要求核对，不假设所有外部副作用都可重放。默认仅串行内置组合，外部组件显式实现恢复契约。
 
 默认执行职责落在现有组件中，不新增平级系统：
 
@@ -107,7 +113,7 @@ Runtime 提供运行策略、模型、作业、产物、执行后端与 Runner �
 - 默认 Exploration 端点可发现未确认的指令；重建 Runner 后先恢复交付，避免决策侧已接收、探索侧未确认时错误发出下一条指令。两侧身份冲突时停止推进。
 - 后端终态结果违反请求身份/角色/协议时，指令转为失败反馈并可正常确认退出；暂时的网络或记录失败继续保留原任务供重试。
 - 默认 Harness 在操作或 episode 已执行但记录失败时保留结果和稳定 ID，下次推进只补写。结果保存前不交付终态，不重复执行或 rollout；执行异常仍抛给调用方，清理异常附加到原异常。
-- 待写结果和回执仅在进程内；待补写期间禁止快照，不提供崩溃恢复。
+- 未启用 durable 时待写结果和回执仅在进程内；启用后按 Runner 边界保存，重启恢复原预算与任务身份。未确认副作用须核对后继续，不自动重放；空闲 Snapshot 仍禁止待补写状态。
 
 `completed` 表示终态反馈已交付，任务结果看 Feedback；质量提升需真实评测确认。模型绑定、服务部署与候选验收由对应实现或策略负责。
 

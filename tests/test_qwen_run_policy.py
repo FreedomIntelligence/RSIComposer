@@ -224,8 +224,25 @@ class QwenRunPolicyTests(unittest.TestCase):
         self.assertEqual(monitor['status'], 'timed_out')
 
     def test_hard_controller_deadline_still_bounds_time_mode(self):
-        result, _, _, _ = self.execute(Services(plan=['train'], forever=True, poll_delay=0.1),
-            '--run-mode', 'time', '--run-seconds', '100', '--timeout', '0.05')
+        # Expire after submission, not during startup on a busy host. Keep real
+        # loopback requests and an independent real cleanup deadline.
+        deadline_type, call = controller.Deadline, controller.HTTPClient.call
+        deadlines = []
+
+        def make_deadline(seconds):
+            deadline = deadline_type(seconds)
+            deadlines.append(deadline)
+            return deadline
+
+        def expire_on_poll(client, path, payload=None):
+            if path.startswith('/jobs/') and client.deadline is deadlines[0]:
+                client.deadline.end = time.monotonic() - 1
+            return call(client, path, payload)
+
+        with patch.object(controller, 'Deadline', side_effect=make_deadline), patch.object(
+                controller.HTTPClient, 'call', new=expire_on_poll):
+            result, _, _, _ = self.execute(Services(plan=['train'], forever=True),
+                '--run-mode', 'time', '--run-seconds', '100', '--timeout', '10')
         self.assertEqual(result['status'], 'timed_out')
         self.assertEqual(result['error_code'], 'TimeoutError')
         self.assertIsNone(result['run_stop'])

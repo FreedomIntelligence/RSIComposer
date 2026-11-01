@@ -10,7 +10,11 @@
 
 Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策侧定义与探索侧 handler 映射扩展，无需修改核心分派。接入方式见[使用指南](docs/GUIDE.md#使用-python-接入组件)。
 
-长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，默认串行，可选隔离的并行实验；待交付状态仍在进程内，见 [Runtime](src/rsisys/runtime/README.md)。
+长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，默认串行，可选隔离的并行实验；使用 `Application(..., durable=True)` 可把串行运行的回执、在途 Mock 作业和 RunPolicy 状态持久化，并通过 `Application.resume()` 重启；中断时结果不明的操作须先核对，见 [Runtime](src/rsisys/runtime/README.md)。
+
+默认 Decision Harness 提供可替换的上下文压缩、模型自主维护的计划 / todos / 阶段总结，以及原始记录分页查询。摘要只是带来源的导航，不替代原始实验结果，也不要求模型按固定研究步骤行动。
+
+可选 [DSH Harness](src/rsisys/loops/decision_making/harness/dsh.py) 使用 DeepSeek Harness 的持久会话和原生压缩，通过同一 Action Space 提交操作。使用 `dsh_decision_factory(config)` 替换默认 Harness；其他 Harness 继续使用公开协议与 Python 工厂接入，见[使用指南](docs/GUIDE.md#使用-dsh-harness)。
 
 ## 快速开始
 

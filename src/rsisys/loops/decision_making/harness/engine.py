@@ -7,6 +7,8 @@ from time import perf_counter
 
 from rsisys.loops._memory import MemoryStore, HistoryEntry
 from .memory import DecisionMemory
+from .context import BasicContextCompactor
+from .research import ResearchAgenda
 
 from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.retrieval import ExperienceSystem, RecentFeedbackSelector
@@ -37,7 +39,8 @@ class DefaultDecisionHarness:
                  experience: ExperienceSystem, learner: DecisionLearner | None = None,
                  *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32,
                  model_activator: ModelActivator | None = None, review_tool_limit: int = 4,
-                 max_outstanding: int = 1, feedback_selector=None):
+                 max_outstanding: int = 1, feedback_selector=None,
+                 context_compactor=None, research_agenda=None):
         self.policy, self.tools, self.experience, self.learner = policy, tools, experience, learner
         if type(experience_limit) is not int or experience_limit < 1:
             raise ValueError("experience_limit must be a positive integer")
@@ -51,6 +54,10 @@ class DefaultDecisionHarness:
         self.feedback_selector = feedback_selector if feedback_selector is not None else RecentFeedbackSelector()
         self.review_tool_limit = review_tool_limit
         self.memory = memory if memory is not None else DecisionMemory()
+        self.context_compactor = context_compactor if context_compactor is not None else BasicContextCompactor()
+        if not callable(getattr(self.context_compactor, 'compact', None)):
+            raise TypeError('context_compactor requires compact(context, recent_limit=...)')
+        self.research_agenda = research_agenda if research_agenda is not None else ResearchAgenda()
         self.memory_limit = memory_limit
         self.experience_limit = experience_limit
         self.model_activator = model_activator
@@ -162,12 +169,12 @@ class DefaultDecisionHarness:
 
     def _context(self, objective: str, action_space: DecisionActionSpace | None = None) -> DecisionContext:
         model = getattr(self.policy, 'model', None)
-        return DecisionContext(
+        context = DecisionContext(
             objective, deepcopy(tuple(self.feedback_selector.select(
                 self.experience, objective, limit=self.experience_limit))),
             action_space.describe() if action_space is not None else (),
             deepcopy(tuple(self.state.operation_results)), self.memory.recall(limit=self.memory_limit),
-            deepcopy(self.state.last_feedback), self.memory.history(limit=self.memory_limit),
+            deepcopy(self.state.last_feedback), self.memory.history(),
             action_space.directive_modes() if action_space is not None and len(self.pending_all()) < self.max_outstanding else (),
             candidates=deepcopy(tuple(self.state.candidates.values())),
             execution=deepcopy(self.state.execution), decision_model=model if isinstance(model, ModelRef) else None,
@@ -175,7 +182,9 @@ class DefaultDecisionHarness:
             candidate_evaluations=deepcopy(tuple(self.state.candidate_evaluations.values())),
             outstanding=self.pending_all(), executions=deepcopy(self.state.executions),
             run_control=deepcopy(self.state.run_control),
+            research_agenda=self.research_agenda.context(),
         )
+        return self.context_compactor.compact(context, recent_limit=self.memory_limit)
 
     def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
         return self._review(objective, progress)
@@ -301,6 +310,11 @@ class DefaultDecisionHarness:
         session.pending_record = None
 
     def _call_policy(self, method, context):
+        # Reviews can append new tool results to a saved session. Re-project them
+        # before every model call; full receipts remain in memory and session state.
+        context = self.context_compactor.compact(replace(context,
+            history=self.memory.history(), research_agenda=self.research_agenda.context()),
+            recent_limit=self.memory_limit)
         received = 0
 
         def record(usage):

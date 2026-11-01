@@ -15,6 +15,8 @@ from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
 from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
 from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.harness.research import ResearchAgenda
+from rsisys.loops.decision_making.harness.tools.research import ResearchTools
 from rsisys.loops.decision_making.harness.tools import DemoDecisionTools
 from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
 from rsisys.loops.decision_making.harness.tools.queries import QueryTools
@@ -138,8 +140,12 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     directives, modes = _decision_directives(context, exploration)
     query_tools = (QueryTools(exploration, artifacts=context.artifacts)
                    if isinstance(exploration, QueryProvider) and exploration.describe_queries() else None)
-    definitions = query_tools.definitions if query_tools is not None else ()
-    bindings = query_tools.bindings if query_tools is not None else {}
+    memory_path = context.data_dir / "decision_memory.json" if context.data_dir is not None else None
+    memory = DecisionMemory(memory_path)
+    agenda = ResearchAgenda(context.data_dir / "decision_research.json" if context.data_dir is not None else None)
+    research_tools = ResearchTools(agenda, memory, experience=context.experience)
+    definitions = (*(query_tools.definitions if query_tools is not None else ()), *research_tools.definitions)
+    bindings = {**(query_tools.bindings if query_tools is not None else {}), **research_tools.bindings}
     if context.data_dir is None:
         tools = DemoDecisionTools(context.sandbox, context.artifacts, extra_bindings=bindings)
         space = DemoDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions,
@@ -149,8 +155,8 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
         space = LocalDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions,
                                          permissions=context.action_permissions)
     tools.query_tools = query_tools
+    tools.research_tools = research_tools
     model = context.roles["decision_maker"]
-    memory_path = context.data_dir / "decision_memory.json" if context.data_dir is not None else None
     return DecisionMakingLoop(
         DefaultDecisionHarness(
             ModelDecisionPolicy(context.backends[model.backend_id], model,
@@ -159,7 +165,7 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
             tools, context.experience,
             learner=MockDecisionLearner(context.artifacts) if context.with_learning else None,
             experience_limit=context.experience_limit,
-            memory=DecisionMemory(memory_path), memory_limit=context.memory_limit,
+            memory=memory, memory_limit=context.memory_limit, research_agenda=agenda,
         ), space,
     )
 

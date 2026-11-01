@@ -58,6 +58,8 @@ class DecisionContext:
     outstanding: tuple[Directive, ...] = ()
     executions: dict[str, ExecutionView] = field(default_factory=dict)
     run_control: dict[str, object] = field(default_factory=dict)
+    context_summary: dict[str, object] = field(default_factory=dict)
+    research_agenda: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
