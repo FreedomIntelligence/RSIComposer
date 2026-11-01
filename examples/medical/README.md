@@ -130,16 +130,26 @@ data subsets, bounded recipes, prompt experiments, evaluation and application;
 there is no fixed three-round research script. Defaults allow 90 minutes of
 research after the separately recorded baseline, at most three SFT submissions
 and 96 decision-model calls. The researcher may choose `finish` with a reason at
-any time; training is optional. These are upper bounds: the run need not last
+any time. These are upper bounds: the run need not last
 90 minutes, use all calls, or complete three training rounds. Exhausting training allowance disables further training
 while other permitted research actions can continue. Recipe steps are bounded by
 `--max-train-steps`; the default recipe uses 32 steps, learning rate 1e-4,
 microbatch 1 and gradient accumulation 2.
 
+The research objective requests a real SFT candidate prepared for inference and
+measured against the baseline when feasible. Prompt-only results do not answer
+that question. This is an objective, not an enforced action sequence or training
+quota: the model chooses its plan and can finish with an explanation of obstacles.
+
 The initial baseline is measured before research starts and its evidence is
 readable through `read_artifact`. It is not a proposed candidate. Candidate
 evaluation/application are exposed only once a candidate exists; this reflects
 their input precondition without prescribing which research action creates it.
+The medical assembly defaults an omitted `protocol_ref` to its frozen protocol.
+It also resolves an omitted `candidate_id` only when exactly one candidate exists;
+multiple candidates require an explicit model choice. Raw model output and the
+resolved directive are recorded separately. Validation retries include the failed
+proposal, error and available candidate IDs, without silently selecting an experiment.
 
 The frozen source selection is train/primary/guardrail **1024/128/64**. Before
 training, the tokenizer checks complete chat-template sequences, including the

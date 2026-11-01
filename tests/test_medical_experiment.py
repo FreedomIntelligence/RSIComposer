@@ -232,6 +232,27 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(feedback['status'], 'failed')
         self.assertIn('Exact duplicate', feedback['error'])
 
+    def test_sole_candidate_and_fixed_protocol_defaults_preserve_full_chain(self):
+        evaluate_only = {'kind': 'explore', 'mode': 'evaluate', 'strategy': 'Evaluate sole candidate', 'arguments': {}}
+        apply_only = {'kind': 'explore', 'mode': 'apply_candidate', 'strategy': 'Apply accepted sole candidate', 'arguments': {}}
+        result = self.execute([train, evaluate_only, apply_only, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(self.serving.activated), 1)
+        self.assertEqual(len(self.read('evaluations.json')), 2)
+
+    def test_ambiguous_candidate_requires_model_choice_and_preserves_error_context(self):
+        prompt = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Second candidate',
+                  'arguments': {'instructions': 'Return one legal label.'}}
+        incomplete = {'kind': 'explore', 'mode': 'evaluate', 'strategy': 'Ambiguous request', 'arguments': {}}
+        result = self.execute([train, prompt, incomplete, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(self.read('evaluations.json')), 1)  # Only the baseline; no guessed candidate.
+        correction = self.serving.contexts[-1]['objective']
+        self.assertIn('previous_output', correction)
+        self.assertIn('candidate_id is required', correction)
+        for candidate in self.serving.contexts[-1]['candidates']:
+            self.assertIn(candidate['candidate_id'], correction)
+
     def test_train_budget_only_removes_train_prompt_and_evaluation_survive(self):
         prompt = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Test optional prompt research',
                   'arguments': {'instructions': 'Choose the requested synthetic symbol'}, 'input_ids': []}

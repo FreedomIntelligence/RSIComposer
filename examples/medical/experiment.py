@@ -504,7 +504,9 @@ class ResearchPolicy(ModelDecisionPolicy):
                     raise ValueError('finish requires a nonempty reason')
             except (ValueError, TypeError, KeyError, PermissionError) as exc:
                 self.monitor.event('model_decision_rejected', attempt=attempt+1, error=str(exc)[:1000])
-                hint = '\nPrevious decision schema/validation error (data): ' + json.dumps(str(exc)[:1000])
+                hint = '\nCorrect this invalid proposal before execution (error data): ' + json.dumps({
+                    'previous_output': response.text[:2048], 'validation_error': str(exc)[:1000],
+                    'available_candidate_ids': [candidate.candidate_id for candidate in current.candidates]})
                 continue
             if decision.kind == 'finish':
                 self.finish_reason = decision.reason
@@ -647,12 +649,18 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         persist(assembly, root)
         objective = ('Investigate whether supervised adaptation of this model on MedQA improves difficult '
             'MedXpertQA performance without degrading the MedQA guardrail. '
+            'MedXpertQA has ten answer labels A-J; MedQA has four A-D. Grading requires exactly '
+            'one legal label, with no period, prefix or explanation. Prompt changes apply to both benchmarks. '
             'The initial baseline has ALREADY been measured; its results and evidence IDs are below. '
             'Read its evidence with read_artifact if useful. The initial system is not a candidate. '
-            'evaluate accepts only a candidate_id listed in context.candidates; candidate operations '
+            'evaluate accepts only a candidate_id listed in context.candidates; a sole candidate and the '
+            'frozen evaluation protocol default automatically, but multiple candidates require an explicit ID. Candidate operations '
             'are unavailable until a candidate exists. Do not invent a candidate or repeat baseline measurement. '
             'You choose the research steps and may conduct multiple rounds, change training data/recipe or prompt, '
-            'evaluate, apply an accepted candidate, or finish with your reason at any time. Training is optional. '
+            'evaluate, apply an accepted candidate, or finish with your reason at any time. '
+            'The requested deliverable is a real SFT candidate loaded for inference and compared on the frozen '
+            'development set, when feasible. Prompt-only experiments do not answer the supervised-adaptation '
+            'question. If you cannot obtain that comparison, explain the obstacle in your finish reason. '
             'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
             'No candidate may be applied without the existing improvement/guardrail acceptance check. '
             'Only method=sft and restart from the fixed initializer are installed; no real RL. '

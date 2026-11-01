@@ -328,6 +328,35 @@ def build(task, *, artifacts, decision_backend, decision_model, initial_model,
         d.parser) for d in builtin_directives() if d.spec.mode in ('configure_prompt', 'evaluate')]
     application = apply_candidate_directive()
     definitions.append(DirectiveDefinition(replace(application.spec, accepts_input_refs=False), application.parser))
+    # The domain fixes the protocol; a sole candidate is an unambiguous reference.
+    # Multiple candidates always require an explicit choice by the researcher.
+    def with_medical_defaults(definition):
+        mode = definition.spec.mode
+        schema = deepcopy(definition.spec.input_schema)
+        schema['required'] = []
+        schema['properties']['candidate_id']['description'] = (
+            'May be omitted only when exactly one candidate exists; otherwise choose its exact ID.')
+        if mode == 'evaluate':
+            schema['properties']['protocol_ref'] = {'type': 'string',
+                'enum': [task.protocol_ref], 'default': task.protocol_ref}
+        def parse(arguments, available):
+            fields = dict(arguments)
+            if 'candidate_id' not in fields:
+                ids = sorted({candidate.candidate_id for candidate in available})
+                if len(ids) != 1:
+                    raise ValueError(f'candidate_id is required: choose exactly one from {ids}')
+                fields['candidate_id'] = ids[0]
+            if mode == 'evaluate':
+                fields.setdefault('protocol_ref', task.protocol_ref)
+                if fields['protocol_ref'] != task.protocol_ref:
+                    raise ValueError('Evaluation must use the frozen medical protocol')
+            return definition.parser(fields, available)
+        return DirectiveDefinition(replace(definition.spec, input_schema=schema,
+            description=definition.spec.description +
+                ' candidate_id defaults only for a sole candidate.' +
+                (' The frozen protocol defaults automatically.' if mode == 'evaluate' else '')), parse)
+    definitions = [with_medical_defaults(d) if d.spec.mode in ('evaluate', 'apply_candidate') else d
+                   for d in definitions]
     if learner is not None:
         initializer = training_initializer or initial_model
         handlers['train'] = _MedicalTraining(task, artifacts, systems, candidates, tuple(trusted_exclusions),
