@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from .candidate import Candidate
 from .model_service import ModelRef
+from .training import TrainingOrigin
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class TrainSpec:
     method: str
     base: ModelRef | None = None
     apply_result: bool = False
+    origin: TrainingOrigin | None = None
 
     def __post_init__(self):
         if any(not isinstance(value, str) or not value.strip() for value in (self.recipe_ref, self.method)):
@@ -71,3 +73,8 @@ class TrainSpec:
             raise TypeError('Training base must be a ModelRef')
         if type(self.apply_result) is not bool:
             raise TypeError('apply_result must be boolean')
+        if self.origin is not None:
+            if not isinstance(self.origin, TrainingOrigin):
+                raise TypeError('origin must be TrainingOrigin')
+            if self.base is not None and self.base != self.origin.initial_model:
+                raise ValueError('Training base differs from origin.initial_model')

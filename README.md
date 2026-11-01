@@ -29,13 +29,19 @@ pixi run test
 
 默认模型、训练与评测使用 Mock。版本引用变化不代表真实梯度训练或能力提升，Mock 评测不执行真实推理打分。HTTP 模型、本地进程、持久化和空闲边界恢复的范围见组件说明。
 
-训练请求保持后端中立，允许自定义 method 和外部数据；Decision 请求也支持 data_refs 与 method。默认 `rl` 保留本地采样、训练、应用版本的简单循环；显式启用 `training_directive()` + `TrainingCommandHandler` 并注入 learner 后，`train` 可把整个任务的 rollout 与训练交给后端。接口开放不等于已有具体框架适配，接入见[使用指南](docs/GUIDE.md#接入整项训练任务)。
+训练请求保持后端中立，允许自定义 method 和外部数据；Decision 请求也支持 data_refs 与 method。默认 `rl` 保留本地采样循环；显式注册 `training_directive()` + `TrainingCommandHandler` 后，`train` 可把整个任务交给后端。[共享协议](src/rsisys/loops/contracts/README.md) 单独定义可选的训练来源、能力声明与部署生命周期；具体进程训练和推理服务接入位于 Harness 外的 [adapters/](src/rsisys/adapters/)，接入见[使用指南](docs/GUIDE.md#接入整项训练任务)。
+
+[SystemVersion / Candidate](src/rsisys/loops/contracts/candidate.py) 描述组件组合及其变更，[SystemRegistry](src/rsisys/runtime/systems.py) 管理父版本、候选注册与当前版本的显式应用。实验父系统 ID、初始训练权重、服务部署和角色绑定分别表达；`TrainingOrigin` 明确 restart / weights_only / full_state，不能根据父版本暗中决定训练起点。
+
+可选 ProcessTrainingBackend 接入原生训练进程，默认 worker 支持 Transformers / PEFT SFT；VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator 接入独立运行的推理服务。已单独验证 CPU tiny random GPT-2 的 3 步 LoRA 训练链路，不代表医学增益；LLaMA-Factory 仅提供原生命令扩展，未声称实际安装或训练，verl 适配尚未验证。
 
 `pixi run backend-demo` 运行 [backend_training.py](examples/backend_training.py)：在独立子进程中进行真实 CPU 标量回归并回传权重产物和 MSE。它不是 LLM 训练或 verl 现成适配，也不演示 RL rollout。
 
 [Qwen3.5 toycase](examples/qwen_toy/README.md) 提供模型自主选择步骤的真实决策、LoRA 训练、评测、候选应用和 Actor 执行装配；外部配置能力、权限及预算，未预设流程或采纳阈值。服务默认使用 CPU，小规模验证使用 0.8B，也可接入 9B。[监视前端](web/README.md) 使用标准库 HTTP 服务读取 `runs/*/monitor.json`，展示双 loop、作业、候选指标和事件时间线。
 
 [并行实验示例](examples/parallel_experiments.py) 展示隔离实验、动态控制和候选比较（Mock 验证）；反馈提取与工作区查询都可替换。
+
+[medical/](examples/medical/README.md) 是独立装配示例：冻结本地医学选择题数据，注入 researcher 模型、候选推理、learner 与系统启用器，再通过两个默认 Harness 和 Runner 研究 prompt / 训练候选。native.py 显式接通 tokenize、原生训练与候选服务准备；数据协议、固定评测与验收规则留在示例中。准备与检查不会下载模型、启动训练或服务，接线与边界见[使用指南](docs/GUIDE.md#独立医学研究示例)。
 
 ## 系统文档
 
@@ -52,7 +58,9 @@ pixi run test
 | [Experience](src/rsisys/experience/README.md) | 系统反馈、来源标签、检索和存储 |
 | [Snapshot](src/rsisys/snapshot/README.md) | 内置实现的保存恢复及自定义边界 |
 | [Runtime](src/rsisys/runtime/README.md) | Runner、模型调用、执行后端、作业和产物 |
+| [适配器](src/rsisys/adapters/README.md) | 原生进程训练、vLLM 推理与部署 |
+| [医学装配](examples/medical/README.md) | 领域数据、评测与 native 包装接线 |
 
 ## 文档维护
 
-架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy）、runtime 中可替换的 RunPolicy，以及协调层和具体执行组件的边界；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。
+架构图以实线灰框标记协议与协调骨架，以彩色虚线框标记可替换实现；adapters/ 和 examples/medical 位于 Harness 外。组件细节见各自 README，具体适配器的使用见现有指南；字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。

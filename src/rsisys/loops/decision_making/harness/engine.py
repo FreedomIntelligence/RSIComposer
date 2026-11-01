@@ -473,7 +473,10 @@ class DefaultDecisionHarness:
                 raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
             candidates[candidate.candidate_id] = candidate
             if directive.mode in ('train', 'sft'):
-                base = getattr(directive.payload, 'base', None) or (provenance.execution_model if provenance else None)
+                origin = getattr(directive.payload, 'origin', None)
+                base = (getattr(directive.payload, 'base', None) or
+                        (origin.initial_model if origin else None) or
+                        (provenance.execution_model if provenance else None))
                 if isinstance(base, ModelRef):
                     if base.revision != candidate.base_version:
                         raise ValueError('Candidate base revision differs from the dispatched model')
@@ -556,14 +559,21 @@ class DefaultDecisionHarness:
         candidates = [self.state.candidates[ident] for ident in ids]
         rows = [self.state.candidate_evaluations[ident] for ident in ids]
         first = rows[0]
-        bases = [self.state.candidate_bases.get(ident) for ident in ids]
-        if any(base is None for base in bases):
-            raise ValueError('Comparison requires known full training base identities')
-        if any(base != bases[0] for base in bases[1:]):
-            raise ValueError('Cannot compare candidates from different full model bases')
-        for candidate, row in zip(candidates, rows):
-            if candidate.base_version != candidates[0].base_version:
+        parents = [candidate.parent_system for candidate in candidates]
+        if any(parent is not None for parent in parents):
+            if any(parent is None or parent != parents[0] for parent in parents):
+                raise ValueError('System comparison requires the same explicit parent system')
+            # A prompt/data candidate need not produce new weights. Same-parent
+            # ranking compares systems, not an equal-compute training experiment.
+        else:
+            bases = [self.state.candidate_bases.get(ident) for ident in ids]
+            if any(base is None for base in bases):
+                raise ValueError('Comparison requires known full training base identities')
+            if any(base != bases[0] for base in bases[1:]):
+                raise ValueError('Cannot compare candidates from different full model bases')
+            if any(candidate.base_version != candidates[0].base_version for candidate in candidates):
                 raise ValueError('Cannot compare candidates from different bases')
+        for candidate, row in zip(candidates, rows):
             if (row.protocol_ref, row.input_refs, row.simulated) != (first.protocol_ref, first.input_refs, first.simulated):
                 raise ValueError('Cannot compare different evaluation protocols, inputs or simulation modes')
             if row.status != ExecutionStatus.COMPLETED or metric not in row.quality_metrics:

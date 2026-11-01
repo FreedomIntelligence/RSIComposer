@@ -52,6 +52,56 @@ Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。
 
 [TrainingResult](training.py) 关联 base / model / candidate / metrics / simulated。[Candidate](candidate.py) 描述变更产物和受影响角色，不表示已经验收。默认 Harness 校验角色归属和基础版本；应用结果需要 policy 支持模型更新。
 
+### 可选训练来源与后端能力
+
+[TrainingOrigin](training.py) 使用 `TrainingOrigin(parent_system, initial_model,
+resume_mode=ResumeMode.RESTART, checkpoint=None)` 显式区分实验父版本与初始权重。
+`parent_system` 是稳定的系统版本 ID，与 `initial_model.revision` 独立；它不是权重来源。
+请求原有 `base` 仍用于训练结果和角色应用的版本检查；传入 origin 时由调用方和后端确认
+`initial_model` 与实际训练请求一致，框架不根据父系统隐式替换模型。
+
+| resume_mode | checkpoint | 语义 |
+|---|---|---|
+| `RESTART` | 必须为 None | 从 initial_model 开始新的训练运行，不恢复运行状态 |
+| `WEIGHTS_ONLY` | 可选 ArtifactRef | 有 checkpoint 时仅加载其权重，否则使用 initial_model；优化器、调度器、步数和 RNG 重新初始化 |
+| `FULL_STATE` | 必须为 ArtifactRef | 恢复 checkpoint 的权重、优化器、调度器、步数及 RNG 等完整训练状态 |
+
+引用只描述来源；后端负责解析和验证实际 checkpoint 内容，无法兑现请求的恢复语义时必须明确拒绝，
+不能把 full_state 静默降级为 weights_only。已有请求无需声明来源，原有 TrainingResult 与
+ModelActivator 构造及调用方式保持兼容。
+
+[BackendCapabilities](backend.py) 是可选声明，字段为 `methods`、`resume_modes`、
+`update_fields` 三个不可变元组，以及 `supports_checkpoint`、`supports_reattach` 两个布尔值。
+`BackendCapabilityProvider.capabilities()` 返回该对象；已有 learner 不需要实现这个端口。
+方法名由后端定义，空元组表示不支持任何值。`validate_training_capabilities`、
+`validate_update_capabilities`、`require_checkpoint` 和 `require_reattach` 在声明不支持时抛出
+`NotImplementedError`，不自动注册或发现后端，不替代 recipe、数据、更新值或版本的校验。
+没有 origin 时，训练能力校验按 restart 处理。
+
+checkpoint 标志声明**导出**能力，与消费现有 checkpoint 的 resume_modes 分开。
+可选 `CheckpointingTrainingBackend.checkpoint(job, idempotency_key=...)` 返回实际 ArtifactRef；
+`ReattachableTrainingBackend.reattach(job)` 返回同一 JobRef 的 JobOutcome，不重新提交训练。
+同键重试 checkpoint 必须复用同一操作，不能为重试创建新作业。
+
+### 可选部署生命周期
+
+[DeploymentBackend](backend.py) 提供 `prepare(model, idempotency_key=...)`、
+`query(deployment)` 和 `release(deployment, idempotency_key=...)`；可选
+`ReattachableDeploymentBackend` 增加 `reattach(deployment)`。它们都返回不可变
+`DeploymentState(deployment, model, status, job=None, error=None)`，其中部署使用稳定的
+`DeploymentRef(deployment_id, backend)`，外部部署作业使用现有 JobRef。
+
+status 为 preparing / ready / releasing / released / failed / unknown；只有 ready 表示精确的
+ModelRef 已可用于推理，`state.ready` 才为 True。unknown 不等于失败，作业成功也不等于部署就绪。
+failed 必须含 error，只有 failed / unknown 可以含 error。查询和重连保留同一部署、模型及已有
+作业身份，不创建替代作业；同键同模型 prepare 返回同一部署，同键不同内容必须拒绝。
+release 可异步停留在 releasing，必须幂等，不表示删除模型产物。未支持的操作明确抛出
+NotImplementedError。
+
+这是供接入适配器组合的协议，Harness 内没有部署实现或自动能力探测。
+ModelActivator 适配器只有在观察到 ready 且 model 与目标完全一致后才能返回模型；角色绑定仍由
+现有应用流程更新。保留外部引用本身不承诺控制器重启后的持久恢复能力。
+
 [model_service.py](model_service.py) 定义 ModelRef、ModelBackend、ModelUpdatable、请求/响应和 TokenUsage；[ArtifactRef](artifacts.py) 只携带产物身份、URI、版本和摘要，不含内容，解析与校验由产物存储负责。模型引用相同不表示角色同步；真实权重加载归模型后端。
 
 可选并行协议位于 `coordination.py`：`ConcurrentExplorationEndpoint.pending_all()` /

@@ -14,8 +14,11 @@ class DirectiveSpec:
     mode: str
     description: str
     input_schema: dict[str, object]
+    accepts_input_refs: bool = True
 
     def __post_init__(self):
+        if type(self.accepts_input_refs) is not bool:
+            raise TypeError('accepts_input_refs must be a bool')
         if not isinstance(self.mode, str) or not self.mode.strip():
             raise ValueError('A nonempty directive mode is required')
         if not isinstance(self.description, str) or not isinstance(self.input_schema, dict):
@@ -131,19 +134,57 @@ def builtin_directives() -> tuple[DirectiveDefinition, ...]:
 DEFAULT_DIRECTIVE_MODES = tuple(d.spec.mode for d in builtin_directives())
 
 
-def training_directive() -> DirectiveDefinition:
+def training_directive(capabilities=None) -> DirectiveDefinition:
     """Explicitly enable backend-owned training; not advertised by default."""
     from rsisys.loops.contracts.requests import TrainSpec
 
-    def parse(arguments, candidates):
-        _arguments(arguments, ('recipe_ref', 'method'), ('apply_result',))
-        return TrainSpec(arguments['recipe_ref'], arguments['method'],
-                         apply_result=arguments.get('apply_result', False))
+    from rsisys.loops.contracts.training import TrainingOrigin, ResumeMode
+    from rsisys.loops.contracts.model_service import ModelRef
+    from rsisys.loops.contracts.artifacts import ArtifactRef
+    from rsisys.loops.contracts.backend import validate_training_capabilities
 
+    def parse(arguments, candidates):
+        _arguments(arguments, ('recipe_ref', 'method'), ('apply_result', 'origin'))
+        origin = arguments.get('origin')
+        if origin is not None:
+            if not isinstance(origin, dict):
+                raise TypeError('origin must be an object')
+            _arguments(origin, ('parent_system', 'initial_model'), ('resume_mode', 'checkpoint'))
+            initial = origin['initial_model']
+            if not isinstance(initial, dict):
+                raise TypeError('initial_model must be an object')
+            _arguments(initial, ('backend_id', 'model_id', 'revision'))
+            checkpoint = origin.get('checkpoint')
+            if checkpoint is not None:
+                if not isinstance(checkpoint, dict):
+                    raise TypeError('checkpoint must be an artifact reference object')
+                checkpoint = ArtifactRef(**checkpoint)
+            origin = TrainingOrigin(origin['parent_system'], ModelRef(**initial),
+                ResumeMode(origin.get('resume_mode', 'restart')), checkpoint)
+        if capabilities is not None:
+            validate_training_capabilities(capabilities, method=arguments['method'], origin=origin)
+        return TrainSpec(arguments['recipe_ref'], arguments['method'],
+                         apply_result=arguments.get('apply_result', False), origin=origin)
+
+    method_schema = {'type': 'string'}
+    modes = [mode.value for mode in ResumeMode]
+    if capabilities is not None:
+        method_schema['enum'] = list(capabilities.methods)
+        modes = [mode.value for mode in capabilities.resume_modes]
     return DirectiveDefinition(DirectiveSpec('train', 'Delegate a complete training job to the configured backend', {
         'type': 'object', 'properties': {
-            'recipe_ref': {'type': 'string'}, 'method': {'type': 'string'},
+            'recipe_ref': {'type': 'string'}, 'method': method_schema,
             'apply_result': {'type': 'boolean', 'default': False},
+            'origin': {'type': 'object', 'properties': {
+                'parent_system': {'type': 'string'},
+                'initial_model': {'type': 'object', 'properties': {
+                    key: {'type': 'string'} for key in ('backend_id', 'model_id', 'revision')
+                }, 'required': ['backend_id', 'model_id', 'revision'], 'additionalProperties': False},
+                'resume_mode': {'type': 'string', 'enum': modes, 'default': 'restart'},
+                'checkpoint': {'type': 'object', 'properties': {
+                    key: {'type': 'string'} for key in ('artifact_id', 'kind', 'uri', 'version', 'digest')
+                }, 'required': ['artifact_id', 'kind', 'uri'], 'additionalProperties': False},
+            }, 'required': ['parent_system', 'initial_model'], 'additionalProperties': False},
         }, 'required': ['recipe_ref', 'method'], 'additionalProperties': False,
     }), parse)
 

@@ -24,6 +24,11 @@ DefaultDecisionHarness 接受可选 `model_activator`。应用真实训练结果
 
 [MockDecisionLearner](backends/mock.py) 的构造参数为 artifacts 和仅限关键字的 pending_polls=1（非负整数）：前 pending_polls 次轮询返回 RUNNING，下一次读取并校验每个 data_refs 产物，再生成 simulated=True 的版本清单；引用不存在或摘要不匹配时任务失败。它没有后台线程或梯度训练，method 字段不意味着实际执行相应算法。result 只读取已成功结果，不推进任务。
 
-真实实现可放在 backends/ 并注入默认 Harness 的 learner 参数；UnimplementedDecisionLearner 的所有方法均抛 NotImplementedError。
+真实实现通过默认 Harness 的 learner 参数注入。通用的具体训练接入位于 Harness 外的
+[adapters/training.py](../../../../adapters/training.py)：ProcessTrainingBackend 可以把请求
+交给原生命令，并将原生结果明确转换为 TrainingResult；配方、数据格式和设备由调用方提供，
+不自动将 experience_refs 转为训练样本。可选 BackendCapabilities 声明实际方法、恢复模式、
+更新字段、checkpoint 导出与 reattach 支持，不表示每个 learner 都提供这些能力。
+UnimplementedDecisionLearner 的所有方法仍抛 NotImplementedError。
 
 训练样本筛选、优化算法与质量评测由后续实现提供；周期触发不属于 learner 后端。

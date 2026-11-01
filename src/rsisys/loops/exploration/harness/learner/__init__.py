@@ -12,7 +12,7 @@ from rsisys.loops._memory import MemoryStore
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
-from rsisys.loops.contracts.training import ModelActivator, TrainingResult
+from rsisys.loops.contracts.training import ModelActivator, TrainingResult, TrainingOrigin
 from rsisys.runtime.jobs import JobBook, InvalidJobResult
 from rsisys.runtime.model import prepare_model_activation
 
@@ -29,10 +29,16 @@ class ActorTrainingRequest:
     recipe_ref: str
     method: str = "sft"
     trajectory_refs: tuple[str, ...] = ()
+    origin: TrainingOrigin | None = None
 
     def __post_init__(self):
         if not isinstance(self.base, ModelRef):
             raise ValueError("Training base must be a ModelRef")
+        if self.origin is not None:
+            if not isinstance(self.origin, TrainingOrigin):
+                raise TypeError('origin must be TrainingOrigin')
+            if self.base != self.origin.initial_model:
+                raise ValueError('Training base differs from origin.initial_model')
         if not isinstance(self.method, str) or not self.method.strip():
             raise ValueError("Training method must be a nonempty string")
         if not isinstance(self.recipe_ref, str) or not self.recipe_ref.strip():
@@ -92,6 +98,10 @@ class LearningExecution:
         available = {r.record_id for r in self.memory.history(kind="trajectory")}
         if any(ref not in available for ref in request.trajectory_refs):
             raise ValueError("Training references must identify this loop's trajectory history")
+        from rsisys.loops.contracts.backend import BackendCapabilityProvider, validate_training_capabilities
+        if isinstance(self.jobs.backend, BackendCapabilityProvider):
+            validate_training_capabilities(self.jobs.backend.capabilities(),
+                                           method=request.method, origin=request.origin)
         return self.jobs.submit(request, idempotency_key=idempotency_key)
 
     def poll(self, job: JobRef) -> JobOutcome[TrainingResult]:
@@ -109,6 +119,8 @@ class LearningExecution:
                 raise InvalidJobResult("Training result does not match the submitted base", outcome)
             if "actor" not in result.candidate.affected_roles:
                 raise InvalidJobResult("Training result does not target this loop's role", outcome)
+            if request.origin is not None and result.candidate.parent_system != request.origin.parent_system:
+                raise InvalidJobResult('Candidate experiment parent differs from request', outcome)
             candidate_id = result.candidate.candidate_id
             if (candidate_id in self.state.candidate_results
                     and self.state.candidate_results[candidate_id] != result):

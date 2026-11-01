@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from contextlib import contextmanager
 import json
 from typing import Protocol
@@ -23,7 +23,10 @@ class ModelDecisionPolicy:
     """Example JSON parser. Provider response parsing stays in policy."""
 
     def __init__(self, backend: ModelBackend, model: ModelRef, *, allowed_actions: tuple[str, ...] = ("echo",),
-                 directives: DirectiveDefinitions | None = None):
+                 directives: DirectiveDefinitions | None = None, max_validation_attempts: int = 1):
+        if type(max_validation_attempts) is not int or not 1 <= max_validation_attempts <= 8:
+            raise ValueError('max_validation_attempts must be between 1 and 8')
+        self.max_validation_attempts = max_validation_attempts
         self.backend, self.model = backend, model
         self.allowed_actions = allowed_actions
         self.directives = directives if directives is not None else DirectiveDefinitions()
@@ -44,6 +47,22 @@ class ModelDecisionPolicy:
             self._usage_recorder(response.usage)
 
     def decide(self, context: DecisionContext) -> Decision:
+        attempt_context = context
+        for attempt in range(self.max_validation_attempts):
+            # Generation/transport/identity errors are outside the retry boundary.
+            response = self._generate_decision(attempt_context)
+            try:
+                return self._parse_decision(response, attempt_context)
+            except (ValueError, TypeError, KeyError) as exc:
+                if attempt + 1 == self.max_validation_attempts:
+                    raise
+                attempt_context = replace(context, objective=context.objective +
+                    '\nPrevious decision failed JSON/schema validation (error data): ' +
+                    json.dumps(str(exc)[:600]) +
+                    '\nReturn a corrected decision using only the documented decision kinds and fields.')
+        raise AssertionError('Unreachable validation loop')
+
+    def _generate_decision(self, context):
         inputs = asdict(context)
         inputs["directives"] = [asdict(spec) for spec in self.directives.describe(context.directive_modes)]
         response = self.backend.generate(GenerationRequest(
@@ -60,6 +79,7 @@ class ModelDecisionPolicy:
                     "Put mode-specific parameters in arguments, following its listed input_schema. "
                     "System instruction execution is owned by the exploration harness. "
                     "Optional input_ids selects only artifacts from current operation results or last_feedback; "
+                    "when a directive declares accepts_input_refs=false, omit input_ids or use []; "
                     "Optional top-level review_after_seconds requests a later running-task review; "
                     "omit it or use null to disable reviews. "
                     "or {\"kind\":\"finish\",\"reason\":text} when done. "
@@ -73,6 +93,9 @@ class ModelDecisionPolicy:
         self._received(response)
         if response.model != self.model:
             raise ValueError("Model response identity does not match the requested version")
+        return response
+
+    def _parse_decision(self, response, context):
         payload = json.loads(response.text)
         kind = payload["kind"]
         if kind == "invoke":
@@ -92,8 +115,11 @@ class ModelDecisionPolicy:
                     candidates.setdefault(candidate.candidate_id, candidate)
             request = self.directives.parse(mode, payload.get('arguments', fields),
                 candidates=tuple(candidates.values()))
+            accepts_inputs = self.directives.describe((mode,))[0].accepts_input_refs
+            if not accepts_inputs and payload.get('input_ids', []) != []:
+                raise ValueError(f'{mode} does not accept input_ids; use [] or omit the field')
             sources = tuple((ref, result.simulated) for result in context.operation_results
-                            for ref in result.artifacts)
+                            for ref in result.artifacts) if accepts_inputs else ()
             if 'input_ids' in payload:
                 available = {ref.artifact_id: (ref, simulated) for ref, simulated in sources}
                 if context.last_feedback:

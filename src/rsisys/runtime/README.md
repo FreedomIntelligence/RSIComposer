@@ -117,6 +117,52 @@ HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；
 
 响应缺少 model_revision 时 revision_verified=false；匹配该字段也不能证明权重不可变。TokenUsage 缺失保持未知，缺失次数由各默认 Harness 记录。
 
+## 系统组合与显式应用
+
+[systems.py](systems.py) 提供可选 `SystemRegistry(initial, activator)`。清单类型
+`SystemVersion(version, components, model=None, parent_version=None)` 定义在
+[candidate.py](../loops/contracts/candidate.py)；components 是命名 ArtifactRef，不限定组件格式。
+`Candidate.parent_system` 表示实验父版本，`base_version` 继续表示训练权重基础 revision。
+
+`register(candidate, model=None)` 根据已知父版本合并变化，保留新清单但不改变 `current`；
+`get(version)` 与 `current` 返回独立副本。`activate(candidate_id, idempotency_key=...)`
+检查父版本等于 current，调用 `SystemActivator.activate(system, idempotency_key=...)`，
+只在返回精确相同清单后更新 current。相同应用键返回原回执，键与候选冲突会拒绝；
+只有 `SystemActivationRejected` 明确确认无副作用或已完成回滚时才释放 pending，current 不变；
+其他异常仍保留同一意图，不能跳到另一候选。不同父版本的候选需显式 rebase。
+
+`ReferenceSystemActivator(model=None)` 只接受模型与构造时一致的清单，适合引用级组件变化，
+不会部署权重。真实 activator 自行承担组件准备、外部效果和绑定原子性；registry 不替它回滚。
+该 registry 无全局实例或隐式存储，不会自动加入 Application 的 durable 状态；自定义恢复必须
+同时保存版本、current、应用意图与 activator 回执。
+
+## Harness 外的具体后端
+
+[adapters/training.py](../adapters/training.py) 的 `ProcessTrainingBackend` 提供可信 POSIX
+主机上的持久作业目录、幂等提交、子进程监督、轮询、取消及同 JobRef 重连。注入的
+`command(request, job_dir)` 返回 TrainingCommand，原生配置和结果读取由适配器明确解释。
+默认 worker 使用可选 Transformers / PEFT 的 SFT；原生 CLI 也可通过命令和 result_reader 接入。
+导入模块不加载训练依赖，核心安装不自动安装这些框架。
+
+训练协议与具体执行分开：[BackendCapabilities](../loops/contracts/backend.py) 声明方法、
+恢复模式、更新字段、checkpoint 导出与重连能力；默认 worker 不承诺 full_state、checkpoint
+导出或热更新。丢失监督进程身份时保留 UNKNOWN，不重新启动不确定的训练。
+后端重连只关联作业，不等于恢复 Runner / SystemRegistry / 外部部署的完整控制状态。
+进程执行继承宿主权限，不是安全隔离；资源、网络和设备限制由调用方部署承担。
+
+同一协议文件还定义独立的 DeploymentBackend（prepare / query / release）及可选 reattach。
+稳定 DeploymentRef 与 JobRef 用于核对已有外部工作，只有 READY 表示精确目标模型可推理；
+ModelActivator 将它与现有 Harness 的角色更新入口连接，SystemActivator 则处理完整组合。
+实际适配器配置和数据边界见[使用指南](../../../docs/GUIDE.md#接入整项训练任务)。
+
+[adapters/serving.py](../adapters/serving.py) 的 VLLMBackend 接入独立运行的 vLLM，
+显式映射模型 revision 与服务别名；VLLMDeploymentBackend 维护稳定部署引用及本地回执，
+通过模型列表和实际推理探测确认就绪。动态 LoRA 需要 allow_runtime_lora 显式开启和服务端
+可访问的原生路径；默认只观察既有静态服务。query / reattach 不加载模型，release 只允许
+卸载自己管理的动态 LoRA，拒绝静态/共享部署。VLLMLoRAActivator 将就绪结果接入现有
+model_activator 入口；它们不负责服务启动、权重上传或完整 SystemVersion 应用。
+缺失服务端 revision 时仍为 revision_verified=False，不把别名当作权重证明。
+
 ## 执行后端
 
 [sandbox.py](sandbox.py) 定义创建、执行、查询、取消与释放协议及 Mock；[local_process.py](local_process.py) 提供真实 argv 进程执行、超时、输出限额、独立工作目录与进程组清理。它使用宿主用户权限，不是安全隔离沙箱。

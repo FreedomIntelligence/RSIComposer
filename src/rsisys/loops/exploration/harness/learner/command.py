@@ -17,11 +17,11 @@ class TrainingCommandHandler(CommandHandler):
         spec = state.directive.payload
         harness.commands.validate_training_payload(spec, TrainSpec,
             apply=isinstance(spec, TrainSpec) and spec.apply_result)
-        base = spec.base or getattr(harness.policy, 'model', None)
+        base = spec.base or (spec.origin.initial_model if spec.origin else getattr(harness.policy, 'model', None))
         if not isinstance(base, ModelRef):
             raise ValueError('Training requires a base model')
         state.request = ActorTrainingRequest(base, state.directive.input_refs,
-                                             spec.recipe_ref, method=spec.method)
+                                             spec.recipe_ref, method=spec.method, origin=spec.origin)
 
     def validate_update(self, harness, state, request):
         backend = harness.learner
@@ -31,6 +31,9 @@ class TrainingCommandHandler(CommandHandler):
             raise NotImplementedError('Training backend does not support live updates')
         if state.job is None:
             raise RuntimeError('Live training updates require a confirmed submitted job')
+        from rsisys.loops.contracts.backend import BackendCapabilityProvider, validate_update_capabilities
+        if isinstance(backend, BackendCapabilityProvider):
+            validate_update_capabilities(backend.capabilities(), tuple(request.changes))
         validate(state.job, deepcopy(request))
 
     def update(self, harness, state, request):

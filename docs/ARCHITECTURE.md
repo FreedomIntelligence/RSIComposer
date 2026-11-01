@@ -17,7 +17,8 @@ src/rsisys/
 │   │   └── action_space/  # Actor 环境动作的描述/校验
 │   └── contracts/         # 消息、引用与公开端口
 ├── experience/            # 共享系统反馈库
-├── runtime/               # Runner、RunPolicy、运行恢复与公共后端
+├── runtime/               # Runner、RunPolicy、SystemRegistry、恢复与公共后端
+├── adapters/              # 可替换的具体训练 / serving 接入，位于 Harness 外
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── application.py         # 本地持久化装配
@@ -25,6 +26,12 @@ src/rsisys/
 ├── cli.py                 # 命令逻辑
 └── __main__.py            # CLI 薄入口
 ```
+
+`examples/medical/` 位于源码包外，独立组合任务、固定评测协议、两个 Harness 与 Runner。
+它使用共享端口和 adapters，不向核心注入医学数据集、验收阈值或训练配方。
+`native.py` 显式包装原始数据、tokenize 回调与进程训练，并保留转化证据；MedicalServing 在评测前
+准备独立候选路由。装配可替换 evaluator_factory 或注入 prepare_inference；默认评测 poll 每次
+至多推进一个样本，就绪等待保留原作业，明确应用拒绝通过终态反馈返回研究者。
 
 `DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。`harness/engine.py` 负责默认装配、状态协调和公开入口；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
 
@@ -64,7 +71,19 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 训练请求是后端中立（backend-neutral）的接口，只约束模型、非空 method / recipe 字符串与引用元组类型；不把训练算法限定为 sft / rl，也不要求引用非空。Actor 请求允许外部后端自主采样；Decision 请求保留原位置参数，追加 `data_refs=()` 和 `method="sft"`，支持外部数据。提供本地轨迹或系统经验引用时，默认 Harness 仍验证其归属。数据格式和算法能力由具体 learner 校验。
 
-默认 `rl` 保留本地顺序采样循环。可选 `train` 通过 `training_directive()` + `TrainingCommandHandler` + 注入的 learner 配对启用，不属于默认指令映射：Harness 将整个训练任务作为一个作业提交，后端可独立负责 rollout 与更新，Harness 负责作业生命周期、证据和可选应用。该路径开放外部 RL/SFT 框架接入，但不意味着已有 verl 等框架的具体适配。[backend_training.py](../examples/backend_training.py) 是独立子进程中的真实 CPU 标量回归示例，展示作业与产物边界，不演示 LLM 训练或 RL rollout；装配见[使用指南](GUIDE.md#接入整项训练任务)。
+默认 `rl` 保留本地顺序采样循环。可选 `train` 通过 `training_directive()` + `TrainingCommandHandler` + 注入的 learner 配对启用，不属于默认指令映射：Harness 将整个任务作为一个作业提交，后端独立负责算法与 rollout，Harness 负责作业、证据和可选应用。具体接入放在 [adapters/](../src/rsisys/adapters/)，不嵌入 Harness；[backend_training.py](../examples/backend_training.py) 仍是独立 CPU 标量回归示例。原生训练框架的配置、数据格式和资源分配由适配器及调用方明确提供，装配见[使用指南](GUIDE.md#接入整项训练任务)。
+
+## 系统版本、训练来源与部署
+
+[SystemVersion](../src/rsisys/loops/contracts/candidate.py) 是 `version`、`components`、可选 `model` 与 `parent_version` 的组合清单。components 将命名组件映射到 ArtifactRef，格式由消费方决定，prompt、数据或配置变更不必产生新权重。Candidate 的 `base_version` 继续表示训练权重基础版本；可选 `parent_system` 独立表示实验父系统，changes 只包含提议替换的组件。
+
+[SystemRegistry](../src/rsisys/runtime/systems.py) 是可选的单写者组合状态，不是后端发现中心。`register(candidate, model=None)` 从已知父版本合并组件并保留候选，`get(version)` 读取清单，`current` 读取当前已启用组合；注册不采纳候选。`activate(candidate_id, idempotency_key=...)` 先检查候选父版本仍是 current，再由注入的 SystemActivator 确认精确清单已准备好，最后更新 current。旧父版本必须显式 rebase；只有 SystemActivationRejected 明确确认无副作用或已完成回滚时可释放 pending，其他异常继续冻结原意图等待核对。ReferenceSystemActivator 仅用于模型保持不变的引用级组合；真实部署和绑定事务须显式实现。
+
+[TrainingOrigin](../src/rsisys/loops/contracts/training.py) 显式保存 `parent_system`、`initial_model`、`resume_mode` 和可选 checkpoint。可选 train 接收 origin；base 缺省且有 origin 时采用 origin.initial_model，两者均缺省时捕获当前角色模型；显式 base 必须与 origin.initial_model 一致。restart 不允许运行 checkpoint；weights_only 只加载权重并重置优化器、调度器、步数和 RNG；full_state 必须提供完整状态 checkpoint，后端不能降级恢复语义。成功结果的 candidate.parent_system 必须保留请求来源。
+
+[backend.py](../src/rsisys/loops/contracts/backend.py) 将方法、resume_modes、update_fields、checkpoint 导出及 reattach 能力显式分开声明。声明不支持的能力应在提交或操作前失败；已有无能力声明的后端继续实现原有 learner 端口。具体配方和 checkpoint 内容仍由后端验证。
+
+部署协议独立提供 prepare / query / release 与可选 reattach，返回稳定 DeploymentRef、可选 JobRef 及精确 ModelRef；只有 READY 表示可推理，UNKNOWN 保留不确定性。ModelActivator 适配器在确认目标模型就绪后返回，Harness 才更新角色绑定。SystemActivator 负责更大组件组合的准备和应用，不能用 JobStatus.SUCCEEDED 或新模型 URI 代替服务就绪。registry 与外部回执的持久化需单独集成，不因存在引用或训练后端 reattach 就自动获得 Application 恢复支持。
 
 ## 双 loop 协同
 
@@ -74,7 +93,7 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 4. Exploration Harness 汇总终态 Feedback；Runner 通过 Decision 的 `receive_feedback` 交付。默认 Decision Harness 将策略结果记为 improvement，供下一次决策使用。
 5. 反馈交付成功后 acknowledge，释放探索流程占用。
 
-默认串行装配一次协调一个未完成交付的指令；可选 `Runner(parallel=True)` 与 `ConcurrentExplorationHarness(factory, max_in_flight=...)` 支持多个独立实验。Decision Harness 用 `max_outstanding` 限制未完成指令数，模型从 outstanding / executions 查看各实验；每 tick 公平推进一个实验，未完成时仍可进行研究或提交新实验。一条 RL 指令内部可以多次采样和更新 Actor。后端轮询由调用方驱动，决策复查由 Directive / ReviewDecision 设定频率，两者不绑定。时间/token 自训练触发及共享模型更新事务尚未实现。并行实验由工厂创建隔离的 Actor、environment、memory 和执行状态；资源分配、作业是否物理并行由后端决定。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
+默认串行装配一次协调一个未完成交付的指令；可选 `Runner(parallel=True)` 与 `ConcurrentExplorationHarness(factory, max_in_flight=...)` 支持多个独立实验。Decision Harness 用 `max_outstanding` 限制未完成指令数，模型从 outstanding / executions 查看各实验；每 tick 公平推进一个实验，未完成时仍可研究或提交新实验。一条 RL 指令内部可多次采样和更新 Actor。后端轮询与模型复查频率独立。时间/token 自训练触发及共享模型更新事务尚未实现。并行实验由工厂隔离 Actor、environment、memory 和执行状态；资源分配由后端决定。模型可共享或独立绑定，具体部署由 Harness 外的适配器负责；角色引用同一模型不表示训练结果自动同步。
 
 运行中的 review 保留 continue / cancel。安装 `ExperimentControls` 后，研究者可通过普通获授权工具按 ID inspect / cancel / update / compare。`DirectiveUpdate` 携带 expected_version、幂等键和 changes；原指令不可变，支持更新的 handler/backend 应用控制变更并确认版本，不支持的字段或后端明确拒绝。候选比较要求已知完整训练 base、相同评测协议/输入及有效指标；排序不自动采纳。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
 
@@ -101,7 +120,7 @@ Experience 收集 runtime_feedback / training_run / evaluation / improvement / i
 
 默认 Harness 将原始 test-time history 留在自身实现中。每个 Actor episode 写一条 runtime_feedback，`Feedback.evidence_refs` 引用系统记录；RL 的 `trajectory_refs` 则引用默认 Exploration Harness 的本地轨迹，不把原始轨迹复制进 Experience。
 
-Runtime 提供运行策略、模型、作业、产物、执行后端与 Runner 协调；实验业务编排属于 Harness。Snapshot 在空闲边界保存内置 Harness 状态、模型绑定、共享 Experience 及产物；运行策略仅兼容默认 ResearcherRunPolicy，其他策略、替代 Harness、并行装配或自定义反馈提取器需显式集成。
+Runtime 提供运行策略、系统清单注册与应用、作业、产物和 Runner 协调；具体训练与服务适配器独立于 Harness，领域业务留在装配示例。Snapshot 在空闲边界保存内置组合；运行策略仅兼容默认 ResearcherRunPolicy，SystemRegistry、外部部署回执、替代 Harness、并行装配和自定义组件仍需显式集成。
 
 ## 交付与失败边界
 
@@ -119,7 +138,7 @@ Runtime 提供运行策略、模型、作业、产物、执行后端与 Runner �
 
 ## 尚待定义的边界
 
-- 优化目标可能是 Actor 模型/prompt、决策者自身，或 Harness 配置/代码；当前没有统一的 target 接口。
+- SystemVersion / Candidate 已能描述命名组件变更；各组件的格式、执行校验和原子启用仍由消费方及 SystemActivator 定义，框架不执行任意代码自修改。
 - 决策者训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
 - 候选跨轮保存，显式启用 `apply_candidate` 可独立应用已评测候选；验收指标和阈值由具体 policy 决定，没有全局默认验收规则。SFT 与可选 train 的 `apply_result` 默认 false，默认 RL 每轮应用学习结果，evaluate 不自动部署候选。
 

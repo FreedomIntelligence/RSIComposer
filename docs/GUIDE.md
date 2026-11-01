@@ -45,6 +45,12 @@ PYTHONPATH=src pixi run python -m rsisys run \
 
 需要鉴权时 credential_env 填环境变量名，启动前设置对应环境变量。不支持 JSON response_format 的服务可将 json_mode 设为 false，但内置模型 policy 仍要求回复合法 JSON。传输能力、版本验证和本地进程限制见 [Runtime](../src/rsisys/runtime/README.md)。
 
+### vLLM 推理与部署
+
+[适配器 README](../src/rsisys/adapters/README.md#serving) 提供 VLLMBackend、部署与 LoRA 启用的完整配置。
+服务由操作者独立启动，endpoint 包含 `/v1`；默认只观察既有部署，动态 LoRA 需显式开启。
+只有 READY 且模型身份匹配才允许绑定；服务别名不证明权重不可变，query / reattach 不重放加载。
+
 ## Researcher 查询实验
 
 默认装配会将 Exploration 的可用查询注册到 Decision Action Space，名称为 `query_exploration_<name>`。researcher 可在普通决策或运行中 review 中调用；review 默认权限仅开放 read_only 操作，可通过外部权限配置开放其他操作，默认最多调用 4 次，再作 continue / cancel 判断。训练继续由后端执行，控制器的同步查询应由对应后端设置超时。
@@ -220,9 +226,38 @@ exploration_harness = DefaultExplorationHarness(
 )
 ```
 
-上述 actor_policy、environment、experience 与 external_learner 由调用方提供。`train` payload 为 `TrainSpec(recipe_ref, method, base=None, apply_result=False)`；handler 将 input_refs 作为 data_refs，以单个 ActorTrainingRequest 提交，不预先生成 trajectory_refs，也不运行本地 RL 循环。后端决定 method、数据与 rollout 的语义，Harness 复用提交重试、轮询、取消、证据记录和可选版本应用。直接向 Exploration 端点提交时仍需注册 handler，调用方负责反馈消费与 acknowledge。
+上述 actor_policy、environment、experience 与 external_learner 由调用方提供。`train` payload 为 `TrainSpec(recipe_ref, method, base=None, apply_result=False, origin=None)`；handler 将 input_refs 作为 data_refs，以单个 ActorTrainingRequest 提交，不预先生成 trajectory_refs，也不运行本地 RL 循环。后端决定 method、数据与 rollout 的语义，Harness 复用提交重试、轮询、取消、证据记录和可选版本应用。直接向 Exploration 端点提交时仍需注册 handler，调用方负责反馈消费与 acknowledge。
 
-接口允许接入外部 RL/SFT 框架，但具体框架的适配、模型产物解析及作业幂等保证仍需实现。默认 MockActorLearner 只支持 sft / rl，并在提交时分别要求非空 data_refs / trajectory_refs，不能替代自主采样的后端。
+默认 MockActorLearner 只支持 sft / rl，并在提交时分别要求非空 data_refs / trajectory_refs，不能替代自主采样的后端。具体框架通过 Harness 外的适配器接入，原生配置与数据格式仍由调用方明确提供。
+
+### 具体训练接入与组合版本
+
+[适配器 README](../src/rsisys/adapters/README.md#training) 提供 ProcessTrainingBackend 的完整 recipe、
+原生命令、数据格式和结果读取接口。默认 worker 支持 Transformers / PEFT SFT，外部依赖自行安装；
+LLaMA-Factory 只是原生命令扩展，未验证 verl 适配。原生作业重连保留同一 JobRef，不自动恢复控制器。
+
+[TrainingOrigin](../src/rsisys/loops/contracts/README.md#可选训练来源与后端能力) 区分实验父系统与初始权重。
+TrainSpec 可传 origin；显式 base 必须等于 initial_model，成功候选须保留 parent_system。
+restart / weights_only / full_state 必须按后端声明执行；默认 worker 不支持 full_state，不隐式转换数据。
+
+[SystemRegistry](../src/rsisys/runtime/README.md#系统组合与显式应用) 管理组件清单。下例仅演示引用级 prompt
+组合；initial_model、prompt_ref 和 next_prompt_ref 由调用方提供：
+
+```python
+from rsisys.loops.contracts.candidate import Candidate, SystemVersion
+from rsisys.runtime.systems import ReferenceSystemActivator, SystemRegistry
+
+initial = SystemVersion("system-v1", {"prompt": prompt_ref}, initial_model)
+systems = SystemRegistry(initial, ReferenceSystemActivator(initial_model))
+proposal = Candidate("prompt-v2", initial_model.revision,
+                     {"prompt": next_prompt_ref}, ("actor",), parent_system=initial.version)
+systems.register(proposal)  # current 仍为 system-v1。
+systems.activate(proposal.candidate_id, idempotency_key="apply-prompt-v2")
+```
+
+register 不采纳候选；activate 检查父版本等于 current，但不做质量评测。ReferenceSystemActivator
+不部署或修改角色；真实组合需显式 SystemActivator，registry 与外部回执的恢复也需单独集成。
+仅 SystemActivationRejected 确认无副作用或已回滚时释放 pending；未知异常继续冻结原意图。
 
 运行 `pixi run backend-demo` 查看 [backend_training.py](../examples/backend_training.py)。示例使用独立子进程在 CPU 上优化标量回归模型，返回真实权重产物与 MSE；它展示训练作业接入，不是 LLM 训练、RL rollout 或 verl 的现成适配。请求字段及结果要求见 [Actor learner](../src/rsisys/loops/exploration/harness/learner/README.md) 和 [Decision learner](../src/rsisys/loops/decision_making/harness/learner/README.md)。
 
@@ -230,7 +265,7 @@ exploration_harness = DefaultExplorationHarness(
 
 真实后端返回训练结果后，若要 apply_learning 或 apply_result，需要在对应 Harness 构造时传入 `model_activator`。该适配器实现 `activate(result, *, idempotency_key)`：解析候选权重引用，完成部署或确认既有部署，并返回与 result.model 相同的 ModelRef。等待状态抛出 ModelActivationPending，由调用方稍后继续推进；不在框架内部持续轮询。角色绑定仅在确认后改变。
 
-`backend-demo` 还展示标量模型的加载与推理：独立进程输出权重，ScalarModelService 加载并确认，Harness 更新绑定，最后通过新版本进行预测。它是简单接口示例，不提供第三方推理服务部署适配。
+`backend-demo` 还展示标量模型的加载与推理：独立进程输出权重，ScalarModelService 加载并确认，Harness 更新绑定，最后通过新版本进行预测。具体推理服务通过独立适配器接入；prepare / query / release / reattach 的共享协议见 [backend.py](../src/rsisys/loops/contracts/backend.py)。部署 JobRef 成功不等于 READY，适配器必须核对精确模型身份后才允许绑定。
 
 外部数据可以直接使用 `ArtifactRef("dataset-id", "dataset", "s3://bucket/path")` 等引用，无需先写入框架存储；URI 和数据格式由使用者的适配实现解释。未知的 version/digest 保留 None，不伪造摘要。
 
@@ -279,6 +314,23 @@ with Application.resume(config.data_dir) as app:
 
 反馈提取可通过 `DefaultDecisionHarness(..., feedback_selector=...)` 替换；接口和默认实现见 [Experience](../src/rsisys/experience/README.md)。工作区基础读取见 [tools](../src/rsisys/loops/decision_making/harness/tools/README.md)，宿主资源隔离由沙箱/部署层实现。
 
+## 独立医学研究示例
+
+[medical README](../examples/medical/README.md) 提供数据格式、prepare / check / run 命令、Python 装配、
+固定评测及证据边界。领域代码位于 examples/medical，通过两个默认 Harness 与 Runner 独立装配。
+prepare / check 只读；CLI run 支持 prompt 研究，原生训练通过 Python 注入 learner 与显式输入绑定。
+
+医疗 prompt / evaluate / apply_candidate 声明 `accepts_input_refs=False`，省略 input_ids 即为空，
+显式非空拒绝并可进入有界输出纠错；固定评测后端仍拒绝非空 data_refs。train 保留输入引用。
+原生 worker 的 tokenized JSONL 与医学题目格式不同，转换和消费证据由接入实现提供。
+[native.py](../examples/medical/native.py) 的 MedicalTrainingBackend / MedicalServing 提供显式
+tokenize / 进程训练包装与候选路由准备；完整接线见上述 README。
+评测可注入 prepare_inference / evaluator_factory，默认 poll 每次至多推进一个样本；明确应用拒绝返回反馈。
+
+已验证 native-final 的 3 步训练、6 行／48 input tokens 消费及同 job 重连一致。
+真实医疗运行仅为 prompt→评测→持平拒绝 apply→finish，current 未变；使用 4 条 train 和
+4 条原 source TRAIN 子集作 dev。尚无真实 medical SFT / LoRA 部署或训练→评测→apply 全链路证明，
+这些接线验证不代表医学增益。
 
 ## 默认长程研究能力
 

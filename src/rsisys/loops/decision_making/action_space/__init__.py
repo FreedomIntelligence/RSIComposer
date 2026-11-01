@@ -103,6 +103,8 @@ class ModularDecisionActionSpace:
         # Exploration owns payload validation for each supported mode.
         if directive.mode not in self._directive_modes:
             raise ValueError(f"Unsupported directive mode: {directive.mode}")
+        if directive.input_refs and not self.directives.describe((directive.mode,))[0].accepts_input_refs:
+            raise ValueError(f"{directive.mode} does not accept input references")
 
 
 class _StringArgumentDefinition:

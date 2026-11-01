@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate native SVGs for two Harnesses, runtime RunPolicy and Experience."""
+"""Generate native SVGs with explicit core, replaceable adapter and example layers."""
 from pathlib import Path
 from html import escape
 import unicodedata
@@ -40,6 +40,8 @@ class SVG:
         if max_width is not None:
             assert width <= max_width, (text, round(width), max_width)
         assert 0 <= x <= self.width and 0 <= y <= self.height
+        left = x if anchor == 'start' else x-width if anchor == 'end' else x-width/2
+        assert 0 <= left and left+width <= self.width, (text, left, width)
         fam = MONO if mono else FAMILY
         self.parts.append(f'<text x="{x}" y="{y}" font-family="{escape(fam, quote=True)}" font-size="{size}" font-weight="{weight}" fill="{color}" text-anchor="{anchor}">{escape(text)}</text>')
         self.text_count += 1
@@ -69,6 +71,7 @@ class SVG:
         self.text(x+24,title_y,title,title_size,color,650,max_width=w-48)
         for i,line in enumerate(lines):
             if line:
+                assert title_y+34+i*29 <= y+h-12, (ident, line, h)
                 self.text(x+24,title_y+34+i*29,line,20,MUTED,max_width=w-48)
         self.parts.append('</g>')
 
@@ -86,7 +89,7 @@ def legend(s):
     s.rect(350, 158, 42, 26, '#F4F8FF', BLUE, rx=6, dash='8 5')
     s.text(406, 179, '整体可换 / 实现可换（遵守接口）', 20, MUTED)
     s.rect(980, 158, 42, 26, '#FFF8E8', AMBER, rx=6, dash='8 5')
-    s.text(1036, 179, '可换 · 需适配', 20, MUTED)
+    s.text(1036, 179, '接入 / 示例 · 需显式装配', 20, MUTED)
     s.text(2300, 179, '蓝 / 绿：两个 Loop    紫：共享 Experience', 20, MUTED, anchor='end')
 
 
@@ -99,13 +102,14 @@ def replaceable(s, ident, x, y, w, h, title, lines=(), color=BLUE,
 
 
 def system_flow():
-    s = SVG(2400, 1920, 'RSISys 系统流程图',
+    s = SVG(2400, 2540, 'RSISys 系统流程图',
             '两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。'
             'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
             'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
             'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
             'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。'
-            'runtime 中的 RunPolicy 可替换，支持 researcher、time、goal；Recovery 保存运行检查点。默认上下文压缩与长期议程可替换，可选 DSH 持久会话。')
+            'runtime 中的 RunPolicy 可替换；SystemRegistry 管理组件清单的父版本与 current。'
+            'TrainingOrigin 区分实验父系统与初始权重。具体训练和 serving 适配器、独立 medical 示例位于 Harness 外。')
     s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
     s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
     legend(s)
@@ -151,7 +155,7 @@ def system_flow():
     s.text(1390, 379, 'Exploration Harness', 29, GREEN, 650)
     s.chip(2085, 352, 145, '整体可换', '#D7EEE2', GREEN)
     s.node('directive-dispatch', 1390, 410, 840, 105, '默认 Harness · 仅装配与指令协调', (
-        'Directive → execute / SFT / RL / prompt / evaluate',
+        'Directive → execute / SFT / RL / train / prompt / evaluate',
     ), GREEN, stroke='#9ACBB6', title_size=28)
     s.path('M 1810 515 V 540', GREEN, arrow='green')
     s.parts.append('<g id="exploration-execution">')
@@ -194,7 +198,7 @@ def system_flow():
         '可直接提交指令',
     ), INK, '#EAF0F6', LINE, title_size=25)
     s.node('directive', 1060, 410, 230, 180, 'Directive', (
-        'execute · sft', 'rl · evaluate', 'prompt 配置',
+        'execute · sft', 'rl · train', 'evaluate · 配置',
     ), INK, '#EAF0F6', LINE, title_size=26)
     s.path('M 1175 330 V 410')
     s.path('M 960 710 H 1045 V 465 H 1060', BLUE, arrow='blue')
@@ -223,25 +227,45 @@ def system_flow():
     s.path('M 100 1525 H 55 V 505 H 170', PURPLE, arrow='purple', dash='9 7')
     s.label(55, 1410, '检索', PURPLE, 18)
 
-    replaceable(s, 'runtime-backends', 100, 1660, 1050, 165, 'Runtime / 共享后端', (
+    s.node('system-versions', 100, 1650, 2200, 155, '核心协议 / 系统版本与训练来源', (
+        'SystemVersion：命名组件 + model + parent_version；Candidate.parent_system 与训练 base_version 独立',
+        'SystemRegistry：父版本 / current / activate；SystemActivationRejected 释放 pending，未知结果冻结；TrainingOrigin：父系统 / 初始权重 / 恢复模式',
+        'BackendCapabilities：method / resume / update / checkpoint / reattach；DeploymentState：稳定引用，READY 才表示可推理',
+    ), INK, '#EAF0F6', LINE, title_size=28)
+    replaceable(s, 'runtime-backends', 100, 1850, 1050, 165, 'Runtime / 共享后端', (
         'Model · Sandbox · Artifact 后端',
         'Recovery：运行检查点 / 回执；未知效果须核对',
     ), BLUE, '#EFF5FF', title_size=28)
-    replaceable(s, 'snapshot', 1190, 1660, 1110, 165, 'Snapshot / 保存与恢复', (
+    replaceable(s, 'snapshot', 1190, 1850, 1110, 165, 'Snapshot / 保存与恢复', (
         '内置空闲边界 · 仅默认 researcher 运行策略',
         '自定义模块需显式适配保存 / 恢复 / 引用一致性',
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    s.text(100, 1875, '虚线框内部展示默认组合；整体替换 Harness 不要求保留相同内部结构。默认训练 / 评测后端为 Mock。', 22, MUTED)
+    replaceable(s, 'training-adapter', 100, 2070, 1050, 170, 'adapters/training.py · 原生训练', (
+        'ProcessTrainingBackend → TrainingCommand / 原生配方 / 作业回执',
+        '可选 Transformers / PEFT；其他 CLI 需显式命令与结果读取',
+    ), AMBER, '#FFF8E8', title_size=27, adapt=True)
+    replaceable(s, 'serving-adapter', 1190, 2070, 1110, 170, 'adapters/serving.py · 推理与部署', (
+        'VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator',
+        '既有服务 / 显式 LoRA；query / reattach → READY；release',
+    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
+    s.path('M 625 2070 V 2035 H 70 V 1725 H 100', AMBER, arrow='amber', dash='7 6')
+    s.path('M 1745 2070 V 2035 H 2330 V 1725 H 2300', AMBER, arrow='amber', dash='7 6')
+    replaceable(s, 'medical-example', 100, 2290, 2200, 155, 'examples/medical/ · 独立领域装配，位于 Harness 外', (
+        'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
+        'native.py：显式 tokenize → 进程训练 / 来源与转化证据；MedicalServing：独立候选路由；应用拒绝返回反馈',
+    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
+    s.text(100, 2490, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
     s.save('system-flow.svg')
 
 
 def file_architecture():
-    s = SVG(2400, 1920, 'RSISys 文件架构图',
+    s = SVG(2400, 2440, 'RSISys 文件架构图',
             '两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。'
             'Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。'
             'step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。'
             '跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。'
-            'Experience 与服务后端可换，Snapshot 仅兼容默认 researcher 策略，自定义模块需显式适配。')
+            'SystemVersion、TrainingOrigin 与可选部署能力定义在 contracts，SystemRegistry 位于 runtime/systems.py。'
+            'adapters 提供 Harness 外的具体执行接入；examples/medical 独立持有领域任务和验收规则。')
     s.text(100, 80, 'RSISys / 文件架构', 42, weight=750)
     s.text(100, 126, 'src/rsisys/ · 默认组合与替换边界', 26, MUTED)
     legend(s)
@@ -315,9 +339,10 @@ def file_architecture():
     s.text(1680, 1150, '运行 / 训练 / 评测 / 改进证据', 22, MUTED)
     s.text(1680, 1200, '工作记忆保留在两个 Harness 内', 22, MUTED)
 
-    s.node('framework', 100, 1380, 2200, 140, '框架骨架 / Loop protocol + Runner 协同', (
-        'loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training',
-        'runner.py：串行 / 并行协同；recovery.py：串行运行恢复；control.py：查询 / 取消 / 更新 / 比较',
+    s.node('framework', 100, 1380, 2200, 155, '框架骨架 / Loop protocol + Runner 协同', (
+        'loops/contracts/：candidate.py → SystemVersion / Candidate；training.py → TrainingOrigin；backend.py → 能力 / 部署协议',
+        'runtime/runner.py：协同；systems.py：父版本 / current / 应用；recovery.py：恢复；control.py：查询 / 取消 / 更新 / 比较',
+        'Directive / Feedback / coordination / queries / requests / jobs / model_service / artifacts：共享端口与消息',
     ), INK, '#EAF0F6', LINE, title_size=28)
     s.parts.append('<g id="runtime-dir">')
     s.node('runtime-boundary', 100, 1570, 1050, 255, 'runtime/ · 运行控制与共享后端',
@@ -336,7 +361,17 @@ def file_architecture():
         '内置空闲边界 · 仅默认 researcher 运行策略',
         'time / goal 与自定义组件需显式适配保存 / 恢复 / 引用一致性',
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    s.text(100, 1878, '装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。', 22, MUTED)
+    replaceable(s, 'concrete-adapters', 100, 1880, 2200, 185, 'src/rsisys/adapters/ · 具体接入，独立于两个 Harness', (
+        'training.py：ProcessTrainingBackend / TrainingCommand；可选 Transformers / PEFT，其他原生 CLI 需显式接入',
+        'serving.py：VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator；独立服务 / 显式 LoRA',
+        '依赖共享协议，不反向把原生训练或 serving 框架嵌入 Harness；外部作业回执不等于控制器完整恢复',
+    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
+    replaceable(s, 'medical-example-files', 100, 2120, 2200, 185, 'examples/medical/ · 独立装配与可替换领域规则', (
+        'task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run',
+        'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
+        'build：prepare_inference / evaluator_factory 可替换；组合两 Harness + Runner + SystemRegistry，领域规则留在示例',
+    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
+    s.text(100, 2370, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
     s.save('file-architecture.svg')
 
 

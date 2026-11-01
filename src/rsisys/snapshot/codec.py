@@ -4,14 +4,14 @@ from dataclasses import fields, is_dataclass
 from enum import Enum
 
 from rsisys.loops.contracts.artifacts import ArtifactRef
-from rsisys.loops.contracts.candidate import Candidate
+from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision
 from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, TokenUsage
-from rsisys.loops.contracts.training import TrainingResult
+from rsisys.loops.contracts.training import TrainingResult, TrainingOrigin, ResumeMode
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 from rsisys.loops.decision_making.action_space import OperationCall, OperationResult
 from rsisys.loops.decision_making.harness.state import (
@@ -42,13 +42,13 @@ TYPES = {cls.__name__: cls for cls in (
     ExperienceRecord, Memory, HistoryEntry, DecisionContext, OperationSpec,
     _PendingOperationRecord, _PendingReviewRecord, _ReviewSession, DecisionTrainingRequest,
     CommandState, PendingEpisode, EvaluationRequest, EvaluationResult,
-    ArtifactRef, Candidate, Directive, Feedback, JobRef, ModelRef, TokenUsage,
+    ArtifactRef, Candidate, SystemVersion, Directive, Feedback, JobRef, ModelRef, TokenUsage,
     ExecutionView, ExplorationProgress, ReviewDecision, JobProgress,
     DirectiveProvenance, CandidateEvaluation,
-    TrainingResult, OperationCall, OperationResult, DecisionState, ExplorationState,
+    TrainingResult, TrainingOrigin, OperationCall, OperationResult, DecisionState, ExplorationState,
     RLPlan, RLState, ActorTrainingRequest, SFTSpec, RLSpec, EvaluationSpec, PromptSpec,
 )}
-ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus)}
+ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus, ResumeMode)}
 
 
 def encode(value):

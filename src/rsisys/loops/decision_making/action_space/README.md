@@ -62,6 +62,8 @@ tools = BoundDecisionTools(capabilities.bindings)
 
 [directives.py](directives.py) 提供 `DirectiveSpec(mode, description, input_schema)`、`DirectiveDefinition(spec, parser)` 和 `DirectiveDefinitions(definitions=None)`。每个装配实例独立持有定义；无全局注册表。省略 definitions 使用内置模式，显式传入则替换整个目录；追加模式使用 `(*builtin_directives(), custom_definition)`。
 
+`DirectiveSpec.accepts_input_refs=False` 表示该指令不接收额外输入引用；默认 policy 在省略 input_ids 时不继承历史产物，并拒绝非空 input_ids。Action Space 也在发出指令前校验这一声明。默认 True 保留显式选取或继承输入的行为，具体内容仍由执行后端校验。
+
 parser 接收 `(arguments, candidates)`，返回 payload；它负责参数验证，JSON Schema 仅向模型描述参数。payload 应为可被 JSON 序列化的值或仅包含这些值的 dataclass，以适配默认 Harness 的 history 与事件记录。返回可序列化 payload 不代表具备快照支持。
 
 ModelDecisionPolicy 传入跨轮 context.candidates，并兼容合并 last_feedback.candidates，同 ID 只传一次。内置 evaluate 按 candidate_id 查找此集合，允许重复评测较早的训练候选，不要求最近反馈再次携带候选。
