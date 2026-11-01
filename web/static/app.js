@@ -224,10 +224,14 @@ function abortEntry(entry) {
   entry.controller?.abort(); entry.controller = null; entry.token = (entry.token || 0) + 1;
   if (entry.status === "pending") entry.status = entry.snapshot ? "ready" : "idle";
 }
+function disposeGraph(scope) {
+  if(!scope)return;
+  scope.graph?.dispose?.();scope.graph=null;scope.detailFingerprint=null;scope.renderPending=false;
+}
 function activateProject() {
   const key = JSON.stringify([state.demo, state.runId]);
   if (state.activeScope?.key === key) return state.activeScope;
-  if (state.activeScope) for (const entry of state.activeScope.cache.values()) abortEntry(entry);
+  if (state.activeScope) { disposeGraph(state.activeScope); for (const entry of state.activeScope.cache.values()) abortEntry(entry); }
   let scope = state.scopes.get(key);
   if (!scope) { scope = { key, cache: new Map(), runId: state.runId, details: null }; state.scopes.set(key, scope); }
   state.activeScope = scope;
@@ -275,7 +279,14 @@ function executionSequence(s, scope) {
   const graphRows=groups.map(g=>g.row),graphKeys=new Map(RSIDecisions.layout(graphRows).nodes.filter(n=>n.row).map(n=>[groups[n.index],n.key]));
   section.id="execution-flow";
 
-  const navigation=el("div","flow-map");navigation.setAttribute("aria-label",t("本次运行的决策"));section.append(navigation);
+  scope.graphView ||= {};
+  const shell=el("div","trajectory-shell"),navigation=el("div","flow-map");
+  navigation.setAttribute("aria-label",t("本次运行的决策"));shell.append(navigation);
+  const controls=el("div","trajectory-tools");
+  for(const [text,title,action] of [["−","缩小",()=>scope.graph?.zoomBy(.8)],["+","放大",()=>scope.graph?.zoomBy(1.25)],["⤢","适应全部节点",()=>scope.graph?.fit()],["↺","重排",()=>scope.graph?.reset()]]){
+    const button=el("button","",text);button.type="button";button.title=t(title);button.setAttribute("aria-label",t(title));button.addEventListener("click",action);controls.append(button);
+  }
+  shell.append(controls);section.append(shell);
   const entries=el("ol","flow-steps");section.append(entries);
   const fill=(restoreFocus=false)=>{
     const scroll={left:navigation.scrollLeft,top:navigation.scrollTop};
@@ -284,12 +295,16 @@ function executionSequence(s, scope) {
     let selected=scope.flowSelected.get(s.run_id);
     if(!groups.some(g=>keyOf(g)===selected))selected=groups.length?keyOf(groups[0]):null;
     scope.flowSelected.set(s.run_id,selected);
-    navigation.replaceChildren(RSIDecisions.render({
+    scope.graph?.dispose?.();
+    scope.graph=RSIDecisions.render({
+      view:scope.graphView,
+      onIdle:()=>{if(scope===state.activeScope&&state.page==="experiment"&&scope.renderPending){scope.renderPending=false;renderProject();}},
       rows:graphRows,selected,
-      startLabel:t("实验起点"),label:(row,index)=>`${index+1} · ${actionText(decisionAction(row))}`,
+      startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>`${index+1} · ${actionText(decisionAction(row))}`,
       edgeLabel:kind=>t({sequence:"记录顺序，不表示因果",parent:"明确的父决策",source:"引用的决策"}[kind]),
       onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
-    }));
+    });
+    navigation.replaceChildren(scope.graph);
     navigation.scrollLeft=scroll.left;navigation.scrollTop=scroll.top;
     for(const [i,g] of groups.entries()){
       const row=g.row,f=feedbackFor(row,s),key=keyOf(g);
@@ -394,6 +409,7 @@ function renderProject() {
   if (!project || state.page!=="experiment") return;
   const scope = state.activeScope || activateProject(), row = runRows(project).find(r=>r.run_id===state.runId);
   if(!row)return;
+  if(scope.graphView?.interacting||scope.graphView?.animating){scope.renderPending=true;return;}
   $("project-name").textContent = experimentName(row); $("project-description").textContent = projectName(project); $("project-description").hidden=false;
   const host=$("project-content"),details=scope.details || (scope.details=el("section","project-detail"));
   details.setAttribute("aria-label",t("本次运行的决策"));
@@ -405,6 +421,7 @@ function renderProject() {
       scope.flowOpen ||= new Set();if(d.open)scope.flowOpen.add(d.dataset.retainKey);else scope.flowOpen.delete(d.dataset.retainKey);
     }
     const oldMap=details.querySelector?.(".flow-map"),scroll={left:oldMap?.scrollLeft||0,top:oldMap?.scrollTop||0};
+    scope.graph?.dispose?.();scope.graph=null;
     details.replaceChildren(runDetail({runId:row.run_id,row},scope));
     const map=details.querySelector?.(".flow-map");if(map){map.scrollLeft=scroll.left;map.scrollTop=scroll.top;}
     scope.detailFingerprint=fingerprint;
@@ -455,7 +472,7 @@ function navigateURL(id,replace=false) {
 }
 function showManagement(push=true) {
   clearTimeout(state.timer);state.controller?.abort();++state.epoch;
-  if(state.activeScope)for(const entry of state.activeScope.cache.values())abortEntry(entry);
+  if(state.activeScope){disposeGraph(state.activeScope);for(const entry of state.activeScope.cache.values())abortEntry(entry);}
   state.page="management";if(push)navigateURL("");renderSelectors();renderProject();schedule();
 }
 function selectRun(id,push=true) {
@@ -548,6 +565,7 @@ async function refresh() {
 }
 function switchDemo() {
   if (state.activeScope) {
+    disposeGraph(state.activeScope);
     for (const entry of state.activeScope.cache.values()) abortEntry(entry);
     state.activeScope = null;
   }
@@ -578,8 +596,9 @@ $("empty-demo").addEventListener("click", () => {
   else refresh();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { clearTimeout(state.timer); }
-  else if (state.auto && !state.demo) refresh();
+  if (document.hidden) { clearTimeout(state.timer); disposeGraph(state.activeScope); }
+  else if(state.demo)renderProject();
+  else if (state.auto) refresh();
 });
 function renderLanguage() {
   RSII18n.applyStatic(document);

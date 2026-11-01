@@ -7,15 +7,22 @@ const source = fs.readFileSync(`${__dirname}/app.js`, "utf8");
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const textOf = node => descendants(node).map(n => n.textContent || "").join(" ");
 const findClass = (node, name) => descendants(node).filter(n => (n.className || "").split(" ").includes(name));
+function events(target,listeners={}) {
+  const registered=new Map();
+  target.addEventListener=(type,callback)=>{if(!registered.has(type))registered.set(type,new Set());registered.get(type).add(callback);listeners[type]=(...args)=>{for(const listener of [...registered.get(type)])if(registered.get(type).has(listener))listener(...args);};};
+  target.removeEventListener=(type,callback)=>registered.get(type)?.delete(callback);
+  return target;
+}
 class Element {
-  constructor(tag = "div") { this.tagName = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {}; this.listeners = {}; this.scrollLeft = 0; this.scrollTop = 0; this.open = false; }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = nodes; }
+  constructor(tag = "div") { this.tagName = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {}; this.listeners = {}; this.scrollLeft = 0; this.scrollTop = 0; this.open = false; events(this,this.listeners); }
+  append(...nodes) { for(const node of nodes)node.parentNode=this;this.children.push(...nodes); }
+  replaceChildren(...nodes) { for(const node of this.children)node.parentNode=null;this.children=[];this.append(...nodes); }
   get childElementCount() { return this.children.length; }
   get firstElementChild() { return this.children[0]; }
   setAttribute(k, v) { this.attributes[k] = String(v); if (k === "class") this.className = String(v); if (k.startsWith("data-")) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(v); }
   getAttribute(k) { return this.attributes[k] ?? null; }
-  addEventListener(k, f) { this.listeners[k] = f; }
+  setPointerCapture(id) { this.capturedPointer=id; }
+  releasePointerCapture(id) { if(this.capturedPointer===id)delete this.capturedPointer; }
   querySelectorAll(selector) { return descendants(this).filter(n => selector.startsWith(".") ? (n.className || "").split(" ").includes(selector.slice(1)) : selector === "details[data-retain-key]" && n.tagName === "details" && n.dataset.retainKey); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   focus() {}
@@ -23,7 +30,7 @@ class Element {
 function harness(fetcher = async () => { throw Error("unexpected fetch"); }, search = "") {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) { const e = new Element(); e.id = id; elements.set(id, e); } return elements.get(id); };
-  const documentListeners = {}, document = { getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), addEventListener(k, f) { documentListeners[k] = f; }, hidden: false };
+  const documentListeners = {}, document = events({ getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), hidden: false },documentListeners);
   const windowListeners = {}, location = { href: `http://localhost:8769/${search}`, search };
   const entries = [location.href]; let cursor = 0;
   const updateURL = url => { const next = new URL(String(url), location.href); location.href = next.href; location.search = next.search; location.hash = next.hash; };
@@ -34,14 +41,26 @@ function harness(fetcher = async () => { throw Error("unexpected fetch"); }, sea
     go(delta) { const next = cursor + delta; if (next < 0 || next >= entries.length) return; cursor = next; updateURL(entries[cursor]); ctx.savedURL = location.href; windowListeners.popstate?.({ state: null }); },
     back() { this.go(-1); }, forward() { this.go(1); },
   };
-  const window = { addEventListener(k, f) { windowListeners[k] = f; }, scrollX: 0, scrollY: 0,
-    scrollTo({ left = 0, top = 0 }) { this.scrollX = left; this.scrollY = top; } };
-  const ctx = vm.createContext({ document, window, location, history, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher });
+  const window = events({scrollX: 0, scrollY: 0,
+    scrollTo({ left = 0, top = 0 }) { this.scrollX = left; this.scrollY = top; } },windowListeners);
+  const frames=new Map();let frameID=0,now=0;
+  const requestAnimationFrame=callback=>{const id=++frameID;frames.set(id,callback);return id;};
+  const cancelAnimationFrame=id=>frames.delete(id);
+  const frame=()=>{const pending=[...frames.values()];frames.clear();now+=16;for(const callback of pending)callback(now);};
+  const flushFrames=(limit=600)=>{for(let i=0;frames.size&&i<limit;i++)frame();assert.equal(frames.size,0,"graph animation did not become idle");};
+  Object.assign(window,{requestAnimationFrame,cancelAnimationFrame});
+  const ctx = vm.createContext({ document, window, location, history, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, requestAnimationFrame,cancelAnimationFrame,performance:{now:()=>now},fetch: fetcher });
   vm.runInContext(fs.readFileSync(`${__dirname}/i18n.js`, "utf8"), ctx);
   vm.runInContext(fs.readFileSync(`${__dirname}/decisions.js`, "utf8"), ctx);
+  // Observe the real renderer and lifecycle rather than replacing graph behavior.
+  const renders=[],decisions=ctx.RSIDecisions;
+  ctx.RSIDecisions={...decisions,render(options){
+    const svg=decisions.render(options),record={svg,options,disposals:0},dispose=svg.dispose;
+    svg.dispose=function(...args){record.disposals++;return dispose.apply(this,args);};renders.push(record);return svg;
+  }};
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
   vm.runInContext("state.auto = false;", ctx);
-  return { ctx, get, document, documentListeners, windowListeners, history, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
+  return { ctx, get, document, documentListeners, windowListeners, history, renders,frame,flushFrames,get pendingFrames(){return frames.size;},run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
 }
 const run = (id, extra = {}) => ({ schema_version: 1, run_id: id, updated_at: "2026-11-01T00:00:00Z", ...extra });
 const project = (id, runs = [run(id)], extra = {}) => ({ project_id: id, name: id, runs, ...extra });
@@ -53,6 +72,14 @@ function seed(h, id, snapshot) {
   h.run('{ const key=JSON.stringify([state.demo,id]); let scope=state.scopes.get(key); if(!scope){scope={key,cache:new Map(),runId:id,details:null};state.scopes.set(key,scope);} scope.cache.set(id,{snapshot:fixture,status:"ready",token:0}); }');
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+const graphState = h => JSON.parse(h.run('JSON.stringify({camera:state.activeScope.graphView.camera,positions:state.activeScope.graphView.positions},(_,value)=>value instanceof Map?[...value]:value)'));
+function dragGraphNode(h,key,dx=60,dy=40,release=true) {
+  const node=findClass(h.get("project-content"),"decision-node").find(n=>n.dataset.key===key);assert.ok(node,`missing node ${key}`);
+  const event={pointerId:1,button:0,clientX:100,clientY:100,target:node,stopPropagation(){},preventDefault(){}};
+  node.listeners.pointerdown(event);node.listeners.pointermove({...event,clientX:100+dx,clientY:100+dy});
+  if(release)node.listeners.pointerup({...event,type:"pointerup",clientX:100+dx,clientY:100+dy});
+  return node;
+}
 
 test("catalog preserves two real project groups with multiple experiments without merging equal project names", () => {
   const input = [
@@ -136,8 +163,8 @@ test("experiments within one project isolate cached histories, selected graph no
   assert.equal(findClass(detail,"flow-map")[0].scrollLeft,321);assert.equal(findClass(detail,"flow-map")[0].scrollTop,87);
   assert.equal(h.run('state.snapshot.decisions.length'),35);
   h.run('showManagement()');await h.run('selectRun("b")');
-  assert.equal(findClass(h.get("project-content"),"flow-map")[0],bMap);
-  assert.equal(bMap.scrollLeft,18);assert.equal(bMap.scrollTop,29);
+  const rebuiltBMap=findClass(h.get("project-content"),"flow-map")[0];assert.notEqual(rebuiltBMap,bMap);
+  assert.equal(rebuiltBMap.scrollLeft,18);assert.equal(rebuiltBMap.scrollTop,29);
   assert.deepEqual(requests,["/api/runs/b"]);
 });
 
@@ -277,6 +304,89 @@ test("refresh reloads only the selected experiment and preserves another experim
   assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.activeScope"),bScope);assert.equal(h.run('state.activeScope.cache.get("b")'),bEntry);assert.equal(h.get("project-content").firstElementChild,bDetail);assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["b"]);
 });
 
+test("graph selection and changed polling preserve the experiment's camera and node positions", async () => {
+  const initial=run("a",{decisions:[{decision_id:"d1",mode:"train",reason:"First decision"},{decision_id:"d2",mode:"evaluate",feedback:{summary:"Previous outcome"}}]});
+  const updated={...initial,decisions:[initial.decisions[0],{...initial.decisions[1],feedback:{summary:"Updated outcome"}}]};
+  const catalog=[project("p",[run("a"),run("b")])],calls=[];
+  const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:updated);});setup(h,catalog);seed(h,"a",initial);await h.run('selectRun("a")');h.flushFrames();
+  const view=h.run("state.activeScope.graphView");h.run('state.activeScope.graph.zoomBy(1.25)');h.flushFrames();
+  const unshifted=graphState(h);dragGraphNode(h,"d2");assert.ok(h.pendingFrames>0);h.flushFrames();assert.notDeepEqual(graphState(h).positions,unshifted.positions);
+  const before=graphState(h),old=h.renders.at(-1);
+  findClass(h.get("project-content"),"decision-node")[1].listeners.click({detail:0});
+  assert.ok(old.disposals>0);assert.equal(h.run("state.activeScope.graphView"),view);assert.deepEqual(graphState(h),before);
+  h.flushFrames();const selected=h.renders.at(-1),beforePoll=graphState(h);
+  await h.run("refresh()");
+  assert.ok(selected.disposals>0);assert.notEqual(h.run("state.activeScope.graph"),selected.svg);
+  assert.equal(h.run("state.activeScope.graphView"),view);assert.deepEqual(graphState(h),beforePoll);
+  assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"d2");assert.match(textOf(h.get("project-content")),/Updated outcome/);
+  assert.deepEqual(calls,["/api/projects","/api/runs/a"]);h.flushFrames();
+});
+
+test("polling while graph interaction or animation is busy keeps its DOM until onIdle renders the latest snapshot", async () => {
+  for(const busy of ["interacting","animating"]){
+    let version=0;const calls=[],catalog=[project("p",[run("a"),run("b")])];
+    const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:run("a",{decisions:[{decision_id:"d",mode:"train",feedback:{summary:`Outcome ${++version}`}}]}));});
+    setup(h,catalog);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train",feedback:{summary:"Initial outcome"}}]}));await h.run('selectRun("a")');h.flushFrames();
+    const record=h.renders.at(-1),detail=h.get("project-content").firstElementChild,runDOM=findClass(detail,"run-detail")[0],count=h.renders.length;
+    if(busy==="interacting")record.svg.listeners.pointerdown({pointerId:2,button:0,clientX:100,clientY:100,target:record.svg});
+    else dragGraphNode(h,"d");
+    assert.equal(h.run(`state.activeScope.graphView.${busy}`),true);
+    await h.run("refresh()");await h.run("refresh()");
+    assert.equal(h.renders.length,count);assert.equal(record.disposals,0);assert.equal(h.run("state.activeScope.graph"),record.svg);
+    assert.equal(h.get("project-content").firstElementChild,detail);assert.equal(findClass(detail,"run-detail")[0],runDOM);
+    assert.match(textOf(detail),/Initial outcome/);assert.doesNotMatch(textOf(detail),/Outcome [12]/);
+    assert.equal(h.run("state.activeScope.renderPending"),true);assert.equal(h.run('state.snapshot.decisions[0].feedback.summary'),"Outcome 2");
+    if(busy==="interacting")record.svg.listeners.pointerup({pointerId:2,type:"pointerup"});else h.flushFrames();
+    assert.equal(h.run("state.activeScope.renderPending"),false);assert.ok(record.disposals>0);assert.equal(h.renders.length,count+1);
+    assert.equal(h.get("project-content").firstElementChild,detail);assert.notEqual(findClass(detail,"run-detail")[0],runDOM);
+    assert.match(textOf(detail),/Outcome 2/);assert.doesNotMatch(textOf(detail),/Initial outcome|Outcome 1/);
+    assert.deepEqual(calls,["/api/projects","/api/runs/a","/api/projects","/api/runs/a"]);h.flushFrames();
+  }
+});
+
+test("leaving an experiment disposes its graph and restores isolated views without accepting stale idle callbacks", async () => {
+  const h=harness();setup(h,[project("p",[run("a"),run("b")])]);
+  for(const id of ["a","b"])seed(h,id,run(id,{decisions:[{decision_id:"shared",mode:"train",reason:`Only ${id}`}]}));
+  await h.run('selectRun("a")');h.flushFrames();h.run('state.activeScope.graph.zoomBy(1.25)');h.flushFrames();
+  dragGraphNode(h,"shared");assert.ok(h.pendingFrames>0);
+  const aScope=h.run("state.activeScope"),aView=aScope.graphView,aState=graphState(h),aGraph=h.renders.at(-1);
+  await h.run('selectRun("b")');h.flushFrames();
+  assert.ok(aGraph.disposals>0);assert.equal(aScope.graph,null);assert.equal(aScope.detailFingerprint,null);assert.equal(aScope.graphView,aView);assert.equal(h.pendingFrames,0);assert.equal(aView.animating,false);assert.equal(aView.interacting,false);
+  const bScope=h.run("state.activeScope"),bGraph=h.renders.at(-1);assert.notEqual(bScope.graphView,aView);assert.notEqual(bScope.graphView.positions,aView.positions);assert.notEqual(bScope.graphView.camera,aView.camera);
+  const count=h.renders.length;aScope.renderPending=true;aGraph.options.onIdle();
+  assert.equal(h.renders.length,count);assert.equal(h.run("state.activeScope.graph"),bGraph.svg);assert.match(textOf(h.get("project-content")),/Only b/);
+  h.run('state.activeScope.graph.zoomBy(.8)');dragGraphNode(h,"shared",20,-70);h.flushFrames();const bState=graphState(h);assert.notDeepEqual(bState,aState);
+  await h.run('selectRun("a")');
+  assert.ok(bGraph.disposals>0);assert.equal(bScope.graph,null);assert.equal(h.run("state.activeScope.graphView"),aView);assert.deepEqual(graphState(h),aState);assert.notEqual(h.run("state.activeScope.graph"),aGraph.svg);h.flushFrames();
+  dragGraphNode(h,"shared",0,25);assert.ok(h.pendingFrames>0);
+  const returning=h.renders.at(-1),beforeManagement=graphState(h);h.get("back-projects").listeners.click();
+  assert.ok(returning.disposals>0);assert.equal(aScope.graph,null);assert.equal(aScope.detailFingerprint,null);assert.equal(h.pendingFrames,0);assert.deepEqual(graphState(h),beforeManagement);
+  aScope.renderPending=true;const hiddenCount=h.renders.length;returning.options.onIdle();assert.equal(h.renders.length,hiddenCount);assert.equal(h.run("state.page"),"management");
+  await h.run('selectRun("b")');assert.equal(h.run("state.activeScope"),bScope);assert.deepEqual(graphState(h),bState);assert.notEqual(h.run("state.activeScope.graph"),bGraph.svg);h.flushFrames();
+});
+
+test("hidden demo disposes its graph and showing it rebuilds the preserved view without fetching", async () => {
+  const demo=JSON.parse(fs.readFileSync(`${__dirname}/demo.json`,"utf8")),calls=[];
+  const h=harness(async url=>{calls.push(url);assert.equal(url,"/demo.json");return response(demo);});h.run("state.demo=true");await h.run("refresh()");await h.run(`selectRun(${JSON.stringify(demo.run_id)})`);h.flushFrames();
+  h.run('state.activeScope.graph.zoomBy(1.25)');h.flushFrames();
+  const nodes=findClass(h.get("project-content"),"decision-node"),dragged=dragGraphNode(h,nodes.at(-1).dataset.key,35,50,false);assert.ok(h.pendingFrames>0);assert.equal(dragged.capturedPointer,1);
+  const view=h.run("state.activeScope.graphView"),before=graphState(h),old=h.renders.at(-1),snapshot=h.run("state.snapshot");
+  h.document.hidden=true;h.documentListeners.visibilitychange();
+  assert.ok(old.disposals>0);assert.equal(h.pendingFrames,0);assert.equal(dragged.capturedPointer,undefined);assert.equal(view.interacting,false);assert.equal(view.animating,false);assert.equal(h.run("state.activeScope.graph"),null);assert.equal(h.run("state.activeScope.detailFingerprint"),null);assert.deepEqual(graphState(h),before);
+  h.document.hidden=false;h.documentListeners.visibilitychange();
+  assert.notEqual(h.run("state.activeScope.graph"),old.svg);assert.equal(h.run("state.activeScope.graphView"),view);assert.deepEqual(graphState(h),before);assert.equal(h.run("state.snapshot"),snapshot);
+  assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.runId"),demo.run_id);assert.deepEqual(calls,["/demo.json"]);h.flushFrames();
+});
+
+test("trajectory toolbar invokes zoom, fit and rearrange on the current graph", async () => {
+  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train"}]}));await h.run('selectRun("a")');h.flushFrames();
+  const graph=h.run("state.activeScope.graph"),calls=[];
+  for(const method of ["zoomBy","fit","reset"]){const original=graph[method];graph[method]=function(...args){calls.push([method,...args]);return original.apply(this,args);};}
+  const toolbar=findClass(h.get("project-content"),"trajectory-tools");assert.equal(toolbar.length,1);assert.deepEqual(toolbar[0].children.map(b=>b.textContent),["−","+","⤢","↺"]);
+  for(const button of toolbar[0].children){button.listeners.click();h.flushFrames();}
+  assert.deepEqual(calls,[["zoomBy",.8],["zoomBy",1.25],["fit"],["reset"]]);
+});
+
 test("failed reads retain decisions and a retry restores the current project", async () => {
   let fail=true;const h=harness(async()=>{if(fail)throw Error("offline");return response(run("a",{decisions:[{reason:"Recovered"}]}));});
   setup(h,[project("a")]);seed(h,"a",run("a",{decisions:[{reason:"Cached decision"}]}));await h.run('selectRun("a")');
@@ -351,6 +461,7 @@ test("known research actions have distinct names and custom operations retain th
 test("unchanged polling reuses run detail DOM without a refreshing message",async()=>{
   const next=deferred(),snapshot=run("a",{candidates:[{candidate_id:"unlinked",status:"accepted",metrics:{score:.8}}],decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",reason:"Choose a short training run"}]});
   const h=harness(()=>next.promise);setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');
+  const graph=h.renders.at(-1),view=h.run("state.activeScope.graphView"),beforeView=graphState(h),renderCount=h.renders.length;
   const detail=findClass(h.get("project-content"),"run-detail")[0],record=findClass(detail,"record-details")[0];record.open=true;
   const pending=h.run('loadRun("a",state.activeScope,true)');
   assert.equal(findClass(h.get("project-content"),"run-detail")[0],detail);
@@ -358,6 +469,7 @@ test("unchanged polling reuses run detail DOM without a refreshing message",asyn
   next.resolve(response(JSON.parse(JSON.stringify(snapshot))));await pending;
   assert.equal(findClass(h.get("project-content"),"run-detail")[0],detail);assert.equal(record.open,true);
   assert.equal(h.run('state.activeScope.cache.get("a").snapshot'),h.ctx.fixture);
+  assert.equal(h.run("state.activeScope.graph"),graph.svg);assert.equal(graph.disposals,0);assert.equal(h.renders.length,renderCount);assert.equal(h.run("state.activeScope.graphView"),view);assert.deepEqual(graphState(h),beforeView);
 });
 
 

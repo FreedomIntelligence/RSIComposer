@@ -49,21 +49,33 @@ function valid(model) {
 }
 
 class Element {
-  constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; this.style = {}; this.listeners = {}; }
+  constructor(tag) {
+    this.tagName = tag; this.children = []; this.attributes = {}; this.style = {}; this.listeners = {};
+    this.isConnected = true; this.rect = { left: 0, top: 0, width: 960, height: 420 };
+    this.captures = new Set();
+  }
   setAttribute(key, value) { this.attributes[key] = String(value); }
-  append(...children) { this.children.push(...children); }
+  append(...children) { this.children.push(...children); for (const child of children) child.parentNode = this; }
   addEventListener(name, listener) { this.listeners[name] = listener; }
+  removeEventListener(name, listener) { if (this.listeners[name] === listener) delete this.listeners[name]; }
+  setPointerCapture(id) { this.captures.add(id); }
+  releasePointerCapture(id) { this.captures.delete(id); }
+  getBoundingClientRect() { return this.rect; }
 }
-function harness() {
-  const document = { createElementNS(namespace, tag) {
+function harness(options = {}) {
+  const document = { hidden: false, listeners: {}, addEventListener(name, callback) { this.listeners[name] = callback; },
+    removeEventListener(name, callback) { if (this.listeners[name] === callback) delete this.listeners[name]; },
+    createElementNS(namespace, tag) {
     assert.equal(namespace, "http://www.w3.org/2000/svg"); return new Element(tag);
   } };
-  const context = vm.createContext({ document });
+  const context = vm.createContext({ document, ...options });
   vm.runInContext(source, context);
   return context.RSIDecisions;
 }
-const renderedNodes = svg => svg.children.filter(node => node.attributes.class?.split(" ").includes("decision-node"));
-const tag = (node, name) => node.children.filter(child => child.tagName === name);
+const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
+const renderedNodes = svg => descendants(svg).filter(node => node.attributes.class?.split(" ").includes("decision-node"));
+const tag = (node, name) => descendants(node).filter(child => child.tagName === name);
+const circle = (node, className) => tag(node, "circle").find(c => c.attributes.class === className);
 
 test("CommonJS and browser global load without a DOM, timers, or dependencies", () => {
   const context = vm.createContext({});
@@ -177,20 +189,23 @@ test("200 sequential nodes retain horizontal extent and branches never overlap l
   valid(branches);
 });
 
-test("render returns SVG with intrinsic dimensions, readable labels, selection and full titles", () => {
+test("render returns responsive 420px SVG, readable labels, selection halo and full titles", () => {
   const api = harness(), rows = [row("b", 1), row("a")], calls = [];
   const label = (record, index) => { calls.push([record, index]); return `${index + 1} 很长的决策名称与完整上下文标签`; };
   const svg = api.render({ rows, selected: "b", label, startLabel: "开始" });
   assert.equal(svg.tagName, "svg");
-  assert.ok(Number(svg.attributes.width) > 400);
-  assert.equal(svg.style.minWidth, `${svg.attributes.width}px`);
-  assert.equal(svg.attributes.height, "240");
+  assert.equal(svg.attributes.width, "100%");
+  assert.equal(svg.style.width, "100%");
+  assert.equal(svg.attributes.height, "420");
+  assert.equal(svg.attributes.viewBox, "0 0 960 420");
   assert.equal(svg.style.overflow, undefined);
   assert.deepEqual(calls, [[rows[1], 1], [rows[0], 0]]);
   for (const node of renderedNodes(svg)) {
     assert.ok(node.attributes.class.includes("flow-choice"));
     assert.equal(node.attributes.role, "button"); assert.equal(node.attributes.tabindex, "0");
     assert.equal(tag(node, "text")[0].attributes["font-size"], "16");
+    assert.equal(tag(node, "text")[0].attributes["text-anchor"], "middle");
+    assert.equal(tag(node, "text")[0].attributes.x, "0");
     assert.ok(tag(node, "text")[0].textContent.endsWith("…"));
     assert.equal(tag(node, "title")[0].textContent, node.attributes["aria-label"]);
     assert.equal(tag(node, "circle")[0].attributes.r, "18");
@@ -199,10 +214,11 @@ test("render returns SVG with intrinsic dimensions, readable labels, selection a
   const [a, b] = renderedNodes(svg);
   assert.equal(a.attributes["aria-pressed"], "false");
   assert.equal(b.attributes["aria-pressed"], "true");
-  assert.equal(tag(a, "circle")[1].attributes.r, "6");
-  assert.equal(tag(b, "circle")[1].attributes.r, "8");
-  assert.equal(tag(b, "circle")[1].attributes.fill, "var(--orange, #b45b35)");
-  const root = svg.children.find(node => node.attributes.class === "decision-root");
+  assert.equal(circle(a, "decision-dot").attributes.r, "6");
+  assert.equal(circle(b, "decision-dot").attributes.r, "8");
+  assert.equal(circle(b, "decision-dot").attributes.fill, "var(--orange, #b45b35)");
+  assert.equal(circle(b, "decision-halo").attributes.r, "13");
+  const root = descendants(svg).find(node => node.attributes.class === "decision-root");
   assert.equal(root.attributes.transform, "translate(40 100)");
   assert.equal(root.attributes.role, undefined); assert.equal(root.attributes.tabindex, undefined);
   assert.deepEqual(root.listeners, {}); assert.equal(tag(root, "title")[0].textContent, "开始");
@@ -245,5 +261,219 @@ test("labels remain text even when markup is supplied, including empty and Unico
     assert.equal(node.attributes["aria-label"], label);
     assert.ok(Array.from(tag(node, "text")[0].textContent).length <= 14);
     assert.equal(node.innerHTML, undefined);
+  }
+});
+
+function interactive({ reduced = false, raf = true } = {}) {
+  const frames = new Map(), observers = [], canceled = [], listeners = {};
+  let next = 0;
+  const document = { hidden: false, listeners, createElementNS: (_, name) => new Element(name),
+    addEventListener(type, callback) { listeners[type] = callback; },
+    removeEventListener(type, callback) { if (listeners[type] === callback) delete listeners[type]; } };
+  class ResizeObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  }
+  const api = harness({ document, ResizeObserver, matchMedia: () => ({ matches: reduced }),
+    ...(raf ? { requestAnimationFrame(callback) { frames.set(++next, callback); return next; },
+      cancelAnimationFrame(id) { canceled.push(id); frames.delete(id); } } : {}) });
+  function step() {
+    const pending = [...frames]; frames.clear();
+    for (const [, callback] of pending) callback();
+  }
+  function drain() {
+    let count = 0;
+    while (frames.size && count++ < 100) step();
+    assert.equal(frames.size, 0, "RAF must have a finite budget");
+    return count;
+  }
+  return { api, document, observers, frames, canceled, step, drain };
+}
+function pointer(target, type, x, y, extra = {}) {
+  const event = { type, target, clientX: x, clientY: y, pointerId: 1, button: 0,
+    preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...extra };
+  target.listeners[type]?.(event);
+  return event;
+}
+const coordinates = p => [p.x, p.y];
+function startDrag(svg, view, index = 0) {
+  const node = renderedNodes(svg)[index], key = node.attributes["data-key"], position = view.positions.get(key);
+  const x = view.camera.x + position.x * view.camera.scale, y = view.camera.y + position.y * view.camera.scale;
+  pointer(node, "pointerdown", x, y);
+  return { node, key, x, y };
+}
+
+test("default graph has vertical variation and readable scale; explicit fit/reset are synchronous", () => {
+  const h = interactive(), view = {}, rows = Array.from({ length: 200 }, (_, i) => row(`d${i}`, i));
+  const svg = h.api.render({ rows, view });
+  assert.equal(h.frames.size, 0); assert.ok(view.camera.scale >= 0.85);
+  assert.ok(new Set([...view.positions.values()].map(p => p.y)).size > 1);
+  const keys = new Set(layout(rows).edges.map(e => JSON.stringify([e.from, e.to, e.kind])));
+  assert.equal(tag(svg, "line").length, keys.size);
+  svg.fit(); assert.ok(view.camera.scale < 0.1);
+  const fitScale = view.camera.scale;
+  h.observers[0].callback(); assert.equal(view.camera.scale, fitScale);
+  for (const p of view.positions.values()) {
+    assert.ok((p.x - 96) * view.camera.scale + view.camera.x >= 31.9);
+    assert.ok((p.x + 96) * view.camera.scale + view.camera.x <= 928.1);
+  }
+  svg.reset(); assert.ok(view.camera.scale >= 0.85); assert.equal(h.frames.size, 0);
+  svg.dispose();
+});
+
+test("node dragging elastically moves neighbors, fixes root, persists manual placement and suppresses click", () => {
+  const h = interactive(), view = {}, calls = []; let idle = 0;
+  const rows = [row("a"), row("b", 1), row("c", 2)];
+  const svg = h.api.render({ rows, view, onSelect: key => calls.push(key), onIdle: () => idle++ });
+  const root = coordinates(view.positions.get("root")), before = coordinates(view.positions.get("b"));
+  const d = startDrag(svg, view);
+  assert.equal(view.interacting, true);
+  pointer(d.node, "pointermove", d.x + 40, d.y + 150);
+  assert.equal(view.animating, true); assert.equal(h.frames.size, 1);
+  const placed = coordinates(view.positions.get("a"));
+  h.step();
+  assert.notDeepEqual(coordinates(view.positions.get("b")), before);
+  assert.deepEqual(coordinates(view.positions.get("root")), root);
+  pointer(d.node, "pointerup", d.x + 40, d.y + 150);
+  assert.equal(view.interacting, false); assert.equal(view.animating, true);
+  assert.equal(d.node.captures.size, 0); assert.equal(idle, 0);
+  d.node.listeners.click({ detail: 1 }); assert.deepEqual(calls, []);
+  assert.equal(h.drain(), 18); assert.equal(idle, 1); assert.equal(view.animating, false);
+  assert.deepEqual(coordinates(view.positions.get("a")), placed);
+  assert.deepEqual(coordinates(view.positions.get("root")), root);
+  d.node.listeners.keydown({ key: "Enter", preventDefault() {} }); assert.deepEqual(calls, ["a"]);
+  const savedCamera = { ...view.camera }, savedPositions = [...view.positions].map(([key, p]) => [key, ...coordinates(p)]);
+  svg.dispose(); assert.equal(idle, 1);
+  const restored = h.api.render({ rows, view, label: () => "translated" });
+  assert.deepEqual({ ...view.camera }, savedCamera);
+  assert.deepEqual([...view.positions].map(([key, p]) => [key, ...coordinates(p)]), savedPositions);
+  assert.equal(h.frames.size, 0);
+  restored.reset(); assert.notDeepEqual(coordinates(view.positions.get("a")), placed);
+  restored.dispose();
+});
+
+test("tiny pointer movements still click; pointercancel stops animation without accidental selection", () => {
+  const h = interactive(), view = {}, calls = []; let idle = 0;
+  const svg = h.api.render({ rows: [row("a"), row("b", 1)], view,
+    onSelect: key => calls.push(key), onIdle: () => idle++ });
+  let d = startDrag(svg, view);
+  const original = coordinates(view.positions.get("a"));
+  pointer(d.node, "pointermove", d.x + 2, d.y + 1);
+  pointer(d.node, "pointerup", d.x + 2, d.y + 1);
+  assert.deepEqual(coordinates(view.positions.get("a")), original);
+  d.node.listeners.click({ detail: 1 }); assert.deepEqual(calls, ["a"]);
+  d = startDrag(svg, view);
+  pointer(d.node, "pointermove", d.x, d.y + 50);
+  pointer(d.node, "pointercancel", d.x, d.y + 50);
+  assert.equal(h.frames.size, 0); assert.equal(view.interacting, false); assert.equal(view.animating, false);
+  d.node.listeners.click({ detail: 1 }); assert.deepEqual(calls, ["a"]);
+  assert.equal(idle, 2); svg.dispose();
+});
+
+test("background pan is unlimited in both directions and restored cameras remain run-local", () => {
+  const h = interactive(), view = { camera: { x: 11, y: -23, scale: 1.5 } };
+  const svg = h.api.render({ rows: [row("a")], view });
+  pointer(svg, "pointerdown", 400, 200); pointer(svg, "pointermove", -1600, -1800);
+  pointer(svg, "pointerup", -1600, -1800);
+  assert.deepEqual({ ...view.camera }, { x: -1989, y: -2023, scale: 1.5 });
+  pointer(svg, "pointerdown", 100, 100); pointer(svg, "pointermove", 4100, 4100);
+  pointer(svg, "pointerup", 4100, 4100);
+  assert.deepEqual({ ...view.camera }, { x: 2011, y: 1977, scale: 1.5 });
+  assert.equal(view.interacting, false); assert.equal(h.frames.size, 0);
+  const saved = { ...view.camera }; svg.dispose();
+  const restored = h.api.render({ rows: [row("a")], view });
+  assert.deepEqual({ ...view.camera }, saved);
+  const otherView = {}; const other = h.api.render({ rows: [row("a")], view: otherView });
+  assert.notDeepEqual({ ...otherView.camera }, saved);
+  restored.dispose(); other.dispose();
+});
+
+test("same-size rerenders preserve an auto-fit camera when new decisions arrive", () => {
+  const h = interactive(), view = {};
+  const initial = h.api.render({ rows: [row("a")], view });
+  assert.equal(view.autoFit, true); assert.equal(view.viewportWidth, 960);
+  const camera = { ...view.camera }, a = coordinates(view.positions.get("a"));
+  initial.dispose();
+  const updated = h.api.render({ rows: [row("a"), ...Array.from({ length: 30 }, (_, i) => row(`d${i}`, i + 1))], view });
+  assert.deepEqual({ ...view.camera }, camera);
+  assert.deepEqual(coordinates(view.positions.get("a")), a);
+  h.observers[1].callback(); assert.deepEqual({ ...view.camera }, camera);
+  updated.rect.width = 720; h.observers[1].callback();
+  assert.equal(view.viewportWidth, 720); assert.notDeepEqual({ ...view.camera }, camera);
+  updated.dispose();
+});
+
+test("Ctrl/Meta wheel zooms at pointer while ordinary wheel retains native scrolling", () => {
+  const h = interactive(), view = { camera: { x: 0, y: 0, scale: 1 } };
+  const svg = h.api.render({ rows: [row("a")], view });
+  const before = { ...view.camera };
+  const ordinary = pointer(svg, "wheel", 200, 150, { deltaY: 100 });
+  assert.equal(ordinary.prevented, undefined); assert.deepEqual({ ...view.camera }, before);
+  for (const modifier of ["ctrlKey", "metaKey"]) {
+    const world = [(200 - view.camera.x) / view.camera.scale, (150 - view.camera.y) / view.camera.scale];
+    const event = pointer(svg, "wheel", 200, 150, { deltaY: -80, [modifier]: true });
+    assert.equal(event.prevented, true);
+    assert.ok(Math.abs((200 - view.camera.x) / view.camera.scale - world[0]) < 1e-8);
+    assert.ok(Math.abs((150 - view.camera.y) / view.camera.scale - world[1]) < 1e-8);
+  }
+  const scale = view.camera.scale; svg.zoomBy(2); assert.equal(view.camera.scale, scale * 2);
+  const valid = { ...view.camera }; svg.zoomBy(NaN); svg.zoomBy(-1);
+  assert.deepEqual({ ...view.camera }, valid); svg.dispose();
+});
+
+test("resize and CTM conversion preserve world drag distances and a manual camera", () => {
+  const h = interactive(), view = { camera: { x: 50, y: 20, scale: 2 } };
+  const svg = h.api.render({ rows: [row("a"), row("b", 1)], view });
+  svg.rect = { left: 100, top: 200, width: 480, height: 210 };
+  // Screen CTM includes a transformed ancestor; use its inverse rather than rect alone.
+  let inversions = 0;
+  svg.getScreenCTM = () => ({ inverse() { inversions++; return {}; } });
+  svg.createSVGPoint = () => ({ x: 0, y: 0,
+    matrixTransform() { return { x: (this.x - 100) * 2, y: (this.y - 200) * 2 }; } });
+  const node = renderedNodes(svg)[0], before = coordinates(view.positions.get("a"));
+  pointer(node, "pointerdown", 300, 300); pointer(node, "pointermove", 310, 330);
+  assert.deepEqual(coordinates(view.positions.get("a")), [before[0] + 10, before[1] + 30]);
+  assert.equal(inversions, 2); pointer(node, "pointerup", 310, 330); h.drain();
+  const camera = { ...view.camera };
+  svg.rect.width = 720; h.observers[0].callback();
+  assert.equal(svg.attributes.viewBox, "0 0 720 420");
+  assert.deepEqual({ ...view.camera }, camera); svg.dispose();
+});
+
+test("dispose cancels RAF, observer, capture and all listeners without onIdle or state loss", () => {
+  const h = interactive(), view = {}; let idle = 0;
+  const svg = h.api.render({ rows: [row("a"), row("b", 1)], view, onIdle: () => idle++ });
+  const d = startDrag(svg, view); pointer(d.node, "pointermove", d.x, d.y + 80);
+  const callback = [...h.frames.values()][0], positions = [...view.positions].map(([k, p]) => [k, ...coordinates(p)]);
+  svg.dispose(); svg.dispose(); callback();
+  assert.equal(idle, 0); assert.equal(h.frames.size, 0); assert.ok(h.canceled.length > 0);
+  assert.equal(view.interacting, false); assert.equal(view.animating, false);
+  assert.equal(h.observers[0].disconnected, true); assert.equal(d.node.captures.size, 0);
+  for (const node of [svg, ...descendants(svg)]) assert.deepEqual(node.listeners, {});
+  assert.deepEqual(h.document.listeners, {});
+  assert.deepEqual([...view.positions].map(([k, p]) => [k, ...coordinates(p)]), positions);
+  const camera = { ...view.camera }; svg.fit(); svg.zoomBy(2); svg.reset();
+  assert.deepEqual({ ...view.camera }, camera);
+});
+
+test("hidden or detached SVG stops RAF; reduced motion and missing RAF still permit dragging", () => {
+  for (const reason of ["hidden", "detached"]) {
+    const h = interactive(), view = {}; let idle = 0;
+    const svg = h.api.render({ rows: [row("a"), row("b", 1)], view, onIdle: () => idle++ });
+    const d = startDrag(svg, view); pointer(d.node, "pointermove", d.x, d.y + 80);
+    if (reason === "hidden") { h.document.hidden = true; h.document.listeners.visibilitychange(); }
+    else { svg.isConnected = false; h.step(); }
+    assert.equal(h.frames.size, 0); assert.equal(view.animating, false); assert.equal(view.interacting, false);
+    assert.equal(h.observers[0].disconnected, true); assert.equal(idle, 0);
+  }
+  for (const options of [{ reduced: true }, { raf: false }]) {
+    const h = interactive(options), view = {};
+    const svg = h.api.render({ rows: [row("a"), row("b", 1)], view });
+    const d = startDrag(svg, view), before = coordinates(view.positions.get("a"));
+    pointer(d.node, "pointermove", d.x, d.y + 80); pointer(d.node, "pointerup", d.x, d.y + 80);
+    assert.notDeepEqual(coordinates(view.positions.get("a")), before);
+    assert.deepEqual(coordinates(view.positions.get("root")), [40, 100]);
+    assert.equal(h.frames.size, 0); assert.equal(view.animating, false); svg.dispose();
   }
 });

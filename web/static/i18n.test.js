@@ -8,7 +8,7 @@ const appSource = fs.readFileSync(`${__dirname}/app.js`, "utf8");
 const html = fs.readFileSync(`${__dirname}/index.html`, "utf8");
 // Reuse the existing graph/RAF harness without registering its regression tests.
 const shared = fs.readFileSync(`${__dirname}/project.test.js`, "utf8").split('\ntest("')[0];
-const { harness, setup, seed, run, project } = new Function("require", "__dirname", `${shared}\nreturn {harness,setup,seed,run,project};`)(require, __dirname);
+const { harness, setup, seed, run, project,graphState,dragGraphNode } = new Function("require", "__dirname", `${shared}\nreturn {harness,setup,seed,run,project,graphState,dragGraphNode};`)(require, __dirname);
 const nodes = root => [root, ...(root.children || []).flatMap(nodes)];
 const hasClass = (node, name) => (node.className || "").split(" ").includes(name);
 const findClass = (root, name) => nodes(root).filter(n => hasClass(n, name));
@@ -32,7 +32,7 @@ function fixture(h) {
     jobs:[{job_id:"j",kind:"train",status:"completed",metrics:{loss:.3,learning_rate:.001,"custom.reward":.7},metric_history:[{step:2,metrics:{loss:.3,learning_rate:.001}}]}],
     events:[{kind:"custom.event",summary:"运行开始 原文 log",details:{reason:"错误 原文 log"}}], candidates:[{candidate_id:"c",status:"accepted",metrics:{loss:{baseline:.6,candidate:.3}}}],
     round_results:[{round:1,applied:true,answer_correct:true}] });
-  setup(h,[project("p",[run("a",{experiment_name:"实验原文 a"}),run("b")],{name:"研究项目"})]); seed(h,"a",s);h.run('selectRun("a")');return s;
+  setup(h,[project("p",[run("a",{experiment_name:"实验原文 a"}),run("b")],{name:"研究项目"})]); seed(h,"a",s);h.run('selectRun("a")');h.flushFrames();return s;
 }
 
 test("preference persists, reload restores it, and denied/invalid storage falls back safely", () => {
@@ -69,6 +69,9 @@ test("static translation touches only explicit UI markers and preserves adjacent
 test("switching language rerenders direct decisions and preserves project, selected step, cache and model prose", () => {
   const h=monitor();fixture(h);
   findClass(h.get("project-content"),"decision-node")[1].listeners.click();
+  h.flushFrames();h.run('state.activeScope.graph.zoomBy(1.25)');dragGraphNode(h,"d2");h.flushFrames();
+  const view=h.run("state.activeScope.graphView"),beforeView=graphState(h),old=h.renders.at(-1);
+  assert.deepEqual(findClass(h.get("project-content"),"trajectory-tools")[0].children.map(b=>b.title),["缩小","放大","适应全部节点","重排"]);
   findClass(h.get("project-content"),"flow-map")[0].scrollLeft=123;
   findClass(h.get("project-content"),"flow-map")[0].scrollTop=67;
   const before=h.json('[state.page,state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]');
@@ -77,6 +80,11 @@ test("switching language rerenders direct decisions and preserves project, selec
   assert.equal(h.get("lang-en").attributes["aria-pressed"],"true");assert.equal(h.get("lang-zh").attributes["aria-pressed"],"false");
   assert.deepEqual(h.json('[state.page,state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]'),before);
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
+  assert.ok(old.disposals>0);assert.equal(h.run("state.activeScope.graphView"),view);assert.deepEqual(graphState(h),beforeView);
+  const controls=findClass(h.get("project-content"),"trajectory-tools")[0].children;
+  assert.deepEqual(controls.map(b=>b.textContent),["−","+","⤢","↺"]);
+  assert.deepEqual(controls.map(b=>b.title),["Zoom out","Zoom in","Fit all nodes","Rearrange"]);
+  for(const button of controls)assert.equal(button.getAttribute("aria-label"),button.title);
   assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"a");
   assert.equal(h.get("project-name").textContent,"实验原文 a");assert.equal(h.get("project-description").textContent,"研究项目");assert.equal(h.get("project-description").hidden,false);
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,123);
@@ -90,7 +98,17 @@ test("switching language rerenders direct decisions and preserves project, selec
   assert.match(graphNodes[0].getAttribute("aria-label"),/Train model/);assert.match(text(h.get("project-content")),/Experiment start/);
   assert.equal(findClass(h.get("project-content"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
-  h.get("lang-zh").listeners.click();assert.match(text(h.get("project-content")),/复查时指标/);assert.deepEqual(h.calls,[]);
+  h.flushFrames();h.get("lang-zh").listeners.click();assert.match(text(h.get("project-content")),/复查时指标/);assert.deepEqual(h.calls,[]);assert.deepEqual(graphState(h),beforeView);h.flushFrames();
+});
+
+test("language switches during graph interaction defer its DOM until idle while retaining the view and model prose", () => {
+  const h=monitor();fixture(h);const record=h.renders.at(-1),before=graphState(h),count=h.renders.length;
+  record.svg.listeners.pointerdown({pointerId:2,button:0,clientX:100,clientY:100,target:record.svg});h.get("lang-en").listeners.click();
+  assert.equal(h.renders.length,count);assert.equal(record.disposals,0);assert.equal(h.run("state.activeScope.graph"),record.svg);assert.equal(h.run("state.activeScope.renderPending"),true);
+  assert.match(text(h.get("project-content")),/研究脉络/);assert.doesNotMatch(text(h.get("project-content")),/Research graph/);
+  record.svg.listeners.pointerup({pointerId:2,type:"pointerup"});
+  assert.equal(h.run("state.activeScope.renderPending"),false);assert.ok(record.disposals>0);assert.match(text(h.get("project-content")),/Research graph/);
+  assert.match(text(h.get("project-content")),/训练模型 原文 reason/);assert.deepEqual(graphState(h),before);assert.deepEqual(h.calls,[]);h.flushFrames();
 });
 
 test("unknown events and application errors/empty states switch without refetching", () => {
