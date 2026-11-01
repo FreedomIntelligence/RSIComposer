@@ -20,6 +20,15 @@ The default executes `python -m rsisys.adapters.training transformers-peft RECIP
 with the controller's interpreter; that environment must already contain torch,
 Transformers and PEFT. `request.recipe_ref` is an absolute native JSON file:
 
+Optional native recipe `num_processes` (default `1`) selects single-node torchrun
+DDP. For example, `8` requires eight scheduler-allocated visible CUDA GPUs and
+loads one full model replica per GPU. This is not tensor parallelism or FSDP.
+The worker sets each local rank's device before loading, synchronizes checkpoint
+saves, and publishes progress/results from rank zero only. Training evidence
+includes actual per-rank and summed sample/token exposure. The caller owns GPU
+allocation; the adapter never requests resources or shares an active inference
+engine's GPUs.
+
 ```json
 {
   "initial_model": {"backend_id":"vllm","model_id":"tiny-gpt2","revision":"random-smoke"},
@@ -61,7 +70,7 @@ resume, running hyperparameter updates, and checkpoint export are unsupported.
 For another native worker supply
 `ProcessTrainingBackend(root, command(request, job_dir), *, capabilities=..., result_reader=...)`.
 The callable returns `TrainingCommand(argv, cwd, env={}, timeout_seconds=3600)`.
-`transformers_peft_command(config_ref, *, cwd, python=...)` and
+`transformers_peft_command(config_ref, *, cwd, python=..., num_processes=1)` and
 `llamafactory_command(config_ref, *, cwd, executable='llamafactory-cli')` build
 explicit argv; no shell expansion occurs. LLaMA-Factory retains its native YAML
 and dataset registry. Its unmodified CLI does not emit our result format: provide

@@ -153,7 +153,7 @@
 <rect x="100" y="1880" width="2200" height="185" rx="16" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="124" y="1905" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#A86B13" text-anchor="start">可换 · 需适配</text>
 <text x="124" y="1944" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#A86B13" text-anchor="start">src/rsisys/adapters/ · 具体接入，独立于两个 Harness</text>
-<text x="124" y="1978" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">training.py：ProcessTrainingBackend / TrainingCommand；可选 Transformers / PEFT，其他原生 CLI 需显式接入</text>
+<text x="124" y="1978" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">training.py：ProcessTrainingBackend / TrainingCommand；Transformers / PEFT 单进程或 torchrun DDP</text>
 <text x="124" y="2007" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">serving.py：VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator；独立服务 / 显式 LoRA</text>
 <text x="124" y="2036" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">依赖共享协议，不反向把原生训练或 serving 框架嵌入 Harness；外部作业回执不等于控制器完整恢复</text>
 </g>
@@ -163,7 +163,7 @@
 <text x="124" y="2184" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#A86B13" text-anchor="start">examples/medical/ · 独立装配与可替换领域规则</text>
 <text x="124" y="2218" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run</text>
 <text x="124" y="2247" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由</text>
-<text x="124" y="2276" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">build：prepare_inference / evaluator_factory 可替换；组合两 Harness + Runner + SystemRegistry，领域规则留在示例</text>
+<text x="124" y="2276" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">experiment.py：自主科研装配；transformers_runtime.py / sglang_runtime.py：可替换推理，后者支持张量并行</text>
 </g>
 <text x="100" y="2370" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。</text>
 </svg>

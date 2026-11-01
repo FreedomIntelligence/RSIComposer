@@ -14,11 +14,13 @@ import sys
 import tempfile
 import threading
 import time
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from rsisys.adapters.training import (ProcessTrainingBackend, TrainingCommand,
-    transformers_peft_command, llamafactory_command, _identity, _native_inputs)
+    transformers_peft_command, llamafactory_command, _identity, _native_inputs,
+    _transformers_peft, _worker_ranks, _worker_group)
 from rsisys.adapters.serving import VLLMBackend, VLLMDeploymentBackend, VLLMLoRAActivator
 from rsisys.loops.contracts.backend import BackendCapabilities, DeploymentStatus
 from rsisys.loops.contracts.artifacts import ArtifactRef
@@ -188,6 +190,10 @@ class ProcessAdapterTests(unittest.TestCase):
     def test_scheduler_visibility_is_preserved_credentials_are_not(self):
         with patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES':'3', 'NVIDIA_VISIBLE_DEVICES':'GPU-3',
             'ASCEND_RT_VISIBLE_DEVICES':'2', 'OMP_NUM_THREADS':'1', 'MKL_NUM_THREADS':'1',
+            'NCCL_SOCKET_IFNAME':'eth0', 'NCCL_IB_HCA':'mlx5_0', 'NCCL_DEBUG':'WARN',
+            'LD_LIBRARY_PATH':'/pixi/cuda-compat:/pixi/lib:/pixi/targets/x86_64-linux/lib',
+            'CUDA_HOME':'/pixi', 'NCCL_IB_TIMEOUT':'22', 'NCCL_CUMEM_ENABLE':'0',
+            'TORCH_NCCL_ASYNC_ERROR_HANDLING':'1', 'NCCL_PRIVATE_TOKEN':'secret',
             'PRIVATE_API_TOKEN':'must-not-be-inherited'}):
             backend = self.backend()
             job = backend.submit(self.request, idempotency_key='env')
@@ -197,6 +203,16 @@ class ProcessAdapterTests(unittest.TestCase):
         self.assertEqual(env['NVIDIA_VISIBLE_DEVICES'], 'GPU-3')
         self.assertEqual(env['ASCEND_RT_VISIBLE_DEVICES'], '2')
         self.assertEqual(env['MKL_NUM_THREADS'], '1')
+        self.assertEqual(env['NCCL_SOCKET_IFNAME'], 'eth0')
+        self.assertEqual(env['NCCL_IB_HCA'], 'mlx5_0')
+        self.assertEqual(env['NCCL_DEBUG'], 'WARN')
+        self.assertEqual(env['LD_LIBRARY_PATH'],
+                         '/pixi/cuda-compat:/pixi/lib:/pixi/targets/x86_64-linux/lib')
+        self.assertEqual(env['CUDA_HOME'], '/pixi')
+        self.assertEqual(env['NCCL_IB_TIMEOUT'], '22')
+        self.assertEqual(env['NCCL_CUMEM_ENABLE'], '0')
+        self.assertEqual(env['TORCH_NCCL_ASYNC_ERROR_HANDLING'], '1')
+        self.assertNotIn('NCCL_PRIVATE_TOKEN', env)
         self.assertNotIn('PRIVATE_API_TOKEN', env)
 
     def test_capabilities_reject_unsupported_before_launch(self):
@@ -271,6 +287,303 @@ class ProcessAdapterTests(unittest.TestCase):
         config.write_text(json.dumps(native))
         with self.assertRaisesRegex(ValueError, 'initial_model'):
             ProcessTrainingBackend(self.root / 'default').submit(request, idempotency_key='bad')
+
+
+class NativeDistributedWorkerTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.recipe = self.root / 'recipe with spaces.json'
+        self.data = self.root / 'rows.jsonl'
+        self.data.write_text('{"input_ids":[1,2,3],"labels":[-100,2,3]}\n')
+        self.config = {'initial_model': asdict(BASE), 'train_dataset': str(self.data),
+            'model_name_or_path': 'official', 'lora_config': {'r': 2},
+            'model_kwargs': {'device_map': 'auto', 'local_files_only': True},
+            'training_args': {'max_steps': 1, 'gradient_accumulation_steps': 2}}
+        self.request = ActorTrainingRequest(BASE, (), str(self.recipe))
+        self.request_file = self.root / 'request.json'
+        self.request_file.write_text(json.dumps({'request_type': 'ActorTrainingRequest',
+                                                'request': asdict(self.request)}))
+
+    def write_recipe(self):
+        self.recipe.write_text(json.dumps(self.config))
+
+    def test_launch_argv_and_real_subprocess_without_optional_packages(self):
+        single = transformers_peft_command(self.recipe, cwd=self.root)
+        self.assertEqual(single.argv, (sys.executable, '-m', 'rsisys.adapters.training',
+                                      'transformers-peft', str(self.recipe)))
+        command = transformers_peft_command(self.recipe, cwd=self.root, num_processes=8)
+        self.assertEqual(command.argv, (sys.executable, '-m', 'torch.distributed.run',
+            '--standalone', '--nnodes=1', '--nproc-per-node=8', '-m',
+            'rsisys.adapters.training', 'transformers-peft', str(self.recipe)))
+        self.assertEqual(transformers_peft_command(self.recipe, cwd=self.root,
+            python='/custom/python', num_processes=8).argv[0], '/custom/python')
+        # Execute the exact command against a recording launcher, without torch/GPU.
+        package = self.root / 'torch' / 'distributed'
+        package.mkdir(parents=True)
+        (package.parent / '__init__.py').write_text('')
+        (package / '__init__.py').write_text('')
+        (package / 'run.py').write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        completed = subprocess.run(command.argv, cwd=command.cwd,
+            env=dict(os.environ, PYTHONPATH=str(self.root)), capture_output=True, text=True, timeout=5)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(json.loads(completed.stdout), list(command.argv[3:]))
+        for value in (True, False, 0, -1, 1.5, '8', None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'num_processes'):
+                transformers_peft_command(self.recipe, cwd=self.root, num_processes=value)
+
+    def test_default_backend_selects_recipe_count_and_validates_before_launch(self):
+        for count in (None, 8):
+            with self.subTest(count=count):
+                if count is not None:
+                    self.config['num_processes'] = count
+                self.write_recipe()
+                backend = ProcessTrainingBackend(self.root / f'jobs-{count}')
+                with patch('rsisys.adapters.training.subprocess.Popen') as popen:
+                    job = backend.submit(self.request, idempotency_key='native')
+                popen.assert_called_once()
+                receipt = json.loads((backend.root / job.job_id / 'receipt.json').read_text())
+                expected = transformers_peft_command(self.recipe.resolve(), cwd=backend.root,
+                                                      num_processes=count or 1).argv
+                self.assertEqual(receipt['command']['argv'], list(expected))
+                fingerprint = json.loads((backend.root / job.job_id / 'native-inputs.json').read_text())
+                self.assertEqual(fingerprint['data_sha256'], hashlib.sha256(self.data.read_bytes()).hexdigest())
+        for count in (True, '8', 0, -1):
+            self.config['num_processes'] = count
+            self.write_recipe()
+            with self.subTest(count=count), patch('rsisys.adapters.training.subprocess.Popen') as popen:
+                with self.assertRaisesRegex(ValueError, 'num_processes'):
+                    ProcessTrainingBackend(self.root / 'invalid').submit(self.request,
+                        idempotency_key=f'invalid-{count}')
+                popen.assert_not_called()
+
+    def test_rank_validation_requires_one_node_and_matching_recipe(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_worker_ranks({}), (0, 0, 1))
+        environment = {'WORLD_SIZE': '8', 'LOCAL_WORLD_SIZE': '8', 'RANK': '7', 'LOCAL_RANK': '7'}
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(_worker_ranks({'num_processes': 8}), (7, 7, 8))
+            with self.assertRaisesRegex(ValueError, 'WORLD_SIZE'):
+                _worker_ranks({'num_processes': 1})
+        for updates in ({'LOCAL_WORLD_SIZE': '4'}, {'RANK': '8'}, {'LOCAL_RANK': '0'},
+                        {'WORLD_SIZE': '0'}, {'LOCAL_RANK': '-1'}):
+            with self.subTest(updates=updates), patch.dict(os.environ, dict(environment, **updates), clear=True):
+                with self.assertRaises(ValueError):
+                    _worker_ranks({})
+        with patch.dict(os.environ, {'WORLD_SIZE': '8'}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'single-node'):
+                _worker_ranks({})
+
+    def fake_frameworks(self, rank, world_size, *, fail_train=False):
+        events = []
+        counts = [{'presented_rows': 4, 'presented_input_tokens': 8},
+                  {'presented_rows': 2, 'presented_input_tokens': 10}]
+        model = SimpleNamespace(training=True, config=SimpleNamespace(use_cache=True))
+        outer = self
+        def gather(target, local):
+            events.append('gather')
+            outer.assertEqual(local, counts[rank])
+            target[:] = counts
+        distributed = SimpleNamespace(
+            init_process_group=lambda **kw: events.append(('init', kw)),
+            destroy_process_group=lambda: events.append('destroy'),
+            barrier=lambda: events.append('barrier'), get_world_size=lambda: world_size,
+            all_gather_object=gather)
+        torch = ModuleType('torch')
+        torch.cuda = SimpleNamespace(is_available=lambda: True, device_count=lambda: world_size,
+            set_device=lambda device: events.append(('device', device)))
+        torch.distributed = distributed
+        torch.manual_seed = lambda seed: events.append(('seed', seed))
+        class AutoModel:
+            @staticmethod
+            def from_pretrained(path, **kwargs):
+                events.append(('load', path, kwargs))
+                if world_size > 1:
+                    outer.assertEqual(kwargs['device_map'], {'': rank})
+                    outer.assertLess(events.index(('device', rank)), len(events) - 1)
+                    outer.assertIn('barrier', events)
+                return model
+            @staticmethod
+            def from_config(config):
+                events.append(('from_config', config))
+                return model
+        class Trainer:
+            def __init__(self, **kwargs):
+                self.args = SimpleNamespace(**kwargs['args'])
+                self.state = SimpleNamespace(global_step=1, max_steps=1)
+                self.callbacks = kwargs['callbacks']
+                events.append(('trainer_args', kwargs['args']))
+            def compute_loss(self, model, inputs, *args, **kwargs):
+                return .5
+            def train(self):
+                events.append('train')
+                if fail_train:
+                    raise RuntimeError('synthetic training failure')
+                batch = SimpleNamespace(shape=(2, 3), numel=lambda: 6) if rank == 0 else SimpleNamespace(
+                    shape=(1, 5), numel=lambda: 5)
+                inputs = {'input_ids': batch}
+                if rank == 0:
+                    inputs['attention_mask'] = SimpleNamespace(sum=lambda: 4)
+                for _ in range(2):  # Two actual training microbatches, not dataset size * epochs.
+                    self.compute_loss(model, inputs)
+                model.training = False
+                self.compute_loss(model, inputs)  # Evaluation must not inflate exposure.
+                for callback in self.callbacks:
+                    callback.on_log(self.args, self.state, None, {'loss': .5, 'bad': float('nan')})
+                return SimpleNamespace(metrics={'loss': .5})
+            def save_model(self, path):
+                events.append('save')
+                if rank == 0:
+                    (Path(path) / 'adapter_config.json').write_text('{}')
+        transformers = ModuleType('transformers')
+        transformers.AutoConfig = SimpleNamespace(for_model=lambda kind, **kw: dict(model_type=kind, **kw))
+        transformers.AutoModelForCausalLM = AutoModel
+        transformers.Trainer = Trainer
+        transformers.TrainerCallback = object
+        transformers.TrainingArguments = lambda **kwargs: kwargs
+        transformers.default_data_collator = object()
+        peft = ModuleType('peft')
+        peft.LoraConfig = lambda **kwargs: kwargs
+        peft.get_peft_model = lambda model, config: model
+        peft.PeftModel = SimpleNamespace(from_pretrained=lambda model, uri, **kwargs:
+            (events.append(('resume', uri, kwargs)) or model))
+        return {'torch': torch, 'transformers': transformers, 'peft': peft}, events, counts
+
+    def run_worker(self, rank, world_size, *, fail_train=False):
+        modules, events, counts = self.fake_frameworks(rank, world_size, fail_train=fail_train)
+        environment = {'RSISYS_JOB_DIR': str(self.root), 'RSISYS_REQUEST_FILE': str(self.request_file),
+            'RSISYS_RESULT_FILE': str(self.root / 'result.json')}
+        if world_size > 1:
+            environment.update(WORLD_SIZE=str(world_size), LOCAL_WORLD_SIZE=str(world_size),
+                               RANK=str(rank), LOCAL_RANK=str(rank))
+        self.write_recipe()
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, environment, clear=True):
+            _transformers_peft(self.recipe)
+        return events, counts
+
+    def test_rank_zero_writes_global_evidence_after_synchronized_save(self):
+        self.config['num_processes'] = 2
+        self.config['training_args']['gradient_checkpointing'] = True
+        events, counts = self.run_worker(0, 2)
+        self.assertEqual(events[:3], [('device', 0), ('init', {'backend': 'nccl'}), 'barrier'])
+        self.assertEqual(events[-6:], ['train', 'barrier', 'save', 'barrier', 'gather', 'destroy'])
+        args = next(event[1] for event in events if isinstance(event, tuple) and event[0] == 'trainer_args')
+        self.assertEqual(args['local_rank'], 0)
+        self.assertEqual(args['ddp_backend'], 'nccl')
+        self.assertFalse(args['save_on_each_node'])
+        self.assertEqual(args['gradient_accumulation_steps'], 2)
+        self.assertFalse(args['ddp_find_unused_parameters'])
+        progress = json.loads((self.root / 'progress.json').read_text())
+        self.assertEqual(progress['metrics'], {'loss': .5})
+        evidence_path = self.root / 'training-evidence.json'
+        evidence = json.loads(evidence_path.read_text())
+        self.assertEqual(evidence['presented_rows'], 6)
+        self.assertEqual(evidence['presented_input_tokens'], 18)
+        self.assertEqual(evidence['per_rank_exposure'], [dict(rank=i, **c) for i, c in enumerate(counts)])
+        self.assertEqual(evidence['world_size'], 2)
+        self.assertEqual(evidence['exposure_scope'], 'all_worker_ranks')
+        self.assertFalse(evidence['weight_identity_verified'])
+        self.assertEqual(evidence['initialization'], 'pretrained')
+        self.assertEqual(evidence['model_kwargs']['device_map'], 'auto')  # Original recipe fingerprint.
+        result = json.loads((self.root / 'result.json').read_text())
+        self.assertEqual(result['candidate']['changes']['training_evidence']['digest'],
+                         hashlib.sha256(evidence_path.read_bytes()).hexdigest())
+
+    def test_nonzero_rank_does_not_create_output_or_publish_shared_files(self):
+        self.config['num_processes'] = 2
+        self.config['training_args'].update(gradient_checkpointing=True, ddp_find_unused_parameters=True)
+        # Existing rank-zero directory must neither raise nor be recreated by rank one.
+        output = self.root / 'adapter'
+        output.mkdir()
+        events, _ = self.run_worker(1, 2)
+        self.assertEqual(events[0], ('device', 1))
+        self.assertIn('save', events)
+        self.assertIn('gather', events)
+        args = next(event[1] for event in events if isinstance(event, tuple) and event[0] == 'trainer_args')
+        self.assertTrue(args['ddp_find_unused_parameters'])
+        self.assertEqual(list(output.iterdir()), [])
+        for name in ('progress.json', 'training-evidence.json', 'result.json'):
+            self.assertFalse((self.root / name).exists(), name)
+
+    def test_single_process_keeps_model_kwargs_and_local_exposure(self):
+        events, _ = self.run_worker(0, 1)
+        self.assertNotIn('barrier', events)
+        self.assertNotIn('gather', events)
+        self.assertNotIn('destroy', events)
+        self.assertIn(('load', 'official', self.config['model_kwargs']), events)
+        evidence = json.loads((self.root / 'training-evidence.json').read_text())
+        self.assertEqual((evidence['presented_rows'], evidence['presented_input_tokens']), (4, 8))
+        self.assertEqual(evidence['exposure_scope'], 'this_worker_rank')
+
+    def test_worker_rechecks_fingerprints_before_distributed_setup(self):
+        self.config['num_processes'] = 2
+        self.write_recipe()
+        _, _, evidence = _native_inputs(asdict(self.request), self.recipe)
+        (self.root / 'native-inputs.json').write_text(json.dumps(evidence))
+        self.data.write_text('{"input_ids":[4],"labels":[4]}\n')
+        with patch('rsisys.adapters.training._worker_group') as group:
+            with self.assertRaisesRegex(ValueError, 'changed after submission'):
+                self.run_worker(0, 2)
+            group.assert_not_called()
+
+    def test_group_cleanup_on_failure_and_missing_cuda(self):
+        modules, events, _ = self.fake_frameworks(1, 2)
+        with patch.dict(sys.modules, modules):
+            with self.assertRaisesRegex(RuntimeError, 'failure'):
+                with _worker_group(1, 2):
+                    raise RuntimeError('failure')
+            self.assertEqual(events[-1], 'destroy')
+            modules['torch'].cuda.is_available = lambda: False
+            with self.assertRaisesRegex(ValueError, 'visible CUDA GPU'):
+                with _worker_group(1, 2):
+                    self.fail('Must reject CPU distributed training')
+
+    def test_training_failure_cleans_up_without_publishing_result(self):
+        self.config['num_processes'] = 2
+        modules, events, _ = self.fake_frameworks(0, 2, fail_train=True)
+        with patch.object(self, 'fake_frameworks', return_value=(modules, events, [])):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic training failure'):
+                self.run_worker(0, 2, fail_train=True)
+        self.assertEqual(events[-1], 'destroy')
+        self.assertNotIn('save', events)
+        self.assertFalse((self.root / 'result.json').exists())
+
+    def test_distributed_random_initialization_and_weights_only_origin(self):
+        self.config.update(num_processes=2, model_config={'model_type': 'gpt2', 'n_layer': 1})
+        origin = TrainingOrigin('parent', BASE, ResumeMode.WEIGHTS_ONLY,
+            ArtifactRef('checkpoint', 'peft_adapter', (self.root / 'prior-adapter').as_uri()))
+        self.request_file.write_text(json.dumps({'request_type': 'ActorTrainingRequest',
+            'request': asdict(replace(self.request, origin=origin))}))
+        events, _ = self.run_worker(0, 2)
+        self.assertIn(('from_config', {'model_type': 'gpt2', 'n_layer': 1}), events)
+        self.assertTrue(any(isinstance(event, tuple) and event[0] == 'resume' and
+            event[2] == {'is_trainable': True} for event in events))
+        evidence = json.loads((self.root / 'training-evidence.json').read_text())
+        self.assertEqual(evidence['initialization'], 'random_from_config')
+        self.assertEqual(evidence['initial_model_binding'], asdict(BASE))
+        result = json.loads((self.root / 'result.json').read_text())
+        self.assertEqual(result['candidate']['parent_system'], 'parent')
+
+    def test_distributed_worker_rejects_other_parallel_strategies_before_group_init(self):
+        environment = {'RSISYS_JOB_DIR': str(self.root), 'RSISYS_REQUEST_FILE': str(self.request_file),
+            'WORLD_SIZE': '2', 'LOCAL_WORLD_SIZE': '2', 'RANK': '0', 'LOCAL_RANK': '0'}
+        for key, value in (('deepspeed', 'zero.json'), ('fsdp', 'full_shard'),
+                           ('parallelism_config', {'tp_size': 2}), ('use_cpu', True)):
+            self.config['training_args'] = {key: value}
+            self.write_recipe()
+            with self.subTest(key=key), patch.dict(os.environ, environment, clear=True):
+                with patch('rsisys.adapters.training._worker_group') as group:
+                    with self.assertRaisesRegex(ValueError, 'native CUDA Trainer DDP only'):
+                        _transformers_peft(self.recipe)
+                    group.assert_not_called()
+
+    def test_import_remains_framework_free(self):
+        code = ('import sys; import rsisys.adapters.training; '
+                'assert not any(m in sys.modules for m in ("torch", "transformers", "peft"))')
+        completed = subprocess.run([sys.executable, '-c', code], capture_output=True,
+            env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)), timeout=5)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 class HTTPFixture:

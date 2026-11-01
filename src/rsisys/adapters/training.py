@@ -21,10 +21,17 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, JobProgre
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
 
-_WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
+_WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
+    'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
     'NVIDIA_VISIBLE_DEVICES', 'ASCEND_RT_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES',
     'ROCR_VISIBLE_DEVICES', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
     'RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'LOCAL_WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT',
+    'NCCL_DEBUG', 'NCCL_DEBUG_SUBSYS', 'NCCL_SOCKET_IFNAME', 'NCCL_SOCKET_FAMILY',
+    'NCCL_IB_HCA', 'NCCL_IB_GID_INDEX', 'NCCL_IB_QPS_PER_CONNECTION', 'NCCL_IB_DISABLE', 'NCCL_IB_TIMEOUT', 'NCCL_IB_RETRY_CNT',
+    'NCCL_P2P_DISABLE', 'NCCL_P2P_LEVEL', 'NCCL_SOCKET_NTHREADS', 'NCCL_NSOCKS_PERTHREAD',
+    'NCCL_ALGO', 'NCCL_PROTO', 'NCCL_CUMEM_ENABLE',
+    'NCCL_SHM_DISABLE', 'NCCL_NET_GDR_LEVEL', 'NCCL_CROSS_NIC',
+    'TORCH_NCCL_ASYNC_ERROR_HANDLING', 'TORCH_NCCL_BLOCKING_WAIT',
     'HF_HOME', 'HF_HUB_CACHE', 'TRANSFORMERS_CACHE', 'TOKENIZERS_PARALLELISM')
 
 
@@ -86,8 +93,18 @@ class TrainingCommand:
             raise ValueError('env must contain string pairs')
 
 
-def transformers_peft_command(config_ref, *, cwd, python=sys.executable):
-    return TrainingCommand((python, '-m', 'rsisys.adapters.training', 'transformers-peft',
+def _num_processes(value):
+    if type(value) is not int or value < 1:
+        raise ValueError('num_processes must be a positive integer')
+    return value
+
+
+def transformers_peft_command(config_ref, *, cwd, python=sys.executable, num_processes=1):
+    """Native single-node Trainer launch; one complete model replica per GPU in DDP."""
+    count = _num_processes(num_processes)
+    launcher = (python,) if count == 1 else (python, '-m', 'torch.distributed.run',
+        '--standalone', '--nnodes=1', f'--nproc-per-node={count}')
+    return TrainingCommand((*launcher, '-m', 'rsisys.adapters.training', 'transformers-peft',
                             str(config_ref)), str(cwd))
 
 
@@ -115,6 +132,7 @@ def _native_inputs(request, config_ref):
     config_path = Path(config_ref).resolve()
     raw_config = config_path.read_bytes()
     config = json.loads(raw_config)
+    _num_processes(config.get('num_processes', 1))
     if config.get('model_auto_class', 'causal_lm') not in ('causal_lm', 'image_text_to_text'):
         raise ValueError('model_auto_class must be causal_lm or image_text_to_text')
     if 'use_cache' in config and type(config['use_cache']) is not bool:
@@ -204,9 +222,10 @@ class ProcessTrainingBackend:
                     return job
             else:
                 if self.command is None:
-                    _, _, evidence = _native_inputs(payload['request'], request.recipe_ref)
+                    config, _, evidence = _native_inputs(payload['request'], request.recipe_ref)
                     _write(directory / 'native-inputs.json', evidence)
-                    command = transformers_peft_command(str(Path(request.recipe_ref).resolve()), cwd=directory)
+                    command = transformers_peft_command(str(Path(request.recipe_ref).resolve()),
+                        cwd=directory, num_processes=config.get('num_processes', 1))
                 else:
                     command = self.command(request, directory)
                 if not isinstance(command, TrainingCommand):
@@ -350,6 +369,51 @@ def _supervise(directory):
             _write(directory / 'state.json', state)
 
 
+def _worker_ranks(config):
+    """Accept only a single torchrun node, never infer ranks from GPU visibility."""
+    world = int(os.environ.get('WORLD_SIZE', '1'))
+    rank = int(os.environ.get('RANK', '0'))
+    local = int(os.environ.get('LOCAL_RANK', '0'))
+    if world < 1 or not 0 <= rank < world or not 0 <= local < world:
+        raise ValueError('Invalid distributed worker ranks')
+    if world > 1 and (any(key not in os.environ for key in
+            ('RANK', 'LOCAL_RANK', 'LOCAL_WORLD_SIZE')) or
+            int(os.environ['LOCAL_WORLD_SIZE']) != world or rank != local):
+        raise ValueError('Built-in worker supports single-node torchrun only')
+    if 'num_processes' in config and _num_processes(config['num_processes']) != world:
+        raise ValueError('Recipe num_processes differs from launcher WORLD_SIZE')
+    return rank, local, world
+
+
+@contextmanager
+def _worker_group(local_rank, world_size):
+    if world_size == 1:
+        yield None
+        return
+    import torch
+    if not torch.cuda.is_available() or local_rank >= torch.cuda.device_count():
+        raise ValueError('Multi-process SFT requires one visible CUDA GPU per local rank')
+    torch.cuda.set_device(local_rank)  # Before NCCL, weight loading, or Trainer setup.
+    distributed = torch.distributed
+    distributed.init_process_group(backend='nccl')
+    try:
+        yield distributed
+    finally:
+        distributed.destroy_process_group()
+
+
+def _training_exposure(trainer, distributed):
+    local = {'presented_rows': trainer.presented_rows,
+             'presented_input_tokens': trainer.presented_tokens}
+    counts = [local]
+    if distributed is not None:
+        counts = [None] * distributed.get_world_size()
+        distributed.all_gather_object(counts, local)
+    return {'presented_rows': sum(count['presented_rows'] for count in counts),
+        'presented_input_tokens': sum(count['presented_input_tokens'] for count in counts),
+        'per_rank_exposure': [dict(rank=rank, **count) for rank, count in enumerate(counts)]}
+
+
 def _transformers_peft(config_ref):
     directory = Path(os.environ['RSISYS_JOB_DIR'])
     payload = json.loads(Path(os.environ['RSISYS_REQUEST_FILE']).read_text())
@@ -360,9 +424,32 @@ def _transformers_peft(config_ref):
             raise ValueError('Native recipe/data changed after submission')
     arguments = dict(config.get('training_args', {}))
     output = Path(arguments.setdefault('output_dir', str(directory / 'adapter'))).resolve()
-    output.mkdir(parents=True, exist_ok=False)  # Never overwrite shared/existing weights.
     if arguments.get('resume_from_checkpoint'):
         raise ValueError('Resume must be declared through TrainingOrigin')
+    rank, local_rank, world_size = _worker_ranks(config)
+    if world_size > 1:
+        if (any(arguments.get(key) for key in
+                ('deepspeed', 'fsdp', 'parallelism_config', 'use_cpu', 'no_cuda')) or
+                config.get('model_kwargs', {}).get('tp_plan') is not None):
+            raise ValueError('Multi-process worker supports native CUDA Trainer DDP only')
+        arguments['local_rank'] = local_rank
+        arguments['ddp_backend'] = 'nccl'
+        arguments['save_on_each_node'] = False
+        if arguments.get('gradient_checkpointing') and arguments.get('ddp_find_unused_parameters') is None:
+            # PEFT wrappers do not inherit Trainer's PreTrainedModel checkpointing default.
+            arguments['ddp_find_unused_parameters'] = False
+    with _worker_group(local_rank, world_size) as distributed:
+        if rank == 0:
+            output.mkdir(parents=True, exist_ok=False)  # Never overwrite existing weights.
+        if distributed is not None:
+            distributed.barrier()
+        _train_transformers_peft(directory, payload, config, rows, evidence, arguments,
+                                 output, rank, local_rank, world_size, distributed)
+
+
+def _train_transformers_peft(directory, payload, config, rows, evidence, arguments,
+                             output, rank, local_rank, world_size, distributed):
+    request = payload['request']
     # Importing this adapter never imports torch or optional training packages.
     from transformers import AutoConfig, Trainer, TrainingArguments, TrainerCallback, default_data_collator
     if config.get('model_auto_class', 'causal_lm') == 'image_text_to_text':
@@ -381,7 +468,11 @@ def _transformers_peft(config_ref):
         native = dict(config['model_config'])
         model = ModelAutoClass.from_config(AutoConfig.for_model(native.pop('model_type'), **native))
     else:
-        model = ModelAutoClass.from_pretrained(config['model_name_or_path'], **config.get('model_kwargs', {}))
+        model_kwargs = dict(config.get('model_kwargs', {}))
+        if distributed is not None:
+            # Inference auto-sharding must never span GPUs during DDP training.
+            model_kwargs['device_map'] = {'': local_rank}
+        model = ModelAutoClass.from_pretrained(config['model_name_or_path'], **model_kwargs)
     if 'use_cache' in config:
         model.config.use_cache = config['use_cache']
         if getattr(model.config, 'text_config', None) is not None:
@@ -400,6 +491,8 @@ def _transformers_peft(config_ref):
     arguments.setdefault('report_to', 'none')
     class Progress(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kwargs):
+            if rank != 0:
+                return
             metrics = {k: v for k, v in (logs or {}).items() if type(v) in (int, float) and math.isfinite(v)}
             _write(directory / 'progress.json', asdict(JobProgress(step=state.global_step,
                 total_steps=state.max_steps or None, metrics=metrics, observed_at=time.time())))
@@ -414,10 +507,18 @@ def _transformers_peft(config_ref):
     trainer = ObservedTrainer(model=model, args=TrainingArguments(**arguments), train_dataset=rows,
                       data_collator=default_data_collator, callbacks=[Progress()])
     trained = trainer.train()
+    if distributed is not None:
+        distributed.barrier()
+    # Every rank participates; native Trainer gates actual writes to rank zero.
     trainer.save_model(str(output))
-    evidence.update(presented_rows=trainer.presented_rows, presented_input_tokens=trainer.presented_tokens,
-        optimizer_steps=trainer.state.global_step, world_size=trainer.args.world_size,
-        exposure_scope='this_worker_rank', output_dir=str(output))
+    if distributed is not None:
+        distributed.barrier()
+    exposure = _training_exposure(trainer, distributed)
+    if rank != 0:
+        return
+    evidence.update(exposure, optimizer_steps=trainer.state.global_step, world_size=world_size,
+        exposure_scope='all_worker_ranks' if distributed is not None else 'this_worker_rank',
+        output_dir=str(output))
     _write(directory / 'training-evidence.json', evidence)
     base = ModelRef(**request['base'])
     model_ref = ModelRef(**config['result_model']) if 'result_model' in config else ModelRef(

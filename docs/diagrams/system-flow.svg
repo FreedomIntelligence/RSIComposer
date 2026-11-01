@@ -214,7 +214,7 @@
 <text x="124" y="2095" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#A86B13" text-anchor="start">可换 · 需适配</text>
 <text x="124" y="2134" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="27" font-weight="650" fill="#A86B13" text-anchor="start">adapters/training.py · 原生训练</text>
 <text x="124" y="2168" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">ProcessTrainingBackend → TrainingCommand / 原生配方 / 作业回执</text>
-<text x="124" y="2197" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">可选 Transformers / PEFT；其他 CLI 需显式命令与结果读取</text>
+<text x="124" y="2197" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Transformers / PEFT：单进程或 torchrun DDP；其他 CLI 显式接入</text>
 </g>
 <g id="serving-adapter">
 <rect x="1190" y="2070" width="1110" height="170" rx="16" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.8" stroke-dasharray="8 5"/>
@@ -230,7 +230,7 @@
 <text x="124" y="2315" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#A86B13" text-anchor="start">可换 · 需适配</text>
 <text x="124" y="2354" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#A86B13" text-anchor="start">examples/medical/ · 独立领域装配，位于 Harness 外</text>
 <text x="124" y="2388" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run</text>
-<text x="124" y="2417" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">native.py：显式 tokenize → 进程训练 / 来源与转化证据；MedicalServing：独立候选路由；应用拒绝返回反馈</text>
+<text x="124" y="2417" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">native.py：数据转换 / 训练证据；transformers_runtime.py 或 sglang_runtime.py：候选部署与推理，训练前释放资源</text>
 </g>
 <text x="100" y="2490" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。</text>
 </svg>

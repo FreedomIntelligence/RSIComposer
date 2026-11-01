@@ -242,7 +242,7 @@ def system_flow():
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
     replaceable(s, 'training-adapter', 100, 2070, 1050, 170, 'adapters/training.py · 原生训练', (
         'ProcessTrainingBackend → TrainingCommand / 原生配方 / 作业回执',
-        '可选 Transformers / PEFT；其他 CLI 需显式命令与结果读取',
+        'Transformers / PEFT：单进程或 torchrun DDP；其他 CLI 显式接入',
     ), AMBER, '#FFF8E8', title_size=27, adapt=True)
     replaceable(s, 'serving-adapter', 1190, 2070, 1110, 170, 'adapters/serving.py · 推理与部署', (
         'VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator',
@@ -252,7 +252,7 @@ def system_flow():
     s.path('M 1745 2070 V 2035 H 2330 V 1725 H 2300', AMBER, arrow='amber', dash='7 6')
     replaceable(s, 'medical-example', 100, 2290, 2200, 155, 'examples/medical/ · 独立领域装配，位于 Harness 外', (
         'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
-        'native.py：显式 tokenize → 进程训练 / 来源与转化证据；MedicalServing：独立候选路由；应用拒绝返回反馈',
+        'native.py：数据转换 / 训练证据；transformers_runtime.py 或 sglang_runtime.py：候选部署与推理，训练前释放资源',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
     s.text(100, 2490, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
     s.save('system-flow.svg')
@@ -362,14 +362,14 @@ def file_architecture():
         'time / goal 与自定义组件需显式适配保存 / 恢复 / 引用一致性',
     ), AMBER, '#FFF8E8', title_size=28, adapt=True)
     replaceable(s, 'concrete-adapters', 100, 1880, 2200, 185, 'src/rsisys/adapters/ · 具体接入，独立于两个 Harness', (
-        'training.py：ProcessTrainingBackend / TrainingCommand；可选 Transformers / PEFT，其他原生 CLI 需显式接入',
+        'training.py：ProcessTrainingBackend / TrainingCommand；Transformers / PEFT 单进程或 torchrun DDP',
         'serving.py：VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator；独立服务 / 显式 LoRA',
         '依赖共享协议，不反向把原生训练或 serving 框架嵌入 Harness；外部作业回执不等于控制器完整恢复',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
     replaceable(s, 'medical-example-files', 100, 2120, 2200, 185, 'examples/medical/ · 独立装配与可替换领域规则', (
         'task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run',
         'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
-        'build：prepare_inference / evaluator_factory 可替换；组合两 Harness + Runner + SystemRegistry，领域规则留在示例',
+        'experiment.py：自主科研装配；transformers_runtime.py / sglang_runtime.py：可替换推理，后者支持张量并行',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
     s.text(100, 2370, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
     s.save('file-architecture.svg')

@@ -164,13 +164,14 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.process = FixtureProcess(self.root/'native-process')
         self.serving = None
 
-    def execute(self, script, **overrides):
+    def execute(self, script, *, research_started_callback=None, **overrides):
         def serving_factory(path, **kwargs):
             self.serving = FixtureServing(path, process=self.process, script=script, **kwargs)
             return self.serving
         settings = ExperimentSettings(self.task, self.root/'run', self.root/'fixture-model', **overrides)
         return run(settings, serving_factory=serving_factory, converter_factory=lambda *a, **kw: Converter(),
-            process_backend=self.process, identity_factory=lambda p: ('fixture-content-pin',
+            process_backend=self.process, research_started_callback=research_started_callback,
+            identity_factory=lambda p: ('fixture-content-pin',
                 {'model_id': 'fixture-symbol-model', 'actual_weight_sha256': 'fixture-only'}))
 
     def read(self, path):
@@ -190,7 +191,7 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertNotIn('evaluate', context['directive_modes'])
         self.assertNotIn('apply_candidate', context['directive_modes'])
         self.assertIn('ALREADY been measured', context['objective'])
-        self.assertEqual(self.read('monitor.json')['project']['system_id'], 'medical-qwen35-9b')
+        self.assertEqual(self.read('monitor.json')['project']['system_id'], 'medical-fixture-model')
         self.assertEqual(self.read('monitor.json')['status'], 'completed')
         self.assertTrue(self.read('decision_memory.json')['history'])
         for name in ('experience.json', 'candidates.json', 'evaluations.json', 'exploration_memory.json',
@@ -248,6 +249,25 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         feedback = self.serving.contexts[-1]['last_feedback']
         self.assertEqual(feedback['status'], 'failed')
         self.assertIn('Exact duplicate', feedback['error'])
+
+    def test_training_parallelism_reaches_native_recipe(self):
+        result = self.execute([train, FINISH], training_processes=8)
+        self.assertEqual(result['status'], 'completed', result)
+        request, _ = next(iter(self.process.requests.values()))
+        self.assertEqual(json.loads(Path(request.recipe_ref).read_text())['num_processes'], 8)
+        self.assertEqual(self.read('parallelism.json')['training_processes'], 8)
+
+    def test_research_clock_is_armed_after_baseline_before_first_decision(self):
+        observed = []
+        def started(seconds):
+            observed.append((seconds, (self.root/'run/baseline.json').exists(), self.serving.model_calls))
+        result = self.execute([FINISH], seconds=1800, research_started_callback=started)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(observed, [(1800, True, 0)])
+
+    def test_tensor_parallelism_cannot_be_silently_ignored(self):
+        with self.assertRaisesRegex(ValueError, 'requires the sglang'):
+            ExperimentSettings(self.task, self.root/'run', self.root/'model', tensor_parallel_size=8)
 
     def test_sole_candidate_and_fixed_protocol_defaults_preserve_full_chain(self):
         evaluate_only = {'kind': 'explore', 'mode': 'evaluate', 'strategy': 'Evaluate sole candidate', 'arguments': {}}

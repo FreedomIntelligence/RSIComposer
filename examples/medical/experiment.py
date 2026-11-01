@@ -1,4 +1,4 @@
-"""Single-GPU, model-directed medical experiment (no prescribed research steps).
+"""Model-directed medical experiment (no prescribed research steps).
 
 Run as ``python -m examples.medical.experiment --task ... --run-dir ...
 --model-path ...`` inside the operator's allocated GPU job. Never resumes a run.
@@ -77,6 +77,9 @@ class ExperimentSettings:
     private_exclusions: tuple[Path, ...] = ()
     decision_thinking: bool = False
     parent_run_id: str | None = None
+    training_processes: int = 1
+    serving_backend: str = 'transformers'
+    tensor_parallel_size: int = 1
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -94,6 +97,13 @@ class ExperimentSettings:
             raise TypeError('private_exclusions must be a tuple of Paths')
         if type(self.decision_thinking) is not bool:
             raise TypeError('decision_thinking must be boolean')
+        for name in ('training_processes', 'tensor_parallel_size'):
+            if type(getattr(self, name)) is not int or getattr(self, name) < 1:
+                raise ValueError(f'{name} must be a positive integer')
+        if self.serving_backend not in ('transformers', 'sglang'):
+            raise ValueError('serving_backend must be transformers or sglang')
+        if self.serving_backend == 'transformers' and self.tensor_parallel_size != 1:
+            raise ValueError('Tensor parallel inference requires the sglang serving backend')
         RunSource(self.run_dir.resolve().name, self.parent_run_id)
 
 
@@ -151,12 +161,13 @@ class RecipeLearner:
     budget and are never automatically replayed by the controller.
     """
     def __init__(self, root, artifacts, converter, base, model_path, monitor, release_memory,
-                 *, max_trainings=3, max_steps=64, process_backend=None):
+                 *, max_trainings=3, max_steps=64, process_backend=None, training_processes=1):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.artifacts, self.converter, self.base = artifacts, converter, base
         self.model_path, self.monitor, self.release_memory = str(model_path), monitor, release_memory
         self.max_trainings, self.max_steps = max_trainings, max_steps
+        self.training_processes = training_processes
         self.process = process_backend or ProcessTrainingBackend(self.root / 'process')
         self.backends: dict[str, MedicalTrainingBackend] = {}
         self.recipes: dict[str, dict] = {}
@@ -187,6 +198,7 @@ class RecipeLearner:
                 raise ResearchInputError(f'{name} must be finite in {lo}..{hi}')
             values[name] = float(value)
         template = {'model_name_or_path': self.model_path, 'initial_model': asdict(self.base),
+            'num_processes': self.training_processes,
             'model_auto_class': 'image_text_to_text', 'use_cache': False,
             'model_kwargs': {'local_files_only': True, 'dtype': 'bfloat16', 'attn_implementation': 'sdpa'},
             'seed': values['seed'],
@@ -553,7 +565,7 @@ class ResearchPolicy(ModelDecisionPolicy):
                     space.validate_directive(decision.directive)
                     if decision.directive.mode == 'train':
                         if decision.directive.review_after_seconds is not None:
-                            raise ValueError('Single-GPU train cannot run model reviews; omit review_after_seconds')
+                            raise ValueError('Serial training owns the allocated GPUs; omit review_after_seconds')
                         if not decision.directive.input_refs or any(ref.kind != 'training_data' for ref in decision.directive.input_refs):
                             raise ValueError('train requires explicit input_ids containing training_data artifacts only')
                 elif decision.kind == 'wait':
@@ -577,7 +589,7 @@ class ResearchPolicy(ModelDecisionPolicy):
 
     def review(self, context):
         # Resource scheduling, not a synthetic researcher/model decision.
-        return ReviewDecision('continue', reason='Serial single-GPU controller polls without inference')
+        return ReviewDecision('continue', reason='Serial controller polls without inference while training owns GPUs')
 
 
 def evaluator_factory(monitor, root):
@@ -624,7 +636,7 @@ def persist(assembly, root):
 
 
 def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory=None,
-        process_backend=None, identity_factory=model_identity) -> dict:
+        process_backend=None, identity_factory=model_identity, research_started_callback=None) -> dict:
     root = settings.run_dir.resolve()
     source = RunSource(root.name, settings.parent_run_id)
     root.mkdir(parents=True, exist_ok=True)
@@ -659,15 +671,28 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         artifacts = FileArtifactStore(root / 'artifacts')
         monitor = JournalMonitor(root, base, 'Autonomous medical research', rounds=settings.max_trainings,
                                  source=source)
-        monitor.data['project'] = {'project_id': 'medical-rsi', 'name': '医疗自主研究', 'system_id': 'medical-qwen35-9b'}
+        model_dir = settings.model_path.resolve()
+        model_label = (model_dir.parent.parent.name.removeprefix('models--').replace('--', '-')
+                       if model_dir.parent.name == 'snapshots' else model_dir.name)
+        monitor.data['project'] = {'project_id': 'medical-rsi', 'name': '医疗自主研究',
+                                  'system_id': 'medical-' + model_label.lower()}
+        write_json(root / 'parallelism.json', {'serving_backend': settings.serving_backend,
+            'tensor_parallel_size': settings.tensor_parallel_size, 'training_processes': settings.training_processes})
         monitor.write()
-        serving = (serving_factory or LocalTransformerServing)(str(settings.model_path.resolve()), actor_model=base,
+        serving_options = {}
+        if settings.serving_backend == 'sglang':
+            from .sglang_runtime import SGLangServing
+            default_serving = SGLangServing
+            serving_options = {'tensor_parallel_size': settings.tensor_parallel_size, 'runtime_root': root / 'serving'}
+        else:
+            default_serving = LocalTransformerServing
+        serving = (serving_factory or default_serving)(str(settings.model_path.resolve()), actor_model=base,
             decision_model=base, artifacts=artifacts, native_model_class='image_text_to_text',
             device='cuda:0', dtype='bfloat16', max_context_tokens=32768,
-            decision_thinking=settings.decision_thinking)
+            decision_thinking=settings.decision_thinking, **serving_options)
         learner = RecipeLearner(root / 'training', artifacts, converter, base, settings.model_path.resolve(), monitor,
             serving.release_memory, max_trainings=settings.max_trainings, max_steps=settings.max_train_steps,
-            process_backend=process_backend)
+            process_backend=process_backend, training_processes=settings.training_processes)
         backend = DecisionBackend(serving, root, monitor, settings.max_model_calls)
         backend.training_active = learner.active
         def check_deadline():
@@ -731,7 +756,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'or prepare_data for validated domain JSONL. read_artifact returns summaries for training data. '
             'Never use development or protected examples for training. '
             'For train explicitly select input_ids of training_data only, apply_result=false, '
-            'and omit review_after_seconds: training owns the GPU until the process exits. '
+            'and omit review_after_seconds: training owns the allocated GPUs until the processes exit. '
             'configure_prompt/evaluate/apply_candidate require input_ids=[]. '
             f'Train budget={settings.max_trainings}, decision calls={settings.max_model_calls}, '
             f'research seconds={settings.seconds}; exhausting train budget removes train capability only. '
@@ -743,6 +768,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         research_started = time.monotonic()
         write_json(root / 'research-started.json', {'started_at': time.time(),
             'max_seconds': settings.seconds, 'researcher_finish_ends_run': True})
+        if research_started_callback is not None:
+            research_started_callback(settings.seconds)
         while True:
             step = assembly.runner.step(objective)
             monitor.advance(step)
@@ -821,6 +848,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--private-exclusions', type=Path, action='append', default=[])
     result.add_argument('--decision-thinking', action='store_true',
                         help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
+    result.add_argument('--training-processes', type=int, default=1)
+    result.add_argument('--serving-backend', choices=('transformers', 'sglang'), default='transformers')
+    result.add_argument('--tensor-parallel-size', type=int, default=1)
     return result
 
 
@@ -831,11 +861,16 @@ def main(argv=None):
     def terminate(signum, frame):
         raise KeyboardInterrupt(f'signal {signum}')
     previous = signal.signal(signal.SIGTERM, terminate)
+    def expired(signum, frame):
+        raise BudgetExhausted('deadline')
+    previous_alarm = signal.signal(signal.SIGALRM, expired)
     try:
-        result = run(settings)
+        result = run(settings, research_started_callback=lambda seconds: signal.setitimer(signal.ITIMER_REAL, seconds))
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return 1 if result['status'] == 'failed' else 0
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_alarm)
         signal.signal(signal.SIGTERM, previous)
 
 

@@ -104,11 +104,11 @@ stay in `operator-private/`. Neither that directory nor `source-cache/` belongs 
 model context or researcher artifacts. Optional `--exclude` reads operator-owned
 domain JSONL exclusion lists without publishing their membership.
 
-## Single-GPU autonomous experiment
+## Autonomous experiment
 
 The [experiment entry](experiment.py) assembles the existing harnesses with
 [transformers_runtime.py](transformers_runtime.py) for local inference and native
-LoRA SFT. Run inside an explicitly allocated single-GPU job, with the intended
+LoRA SFT by default. Run inside an explicitly allocated GPU job, with the intended
 device mapped by its launcher, a cached official model, and compatible PyTorch,
 Transformers, PEFT and training dependencies already installed:
 
@@ -122,12 +122,25 @@ PYTHONPATH=src:. python3.12 -m examples.medical.experiment \
 ```
 
 There is no subcommand or separate backend/settings/recipe JSON for this entry.
+For a single node with eight GPUs, select `--serving-backend sglang
+--tensor-parallel-size 8 --training-processes 8`. The optional
+[SGLang runtime](sglang_runtime.py) handles inference tensor parallelism;
+the native Trainer uses eight data-parallel replicas for SFT. The assembly releases
+inference resources before training and prepares the actual returned adapter for
+candidate evaluation. Both frameworks remain outside the Harness. Each training
+GPU must fit a complete model replica. `parallelism.json` records requested
+parallelism; worker evidence records the ranks that actually trained.
+Use `--seconds 1800` for a 30-minute research limit. The CLI arms its hard deadline
+after baseline evaluation, excluding initial model preparation; the job launcher
+must also bound startup time and guarantee resource cleanup.
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.
-Researcher generation stops after one complete final JSON object (the policy still
+The Transformers backend stops researcher generation after one complete final JSON object (the policy still
 checks the action schema and permissions). Reasoning and incomplete JSON cannot
 trigger an action. Actor evaluation has no JSON stopping rule.
+SGLang uses native generation; its final response passes the same policy parser
+and permissions. It does not silently select one action from a multi-action response.
 Optional `--decision-thinking` enables the Qwen researcher thinking template with
 an 8192-token response limit and sampling (temperature 0.6, top-p 0.95, top-k 20).
 Only the final answer after the reasoning delimiter reaches the decision parser;
