@@ -319,6 +319,7 @@ with Application.resume(config.data_dir) as app:
 [medical README](../examples/medical/README.md) 提供数据格式、prepare / check / run 命令、Python 装配、
 固定评测及证据边界。领域代码位于 examples/medical，通过两个默认 Harness 与 Runner 独立装配。
 prepare / check 只读；CLI run 支持 prompt 研究，原生训练通过 Python 注入 learner 与显式输入绑定。
+缓存数据准备 CLI 与单 GPU 自主 LoRA SFT 入口、预算和恢复限制见 [medical README](../examples/medical/README.md#single-gpu-autonomous-experiment)。
 
 医疗 prompt / evaluate / apply_candidate 声明 `accepts_input_refs=False`，省略 input_ids 即为空，
 显式非空拒绝并可进入有界输出纠错；固定评测后端仍拒绝非空 data_refs。train 保留输入引用。

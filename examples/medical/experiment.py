@@ -1,0 +1,759 @@
+"""Single-GPU, model-directed medical experiment (no prescribed research steps).
+
+Run as ``python -m examples.medical.experiment --task ... --run-dir ...
+--model-path ...`` inside the operator's allocated GPU job. Never resumes a run.
+Optional frameworks are imported only by the injected serving/tokenizer/worker.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+from dataclasses import asdict, dataclass, replace
+from hashlib import sha256
+import json
+import math
+from pathlib import Path
+import signal
+import time
+import traceback
+from types import MappingProxyType
+from typing import Callable
+
+from rsisys.adapters.training import ProcessTrainingBackend
+from rsisys.loops.contracts.backend import BackendCapabilities
+from rsisys.loops.contracts.coordination import OperationResult, ReviewDecision
+from rsisys.loops.contracts.feedback import Feedback
+from rsisys.loops.contracts.jobs import JobRef, JobStatus
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.training import ResumeMode
+from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace, OperationCall, OperationSpec
+from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
+from rsisys.loops.decision_making.harness.context import BasicContextCompactor
+from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+from rsisys.loops.exploration.harness.commands import CommandHandler
+from rsisys.runtime.artifacts import FileArtifactStore
+from rsisys.runtime.files import atomic_write
+from rsisys.runtime.run_policy import RunContext, RunDecision
+from examples.qwen_toy.monitor import Monitor
+from .evaluation import MedicalEvaluator
+from .native import MedicalTrainingBackend
+from .run import build
+from .task import DataRef, Sample, encoded, prepare, samples, validate_training
+
+
+class BudgetExhausted(BaseException):
+    """External stop; must bypass operation/evaluator Exception recovery."""
+
+
+class ResearchInputError(ValueError):
+    """Known domain rejection before any external side effect."""
+
+
+def write_json(path: Path, value: object) -> None:
+    atomic_write(path, encoded(value))
+
+
+def row_json(row: Sample) -> dict:
+    return {**asdict(row), 'options': dict(row.options)}
+
+
+def jsonl(rows) -> bytes:
+    return b''.join(encoded(row_json(row)) + b'\n' for row in rows)
+
+
+@dataclass(frozen=True)
+class ExperimentSettings:
+    task: Path
+    run_dir: Path
+    model_path: Path
+    seconds: float = 5400
+    max_trainings: int = 3
+    max_model_calls: int = 96
+    max_seq_length: int = 2048
+    max_train_steps: int = 64
+    private_exclusions: tuple[Path, ...] = ()
+
+    def __post_init__(self):
+        for name in ('task', 'run_dir', 'model_path'):
+            if not isinstance(getattr(self, name), Path):
+                raise TypeError(f'{name} must be a Path')
+        if type(self.seconds) not in (int, float) or not math.isfinite(self.seconds) or self.seconds <= 0:
+            raise ValueError('seconds must be finite and positive')
+        for name, maximum in (('max_trainings', 3), ('max_train_steps', 64),
+                              ('max_model_calls', 10000), ('max_seq_length', 2048)):
+            value = getattr(self, name)
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise ValueError(f'{name} must be an integer in 1..{maximum}')
+        if not isinstance(self.private_exclusions, tuple) or any(
+                not isinstance(path, Path) for path in self.private_exclusions):
+            raise TypeError('private_exclusions must be a tuple of Paths')
+
+
+class JournalMonitor(Monitor):
+    """Existing public schema plus an unbounded append-only event archive."""
+    def event(self, event, **details):
+        super().event(event, **details)
+        with (self.root / 'events.jsonl').open('ab') as stream:
+            stream.write(encoded(self.data['events'][-1]) + b'\n')
+
+
+class DecisionBackend:
+    def __init__(self, serving, root: Path, monitor: Monitor, limit: int):
+        self.serving, self.root, self.monitor, self.limit = serving, root, monitor, limit
+        self.calls = 0
+        self.check_deadline: Callable[[], None] = lambda: None
+        self.training_active: Callable[[], bool] = lambda: False
+
+    def generate(self, request):
+        self.check_deadline()
+        if self.training_active():
+            raise RuntimeError('Decision inference prohibited while a training process is active')
+        if self.calls >= self.limit:
+            raise BudgetExhausted('model_call_budget_exhausted')
+        self.calls += 1
+        write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit})
+        self.monitor.event('model_decision_requested', call=self.calls)
+        response = self.serving.generate(replace(request, max_output_tokens=1024))
+        with (self.root / 'model_responses.jsonl').open('ab') as stream:
+            stream.write(encoded({'call': self.calls, 'response': asdict(response)}) + b'\n')
+        self.check_deadline()
+        return response
+
+
+class ExperimentRunPolicy:
+    """Deadline and researcher finish both stop; neither restarts research."""
+    def __init__(self, seconds: float, backend: DecisionBackend):
+        self.max_seconds, self.backend = seconds, backend
+
+    def evaluate(self, context: RunContext) -> RunDecision:
+        if context.elapsed_seconds >= self.max_seconds:
+            return RunDecision('stop', 'deadline', 'cancel')
+        if context.researcher_finished:
+            return RunDecision('stop', 'researcher_finished', 'cancel')
+        if self.backend.calls >= self.backend.limit:
+            return RunDecision('stop', 'model_call_budget_exhausted', 'cancel')
+        return RunDecision()
+
+
+class RecipeLearner:
+    """Small recipe router; shared process backend, recipe-scoped native keys.
+
+    Reservations are persisted BEFORE submission. Unknown submissions consume
+    budget and are never automatically replayed by the controller.
+    """
+    def __init__(self, root, artifacts, converter, base, model_path, monitor, release_memory,
+                 *, max_trainings=3, max_steps=64, process_backend=None):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.artifacts, self.converter, self.base = artifacts, converter, base
+        self.model_path, self.monitor, self.release_memory = str(model_path), monitor, release_memory
+        self.max_trainings, self.max_steps = max_trainings, max_steps
+        self.process = process_backend or ProcessTrainingBackend(self.root / 'process')
+        self.backends: dict[str, MedicalTrainingBackend] = {}
+        self.recipes: dict[str, dict] = {}
+        self.ledger_path = self.root / 'budget.json'
+        self.ledger: dict[str, dict] = (json.loads(self.ledger_path.read_text())
+                                      if self.ledger_path.exists() else {})
+        self.default_recipe = self.define_recipe({'steps': min(32, max_steps), 'lr': 1e-4, 'seed': 0})
+
+    @property
+    def remaining(self) -> int:
+        return self.max_trainings - len(self.ledger)
+
+    def capabilities(self):
+        return BackendCapabilities(methods=('sft',), resume_modes=(ResumeMode.RESTART,), supports_reattach=True)
+
+    def define_recipe(self, fields: dict) -> str:
+        allowed = {'steps', 'lr', 'seed', 'weight_decay', 'warmup_ratio'}
+        if not isinstance(fields, dict) or set(fields) - allowed:
+            raise ResearchInputError('define_recipe accepts steps, lr, seed, weight_decay, warmup_ratio only')
+        values = {'steps': min(32, self.max_steps), 'lr': 1e-4, 'seed': 0,
+                  'weight_decay': 0.0, 'warmup_ratio': 0.0, **fields}
+        for name, lo, hi in (('steps', 1, self.max_steps), ('seed', 0, 2**31 - 1)):
+            if type(values[name]) is not int or not lo <= values[name] <= hi:
+                raise ResearchInputError(f'{name} must be an integer in {lo}..{hi}')
+        for name, lo, hi in (('lr', 1e-6, 1e-3), ('weight_decay', 0, .1), ('warmup_ratio', 0, .2)):
+            value = values[name]
+            if type(value) not in (float, int) or not math.isfinite(value) or not lo <= value <= hi:
+                raise ResearchInputError(f'{name} must be finite in {lo}..{hi}')
+            values[name] = float(value)
+        template = {'model_name_or_path': self.model_path, 'initial_model': asdict(self.base),
+            'model_auto_class': 'image_text_to_text', 'use_cache': False,
+            'model_kwargs': {'local_files_only': True, 'dtype': 'bfloat16', 'attn_implementation': 'sdpa'},
+            'seed': values['seed'],
+            'lora_config': {'r': 8, 'lora_alpha': 16, 'lora_dropout': 0.0, 'bias': 'none',
+                            'task_type': 'CAUSAL_LM', 'target_modules': ['q_proj', 'v_proj']},
+            'training_args': {'max_steps': values['steps'], 'learning_rate': values['lr'],
+                'seed': values['seed'], 'data_seed': values['seed'], 'weight_decay': values['weight_decay'],
+                'warmup_ratio': values['warmup_ratio'], 'per_device_train_batch_size': 1,
+                'gradient_accumulation_steps': 2, 'bf16': True, 'gradient_checkpointing': True,
+                'gradient_checkpointing_kwargs': {'use_reentrant': False}, 'logging_steps': 1,
+                'save_strategy': 'no', 'report_to': 'none', 'dataloader_num_workers': 0}}
+        digest = sha256(encoded(template)).hexdigest()
+        backend = MedicalTrainingBackend(self.root / 'recipes' / digest, self.artifacts,
+            tokenize=self.converter, conversion_id=self.converter.conversion_id,
+            recipe_template=template, process_backend=self.process)
+        ref = backend.recipe_ref
+        self.backends[ref], self.recipes[ref] = backend, {'parameters': values, 'template': template}
+        write_json(self.root / 'recipes.json', self.recipes)
+        return ref
+
+    def bind_inputs(self, request, artifacts):
+        if request.recipe_ref not in self.backends:
+            raise ResearchInputError('Unknown recipe_ref; call define_recipe first')
+        return self.backends[request.recipe_ref].bind_inputs(request, artifacts)
+
+    def signature(self, request) -> str:
+        rows = [row_json(row) for ref in request.data_refs for row in samples(self.artifacts.get(ref))]
+        rows.sort(key=lambda row: row['id'])
+        if len({row['id'] for row in rows}) != len(rows):
+            raise ResearchInputError('Duplicate sample IDs across training inputs')
+        return sha256(encoded({'rows': rows, 'base': asdict(request.base), 'method': request.method,
+                               'recipe': self.recipes[request.recipe_ref]})).hexdigest()
+
+    def check_request(self, request, key: str) -> str:
+        self.bind_inputs(request, self.artifacts)
+        signature = self.signature(request)
+        if key in self.ledger:
+            if self.ledger[key]['request'] != json.loads(encoded(asdict(request))):
+                raise ResearchInputError('Idempotency key reused with a different request')
+            return signature
+        if self.remaining <= 0:
+            raise ResearchInputError('Training budget exhausted; prompt research and evaluation remain available')
+        if any(row['signature'] == signature for row in self.ledger.values()):
+            raise ResearchInputError('Exact duplicate data/initializer/seed/recipe training rejected; no process started')
+        return signature
+
+    def submit(self, request, *, idempotency_key):
+        signature = self.check_request(request, idempotency_key)
+        backend = self.backends[request.recipe_ref]
+        native_key = request.recipe_ref + ':' + idempotency_key
+        native_id = sha256(native_key.encode()).hexdigest()
+        if idempotency_key not in self.ledger:
+            self.ledger[idempotency_key] = {'signature': signature, 'request': asdict(request),
+                'recipe_ref': request.recipe_ref, 'native_key': native_key,
+                'process_job': asdict(JobRef(native_id, self.process.backend)),
+                'status': 'reserved', 'submission_attempted': False}
+            write_json(self.ledger_path, self.ledger)
+        row = self.ledger[idempotency_key]
+        self.release_memory()  # Only before training, never while polling.
+        row['submission_attempted'] = True
+        write_json(self.ledger_path, self.ledger)
+        job = backend.submit(request, idempotency_key=native_key)
+        row.update(job=asdict(job), status='submitted')
+        write_json(self.ledger_path, self.ledger)
+        self.monitor.event('job', kind='train', job_id=job.job_id, status='submitted',
+                           total_steps=self.recipes[request.recipe_ref]['parameters']['steps'])
+        return job
+
+    def _owner(self, job):
+        for row in self.ledger.values():
+            expected = row.get('job') or {'job_id': row['process_job']['job_id'],
+                                         'backend': self.backends[row['recipe_ref']].backend}
+            if expected == asdict(job):
+                return self.backends[row['recipe_ref']], row
+        raise ValueError('Foreign recipe training job')
+
+    def poll(self, job):
+        backend, row = self._owner(job)
+        outcome = backend.poll(job)
+        row['status'] = outcome.status.value
+        write_json(self.ledger_path, self.ledger)
+        details = asdict(outcome.progress) if outcome.progress else {}
+        self.monitor.event('job', kind='train', job_id=job.job_id, status=outcome.status.value, **details)
+        if outcome.status == JobStatus.UNKNOWN:
+            raise RuntimeError('Training process state unknown; no restart attempted')
+        return outcome
+
+    def cancel(self, job):
+        self._owner(job)[0].cancel(job)
+
+    def result(self, job):
+        return self._owner(job)[0].result(job)
+
+    reattach = poll
+
+    def active(self) -> bool:
+        return any(row['status'] not in ('succeeded', 'failed', 'cancelled') for row in self.ledger.values())
+
+    def cleanup(self, timeout=30.0) -> dict:
+        """Cancel only process IDs reserved in THIS controller's durable ledger."""
+        pending, results = {}, {}
+        for key, row in self.ledger.items():
+            job = JobRef(**row['process_job'])
+            directory = self.process.root / job.job_id
+            if not (directory / 'receipt.json').exists():
+                results[key] = {'status': 'not_launched', 'confirmed': True}
+                continue
+            outcome = self.process.poll(job)
+            if outcome.terminal:
+                results[key] = {'status': outcome.status.value, 'confirmed': True}
+                continue
+            self.process.cancel(job)
+            pending[key] = job
+            self.monitor.event('job', kind='train', job_id=job.job_id, status='cancel_requested')
+        deadline = time.monotonic() + timeout
+        while pending and time.monotonic() < deadline:
+            for key, job in tuple(pending.items()):
+                outcome = self.process.poll(job)
+                if outcome.terminal:
+                    results[key] = {'status': outcome.status.value, 'confirmed': True}
+                    del pending[key]
+            if pending:
+                time.sleep(.2)
+        for key in pending:
+            results[key] = {'status': 'unresolved', 'confirmed': False}
+        result = {'confirmed': not pending, 'jobs': results}
+        write_json(self.root / 'cleanup.json', result)
+        return result
+
+
+class CheckedTraining(CommandHandler):
+    """Pure business rejections become feedback; external exceptions propagate."""
+    def __init__(self, delegate, learner):
+        self.delegate, self.learner = delegate, learner
+
+    def prepare(self, harness, state):
+        try:
+            self.delegate.prepare(harness, state)
+            self.learner.check_request(state.request, state.idempotency_key)
+        except (ValueError, KeyError, NotImplementedError) as exc:
+            state.data['business_rejection'] = str(exc)
+
+    def advance(self, harness, state, action_space):
+        if 'business_rejection' in state.data:
+            return Feedback(state.directive.directive_id, ExecutionStatus.FAILED,
+                'Training request rejected before submission; no budget consumed', False,
+                error=state.data['business_rejection'])
+        return self.delegate.advance(harness, state, action_space)
+
+
+class OperationDefinition:
+    def __init__(self, name, description, properties, required, validate, *, read_only=False):
+        self.spec = OperationSpec(name, description, {'type': 'object', 'properties': properties,
+            'required': required, 'additionalProperties': False}, read_only=read_only)
+        self.check = validate
+
+    def validate(self, arguments):
+        if not isinstance(arguments, dict) or set(arguments) - set(self.spec.input_schema['properties']) or any(
+                name not in arguments for name in self.spec.input_schema['required']):
+            raise ResearchInputError(f'Invalid fields for {self.spec.name}')
+        self.check(arguments)
+        return OperationCall(self.spec.name, arguments)
+
+
+class ExperimentOperations:
+    """Domain operations and bindings are outside both default harnesses."""
+    def __init__(self, assembly, learner, converter, excluded):
+        self.assembly, self.learner, self.converter = assembly, learner, converter
+        self.excluded = (*assembly.task.check(), *excluded)
+        self.refs = {ref.artifact_id: ref for ref in assembly.systems.get('initial').components.values()}
+        self.train_ref = assembly.systems.get('initial').components['data']
+        self.rows = samples(assembly.artifacts.get(self.train_ref))
+        self.by_id = {row.id: row for row in self.rows}
+        integer = lambda lo, hi: {'type': 'integer', 'minimum': lo, 'maximum': hi}
+        self.definitions = (
+            OperationDefinition('define_recipe', 'Define controlled SFT recipe; returns recipe_ref. Seed alone is not a mechanism.',
+                {'steps': integer(1, learner.max_steps), 'lr': {'type': 'number', 'minimum': 1e-6, 'maximum': 1e-3},
+                 'seed': integer(0, 2**31-1), 'weight_decay': {'type': 'number', 'minimum': 0, 'maximum': .1},
+                 'warmup_ratio': {'type': 'number', 'minimum': 0, 'maximum': .2}}, [], self._recipe_fields),
+            OperationDefinition('preview_training_data', 'Preview at most eight training rows; development is never selectable.',
+                {'offset': integer(0, len(self.rows)), 'limit': integer(1, 8)}, [], self._page_fields, read_only=True),
+            OperationDefinition('choose_training_data', 'Create training artifact from explicit IDs or bounded offset/limit page.',
+                {'ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 4096},
+                 'offset': integer(0, len(self.rows)), 'limit': integer(1, 256)}, [], self._selection_fields),
+            OperationDefinition('prepare_data', 'Store explicit domain JSONL after protected-overlap and token-length validation.',
+                {'text': {'type': 'string', 'maxLength': 65536}}, ['text'], self._text_fields),
+            OperationDefinition('read_artifact', 'Read visible evidence; training data returns summary/reference. Use paginated preview.',
+                {'artifact_id': {'type': 'string'}}, ['artifact_id'], self._artifact_fields, read_only=True))
+        self.bindings = {definition.spec.name: self._guard(getattr(self, definition.spec.name))
+                         for definition in self.definitions}
+
+    @staticmethod
+    def _guard(handler):
+        def execute(arguments):
+            try:
+                return handler(arguments)
+            except ResearchInputError as exc:
+                return OperationResult('Domain operation rejected', (), False, ExecutionStatus.FAILED, str(exc))
+        return execute
+
+    @staticmethod
+    def _recipe_fields(args):
+        # RecipeLearner owns pure semantic validation at execution, returning FAILED.
+        for name, value in args.items():
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ResearchInputError(f'{name} requires a finite number')
+
+    @staticmethod
+    def _page_fields(args):
+        if type(args.get('offset', 0)) is not int or args.get('offset', 0) < 0 or type(args.get('limit', 8)) is not int or not 1 <= args.get('limit', 8) <= 8:
+            raise ResearchInputError('Preview requires offset>=0 and limit in 1..8')
+
+    @staticmethod
+    def _selection_fields(args):
+        if 'ids' in args:
+            ids = args['ids']
+            if set(args) != {'ids'} or not isinstance(ids, list) or not 1 <= len(ids) <= 4096 or any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
+                raise ResearchInputError('Provide unique string ids only, 1..4096')
+        elif set(args) != {'offset', 'limit'} or type(args['offset']) is not int or args['offset'] < 0 or type(args['limit']) is not int or not 1 <= args['limit'] <= 256:
+            raise ResearchInputError('Choose ids OR offset>=0 and limit in 1..256')
+
+    @staticmethod
+    def _text_fields(args):
+        if not isinstance(args['text'], str) or not 1 <= len(args['text']) <= 65536:
+            raise ResearchInputError('text must contain 1..65536 characters')
+
+    @staticmethod
+    def _artifact_fields(args):
+        if not isinstance(args['artifact_id'], str) or not args['artifact_id']:
+            raise ResearchInputError('artifact_id must be a nonempty string')
+
+    def define_recipe(self, args):
+        ref = self.learner.define_recipe(args)
+        return OperationResult('Recipe defined', (), False,
+            data={'recipe_ref': ref, **self.learner.recipes[ref], 'seed_is_mechanism_change': False})
+
+    def preview_training_data(self, args):
+        offset, limit = args.get('offset', 0), args.get('limit', 8)
+        rows = self.rows[offset:offset+limit]
+        return OperationResult('Training page', (self.train_ref,), False,
+            data={'offset': offset, 'total': len(self.rows), 'rows': [row_json(row) for row in rows],
+                  'next_offset': offset+len(rows) if offset+len(rows) < len(self.rows) else None})
+
+    def _publish(self, rows):
+        if not rows:
+            raise ResearchInputError('Selection is empty')
+        ref = self.assembly.artifacts.put(jsonl(rows), kind='training_data')
+        self.refs[ref.artifact_id] = ref
+        return OperationResult('Training data prepared', (ref,), False,
+            data={'train_ref': asdict(ref), 'count': len(rows), 'benchmarks': dict(Counter(r.benchmark_id for r in rows))})
+
+    def choose_training_data(self, args):
+        if 'ids' in args:
+            if any(ident not in self.by_id for ident in args['ids']):
+                raise ResearchInputError('IDs must belong to the frozen effective training partition')
+            rows = tuple(self.by_id[ident] for ident in args['ids'])
+        else:
+            rows = self.rows[args['offset']:args['offset']+args['limit']]
+        return self._publish(rows)
+
+    def prepare_data(self, args):
+        try:
+            rows = samples(args['text'].encode())
+            validate_training(rows, self.excluded)
+            kept, excluded = self.converter.filter_samples(rows)
+            if excluded:
+                raise ValueError('Some rows exceed max_seq_length; remove whole rows before retrying')
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ResearchInputError(str(exc)) from exc
+        return self._publish(kept)
+
+    def read_artifact(self, args):
+        visible = dict(self.refs)
+        visible.update(self.assembly.evaluator.evidence)
+        for candidate in self.assembly.candidates.values():
+            visible.update({ref.artifact_id: ref for ref in candidate.changes.values()})
+        ref = visible.get(args['artifact_id'])
+        if ref is None:
+            raise ResearchInputError('Unknown or nonvisible artifact')
+        if ref.kind == 'training_data':
+            rows = samples(self.assembly.artifacts.get(ref))
+            return OperationResult('Training artifact summary; use preview_training_data for source rows', (ref,), False,
+                data={'train_ref': asdict(ref), 'count': len(rows),
+                      'benchmarks': dict(Counter(r.benchmark_id for r in rows))})
+        content = self.assembly.artifacts.get(ref).decode()
+        return OperationResult('Visible evidence excerpt' if len(content) > 12000 else 'Visible artifact', (ref,), False,
+            data={'content': content[:12000], 'total_characters': len(content), 'truncated': len(content) > 12000})
+
+
+class ResearchPolicy(ModelDecisionPolicy):
+    def __init__(self, backend, model, catalog, space, monitor, learner, train_ref):
+        super().__init__(backend, model, directives=catalog, max_validation_attempts=1)
+        self.space, self.monitor, self.learner = space, monitor, learner
+        self.train_ref = train_ref
+        self.finish_reason: str | None = None
+
+    def decide(self, context):
+        hint = ''
+        for attempt in range(3):
+            # Transport/model identity/external failures are deliberately outside retry.
+            current = replace(context, objective=context.objective + hint,
+                run_control={**context.run_control, 'researcher_finish_ends_run': True},
+                operation_results=(*context.operation_results, OperationResult(
+                    'Frozen effective training partition; available for explicit input_ids',
+                    (self.train_ref,), False)))
+            response = self._generate_decision(current)
+            try:
+                decision = self._parse_decision(response, current)
+                space = authorized_space(self.space)
+                if decision.kind == 'invoke':
+                    space.validate(decision.operation)
+                elif decision.kind == 'explore':
+                    space.validate_directive(decision.directive)
+                    if decision.directive.mode == 'train':
+                        if decision.directive.review_after_seconds is not None:
+                            raise ValueError('Single-GPU train cannot run model reviews; omit review_after_seconds')
+                        if not decision.directive.input_refs or any(ref.kind != 'training_data' for ref in decision.directive.input_refs):
+                            raise ValueError('train requires explicit input_ids containing training_data artifacts only')
+                elif decision.kind == 'wait':
+                    raise ValueError('Serial research has no outstanding job here; choose an operation, directive, or finish')
+                elif not decision.reason.strip():
+                    raise ValueError('finish requires a nonempty reason')
+            except (ValueError, TypeError, KeyError, PermissionError) as exc:
+                self.monitor.event('model_decision_rejected', attempt=attempt+1, error=str(exc)[:1000])
+                hint = '\nPrevious decision schema/validation error (data): ' + json.dumps(str(exc)[:1000])
+                continue
+            if decision.kind == 'finish':
+                self.finish_reason = decision.reason
+            if decision.directive:
+                self.monitor.stage(decision.directive.mode)
+            self.monitor.decision(decision, current, len(self.learner.ledger)+1)
+            self.monitor.event('model_decision_validated', kind=decision.kind)
+            return decision
+        raise ValueError('Researcher failed three bounded schema/validation attempts')
+
+    def review(self, context):
+        # Resource scheduling, not a synthetic researcher/model decision.
+        return ReviewDecision('continue', reason='Serial single-GPU controller polls without inference')
+
+
+def evaluator_factory(monitor, root):
+    class ObservedEvaluator(MedicalEvaluator):
+        def _measure(self, system):
+            before = len(self._partial.get(system.version, ()))
+            result = super()._measure(system)
+            predictions = self._partial.get(system.version, ())
+            if len(predictions) > before:
+                row = predictions[-1]
+                monitor.event('job', kind='evaluate', job_id='evaluation:'+system.version,
+                    status='succeeded' if result else 'running', step=len(predictions),
+                    total_steps=sum(len(b.data.read()) for b in self.task.development),
+                    candidate_id=system.version, metrics={'correct': int(row['correct'])})
+                write_json(root / 'evaluation_progress.json', self._partial)
+            write_json(root / 'evaluations.json', {key: asdict(value) for key, value in self._outputs.items()})
+            return result
+    return ObservedEvaluator
+
+
+def model_identity(path: Path) -> tuple[str, dict]:
+    """Content pin, with HF snapshot commit used only when actually present."""
+    from .transformers_runtime import _files_identity
+    root = path.resolve()
+    actual = _files_identity(root)
+    revision = root.name if root.parent.name == 'snapshots' and len(root.name) == 40 else 'local-sha256:'+actual
+    config = json.loads((root / 'config.json').read_text())
+    model_id = config.get('_name_or_path') or str(root)
+    if not isinstance(model_id, str) or not model_id:
+        raise ValueError('Model config _name_or_path must be a nonempty string when supplied')
+    manifest = {'model_id': model_id, 'revision': revision, 'source_directory': str(root),
+        'actual_weight_sha256': actual, 'files': [{'name': p.name, 'bytes': p.stat().st_size}
+            for p in sorted(root.iterdir()) if p.is_file() and (p.suffix in ('.json', '.safetensors', '.bin'))]}
+    return revision, manifest
+
+
+def persist(assembly, root):
+    assembly.runner.decision_making.harness.memory.backup(root / 'decision_memory.json')
+    assembly.runner.exploration.harness.memory.backup(root / 'exploration_memory.json')
+    write_json(root / 'experience.json', [asdict(record) for record in assembly.experience_store.records()])
+    write_json(root / 'candidates.json', {key: asdict(value) for key, value in assembly.candidates.items()})
+    write_json(root / 'evaluations.json', {key: asdict(value) for key, value in assembly.evaluator._outputs.items()})
+    write_json(root / 'systems.json', {'current': asdict(assembly.systems.current)})
+
+
+def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory=None,
+        process_backend=None, identity_factory=model_identity) -> dict:
+    root = settings.run_dir.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    # This marker intentionally survives success, exceptions, SIGTERM and crashes.
+    with (root / 'controller-started.json').open('x') as stream:
+        stream.write(encoded({'schema_version': 1, 'started_at': time.time()}).decode())
+    serving = learner = assembly = monitor = backend = None
+    result = {'status': 'failed', 'reason': 'initialization_failed', 'run_id': root.name,
+              'researcher_finish_reason': None, 'baseline_seconds': None, 'research_seconds': 0.0}
+    research_started = None
+    started = time.monotonic()
+    try:
+        from .transformers_runtime import LocalTransformerServing, tokenize_factory
+        original = prepare(json.loads(settings.task.read_text()), base_directory=settings.task.resolve().parent)
+        private = tuple(row for path in settings.private_exclusions for row in samples(path.read_bytes()))
+        validate_training(original.train.read(), (*original.check(), *private))
+        revision, identity = identity_factory(settings.model_path)
+        write_json(root / 'model_identity.json', identity)
+        base = ModelRef('medical-local', identity['model_id'], revision)
+        converter = (converter_factory or tokenize_factory)(str(settings.model_path.resolve()),
+            max_length=settings.max_seq_length, padding=False, revision=revision if len(revision) == 40 else None)
+        kept, excluded = converter.filter_samples(original.train.read())
+        if not kept:
+            raise ValueError('No training rows survive tokenizer preflight')
+        atomic_write(root / 'effective-train.jsonl', jsonl(kept))
+        task = replace(original, train=DataRef.freeze(root / 'effective-train.jsonl'))
+        write_json(root / 'effective-task.json', asdict(task))
+        write_json(root / 'data-manifest.json', {'original_task': asdict(original), 'effective_task': asdict(task),
+            'original_train_rows': len(original.train.read()), 'effective_train_rows': len(kept),
+            'excluded': excluded, 'conversion_id': converter.conversion_id, 'conversion_metadata': converter.metadata})
+        artifacts = FileArtifactStore(root / 'artifacts')
+        monitor = JournalMonitor(root, base, 'Autonomous medical research', rounds=settings.max_trainings)
+        monitor.data['project'] = {'project_id': 'medical-rsi', 'name': '医疗自主研究', 'system_id': 'medical-qwen35-9b'}
+        monitor.write()
+        serving = (serving_factory or LocalTransformerServing)(str(settings.model_path.resolve()), actor_model=base,
+            decision_model=base, artifacts=artifacts, native_model_class='image_text_to_text',
+            device='cuda:0', dtype='bfloat16', max_context_tokens=32768)
+        learner = RecipeLearner(root / 'training', artifacts, converter, base, settings.model_path.resolve(), monitor,
+            serving.release_memory, max_trainings=settings.max_trainings, max_steps=settings.max_train_steps,
+            process_backend=process_backend)
+        backend = DecisionBackend(serving, root, monitor, settings.max_model_calls)
+        backend.training_active = learner.active
+        def check_deadline():
+            if research_started is not None and time.monotonic()-research_started >= settings.seconds:
+                raise BudgetExhausted('deadline')
+        backend.check_deadline = check_deadline
+        permissions = ActionPermissions(check=lambda req: not (
+            req.kind == 'directive' and req.name == 'train' and learner.remaining <= 0))
+        assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=base, initial_model=base,
+            inference=serving, system_activator=serving, prepare_inference=serving.prepare_inference,
+            learner=learner, bind_training_inputs=learner.bind_inputs, trusted_exclusions=private,
+            run_policy=ExperimentRunPolicy(settings.seconds, backend), action_permissions=permissions,
+            evaluator_factory=evaluator_factory(monitor, root))
+        decision = assembly.runner.decision_making.harness
+        operations = ExperimentOperations(assembly, learner, converter, private)
+        research_tools = decision.tools.research_tools
+        tools = BoundDecisionTools({**research_tools.bindings, **operations.bindings})
+        tools.research_tools, tools.artifacts = research_tools, artifacts
+        decision.tools = tools
+        space = ModularDecisionActionSpace((*research_tools.definitions, *operations.definitions),
+            directives=assembly.runner.decision_making.action_space.directives, permissions=permissions)
+        assembly.runner.decision_making.action_space = space
+        policy = ResearchPolicy(backend, base, space.directives, space, monitor, learner, operations.train_ref)
+        decision.policy = policy
+        decision.context_compactor = BasicContextCompactor(recent_tail=4, stream_chars=8000, summary_chars=4096)
+        commands = assembly.runner.exploration.harness.commands
+        commands.handlers = MappingProxyType({**commands.handlers,
+            'train': CheckedTraining(commands.handlers['train'], learner)})
+        monitor.stage('baseline')
+        baseline_started = time.monotonic()
+        anchor = assembly.evaluator.establish_anchor()
+        result['baseline_seconds'] = time.monotonic()-baseline_started
+        write_json(root / 'baseline.json', {'result': asdict(anchor), 'seconds': result['baseline_seconds']})
+        persist(assembly, root)
+        objective = ('Investigate whether supervised adaptation of this model on MedQA improves difficult '
+            'MedXpertQA performance without degrading the MedQA guardrail. '
+            'You choose the research steps and may conduct multiple rounds, change training data/recipe or prompt, '
+            'evaluate, apply an accepted candidate, or finish with your reason at any time. Training is optional. '
+            'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
+            'No candidate may be applied without the existing improvement/guardrail acceptance check. '
+            'Only method=sft and restart from the fixed initializer are installed; no real RL. '
+            'Use define_recipe for controlled steps/lr/seed/weight_decay/warmup_ratio, '
+            'preview_training_data (at most 8 rows), choose_training_data for a subset, '
+            'or prepare_data for validated domain JSONL. read_artifact returns summaries for training data. '
+            'Never use development or protected examples for training. '
+            'For train explicitly select input_ids of training_data only, apply_result=false, '
+            'and omit review_after_seconds: training owns the GPU until the process exits. '
+            'configure_prompt/evaluate/apply_candidate require input_ids=[]. '
+            f'Train budget={settings.max_trainings}, decision calls={settings.max_model_calls}, '
+            f'research seconds={settings.seconds}; exhausting train budget removes train capability only. '
+            f'Default recipe_ref={learner.default_recipe}; default steps={min(32, settings.max_train_steps)}, lr=0.0001. '
+            f'Frozen train artifact_id={operations.train_ref.artifact_id}. '
+            f'Evaluation protocol_ref={task.protocol_ref}. '
+            'Fixed initial anchor: '+json.dumps(asdict(anchor)))
+        monitor.stage('researching')
+        research_started = time.monotonic()
+        write_json(root / 'research-started.json', {'started_at': time.time(),
+            'max_seconds': settings.seconds, 'researcher_finish_ends_run': True})
+        while True:
+            step = assembly.runner.step(objective)
+            monitor.advance(step)
+            for key, candidate in assembly.candidates.items():
+                monitor.candidates[key] = {'candidate_id': key, 'parent_system': candidate.parent_system,
+                    'status': 'applied' if assembly.systems.current.version == key else 'proposed',
+                    'metrics': dict(assembly.evaluator.measurement(key).metrics) if assembly.evaluator.measurement(key) else {}}
+            persist(assembly, root)
+            with (root / 'steps.jsonl').open('ab') as stream:
+                stream.write(encoded(asdict(step))+b'\n')
+            result['researcher_finish_reason'] = policy.finish_reason
+            if step.kind == 'finished':
+                stop = step.event.get('run_stop', {})
+                result.update(status='completed' if stop.get('reason') == 'researcher_finished' else 'stopped',
+                              reason=stop.get('reason', 'runner_finished'), run_stop=stop)
+                break
+            if step.kind == 'waiting':
+                time.sleep(.5)
+        result['model_calls'] = backend.calls
+    except BudgetExhausted as exc:
+        result.update(status='stopped', reason=str(exc))
+    except KeyboardInterrupt:
+        result.update(status='stopped', reason='interrupted')
+    except Exception as exc:
+        result.update(status='failed', reason=type(exc).__name__, error=str(exc))
+        atomic_write(root / 'exception.txt', traceback.format_exc().encode())
+    finally:
+        # No guessed PIDs, process-wide kill, unrelated jobs or automatic retries.
+        cleanup_errors = []
+        try:
+            if learner is not None:
+                result['cleanup'] = learner.cleanup()
+                if not result['cleanup']['confirmed']:
+                    result.update(status='failed', reason='training_cleanup_unconfirmed')
+        except Exception as exc:
+            cleanup_errors.append(f'training cleanup: {type(exc).__name__}: {exc}')
+        finally:
+            try:
+                if serving is not None:
+                    serving.release_memory()
+            except Exception as exc:
+                cleanup_errors.append(f'serving release: {type(exc).__name__}: {exc}')
+        try:
+            if assembly is not None:
+                persist(assembly, root)
+                result['researcher_finish_reason'] = assembly.runner.decision_making.harness.policy.finish_reason
+            if serving is not None:
+                write_json(root / 'serving-weight-identities.json', [
+                    {'model': asdict(model), 'metadata': metadata} for model, metadata in serving.weight_metadata.items()])
+        except Exception as exc:
+            cleanup_errors.append(f'final persistence: {type(exc).__name__}: {exc}')
+        if cleanup_errors:
+            result.update(status='failed', reason='cleanup_or_persistence_failed', cleanup_errors=cleanup_errors)
+        result['research_seconds'] = time.monotonic()-research_started if research_started is not None else 0.0
+        result['duration_seconds'] = time.monotonic()-started
+        result['trainings_reserved'] = len(learner.ledger) if learner is not None else 0
+        result['model_calls'] = backend.calls if backend is not None else 0
+        if monitor is not None:
+            monitor.data['result'] = result
+            monitor.stage(result['reason'], status=result['status'])
+        write_json(root / 'result.json', result)
+    return result
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument('--task', type=Path, required=True)
+    result.add_argument('--run-dir', type=Path, required=True)
+    result.add_argument('--model-path', type=Path, required=True)
+    result.add_argument('--seconds', type=float, default=5400)
+    result.add_argument('--max-trainings', type=int, default=3)
+    result.add_argument('--max-model-calls', type=int, default=96)
+    result.add_argument('--max-seq-length', type=int, default=2048)
+    result.add_argument('--max-train-steps', type=int, default=64)
+    result.add_argument('--private-exclusions', type=Path, action='append', default=[])
+    return result
+
+
+def main(argv=None):
+    args = vars(parser().parse_args(argv))
+    args['private_exclusions'] = tuple(args['private_exclusions'])
+    settings = ExperimentSettings(**args)
+    def terminate(signum, frame):
+        raise KeyboardInterrupt(f'signal {signum}')
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        result = run(settings)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+        return 1 if result['status'] == 'failed' else 0
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

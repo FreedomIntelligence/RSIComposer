@@ -21,7 +21,7 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, JobProgre
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
 
-_WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'CUDA_VISIBLE_DEVICES',
+_WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
     'NVIDIA_VISIBLE_DEVICES', 'ASCEND_RT_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES',
     'ROCR_VISIBLE_DEVICES', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
     'RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'LOCAL_WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT',
@@ -115,6 +115,10 @@ def _native_inputs(request, config_ref):
     config_path = Path(config_ref).resolve()
     raw_config = config_path.read_bytes()
     config = json.loads(raw_config)
+    if config.get('model_auto_class', 'causal_lm') not in ('causal_lm', 'image_text_to_text'):
+        raise ValueError('model_auto_class must be causal_lm or image_text_to_text')
+    if 'use_cache' in config and type(config['use_cache']) is not bool:
+        raise ValueError('use_cache must be boolean')
     if config.get('initial_model') != request['base']:
         raise ValueError('Recipe initial_model must explicitly match request.base')
     data_path = Path(config['train_dataset'])
@@ -141,6 +145,8 @@ def _native_inputs(request, config_ref):
         'initialization': 'random_from_config' if 'model_config' in config else 'pretrained',
         'model_config': config.get('model_config'), 'model_name_or_path': config.get('model_name_or_path'),
         'model_kwargs': config.get('model_kwargs', {}),
+        'model_auto_class': config.get('model_auto_class', 'causal_lm'),
+        'use_cache': config.get('use_cache'),
         'weight_identity_verified': False}
     return config, rows, evidence
 
@@ -353,7 +359,11 @@ def _transformers_peft(config_ref):
     if arguments.get('resume_from_checkpoint'):
         raise ValueError('Resume must be declared through TrainingOrigin')
     # Importing this adapter never imports torch or optional training packages.
-    from transformers import AutoConfig, AutoModelForCausalLM, Trainer, TrainingArguments, TrainerCallback, default_data_collator
+    from transformers import AutoConfig, Trainer, TrainingArguments, TrainerCallback, default_data_collator
+    if config.get('model_auto_class', 'causal_lm') == 'image_text_to_text':
+        from transformers import AutoModelForImageTextToText as ModelAutoClass
+    else:
+        from transformers import AutoModelForCausalLM as ModelAutoClass
     from peft import LoraConfig, get_peft_model, PeftModel
     import torch
 
@@ -364,9 +374,13 @@ def _transformers_peft(config_ref):
     torch.manual_seed(config.get('seed', 0))
     if 'model_config' in config:
         native = dict(config['model_config'])
-        model = AutoModelForCausalLM.from_config(AutoConfig.for_model(native.pop('model_type'), **native))
+        model = ModelAutoClass.from_config(AutoConfig.for_model(native.pop('model_type'), **native))
     else:
-        model = AutoModelForCausalLM.from_pretrained(config['model_name_or_path'], **config.get('model_kwargs', {}))
+        model = ModelAutoClass.from_pretrained(config['model_name_or_path'], **config.get('model_kwargs', {}))
+    if 'use_cache' in config:
+        model.config.use_cache = config['use_cache']
+        if getattr(model.config, 'text_config', None) is not None:
+            model.config.text_config.use_cache = config['use_cache']
     checkpoint = origin.get('checkpoint')
     if mode == 'weights_only' and checkpoint:
         uri = checkpoint['uri']
