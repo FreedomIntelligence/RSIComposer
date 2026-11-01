@@ -54,47 +54,57 @@ function seed(h, id, snapshot) {
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-test("catalog creates one project per startup, flattens old groups and gives repeated names distinct labels", () => {
-  const input = [project("legacy", [run("old"), run("current", { parent_run_id: "old" })], { name: "Experiment" }), project("other", [run("third")], { name: "Experiment" })];
+test("catalog preserves two real project groups with multiple experiments without merging equal project names", () => {
+  const input = [
+    project("p",[run("old",{experiment_name:"Baseline"}),run("current",{experiment_name:"Improved",parent_run_id:"old"})],{name:"Same project name"}),
+    project("q",[run("third",{experiment_name:"Baseline"}),run("fourth",{experiment_name:"Comparison"})],{name:"Same project name"}),
+  ];
+  const before=JSON.stringify(input);
   const h = harness(); setup(h, input);
-  assert.deepEqual(h.json("state.projects.map(p=>[p.project_id,p.runs.map(r=>r.run_id)])"), [["old", ["old"]], ["current", ["current"]], ["third", ["third"]]]);
-  const names = h.get("project-list").children.map(textOf);
-  assert.equal(new Set(names).size, 3);
-  assert.ok(names.every(name => name.includes("Experiment")));
-  assert.equal(h.run("state.runId"), "old");
-  assert.deepEqual(input[0].runs.map(r=>r.run_id), ["old", "current"]);
+  assert.deepEqual(h.json("state.projects.map(p=>[p.project_id,p.runs.map(r=>r.run_id)])"), [["p",["old","current"]],["q",["third","fourth"]]]);
+  const groups=findClass(h.get("project-list"),"project-group");assert.equal(groups.length,2);
+  for(const group of groups){const heading=findClass(group,"project-group-heading")[0];assert.ok(heading);assert.match(textOf(heading),/Same project name/);assert.match(textOf(heading),/2 个实验/);}
+  assert.deepEqual(groups.map(g=>findClass(g,"experiment-grid").length),[1,1]);
+  assert.deepEqual(groups.map(g=>findClass(g,"experiment-card").map(c=>new URL(c.href,"http://localhost").searchParams.get("run"))),[["old","current"],["third","fourth"]]);
+  assert.deepEqual(groups.map(g=>findClass(g,"experiment-card").map(c=>new URL(c.href,"http://localhost").searchParams.get("project"))),[["p","p"],["q","q"]]);
+  assert.match(textOf(groups[0]),/Baseline.*Improved/);assert.match(textOf(groups[1]),/Baseline.*Comparison/);
+  assert.equal(h.run("state.page"),"management");assert.equal(h.run("state.runId"),"");assert.equal(h.run("state.snapshot"),null);
+  assert.equal(h.get("experiment-count").textContent,"2 个项目 · 4 个实验");
+  assert.equal(JSON.stringify(input),before);
   assert.equal(findClass(h.get("project-content"), "graph-node").length, 0);
   assert.equal(findClass(h.get("project-content"), "graph-viewport").length, 0);
 });
 
-test("canonical catalog metadata wins over duplicate legacy entries without losing historical projects", () => {
-  const h=harness();setup(h,[project("legacy",[run("a"),run("b")]),project("a",[run("a")],{name:"Own experiment"})]);
-  assert.deepEqual(h.json("state.projects.map(p=>p.project_id)"),["a","b"]);
-  assert.equal(h.run("state.projects[0].name"),"Own experiment");
-  setup(h,[project("a",[run("a")]),project("b",[run("b")]),project("current",[run("current",{parent_run_id:"b"})])]);
-  assert.equal(h.get("project-list").children.length,3);
+test("repeated project IDs merge their experiments while duplicate run declarations keep the first owner", () => {
+  const h=harness();setup(h,[project("p",[run("a"),run("b")],{name:"Original project"}),project("p",[run("b"),run("c")]),project("q",[run("b"),run("d")])]);
+  assert.deepEqual(h.json("state.projects.map(p=>[p.project_id,p.runs.map(r=>r.run_id)])"),[["p",["a","b","c"]],["q",["d"]]]);
+  assert.equal(h.run("state.projects[0].name"),"Original project");
+  assert.equal(findClass(h.get("project-list"),"project-group").length,2);
+  assert.equal(findClass(h.get("project-list"),"experiment-card").length,4);
 });
 
 test("management home loads only the catalog until an experiment card is opened", async () => {
-  const calls=[], snapshot=run("a", { decisions:[{decision_id:"d",mode:"train",reason:"Plan training",feedback:{summary:"Training result"}}] });
-  const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("a")]}:snapshot);});
+  const calls=[], snapshot=run("a", { objective:"Hidden research objective",decisions:[{decision_id:"d",mode:"train",reason:"Plan training",feedback:{summary:"Training result"}}] });
+  const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("p",[run("a",{experiment_name:"Named experiment"}),run("b")],{name:"Parent project",description:"Project description is not its identity"})]}:snapshot);});
   await h.run("refresh()");
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
   assert.equal(h.run("state.snapshot"),null);assert.equal(h.get("project-content").children.length,0);
   assert.deepEqual(calls,["/api/projects"]);
-  assert.equal(h.get("project-list").children[0].href,"?run=a");
-  h.get("project-list").children[0].listeners.click({preventDefault(){}});await settle();
+  assert.equal(findClass(h.get("project-list"),"experiment-card")[0].href,"?project=p&run=a");
+  findClass(h.get("project-list"),"experiment-card")[0].listeners.click({preventDefault(){}});await settle();
   assert.equal(h.run("state.page"),"experiment");assert.equal(h.get("management").hidden,true);assert.equal(h.get("projects").hidden,false);
-  assert.equal(h.run("state.projectId"),"a");assert.equal(h.run("state.runId"),"a");
+  assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"a");
+  assert.equal(h.get("project-name").textContent,"Named experiment");assert.equal(h.get("project-description").textContent,"Parent project");assert.equal(h.get("project-description").hidden,false);
+  assert.doesNotMatch(textOf(h.get("project-content")),/Hidden research objective/);
   assert.equal(h.run("state.snapshot.run_id"),"a");assert.match(textOf(h.get("project-content")),/Plan training.*Training result/);
   assert.deepEqual(calls,["/api/projects","/api/runs/a"]);
 });
 
-test("experiment cards isolate cached histories, selected graph nodes and both scroll axes", async () => {
+test("experiments within one project isolate cached histories, selected graph nodes and both scroll axes", async () => {
   const requests=[], b=run("b",{decisions:[{decision_id:"same",mode:"evaluate",reason:"Only B"}]});
-  const h=harness(async url=>{requests.push(url);return response(b);});setup(h,[project("a"),project("b")]);
+  const h=harness(async url=>{requests.push(url);return response(b);});setup(h,[project("p",[run("a"),run("b")])]);
   const a=run("a",{decisions:Array.from({length:35},(_,i)=>({decision_id:`d${i}`,timestamp:new Date(Date.UTC(2026,10,1,0,i)).toISOString(),mode:"train",reason:`history-${i}-end`}))});
-  seed(h,"a",a);await h.run('selectProject("a")');
+  seed(h,"a",a);await h.run('selectRun("a")');
   const allNodes=findClass(h.get("project-content"),"decision-node");
   assert.equal(allNodes.length,35);assert.deepEqual(allNodes.map(n=>n.dataset.key),a.decisions.map(d=>d.decision_id));
   assert.equal(findClass(h.get("project-content"),"more-button").length,0);
@@ -106,16 +116,18 @@ test("experiment cards isolate cached histories, selected graph nodes and both s
   const aScope=h.run("state.activeScope"),aCache=h.run("state.activeScope.cache");
   const detail=h.get("project-content").firstElementChild;
   h.get("back-projects").listeners.click();
-  h.get("project-list").children[1].listeners.click();await settle();
-  assert.equal(h.run("state.projectId"),"b");assert.equal(h.run("state.runId"),"b");
+  findClass(h.get("project-list"),"experiment-card")[1].listeners.click();await settle();
+  assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"b");
+  assert.equal(h.get("project-name").textContent,"b");assert.equal(h.get("project-description").textContent,"p");assert.equal(h.get("project-description").hidden,false);
   assert.match(textOf(h.get("project-content")),/Only B/);assert.doesNotMatch(textOf(h.get("project-content")),/history-34-end/);
   assert.notEqual(h.run("state.activeScope"),aScope);assert.notEqual(h.run("state.activeScope.cache"),aCache);
+  assert.equal(h.run("state.activeScope.key"),JSON.stringify([false,"b"]));assert.equal(aScope.key,JSON.stringify([false,"a"]));
   assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["b"]);
   assert.equal(h.run('state.activeScope.flowSelected.get("b")'),"same");
   const bMap=findClass(h.get("project-content"),"flow-map")[0];bMap.scrollLeft=18;bMap.scrollTop=29;
   assert.equal(new URL(h.ctx.savedURL).searchParams.get("run"),"b");
   h.get("back-projects").listeners.click();
-  h.get("project-list").children[0].listeners.click();await settle();
+  findClass(h.get("project-list"),"experiment-card")[0].listeners.click();await settle();
   assert.equal(h.get("project-content").firstElementChild,detail);
   assert.match(textOf(h.get("project-content")),/history-34-end/);
   assert.equal(findClass(h.get("project-content"),"decision-node").length,35);
@@ -123,29 +135,47 @@ test("experiment cards isolate cached histories, selected graph nodes and both s
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"d34");
   assert.equal(findClass(detail,"flow-map")[0].scrollLeft,321);assert.equal(findClass(detail,"flow-map")[0].scrollTop,87);
   assert.equal(h.run('state.snapshot.decisions.length'),35);
-  h.run('showManagement()');await h.run('selectProject("b")');
+  h.run('showManagement()');await h.run('selectRun("b")');
   assert.equal(findClass(h.get("project-content"),"flow-map")[0],bMap);
   assert.equal(bMap.scrollLeft,18);assert.equal(bMap.scrollTop,29);
   assert.deepEqual(requests,["/api/runs/b"]);
 });
 
-test("run deep links and legacy project links open the owning startup directly", async () => {
-  for(const [search,expected] of [["?run=b","b"],["?project=wrong&run=b","b"],["?project=legacy&run=b","b"],["?project=b","b"],["?project=legacy","a"]]){
-    const calls=[],h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("legacy",[run("a"),run("b")])]}:run(expected,{decisions:[{decision_id:"d",reason:`opened ${expected}`}]}));},search);
+test("run deep links open a non-first experiment and its real owner overrides a conflicting project query", async () => {
+  const catalog=[project("p",[run("a"),run("b",{experiment_name:"Second P experiment"})],{name:"Project P"}),project("q",[run("c"),run("d",{experiment_name:"Second Q experiment"})],{name:"Project Q"})];
+  for(const [search,expected,owner,name] of [["?run=b","b","p","Second P experiment"],["?project=wrong&run=b","b","p","Second P experiment"],["?project=p&run=b","b","p","Second P experiment"],["?project=q&run=b","b","p","Second P experiment"],["?project=p&run=d","d","q","Second Q experiment"]]){
+    const calls=[],h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:run(expected,{decisions:[{decision_id:"d",reason:`opened ${expected}`}]}));},search);
     await h.run("refresh()");
     assert.equal(h.run("state.page"),"experiment");assert.equal(h.get("management").hidden,true);assert.equal(h.get("projects").hidden,false);
-    assert.equal(h.run("state.projectId"),expected);assert.equal(h.run("state.runId"),expected);
+    assert.equal(h.run("state.projectId"),owner);assert.equal(h.run("state.runId"),expected);
+    assert.equal(h.get("project-name").textContent,name);assert.equal(h.get("project-description").textContent,owner==="p"?"Project P":"Project Q");assert.equal(h.get("project-description").hidden,false);
     assert.match(textOf(h.get("project-content")),new RegExp(`opened ${expected}`));
     assert.deepEqual(calls,["/api/projects",`/api/runs/${expected}`]);
-    assert.equal(new URL(h.ctx.savedURL).searchParams.has("project"),false);
+    assert.equal(new URL(h.ctx.savedURL).searchParams.get("project"),owner);
     assert.equal(new URL(h.ctx.savedURL).searchParams.get("run"),expected);
   }
+});
+
+test("project-only deep links keep management open without reading a first experiment", async () => {
+  for(const search of ["?project=p","?project=q","?project=single"]){
+    const calls=[],h=harness(async url=>{calls.push(url);assert.equal(url,"/api/projects");return response({projects:[project("p",[run("a"),run("b")]),project("q",[run("c"),run("d")]),project("single")]});},search);
+    await h.run("refresh()");await h.run("refresh()");
+    assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
+    assert.equal(h.run("state.runId"),"");assert.equal(h.run("state.snapshot"),null);assert.equal(h.get("project-content").children.length,0);
+    assert.equal(findClass(h.get("project-list"),"project-group").length,3);assert.deepEqual(calls,["/api/projects","/api/projects"]);
+  }
+});
+
+test("selectProject keeps the legacy run-ID entry point without opening a multi-run project", async () => {
+  const calls=[],h=harness(async url=>{calls.push(url);return response(run("single",{decisions:[{reason:"Legacy detail"}]}));});setup(h,[project("p",[run("a"),run("b")]),project("single")]);
+  await h.run('selectProject("p")');assert.equal(h.run("state.page"),"management");assert.deepEqual(calls,[]);
+  await h.run('selectProject("single")');assert.equal(h.run("state.projectId"),"single");assert.equal(h.run("state.runId"),"single");assert.match(textOf(h.get("project-content")),/Legacy detail/);assert.deepEqual(calls,["/api/runs/single"]);
 });
 
 test("back button returns to management, keeps cached detail and polls only the catalog", async () => {
   const calls=[],snapshot=run("a",{decisions:[{decision_id:"d",reason:"Cached A"}]});
   const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("a")]}:snapshot);});
-  await h.run("refresh()");await h.run('selectProject("a")');
+  await h.run("refresh()");await h.run('selectRun("a")');
   const scope=h.run("state.activeScope"),entry=h.run('state.activeScope.cache.get("a")'),detail=h.get("project-content").firstElementChild;
   h.get("back-projects").listeners.click();
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
@@ -153,32 +183,34 @@ test("back button returns to management, keeps cached detail and polls only the 
   await h.run("refresh()");
   assert.deepEqual(calls,["/api/projects","/api/runs/a","/api/projects"]);
   assert.equal(h.run("state.activeScope"),scope);assert.equal(h.run('state.activeScope.cache.get("a")'),entry);
-  await h.run('selectProject("a")');
+  await h.run('selectRun("a")');
   assert.equal(h.get("project-content").firstElementChild,detail);assert.match(textOf(detail),/Cached A/);
   assert.equal(calls.length,3);
 });
 
 test("browser back and forward restore management and experiments without adding history or fetching cached runs", async () => {
-  const calls=[],h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("a"),project("b")]}:run(url.endsWith("/a")?"a":"b",{decisions:[{decision_id:"shared",reason:url.endsWith("/a")?"History A":"History B"}]}));});
-  await h.run("refresh()");await h.run('selectProject("a")');
-  const aDetail=h.get("project-content").firstElementChild;
-  await h.run('selectProject("b")');const bDetail=h.get("project-content").firstElementChild;
+  const catalog=[project("p",[run("a"),run("b")]),project("q",[run("c"),run("d")])];
+  const calls=[],h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:run(url.endsWith("/b")?"b":"d",{decisions:[{decision_id:"shared",reason:url.endsWith("/b")?"History B":"History D"}]}));});
+  await h.run("refresh()");await h.run('selectRun("b")');
+  const bDetail=h.get("project-content").firstElementChild;
+  await h.run('selectRun("d")');const dDetail=h.get("project-content").firstElementChild;
   const length=h.history.length;assert.equal(length,3);
   h.history.back();await settle();
-  assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.projectId"),"a");assert.equal(h.get("project-content").firstElementChild,aDetail);
+  assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"b");assert.equal(h.get("project-content").firstElementChild,bDetail);
   h.history.back();await settle();
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("projects").hidden,true);assert.equal(h.ctx.location.search,"");
   h.history.forward();await settle();
-  assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.projectId"),"a");assert.equal(h.get("project-content").firstElementChild,aDetail);
+  assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"b");assert.equal(h.get("project-content").firstElementChild,bDetail);
   h.history.forward();await settle();
-  assert.equal(h.run("state.projectId"),"b");assert.equal(h.get("project-content").firstElementChild,bDetail);assert.match(textOf(bDetail),/History B/);
-  assert.equal(h.history.length,length);assert.deepEqual(calls,["/api/projects","/api/runs/a","/api/runs/b"]);
+  assert.equal(h.run("state.projectId"),"q");assert.equal(h.run("state.runId"),"d");assert.equal(h.get("project-content").firstElementChild,dDetail);assert.match(textOf(dDetail),/History D/);
+  assert.equal(new URL(h.ctx.savedURL).searchParams.get("project"),"q");assert.equal(new URL(h.ctx.savedURL).searchParams.get("run"),"d");
+  assert.equal(h.history.length,length);assert.deepEqual(calls,["/api/projects","/api/runs/b","/api/runs/d"]);
 });
 
 test("returning to management aborts a pending detail and a late response cannot reopen it", async () => {
   const pending=deferred();let signal;
   const h=harness((url,options)=>{signal=options.signal;return pending.promise;});setup(h,[project("a")]);
-  const request=h.run('selectProject("a")');h.get("back-projects").listeners.click();
+  const request=h.run('selectRun("a")');h.get("back-projects").listeners.click();
   assert.equal(signal.aborted,true);
   pending.resolve(response(run("a",{decisions:[{decision_id:"late",reason:"Late detail"}]})));await request;
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("projects").hidden,true);
@@ -197,71 +229,81 @@ test("parent and source references are provenance only and never select, fetch o
   assert.match(textOf(h.get("project-content")),/来源引用不表示项目归属或自动继承/);
 });
 
-test("same record IDs in different projects keep decisions, feedback, jobs and candidates isolated", async () => {
-  const h=harness();setup(h,[project("a"),project("b")]);
-  for(const [id,loss] of [["a",1],["b",2]])seed(h,id,run(id,{decisions:[{decision_id:"same",kind:"directive",directive_id:"shared",mode:"train",feedback:{summary:`feedback-${id}`}}],jobs:[{job_id:"same",directive_id:"shared",metrics:{loss}}],candidates:[{candidate_id:"same",directive_id:"shared",metrics:{accuracy:loss/10}}]}));
-  for(const [id,other,loss] of [["a","b",1],["b","a",2],["a","b",1]]){
-    await h.run(`selectProject("${id}")`);assert.match(textOf(h.get("project-content")),new RegExp(`feedback-${id}`));
-    assert.doesNotMatch(textOf(h.get("project-content")),new RegExp(`feedback-${other}`));assert.equal(h.run("state.snapshot.jobs[0].metrics.loss"),loss);
+test("same record IDs keep decisions, feedback, jobs and candidates isolated within and across projects", async () => {
+  for(const catalog of [[project("p",[run("a"),run("b")])],[project("p",[run("a")]),project("q",[run("b")])]]){
+    const h=harness();setup(h,catalog);
+    for(const [id,loss] of [["a",1],["b",2]])seed(h,id,run(id,{decisions:[{decision_id:"same",kind:"directive",directive_id:"shared",mode:"train",feedback:{summary:`feedback-${id}`}}],jobs:[{job_id:"same",directive_id:"shared",metrics:{loss}}],candidates:[{candidate_id:"same",directive_id:"shared",metrics:{accuracy:loss/10}}]}));
+    for(const [id,other,loss] of [["a","b",1],["b","a",2],["a","b",1]]){
+      await h.run(`selectRun("${id}")`);assert.match(textOf(h.get("project-content")),new RegExp(`feedback-${id}`));
+      assert.doesNotMatch(textOf(h.get("project-content")),new RegExp(`feedback-${other}`));assert.equal(h.run("state.snapshot.jobs[0].metrics.loss"),loss);
+    }
   }
 });
 
-test("switch aborts pending reads and late responses cannot replace the selected project", async () => {
-  const old=deferred(),fresh=deferred(),signals=[],h=harness((url,options)=>{signals.push(options.signal);return signals.length===1?old.promise:fresh.promise;});
-  setup(h,[project("a"),project("b")]);seed(h,"b",run("b",{decisions:[{reason:"B history"}]}));
-  const pending=h.run('selectProject("a")');await h.run('selectProject("b")');assert.equal(signals[0].aborted,true);
-  const current=h.run('selectProject("a")');fresh.resolve(response(run("a",{decisions:[{reason:"Fresh A"}]})));await current;
-  old.resolve(response(run("a",{decisions:[{reason:"Stale A"}]})));await pending;
-  assert.match(textOf(h.get("project-content")),/Fresh A/);assert.doesNotMatch(textOf(h.get("project-content")),/Stale A|B history/);
+test("switching experiments within or across projects aborts pending reads and rejects late responses", async () => {
+  for(const catalog of [[project("p",[run("a"),run("b")])],[project("p",[run("a")]),project("q",[run("b")])]]){
+    const old=deferred(),fresh=deferred(),signals=[],h=harness((url,options)=>{signals.push(options.signal);return signals.length===1?old.promise:fresh.promise;});
+    setup(h,catalog);seed(h,"b",run("b",{decisions:[{reason:"B history"}]}));
+    const pending=h.run('selectRun("a")');await h.run('selectRun("b")');assert.equal(signals[0].aborted,true);
+    const current=h.run('selectRun("a")');fresh.resolve(response(run("a",{decisions:[{reason:"Fresh A"}]})));await current;
+    old.resolve(response(run("a",{decisions:[{reason:"Stale A"}]})));await pending;
+    assert.match(textOf(h.get("project-content")),/Fresh A/);assert.doesNotMatch(textOf(h.get("project-content")),/Stale A|B history/);
+  }
 });
 
 test("repeated selection reuses pending requests and cached decisions", async () => {
   const next=deferred(),calls=[],h=harness(url=>{calls.push(url);return next.promise;});setup(h,[project("a")]);
-  const first=h.run('selectProject("a")');h.run('selectProject("a")');
+  const first=h.run('selectRun("a")');h.run('selectRun("a")');
   assert.deepEqual(calls,["/api/runs/a"]);assert.match(textOf(h.get("project-content")),/正在读取/);
-  next.resolve(response(run("a",{decisions:[{reason:"Loaded"}]})));await first;await h.run('selectProject("a")');
+  next.resolve(response(run("a",{decisions:[{reason:"Loaded"}]})));await first;await h.run('selectRun("a")');
   assert.deepEqual(calls,["/api/runs/a"]);assert.match(textOf(h.get("project-content")),/Loaded/);
 });
 
-test("refresh reloads only the selected startup and retains decision selection and historical caches", async () => {
+test("refresh reloads only the selected experiment and preserves another experiment's cache in the same project", async () => {
   const calls=[],a=run("a",{decisions:Array.from({length:35},(_,i)=>({decision_id:`d${i}`,mode:"train",feedback:{summary:"New result"}}))});
-  const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("a"),project("b")]}:a);});setup(h,[project("a"),project("b")]);
+  const catalog=[project("p",[run("a"),run("b")]),project("q",[run("c"),run("d")])];
+  const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:a);});setup(h,catalog);
   seed(h,"a",{...a,decisions:a.decisions.map(d=>({...d,feedback:{summary:"Previous result"}}))});seed(h,"b",run("b",{decisions:[{reason:"B remains"}]}));
-  await h.run('selectProject("a")');findClass(h.get("project-content"),"decision-node")[34].listeners.click();
+  await h.run('selectRun("b")');const bScope=h.run("state.activeScope"),bEntry=h.run('state.activeScope.cache.get("b")'),bDetail=h.get("project-content").firstElementChild;
+  await h.run('selectRun("a")');findClass(h.get("project-content"),"decision-node")[34].listeners.click();
   const map=findClass(h.get("project-content"),"flow-map")[0];map.scrollLeft=456;map.scrollTop=78;
   await h.run("refresh()");
   assert.deepEqual(calls,["/api/projects","/api/runs/a"]);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"d34");
   const nodes=findClass(h.get("project-content"),"decision-node");assert.equal(nodes.length,35);assert.equal(nodes[34].getAttribute("aria-pressed"),"true");
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,456);assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollTop,78);
   assert.match(textOf(h.get("project-content")),/New result/);
-  await h.run('selectProject("b")');assert.match(textOf(h.get("project-content")),/B remains/);assert.equal(calls.length,2);
+  assert.equal(h.run("state.projectId"),"p");assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["a"]);
+  await h.run('selectRun("b")');assert.match(textOf(h.get("project-content")),/B remains/);assert.equal(calls.length,2);
+  assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.activeScope"),bScope);assert.equal(h.run('state.activeScope.cache.get("b")'),bEntry);assert.equal(h.get("project-content").firstElementChild,bDetail);assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["b"]);
 });
 
 test("failed reads retain decisions and a retry restores the current project", async () => {
   let fail=true;const h=harness(async()=>{if(fail)throw Error("offline");return response(run("a",{decisions:[{reason:"Recovered"}]}));});
-  setup(h,[project("a")]);seed(h,"a",run("a",{decisions:[{reason:"Cached decision"}]}));await h.run('selectProject("a")');
+  setup(h,[project("a")]);seed(h,"a",run("a",{decisions:[{reason:"Cached decision"}]}));await h.run('selectRun("a")');
   await h.run('loadRun("a",state.activeScope,true)');assert.match(textOf(h.get("project-content")),/offline.*Cached decision/);
   fail=false;findClass(h.get("project-content"),"run-detail")[0].children.find(n=>n.tagName==="button").listeners.click();await settle();
   assert.match(textOf(h.get("project-content")),/Recovered/);assert.equal(h.run('state.activeScope.cache.get("a").status'),"ready");
 });
 
-test("demo contains separate projects, loads decisions directly and keeps live caches and links", async () => {
+test("demo groups two experiments in one project, loads their decisions and keeps live caches and links", async () => {
   const demo=JSON.parse(fs.readFileSync(`${__dirname}/demo.json`,"utf8")),h=harness(async()=>response(demo));
-  setup(h,[project("live")]);seed(h,"live",run("live",{decisions:[{reason:"Live history"}]}));await h.run('selectProject("live")');
+  setup(h,[project("live")]);seed(h,"live",run("live",{decisions:[{reason:"Live history"}]}));await h.run('selectRun("live")');
   const liveURL=h.ctx.savedURL;h.run('state.demo=true;state.projectId=""');await h.run("refresh()");
-  assert.equal(h.run("state.projects.length"),2);
+  assert.equal(h.run("state.projects.length"),1);assert.equal(h.run("state.projects[0].project_id"),"example-reasoning");
+  assert.equal(findClass(h.get("project-list"),"project-group").length,1);assert.equal(findClass(h.get("project-list"),"experiment-card").length,2);
   for(const snapshot of [demo,...demo.demo_runs]){
-    assert.equal(snapshot.project.project_id,snapshot.run_id);await h.run(`selectProject(${JSON.stringify(snapshot.run_id)})`);
+    assert.equal(snapshot.project.project_id,"example-reasoning");await h.run(`selectRun(${JSON.stringify(snapshot.run_id)})`);
+    assert.equal(h.run("state.projectId"),snapshot.project.project_id);assert.equal(h.get("project-name").textContent,snapshot.experiment_name);assert.equal(h.get("project-description").textContent,snapshot.project.name);assert.equal(h.get("project-description").hidden,false);
     assert.equal(h.run("state.snapshot.run_id"),snapshot.run_id);assert.equal(findClass(h.get("project-content"),"execution-sequence").length,1);
   }
   assert.equal(h.ctx.savedURL,liveURL);
-  h.run('state.demo=false;state.projectId="live"');setup(h,[project("live")]);await h.run('selectProject("live")');
+  h.run('state.demo=false;state.projectId="live"');setup(h,[project("live")]);await h.run('selectRun("live")');
   assert.match(textOf(h.get("project-content")),/Live history/);
 });
 
 test("switching to demo rejects a late live response before the demo catalog arrives", async () => {
   const pending=deferred();let signal;const h=harness((url,options)=>{signal=options.signal;return pending.promise;});setup(h,[project("a")]);
-  const request=h.run('selectProject("a")');h.run('refresh=function(){};switchDemo()');assert.equal(signal.aborted,true);
+  const request=h.run('selectRun("a")');h.run('refresh=function(){};switchDemo()');assert.equal(signal.aborted,true);
   pending.resolve(response(run("a",{decisions:[{reason:"Late live history"}]})));await request;
   assert.equal(h.run("state.snapshot"),null);assert.equal(h.run("state.activeScope"),null);
 });
@@ -270,7 +312,7 @@ test("empty catalog and unavailable snapshot have readable states without a proj
   const h=harness(async url=>response({projects:[]}));await h.run("refresh()");
   assert.equal(h.get("empty").hidden,false);assert.equal(h.get("projects").hidden,true);assert.equal(h.get("project-list").children.length,1);
   setup(h,[project("broken",[run("broken",{status:"unavailable"})])]);
-  await h.run('selectProject("broken")');
+  await h.run('selectRun("broken")');
   assert.equal(h.run("state.runId"),"broken");assert.match(textOf(h.get("project-content")),/快照不可用/);
 });
 test("unknown execution timestamps retain snapshot order without implying chronology; repeat finish retains originals", () => {
@@ -340,7 +382,7 @@ test("duplicate decision IDs select one graph record and retain it when earlier 
   seed(h,"a",run("a",{decisions:[
     {decision_id:"duplicate",kind:"directive",mode:"train",timestamp:"2026-11-01T00:00:01Z",reason:"First record"},
     {decision_id:"duplicate",kind:"directive",mode:"evaluate",timestamp:"2026-11-01T00:00:02Z",reason:"Second record"},
-  ]}));await h.run('selectProject("a")');
+  ]}));await h.run('selectRun("a")');
   const nodes=findClass(h.get("project-content"),"decision-node");
   assert.equal(nodes.length,2);assert.notEqual(nodes[0].dataset.key,nodes[1].dataset.key);
   nodes[1].listeners.click();const key=nodes[1].dataset.key;

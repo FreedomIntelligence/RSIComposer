@@ -17,11 +17,11 @@ python3 web/server.py --runs-dir runs
 python3 web/server.py --runs-dir /path/to/runs --port 8765
 ```
 
-**一次 RSI 启动就是一个实验，对应一个 `run_id`。** 首页是项目管理入口，集中列出独立实验；进入实验详情页后展示其内部的决策脉络。兼容 API 的 `project_id` 仍等于运行目录名，不新增与实验一一对应的“项目”业务层。Qwen、医疗、旧快照的 `project_id` / `group` / `system_id` 都不会把多个运行合并；没有“未归属”分组。历史运行文件保持原样。
+**一次 RSI 启动就是一个实验，对应一个 `run_id`；一个项目可以包含多个实验。** API 仅按快照 `project.project_id` 的显式归属分组，项目 ID 使用与运行 ID 相同的有效字符和长度规则。没有有效归属的实验统一列于 `project_id: "unassigned", name: "未归属"`。不按运行名称、目录前缀、`group` 或 `system_id` 推断归属，也不强制 `project_id=run_id`。历史 Qwen / 医疗快照共享的有效项目 ID 会自然聚合；明确声明 `project_id=run_id` 的新实验保持各自独立。历史运行文件保持原样。
 
-已移除项目注册表、`configs/monitor-projects.json` 和 `--projects-file` 参数；旧启动命令去掉该参数即可。项目从可读取的 `monitor.json` 自动发现，不创建空注册项目。
+本轮不提供项目注册表或 `--projects-file` 参数；归属以已有 `monitor.json` 的 `project` 为权威，不读取其他文件建立历史映射，不创建空注册项目。`unassigned` 是保留 ID，即使快照显式使用该 ID，也固定输出名称“未归属”，忽略其项目名称及其他元信息。
 
-名称按快照中的显式 `display_name`、`name`、`project_name`、`project.name` 顺序取首个非空字符串，否则使用 `run_id`。显式名称附加 ` · run_id` 以区分同名实验；名称已经等于 `run_id` 或带有该后缀时不重复添加。旧 `project.name` 只作为名称前缀，不能定义归属。名称最多 1000 字符并保留运行 ID 后缀。服务仅读取 `monitor.json`；生产端若在 `run.json` 保存 `project_name`，须同时将名称写入监控快照（建议 `project: {project_id: run_id, name: "医疗 RSI · run_id"}`）。
+项目名称取 `project.name`，兼容顶层 `project_name`，缺省为有效项目 ID；这些名称都不能单独建立归属。实验名称单独输出为 `experiment_name`，依次取快照的 `experiment_name`、`display_name`、`name`；仅当 `project.project_id` 等于目录 `run_id` 时兼容旧 `project.name`，最后回退目录 `run_id`。只接受非空字符串，去掉首尾空白并限制为 1000 字符，不自动附加 ID。同项目名称冲突时按目录 `run_id` 排序，首个不同于项目 ID 的有效名称胜出；其他项目元信息取首个 run，单个 run 的 `project` 保留自身上报值。服务仅读取 `monitor.json`；生产端须将项目归属和实验名称写入该快照。
 
 首页默认读取真实接口。无快照时显示空态，点击「查看示例」才加载明确标记「示例数据」的静态 fixture；「返回真实运行」恢复接口。示例不会写入 runs，也不会出现在真实运行列表中。
 
@@ -39,8 +39,8 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- `/` 为项目管理页，以卡片列出实验名称、状态、更新时间和已报告决策数；只读取清单，不自动进入第一个实验。点击实验进入 `?run=<id>`，返回按钮和浏览器前进 / 后退保持两页导航。旧 `?project=<id>&run=<id>` 深链接继续兼容。
-- 实验详情顶部的研究脉络只包含该 run 内的决策节点：固定起点、圆点和直线，自左向右排列。点击节点后，下方显示对应决策的理由、提交内容、反馈和指标。图谱使用当前快照中的全部决策（API 上限 300），不再分页列出步骤按钮。
+- `/` 为项目管理页，按大项目分块，每个项目下以卡片列出实验名称、状态、更新时间和已报告决策数。项目名称与实验名称独立，缺少归属的实验归入“未归属”。首页只读取清单，不自动进入实验。点击实验进入 `?project=<project-id>&run=<run-id>`；仅指定项目时仍停留管理页，指定 run 时由其真实归属确定上级项目。返回按钮和浏览器前进 / 后退保持两页导航。
+- 实验详情分别显示实验名和所属项目名；缓存按 run ID 隔离，同项目下不同实验各自保存选中决策、展开状态和图谱滚动。顶部的研究脉络只包含该 run 内的决策节点：固定起点、圆点和直线，自左向右排列。点击节点后，下方显示对应决策的理由、提交内容、反馈和指标。图谱使用当前快照中的全部决策（API 上限 300），不再分页列出步骤按钮。
 - `decisions.js` 将明确的 `parent_decision_id` 绘成父子分支，`source_decision_ids` 绘成引用虚线；没有明确父关系时按记录顺序连线，仅表示先后，不代表因果。缺失、歧义或循环关系不会生成虚假依赖。图谱支持横纵滚动，不压缩节点到无法阅读。
 - 跨实验的 `parent_run_id` 和 `source_run_ids` 留在「来源记录」中，以链接打开来源实验；不进入实验内部的决策图谱。
 - 每 5 秒静默刷新：管理页只更新清单，实验页更新清单与当前实验。隐藏页面暂停轮询，切换实验取消旧请求并拒绝迟到响应。缓存按实验隔离；不显示连接状态、手动刷新或导出工具栏。
@@ -92,22 +92,25 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
 
 ## HTTP 接口
 
-`GET /api/projects`：为兼容保留 `projects` 数组协议，界面将各项称为实验，每项恰好包含一个运行，不包含完整快照。项目和内部运行的 `project_id` 都等于该运行的 `run_id`。
+`GET /api/projects`：返回按显式 `project_id` 聚合的 `projects` 数组，每项包含一个或多个运行摘要，不包含完整快照。项目按项目 ID、内部运行按目录 `run_id` 升序返回；同名但不同 ID 的项目不会合并。
 
 ```json
 {
   "schema_version": 1,
   "projects": [{
-    "project_id": "run-001",
-    "name": "医疗 RSI · run-001",
+    "project_id": "medical-rsi",
+    "name": "医疗自主研究",
     "description": "…",
     "system_id": "medical-system",
-    "runs": [{"run_id": "run-001", "objective": "…", "status": "running", "updated_at": "…", "project": {"project_id": "run-001", "name": "医疗 RSI · run-001", "description": "…", "system_id": "medical-system"}}]
+    "runs": [
+      {"run_id": "run-001", "experiment_name": "首轮实验", "objective": "…", "status": "running", "updated_at": "…", "project": {"project_id": "medical-rsi", "name": "医疗自主研究", "description": "…", "system_id": "medical-system"}},
+      {"run_id": "run-002", "experiment_name": "第二轮实验", "status": "completed", "project": {"project_id": "medical-rsi", "name": "医疗自主研究"}}
+    ]
   }]
 }
 ```
 
-`GET /api/runs`：每行同样含 `project` 元信息。
+`GET /api/runs`：每行包含独立的 `experiment_name` 和 `project` 归属元信息。
 
 
 ```json
@@ -117,21 +120,22 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
     {
       "schema_version": 1,
       "run_id": "run-001",
+      "experiment_name": "首轮实验",
       "objective": "…",
       "status": "running",
       "updated_at": "2026-11-01T00:00:00Z",
-      "project": {"project_id": "run-001", "name": "医疗 RSI · run-001"},
+      "project": {"project_id": "medical-rsi", "name": "医疗自主研究"},
       "counts": {"jobs": 1, "candidates": 2, "events": 5}
     }
   ]
 }
 ```
 
-只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持的版本保留为带 `error` 的 unavailable 清单项。
+只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持版本 / 超限快照保留为带 `error` 的 unavailable 清单项，`experiment_name` 暂用目录 ID，归入“未归属”。快照恢复有效后自动重新读取显式项目归属，不缓存猜测，不写回文件。
 
 运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；其中 `parent_run_id` 定义续接来源，`source_run_ids` 定义资料引用；两者均不改变项目身份。
 
-`GET /api/runs/<id>`：返回协议字段的只读投影，始终包含 `project: {project_id, name, description, system_id}`，其中 `project_id=run_id`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
+`GET /api/runs/<id>`：返回协议字段的只读投影，始终包含 `experiment_name` 和 `project: {project_id, name}`；有效归属可额外包含公开的 `description`、`system_id`，缺失时不补造。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源，即使快照内 `run_id` 不一致也不改变；项目归属则来自快照的有效 `project.project_id`。不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
 建议生产端在同一目录写临时文件，再原子替换 `monitor.json`。服务不会监听或读数据库、训练样本、配置、日志、模型文件。
 
@@ -152,7 +156,7 @@ node --check web/static/app.js
 node --test web/static/*.test.js
 ```
 
-服务测试覆盖一启动一项目、旧标签不合并、名称后缀去重、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
+服务测试覆盖显式项目归属与多实验分组、同名不同 ID 隔离、实验名称优先级、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
 
 界面采用独立的实验管理页与实验详情页，使用暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 

@@ -32,7 +32,7 @@ function fixture(h) {
     jobs:[{job_id:"j",kind:"train",status:"completed",metrics:{loss:.3,learning_rate:.001,"custom.reward":.7},metric_history:[{step:2,metrics:{loss:.3,learning_rate:.001}}]}],
     events:[{kind:"custom.event",summary:"运行开始 原文 log",details:{reason:"错误 原文 log"}}], candidates:[{candidate_id:"c",status:"accepted",metrics:{loss:{baseline:.6,candidate:.3}}}],
     round_results:[{round:1,applied:true,answer_correct:true}] });
-  setup(h,[project("p",[run("a"),run("b")])]); seed(h,"a",s);h.run('selectRun("a")');return s;
+  setup(h,[project("p",[run("a",{experiment_name:"实验原文 a"}),run("b")],{name:"研究项目"})]); seed(h,"a",s);h.run('selectRun("a")');return s;
 }
 
 test("preference persists, reload restores it, and denied/invalid storage falls back safely", () => {
@@ -77,6 +77,8 @@ test("switching language rerenders direct decisions and preserves project, selec
   assert.equal(h.get("lang-en").attributes["aria-pressed"],"true");assert.equal(h.get("lang-zh").attributes["aria-pressed"],"false");
   assert.deepEqual(h.json('[state.page,state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]'),before);
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
+  assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"a");
+  assert.equal(h.get("project-name").textContent,"实验原文 a");assert.equal(h.get("project-description").textContent,"研究项目");assert.equal(h.get("project-description").hidden,false);
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,123);
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollTop,67);
   assert.match(text(h.get("project-content")),/Metrics at review/);assert.match(text(h.get("project-content")),/继续训练 原文 strategy/);
@@ -100,11 +102,13 @@ test("unknown events and application errors/empty states switch without refetchi
 });
 
 test("management language changes translate experiment cards without opening or fetching details", () => {
-  const h=monitor();setup(h,[project("a",[run("a",{status:"running",counts:{decisions:35}})],{name:"研究项目 原文"})]);
+  const h=monitor();setup(h,[project("p",[run("a",{experiment_name:"实验名称 原文",status:"running",counts:{decisions:35}}),run("b")],{name:"研究项目 原文"}),project("q",[run("c")],{name:"研究项目 原文"})]);
   h.get("lang-en").listeners.click();
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
   assert.equal(h.run("state.snapshot"),null);assert.equal(h.get("project-content").children.length,0);
-  assert.equal(h.get("experiment-count").textContent,"1 experiments");
+  assert.equal(h.get("experiment-count").textContent,"2 projects · 3 experiments");
+  const groups=findClass(h.get("project-list"),"project-group");assert.equal(groups.length,2);assert.deepEqual(groups.map(g=>findClass(g,"experiment-card").length),[2,1]);
+  assert.match(text(groups[0]),/实验名称 原文/);assert.match(text(groups[0]),/2 experiments/);assert.match(text(groups[1]),/1 experiments/);
   assert.match(text(h.get("project-list")),/研究项目 原文/);assert.match(text(h.get("project-list")),/Running/);assert.match(text(h.get("project-list")),/35 decisions/);
   h.get("lang-zh").listeners.click();assert.match(text(h.get("project-list")),/35 次决策/);assert.deepEqual(h.calls,[]);
 });
@@ -122,7 +126,7 @@ test("experiment detail loads the decision graph without the old multi-run proje
   assert.ok(html.includes('id="project-content"'));
   const scripts=[...html.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(m=>m[1]);
   assert.deepEqual(scripts,["/i18n.js","/decisions.js","/app.js"]);
-  assert.doesNotMatch(appSource,/RSILineage|project-root|projectModel|renderGraph|networkLayout|研究轮次|unassigned/);
+  assert.doesNotMatch(appSource,/RSILineage|project-root|projectModel|renderGraph|networkLayout|研究轮次/);
   const css=fs.readFileSync(`${__dirname}/style.css`, "utf8");
   assert.doesNotMatch(css,/graph-node|graph-viewport|graph-controls|graph-header|graph-tools/);
 });

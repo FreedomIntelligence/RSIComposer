@@ -203,6 +203,21 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
     def read(self, path):
         return json.loads((self.root/'run'/path).read_text())
 
+    def test_project_membership_and_experiment_name_are_independent(self):
+        result = self.execute([FINISH], project_id='research-program',
+                              project_name='Medical program', experiment_name='Prompt ablation')
+        self.assertEqual(result['status'], 'completed')
+        monitor = self.read('monitor.json')
+        self.assertEqual(monitor['project']['project_id'], 'research-program')
+        self.assertEqual(monitor['project']['name'], 'Medical program')
+        self.assertEqual(monitor['experiment_name'], 'Prompt ablation')
+        self.assertEqual(monitor['run_id'], 'run')
+        args = parser().parse_args(['--task', str(self.task), '--run-dir', 'second',
+            '--model-path', 'model', '--project-id', 'research-program',
+            '--project-name', 'Medical program', '--experiment-name', 'Second experiment'])
+        self.assertEqual((args.project_id, args.project_name, args.experiment_name),
+                         ('research-program', 'Medical program', 'Second experiment'))
+
     def test_early_finish_constructs_real_build_monitor_and_persistence(self):
         result = self.execute([FINISH])
         self.assertEqual(result['status'], 'completed', result)
@@ -218,7 +233,7 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertNotIn('apply_candidate', context['directive_modes'])
         self.assertIn('ALREADY been measured', context['objective'])
         self.assertEqual(self.read('monitor.json')['project'], {
-            'project_id': 'run', 'name': '医疗 RSI · run', 'system_id': 'medical-fixture-model'})
+            'project_id': 'medical-rsi', 'name': '医疗自主研究', 'system_id': 'medical-fixture-model'})
         self.assertIsNone(self.read('run.json')['parent_run_id'])
         self.assertEqual(self.read('monitor.json')['status'], 'completed')
         self.assertTrue(self.read('decision_memory.json')['history'])

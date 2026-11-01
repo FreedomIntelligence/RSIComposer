@@ -474,3 +474,5 @@ alias and endpoint to the declared base. HTTP aliases do not attest weight bytes
 local candidate manifests retain content hashes. Cross-runtime baseline/candidate
 comparisons also include numerical/runtime differences and cannot isolate SFT
 quality. Use a matched serving backend for controlled quality conclusions.
+
+监控归属：多次实验默认归入 `medical-rsi`（医疗自主研究）。用 `--project-id` / `--project-name` 指定大项目，用 `--experiment-name` 命名本次实验；未指定实验名时使用运行目录名。项目归属不代表继承另一实验的模型或记忆，`--parent-run-id` 独立记录来源。

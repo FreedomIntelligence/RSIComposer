@@ -82,6 +82,9 @@ class ExperimentSettings:
     serving_backend: str = 'transformers'
     tensor_parallel_size: int = 1
     training_device_type: str = 'cuda'
+    project_id: str = 'medical-rsi'
+    project_name: str = '医疗自主研究'
+    experiment_name: str | None = None
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -108,6 +111,11 @@ class ExperimentSettings:
             raise ValueError('Tensor parallel inference requires the sglang serving backend')
         if self.training_device_type not in ('cuda', 'npu'):
             raise ValueError('training_device_type must be cuda or npu')
+        RunSource(self.project_id)
+        if not isinstance(self.project_name, str) or not self.project_name.strip():
+            raise ValueError('project_name must be a nonempty string')
+        if self.experiment_name is not None and (not isinstance(self.experiment_name, str) or not self.experiment_name.strip()):
+            raise ValueError('experiment_name must be a nonempty string when supplied')
         RunSource(self.run_dir.resolve().name, self.parent_run_id)
 
 
@@ -727,7 +735,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         model_dir = settings.model_path.resolve()
         model_label = (model_dir.parent.parent.name.removeprefix('models--').replace('--', '-')
                        if model_dir.parent.name == 'snapshots' else model_dir.name)
-        monitor.data['project'] = {'project_id': root.name, 'name': '医疗 RSI · ' + root.name,
+        monitor.data['experiment_name'] = settings.experiment_name or root.name
+        monitor.data['project'] = {'project_id': settings.project_id, 'name': settings.project_name,
                                   'system_id': 'medical-' + model_label.lower()}
         write_json(root / 'parallelism.json', {'serving_backend': settings.serving_backend,
             'tensor_parallel_size': settings.tensor_parallel_size, 'training_processes': settings.training_processes,
@@ -895,6 +904,9 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--task', type=Path, required=True)
     result.add_argument('--run-dir', type=Path, required=True)
+    result.add_argument('--project-id', default='medical-rsi')
+    result.add_argument('--project-name', default='医疗自主研究')
+    result.add_argument('--experiment-name')
     result.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     result.add_argument('--model-path', type=Path, required=True)
     result.add_argument('--seconds', type=float, default=5400)

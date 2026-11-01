@@ -114,26 +114,31 @@ def metric_history_only(value):
 
 
 def run_project(raw, run_id):
-    """One startup is one project; legacy project IDs never define membership."""
+    """Only a valid snapshot project ID establishes membership, never run identity."""
     project = raw.get("project")
     project = project if isinstance(project, dict) else {}
+    project_id = project.get("project_id")
+    if not isinstance(project_id, str) or not RUN_ID.fullmatch(project_id) or project_id == "unassigned":
+        return {"project_id": "unassigned", "name": "未归属"}
     result = pick(project, ("description", "system_id"))
-    name = next((value.strip() for value in (raw.get("display_name"), raw.get("name"),
-                raw.get("project_name"), project.get("name"))
-                if isinstance(value, str) and value.strip()), run_id)
-    suffix = f" · {run_id}"
-    if name != run_id:
-        prefix = name[:-len(suffix)] if name.endswith(suffix) else name
-        name = prefix[:1000 - len(suffix)] + suffix
-    result.update(project_id=run_id, name=name)
+    name = next((value.strip()[:1000] for value in (project.get("name"), raw.get("project_name"))
+                 if isinstance(value, str) and value.strip()), project_id)
+    result.update(project_id=project_id, name=name)
     return result
+
+
+def experiment_name(raw, run_id):
+    project = raw.get("project")
+    legacy_name = project.get("name") if isinstance(project, dict) and project.get("project_id") == run_id else None
+    return next((value.strip()[:1000] for value in (raw.get("experiment_name"), raw.get("display_name"), raw.get("name"), legacy_name)
+                 if isinstance(value, str) and value.strip()), run_id)
 
 
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
     result = pick(raw, ("objective", "status", "updated_at"))
-    result.update(schema_version=1, run_id=run_id)
+    result.update(schema_version=1, run_id=run_id, experiment_name=experiment_name(raw, run_id))
     if isinstance(raw.get("parent_run_id"), str):
         result["parent_run_id"] = raw["parent_run_id"][:128]
     if isinstance(raw.get("source_run_ids"), list):
@@ -189,7 +194,19 @@ class RunStore:
         self.root = Path(root).expanduser().resolve()
 
     def projects(self):
-        return [{**run["project"], "runs": [run]} for run in self.list()]
+        # list() sorts by authoritative directory ID. First run supplies metadata;
+        # the first named run replaces an ID-only name, but never another name.
+        projects = {}
+        for run in self.list():
+            metadata = run["project"]
+            project_id = metadata["project_id"]
+            if project_id not in projects:
+                projects[project_id] = {**metadata, "runs": []}
+            project = projects[project_id]
+            if project["name"] == project_id and metadata["name"] != project_id:
+                project["name"] = metadata["name"]
+            project["runs"].append(run)
+        return [projects[key] for key in sorted(projects)]
 
     def open_root(self):
         try:
@@ -256,7 +273,7 @@ class RunStore:
                     continue
                 try:
                     snapshot = self.read(name, root_fd)
-                    row = pick(snapshot, ("schema_version", "run_id", "objective", "status", "updated_at"))
+                    row = pick(snapshot, ("schema_version", "run_id", "experiment_name", "objective", "status", "updated_at"))
                     row["project"] = snapshot["project"]
                     for field in ("parent_run_id", "source_run_ids"):
                         if field in snapshot:
@@ -265,7 +282,7 @@ class RunStore:
                 except SnapshotError as error:
                     if error.status == 404:
                         continue  # Ignore unrelated directories and runs without a snapshot.
-                    row = {"run_id": name, "status": "unavailable", "error": error.message,
+                    row = {"run_id": name, "experiment_name": name, "status": "unavailable", "error": error.message,
                            "project": run_project({}, name)}
                 rows.append(row)
             return rows

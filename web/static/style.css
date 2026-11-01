@@ -155,7 +155,7 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .experiment-card { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 24px; color: var(--ink); text-decoration: none; }
 .experiment-card:hover { border-color: var(--orange); background: var(--panel); }
 .experiment-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.experiment-card h2 { font-size: 23px; line-height: 1.4; overflow-wrap: anywhere; }
+.experiment-card h3 { font-size: 23px; line-height: 1.4; overflow-wrap: anywhere; }
 .experiment-card p { margin-top: 16px; }
 .back-link { border: 0; padding: 4px 0; margin-top: 24px; color: var(--muted); }
 .back-link:hover { background: transparent; color: var(--ink); }
@@ -166,3 +166,8 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .decision-node { cursor: pointer; }
 .decision-node:focus-visible { outline: none; }
 .decision-node:focus-visible circle { stroke: var(--orange); stroke-width: 3; }
+
+.project-groups { display: grid; gap: 32px; }
+.project-group-heading { display: flex; gap: 16px; align-items: baseline; margin: 4px 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.project-group-heading h2 { font-size: 27px; overflow-wrap: anywhere; }
+.project-group .experiment-grid { padding-bottom: 0; }

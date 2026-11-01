@@ -227,27 +227,36 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(json.loads(self.get("/api/projects")[2])["projects"], [])
         self.assertFalse(self.root.exists())
 
-    def test_projects_api_keeps_one_run_per_project_and_provenance(self):
+    def test_projects_api_groups_explicit_membership_and_preserves_experiment_names_and_provenance(self):
         legacy = {'project_id': 'shared', 'name': 'Research', 'group': 'qwen'}
-        self.write('parent', project=legacy)
-        self.write('child', project=legacy, parent_run_id='parent', source_run_ids=['parent'])
+        self.write('parent', experiment_name='Parent experiment', display_name='Lower priority', project=legacy)
+        self.write('child', name='Child experiment', project=legacy, parent_run_id='parent', source_run_ids=['parent'])
         status, _, body = self.get('/api/projects')
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data['schema_version'], 1)
-        self.assertEqual([p['project_id'] for p in data['projects']], ['child', 'parent'])
+        self.assertEqual([p['project_id'] for p in data['projects']], ['shared'])
+        self.assertEqual(data['projects'][0]['name'], 'Research')
         rows = json.loads(self.get('/api/runs')[2])['runs']
-        for project, row in zip(data['projects'], rows):
-            self.assertEqual(project['runs'], [row])
-            self.assertEqual(project['project_id'], row['run_id'])
+        self.assertEqual(data['projects'][0]['runs'], rows)
+        self.assertEqual([r['experiment_name'] for r in rows], ['Child experiment', 'Parent experiment'])
+        for row in rows:
+            self.assertEqual(row['project']['project_id'], 'shared')
             detail = json.loads(self.get('/api/runs/' + row['run_id'])[2])
             self.assertEqual(detail['project'], row['project'])
+            self.assertEqual(detail['experiment_name'], row['experiment_name'])
         self.assertEqual(rows[0]['parent_run_id'], 'parent')
         self.assertEqual(rows[0]['source_run_ids'], ['parent'])
         (self.root / 'child' / 'monitor.json').write_text('{')
         projects = json.loads(self.get('/api/projects')[2])['projects']
-        self.assertEqual(projects[0]['project_id'], 'child')
-        self.assertEqual(projects[0]['runs'][0]['status'], 'unavailable')
+        self.assertEqual([p['project_id'] for p in projects], ['shared', 'unassigned'])
+        self.assertEqual(projects[1]['runs'][0]['run_id'], 'child')
+        self.assertEqual(projects[1]['runs'][0]['status'], 'unavailable')
+        self.assertEqual(projects[1]['runs'][0]['experiment_name'], 'child')
+        self.write('child', display_name='Recovered', project=legacy)
+        recovered = json.loads(self.get('/api/projects')[2])['projects']
+        self.assertEqual([p['project_id'] for p in recovered], ['shared'])
+        self.assertEqual(recovered[0]['runs'][0]['experiment_name'], 'Recovered')
 
     def test_unrelated_preview_directory_is_not_a_run(self):
         (self.root / "monitor-preview").mkdir()

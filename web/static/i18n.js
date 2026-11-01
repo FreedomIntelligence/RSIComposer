@@ -3,6 +3,9 @@
 (function (root) {
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
+  "未归属": "Unassigned",
+  "← 项目管理": "← Project management",
+  "{p0} 个项目 · {p1} 个实验": "{p0} projects · {p1} experiments",
   "记录顺序，不表示因果": "Recorded order, not causality",
   "明确的父决策": "Declared parent decision",
   "引用的决策": "Referenced decision",

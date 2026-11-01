@@ -201,41 +201,35 @@ function comparisonView(metrics) {
 }
 function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true;  }
 function clearRun() { state.snapshot = null; }
-// Legacy catalog groups are flattened for display only. Every startup keeps its
-// own identity regardless of registry metadata, system, objective or provenance.
+// Membership comes from the catalog's explicit project IDs, never a run name.
 function normalizeProjects(input) {
-  const projects = new Map();
-  for (const group of list(input)) for (const row of list(group.runs)) {
-    if (!identifier(row.run_id)) continue;
-    const id = row.run_id, canonical = group.project_id === id;
-    const metadata = canonical ? group : object(row.project).project_id === id ? row.project : group;
-    const aliases = [group.project_id, ...listStrings(group.legacyProjectIds)].filter(identifier);
-    const previous = projects.get(id);
-    if (!previous || canonical) projects.set(id, {
-      project_id: id, name: asText(metadata.name, id).trim() || id,
-      description: asText(metadata.description, ""), runs: [row],
-      legacyProjectIds: [...new Set([...(previous?.legacyProjectIds || []), ...aliases])],
-    });
-    else previous.legacyProjectIds = [...new Set([...previous.legacyProjectIds, ...aliases])];
+  const projects=new Map(),seenRuns=new Set();
+  for(const group of list(input)){
+    const id=identifier(group.project_id)?group.project_id:"unassigned";
+    if(!projects.has(id))projects.set(id,{project_id:id,name:asText(group.name,id),description:asText(group.description,""),runs:[]});
+    const target=projects.get(id);
+    for(const row of list(group.runs))if(identifier(row.run_id)&&!seenRuns.has(row.run_id)){
+      seenRuns.add(row.run_id);target.runs.push(row);
+    }
   }
-  const names = new Map();
-  for (const p of projects.values()) names.set(p.name, (names.get(p.name) || 0) + 1);
-  return [...projects.values()].map(p => ({ ...p, displayName: names.get(p.name) > 1 ? `${p.name} · ${p.project_id}` : p.name }));
+  return [...projects.values()];
 }
 const listStrings = v => Array.isArray(v) ? v.filter(identifier) : [];
 const runRows = project => list(project?.runs).filter(r => identifier(r.run_id));
-const projectName = p => asText(p?.displayName || p?.name, p?.project_id || "");
+const projectName = p => p?.project_id==="unassigned"?t("未归属"):asText(p?.name,p?.project_id||"");
+const experimentName = row => asText(row?.experiment_name,row?.run_id||"");
+const ownerOfRun = id => state.projects.find(p=>runRows(p).some(r=>r.run_id===id));
 function selectedProject() { return state.projects.find(p => p.project_id === state.projectId); }
 function abortEntry(entry) {
   entry.controller?.abort(); entry.controller = null; entry.token = (entry.token || 0) + 1;
   if (entry.status === "pending") entry.status = entry.snapshot ? "ready" : "idle";
 }
 function activateProject() {
-  const key = JSON.stringify([state.demo, state.projectId]);
+  const key = JSON.stringify([state.demo, state.runId]);
   if (state.activeScope?.key === key) return state.activeScope;
   if (state.activeScope) for (const entry of state.activeScope.cache.values()) abortEntry(entry);
   let scope = state.scopes.get(key);
-  if (!scope) { scope = { key, cache: new Map(), runId: "", details: null }; state.scopes.set(key, scope); }
+  if (!scope) { scope = { key, cache: new Map(), runId: state.runId, details: null }; state.scopes.set(key, scope); }
   state.activeScope = scope;
   state.runId = scope.runId; clearRun();
   return scope;
@@ -374,10 +368,10 @@ function runDetail(node, scope) {
   if(sources.length){
     const refs=el("div","run-provenance");refs.append(el("p","quiet-note",t("来源引用不表示项目归属或自动继承。")));
     for(const id of sources){
-      const target=state.projects.find(p=>p.project_id===id),link=el("a","provenance-link",target?projectName(target):id);
+      const target=ownerOfRun(id),row=runRows(target).find(r=>r.run_id===id),link=el("a","provenance-link",row?experimentName(row):id);
       link.href=`?run=${encodeURIComponent(id)}`;
       // In demo mode navigate its local catalog without replacing the real URL.
-      if(state.demo&&target)link.addEventListener("click",event=>{event.preventDefault();selectProject(id);});
+      if(state.demo&&target)link.addEventListener("click",event=>{event.preventDefault();selectRun(id);});
       refs.append(link);
     }
     box.append(retainedDetails(JSON.stringify([node.runId,"provenance"]),scope.flowOpen,t("来源记录"),refs));
@@ -390,7 +384,7 @@ function setSelectedRun(id, scope) {
   const s = scope.cache.get(id)?.snapshot;
   if (s) renderSnapshot(s); else clearRun();
   if (!state.demo) {
-    const url = new URL(location.href); url.searchParams.delete("project");
+    const url = new URL(location.href); url.searchParams.set("project",state.projectId);
     if (id) url.searchParams.set("run", id); else url.searchParams.delete("run");
     if(state.page==="experiment")history.replaceState(null, "", url);
   }
@@ -398,8 +392,9 @@ function setSelectedRun(id, scope) {
 function renderProject() {
   const project = selectedProject(); $("management").hidden = state.page!=="management"; $("projects").hidden = state.page!=="experiment" || !project;
   if (!project || state.page!=="experiment") return;
-  const scope = state.activeScope || activateProject(), row = runRows(project)[0];
-  $("project-name").textContent = projectName(project); $("project-description").textContent = project.description || "";
+  const scope = state.activeScope || activateProject(), row = runRows(project).find(r=>r.run_id===state.runId);
+  if(!row)return;
+  $("project-name").textContent = experimentName(row); $("project-description").textContent = projectName(project); $("project-description").hidden=false;
   const host=$("project-content"),details=scope.details || (scope.details=el("section","project-detail"));
   details.setAttribute("aria-label",t("本次运行的决策"));
   const entry=scope.cache.get(row.run_id);
@@ -419,38 +414,38 @@ function renderProject() {
   $("empty").hidden = true;
 }
 function chooseProjects(input) {
-  const previous=state.projectId;
-  state.projects = normalizeProjects(input);
-  let requestedRun = "", requestedProject = previous;
-  if (!state.demo && !state.queryApplied) {
-    const params = new URLSearchParams(location.search);
-    requestedRun = params.get("run"); requestedProject = params.get("project") || previous;
-    state.page = requestedRun || requestedProject ? "experiment" : "management";
-    state.queryApplied = true;
+  state.projects=normalizeProjects(input);
+  let requestedRun=state.runId,requestedProject=state.projectId;
+  if(!state.demo&&!state.queryApplied){
+    const params=new URLSearchParams(location.search);
+    requestedRun=params.get("run")||"";requestedProject=params.get("project")||"";
+    state.page=requestedRun?"experiment":"management";state.queryApplied=true;
   }
-  const target=state.projects.find(p=>p.project_id===requestedRun)
-    || state.projects.find(p=>p.project_id===requestedProject)
-    || state.projects.find(p=>p.legacyProjectIds.includes(requestedProject))
-    || state.projects[0];
-  state.projectId=target?.project_id || "";
-  const scope = activateProject(), id = runRows(target)[0]?.run_id || "";
-  // Cache scopes are keyed by the startup ID. Parent/source runs never enter it.
-  setSelectedRun(id,scope);
+  const owner=ownerOfRun(requestedRun);
+  state.projectId=owner?.project_id || state.projects.find(p=>p.project_id===requestedProject)?.project_id || "";
+  state.runId=owner?requestedRun:"";
+  if(state.page==="experiment"&&!owner)state.page="management";
+  const scope=activateProject();setSelectedRun(state.runId,scope);
   renderSelectors();renderProject();
 }
 function renderSelectors() {
   const host=$("project-list"),signature=JSON.stringify([RSII18n.getLanguage(),state.projects]);
-  $("experiment-count").textContent=t("{p0} 个实验",{p0:state.projects.length});
-  if(host.signature===signature)return;
-  host.signature=signature;
-  const cards=state.projects.map(project=>{
-    const row=runRows(project)[0],card=el("a","experiment-card");card.href=`?run=${encodeURIComponent(row.run_id)}`;
-    const head=el("div","experiment-card-heading");head.append(el("h2","",projectName(project)),badge(row.status));card.append(head);
-    card.append(el("p","quiet-note",dateText(row.updated_at)));
-    if(row.counts?.decisions!==undefined)card.append(el("p","",t("{p0} 次决策",{p0:row.counts.decisions})));
-    card.addEventListener("click",event=>{if(event?.metaKey||event?.ctrlKey||event?.shiftKey||event?.altKey)return;event?.preventDefault();selectProject(project.project_id);});return card;
+  $("experiment-count").textContent=t("{p0} 个项目 · {p1} 个实验",{p0:state.projects.length,p1:state.projects.reduce((n,p)=>n+runRows(p).length,0)});
+  if(host.signature===signature)return;host.signature=signature;
+  const sections=state.projects.map(project=>{
+    const section=el("section","project-group"),heading=el("div","project-group-heading");
+    heading.append(el("h2","",projectName(project)),el("span","quiet-note",t("{p0} 个实验",{p0:runRows(project).length})));section.append(heading);
+    const grid=el("div","experiment-grid");
+    for(const row of runRows(project)){
+      const card=el("a","experiment-card");card.href=`?project=${encodeURIComponent(project.project_id)}&run=${encodeURIComponent(row.run_id)}`;
+      const head=el("div","experiment-card-heading");head.append(el("h3","",experimentName(row)),badge(row.status));card.append(head);
+      card.append(el("p","quiet-note",dateText(row.updated_at)));
+      if(row.counts?.decisions!==undefined)card.append(el("p","",t("{p0} 次决策",{p0:row.counts.decisions})));
+      card.addEventListener("click",event=>{if(event?.metaKey||event?.ctrlKey||event?.shiftKey||event?.altKey)return;event?.preventDefault();selectRun(row.run_id);});grid.append(card);
+    }
+    section.append(grid);return section;
   });
-  host.replaceChildren(...(cards.length?cards:[empty(t("暂无实验"))]));
+  host.replaceChildren(...(sections.length?sections:[empty(t("暂无项目"))]));
 }
 function navigateURL(id,replace=false) {
   if(state.demo)return;
@@ -463,16 +458,16 @@ function showManagement(push=true) {
   if(state.activeScope)for(const entry of state.activeScope.cache.values())abortEntry(entry);
   state.page="management";if(push)navigateURL("");renderSelectors();renderProject();schedule();
 }
-function selectProject(id,push=true) {
-  if(!state.projects.some(p=>p.project_id===id))return Promise.resolve();
-  const changed=id!==state.projectId||state.page!=="experiment";
+function selectRun(id,push=true) {
+  const owner=ownerOfRun(id);if(!owner)return Promise.resolve();
+  const changed=id!==state.runId||state.page!=="experiment";
   clearTimeout(state.timer);state.controller?.abort();++state.epoch;state.page="experiment";
   if(changed&&push)navigateURL(id);
-  state.projectId=id;chooseProjects(state.projects);
+  state.projectId=owner.project_id;state.runId=id;chooseProjects(state.projects);
   return loadRun(state.runId,state.activeScope).finally(schedule);
 }
-// Retain run selection as a compatibility entry point; the sole run is the project.
-function selectRun(id) { if(id)return selectProject(id); }
+// Compatibility for callers that historically passed the sole run ID here.
+function selectProject(id,push=true) { return selectRun(id,push); }
 async function loadRun(id, scope, force = false) {
   if (scope !== state.activeScope || !runRows(selectedProject()).some(r=>r.run_id===id)) return;
   let entry = scope.cache.get(id);
@@ -573,8 +568,8 @@ function switchDemo() {
 }
 $("back-projects").addEventListener("click",()=>showManagement());
 if(typeof window!=="undefined")window.addEventListener("popstate",()=>{
-  const params=new URLSearchParams(location.search),id=params.get("run")||params.get("project");
-  if(id&&state.projects.some(p=>p.project_id===id))selectProject(id,false);
+  const params=new URLSearchParams(location.search),id=params.get("run");
+  if(id&&ownerOfRun(id))selectRun(id,false);
   else showManagement(false);
 });
 $("demo").addEventListener("click", switchDemo);
