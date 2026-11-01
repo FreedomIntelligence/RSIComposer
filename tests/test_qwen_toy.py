@@ -1,5 +1,6 @@
 """CPU-only HTTP contract fixtures; these tests do not claim to run real Qwen."""
 from contextlib import contextmanager, redirect_stdout
+from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
@@ -12,26 +13,114 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from examples.qwen_toy.adapters import (
     Deadline, HTTPClient, RevisionBackend, TRAIN_REF, WorkerActivator, WorkerEvaluator, WorkerTrainer,
 )
-from examples.qwen_toy.run import eligible, parse_args, run
+from examples.qwen_toy.run import BudgetedModel, OBJECTIVE, ResearchBudget, parse_args, run
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.loops.contracts.jobs import JobStatus
-from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
+from rsisys.loops.contracts.model_service import GenerationRequest, GenerationResponse, ModelRef
 from rsisys.loops.exploration.harness.evaluation import EvaluationRequest
 from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 
 
+class ContextBudgetTests(unittest.TestCase):
+    def fixture(self, payload, *, limit=20000):
+        model = ModelRef('fixture', 'model', 'baseline')
+        request = GenerationRequest('decision_maker', model, json.dumps(payload),
+                                    system='Preserve system instructions', max_output_tokens=500)
+        response = GenerationResponse('{"kind":"finish"}', model, False)
+        backend = Mock(generate=Mock(return_value=response))
+        return BudgetedModel(backend, ResearchBudget(max_context_chars=limit)), backend, request, response
+
+    def test_small_context_is_preserved_and_default_budget_is_explicit(self):
+        payload = {'objective': 'task', 'history': [], 'experience': [],
+                   'operations': [{'name': 'inspect', 'input_schema': {'type': 'object'}}]}
+        budgeted, backend, request, response = self.fixture(payload)
+        self.assertEqual(budgeted.budget.max_context_chars, 20000)
+        self.assertIs(budgeted.generate(request), response)
+        sent = backend.generate.call_args.args[0]
+        self.assertEqual(json.loads(sent.prompt), {**payload, 'context_omissions': {}})
+        self.assertEqual((sent.role, sent.model, sent.system), (request.role, request.model, request.system))
+        self.assertEqual(sent.max_output_tokens, budgeted.budget.max_output_tokens)
+        self.assertEqual(request.max_output_tokens, 500)
+        self.assertEqual(budgeted.calls, 1)
+
+    def test_oldest_evidence_is_removed_with_counts_and_latest_source_preserved(self):
+        for field in ('history', 'experience', 'directive_provenance', 'memories', 'operation_results'):
+            with self.subTest(field=field):
+                latest = {'record_id': 'latest', 'source_refs': ['evidence:last'], 'details': {'loss': 0.7}}
+                payload = {'objective': 'task', field: [
+                    {'record_id': 'oldest', 'summary': 'old observation ' * 100},
+                    {'record_id': 'older', 'summary': 'older observation ' * 100}, latest]}
+                original = deepcopy(payload)
+                budgeted, backend, request, _ = self.fixture(payload, limit=500)
+                original_prompt = request.prompt
+                budgeted.generate(request)
+                sent = backend.generate.call_args.args[0]
+                view = json.loads(sent.prompt)
+                self.assertLessEqual(len(sent.prompt), 500)
+                self.assertEqual(view[field], [latest])
+                self.assertEqual(view['context_omissions'], {field: 2})
+                self.assertEqual(payload, original)
+                self.assertEqual(request.prompt, original_prompt)
+                self.assertEqual(json.loads(request.prompt), original)
+
+    def test_large_last_details_and_tool_data_have_explicit_query_hints(self):
+        payload = {'objective': 'task',
+                   'history': [{'record_id': 'history:1', 'source_refs': ['feedback:1'],
+                                'details': {'trace': ['x' * 4000]}}],
+                   'experience': [{'record_id': 'feedback:1', 'source_refs': ['artifact:1'],
+                                   'summary': 'Observed loss', 'details': {'trace': ['y' * 4000]}}],
+                   'operation_results': [{'summary': 'Queried evidence', 'status': 'completed',
+                                          'data': {'items': [{'text': 'z' * 4000}]}}]}
+        original = deepcopy(payload)
+        budgeted, backend, request, _ = self.fixture(payload, limit=1000)
+        budgeted.generate(request)
+        sent = backend.generate.call_args.args[0]
+        view = json.loads(sent.prompt)
+        self.assertLessEqual(len(sent.prompt), 1000)
+        for field, contents in (('history', 'details'), ('experience', 'details'), ('operation_results', 'data')):
+            row, source = view[field][0], original[field][0]
+            self.assertEqual({k: v for k, v in row.items() if k != contents},
+                             {k: v for k, v in source.items() if k != contents})
+            self.assertEqual(set(row[contents]), {'omitted'})
+            self.assertIn('query', row[contents]['omitted'].lower())
+        self.assertEqual(payload, original)
+        self.assertEqual(json.loads(request.prompt), original)
+
+    def test_fixed_schema_over_budget_stops_before_any_backend_call(self):
+        payload = {'objective': 'task', 'operations': [{'name': 'inspect',
+            'input_schema': {'type': 'object', 'description': 'Required schema ' * 100}}],
+            'history': [{'record_id': 'h1', 'details': {'text': 'x' * 2000}}]}
+        original = deepcopy(payload)
+        budgeted, backend, request, _ = self.fixture(payload, limit=500)
+        with self.assertRaisesRegex(TimeoutError, 'context-character budget exhausted'):
+            budgeted.generate(request)
+        backend.generate.assert_not_called()
+        self.assertEqual(budgeted.calls, 0)
+        self.assertEqual(payload, original)
+        self.assertEqual(json.loads(request.prompt), original)
+
+    def test_context_budget_rejects_nonpositive_and_noninteger_values(self):
+        for limit in (0, -1, True, 1.5, None):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, 'positive integers'):
+                ResearchBudget(max_context_chars=limit)
+
+
 class Services:
-    def __init__(self, *, delta=0.5, wrong_revision=False, bad_decisions=False,
+    def __init__(self, *, delta=0.5, wrong_revision=False, plan=None,
                  forever=False, failed=False, wrong_activation_json=False,
                  poll_delay=0, cancel_pending=False, invoke_first=False,
                  response_losses=None, lost_response_delay=0, wrong_revision_round=None, max_rounds=2, review_action='continue'):
-        self.delta, self.wrong_revision, self.bad_decisions = delta, wrong_revision, bad_decisions
+        self.delta, self.wrong_revision = delta, wrong_revision
+        self.plan = list(plan) if plan is not None else None
+        self.planned_rounds, self.review_after = 1, None
+        self.contexts = []
         self.forever, self.failed = forever, failed
         self.wrong_activation_json = wrong_activation_json
         self.poll_delay, self.cancel_pending = poll_delay, cancel_pending
@@ -107,29 +196,40 @@ class Services:
                          'reason': 'Fixture review of the observed job'}
             elif prompt.startswith('{'):
                 context = json.loads(prompt)
-                delta = self.delta[int(self.latest_revision.split('-')[-1])-1] if isinstance(self.delta, list) else self.delta
-                objective = context['objective']
-                phase = objective.split('Current workflow phase: ')[1].split('.')[0]
-                if self.bad_decisions:
-                    value = {'kind': 'finish', 'reason': 'skip all work'}
-                elif self.invoke_first and not self.decisions:
-                    value = {'kind': 'invoke', 'operation': 'train',
-                             'arguments': {'recipe_ref': 'toy-lora', 'method': 'sft', 'apply_result': False}}
-                elif phase == 'train':
-                    value = {'kind': 'explore', 'strategy': 'train once', 'mode': 'train',
-                             'arguments': {'recipe_ref': 'toy-lora', 'method': 'sft'}}
-                elif phase == 'evaluate':
-                    value = {'kind': 'explore', 'strategy': 'heldout validation', 'mode': 'evaluate',
-                             'arguments': {'candidate_id': self.latest_revision,
-                                           'protocol_ref': 'heldout-nll'}}
-                elif phase == 'select' and delta > 0:
-                    assert context['last_feedback']['candidates'] == []
-                    value = {'kind': 'explore', 'strategy': 'positive heldout delta', 'mode': 'apply_candidate',
-                             'arguments': {'candidate_id': self.latest_revision}}
-                elif phase in ('select', 'execute'):
-                    value = {'kind': 'explore', 'strategy': 'execute chosen model', 'mode': 'execute'}
+                self.contexts.append(context)
+                if self.plan is None:
+                    # A scripted HTTP fixture, independent of controller prompt wording.
+                    # This threshold is a fixture choice, never a production guard.
+                    self.plan = []
+                    if self.invoke_first:
+                        self.plan.append({'kind': 'invoke', 'operation': 'train',
+                                          'arguments': {'recipe_ref': 'toy-lora', 'method': 'sft'}})
+                    for number in range(self.planned_rounds):
+                        delta = self.delta[number] if isinstance(self.delta, list) else self.delta
+                        self.plan.extend(['train', 'evaluate'])
+                        if delta > 0:
+                            self.plan.append('apply_candidate')
+                        self.plan.append('execute')
+                    self.plan.append('finish')
+                if not self.plan:
+                    raise AssertionError('Controller requested a decision beyond the fixture plan')
+                action = self.plan.pop(0)
+                if callable(action):
+                    action = action(context)
+                if isinstance(action, dict):
+                    value = action
+                elif action == 'finish':
+                    value = {'kind': 'finish', 'reason': 'Fixture plan complete'}
                 else:
-                    value = {'kind': 'finish', 'reason': 'one cycle complete'}
+                    value = {'kind': 'explore', 'strategy': 'Fixture chooses ' + action, 'mode': action}
+                    if action == 'train':
+                        value['arguments'] = {'recipe_ref': 'toy-lora', 'method': 'sft'}
+                        if self.review_after is not None:
+                            value['review_after_seconds'] = self.review_after
+                    elif action == 'evaluate':
+                        value['arguments'] = {'candidate_id': self.latest_revision, 'protocol_ref': 'heldout-nll'}
+                    elif action == 'apply_candidate':
+                        value['arguments'] = {'candidate_id': self.latest_revision}
                 self.decisions.append(value)
             else:
                 value = {'parity': 'odd' if '113' in prompt else 'even'}
@@ -197,12 +297,13 @@ def servers(service):
 
 
 class QwenControllerTests(unittest.TestCase):
-    def execute(self, service, root, urls, *, max_steps=100, timeout=10, rounds=1, review_after=2, require_review=False):
+    def execute(self, service, root, urls, *, max_steps=100, timeout=10, rounds=1, review_after=2, require_review=False, extra_args=()):
+        service.planned_rounds, service.review_after = rounds, review_after
         args = parse_args(['--baseline-url', urls[0] + '/v1', '--worker-url', urls[1],
                            '--run-dir', str(root), '--poll-interval', '0.001',
                            '--timeout', str(timeout), '--max-steps', str(max_steps), '--rounds', str(rounds),
                            '--review-after-seconds', str(review_after)]
-                          + (['--require-training-review'] if require_review else []))
+                          + (['--require-training-review'] if require_review else []) + list(extra_args))
         return run(args)
 
     def test_two_rounds_continue_from_applied_revision_and_keep_baseline_decisions(self):
@@ -234,7 +335,7 @@ class QwenControllerTests(unittest.TestCase):
             self.assertEqual(sum(r.kind == 'training_run' for r in records), 2)
             self.assertEqual(sum(r.kind == 'evaluation' for r in records), 2)
 
-    def test_round_rejection_preserves_current_actor_and_parent_metrics(self):
+    def test_fixture_nonselection_preserves_current_actor_and_parent_metrics(self):
         for deltas, parents, actors in (([0.5, -0.1], ['baseline', 'candidate-1'], ['candidate-1', 'candidate-1']),
                                        ([-0.1, 0.5], ['baseline', 'baseline'], ['baseline', 'candidate-2'])):
             with self.subTest(deltas=deltas), tempfile.TemporaryDirectory() as directory:
@@ -247,7 +348,7 @@ class QwenControllerTests(unittest.TestCase):
                 monitor = json.loads((Path(directory) / 'monitor.json').read_text())
                 self.assertEqual([c['metrics']['delta_nll'] for c in monitor['candidates']], deltas)
                 self.assertEqual([c['status'] for c in monitor['candidates']],
-                                 ['applied' if delta > 0 else 'rejected' for delta in deltas])
+                                 ['applied' if delta > 0 else 'proposed' for delta in deltas])
 
     def test_second_round_activation_failure_retains_first_round_actor(self):
         with tempfile.TemporaryDirectory() as directory, servers(service := Services(wrong_revision_round=2)) as urls:
@@ -269,7 +370,7 @@ class QwenControllerTests(unittest.TestCase):
             result = self.execute(service, root, urls, rounds=2, review_after=0.005, require_review=True)
             self.assertEqual(result['status'], 'completed')
             self.assertEqual(len(service.reviews), 2)
-            self.assertEqual([r['training_review_count'] for r in result['round_results']], [1, 1])
+            self.assertEqual([r['training_review_count'] for r in result['round_results']], [1, 2])
             self.assertEqual([r['source'] for r in result['training_reviews']], ['llm', 'llm'])
             self.assertEqual([r['actor_revision'] for r in result['training_reviews']], ['baseline', 'candidate-1'])
             for context in service.reviews:
@@ -296,16 +397,18 @@ class QwenControllerTests(unittest.TestCase):
 
     def test_model_review_cancel_is_honored_without_starting_another_round(self):
         with tempfile.TemporaryDirectory() as directory, servers(service := Services(
-                forever=True, poll_delay=0.03, review_action='cancel')) as urls:
+                forever=True, poll_delay=0.03, review_action='cancel', plan=['train', 'finish'])) as urls:
             result = self.execute(service, Path(directory), urls, rounds=2, review_after=0.005)
-            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['experiments'][0]['status'], 'cancelled')
             self.assertEqual(result['training_reviews'][0]['action'], 'cancel')
             self.assertEqual(len(service.jobs), 1)
             self.assertEqual(result['actor_revision'], 'baseline')
 
-    def test_round_argument_defaults_to_one_and_is_bounded(self):
+    def test_round_alias_is_a_bounded_training_budget(self):
         args = ['--baseline-url', 'http://localhost:1', '--worker-url', 'http://localhost:2']
-        self.assertEqual(parse_args(args).rounds, 1)
+        self.assertEqual(parse_args(args).rounds, 2)
+        self.assertEqual(parse_args(args + ['--max-trainings', '1']).rounds, 1)
         self.assertEqual(parse_args(args + ['--rounds', '2']).rounds, 2)
         for invalid in ('0', '3', '-1'):
             with self.subTest(invalid=invalid), redirect_stdout(io.StringIO()):
@@ -313,7 +416,7 @@ class QwenControllerTests(unittest.TestCase):
                 with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     parse_args(args + ['--rounds', invalid])
 
-    def test_real_protocol_adapters_accept_and_reject_paths_with_durable_evidence(self):
+    def test_http_fixture_selection_and_nonselection_have_durable_evidence(self):
         for delta in (0.5, 0, -0.5):
             with self.subTest(delta=delta), tempfile.TemporaryDirectory() as directory:
                 service, root = Services(delta=delta), Path(directory) / 'qwen-toy'
@@ -321,7 +424,7 @@ class QwenControllerTests(unittest.TestCase):
                     result = self.execute(service, root, urls)
                 self.assertEqual(result['status'], 'completed')
                 self.assertFalse(result['simulated'])
-                self.assertEqual(result['selection'], 'accepted' if delta > 0 else 'rejected')
+                self.assertEqual(result['selection'], 'accepted' if delta > 0 else 'not_selected')
                 self.assertEqual(result['actor_revision'], 'candidate-1' if delta > 0 else 'baseline')
                 self.assertEqual(result['decision_revision'], 'baseline')
                 self.assertEqual(result['applied'], delta > 0)
@@ -335,7 +438,7 @@ class QwenControllerTests(unittest.TestCase):
                 monitor = json.loads((root / 'monitor.json').read_text())
                 self.assertEqual(monitor['schema_version'], 1)
                 self.assertEqual(monitor['status'], 'completed')
-                self.assertEqual(monitor['candidates'][0]['status'], 'applied' if delta > 0 else 'rejected')
+                self.assertEqual(monitor['candidates'][0]['status'], 'applied' if delta > 0 else 'proposed')
                 self.assertEqual(monitor['models']['actor']['revision'], result['actor_revision'])
                 # The exact web projection must consume the persisted schema.
                 spec = importlib.util.spec_from_file_location('qwen_monitor_server', ROOT / 'web/server.py')
@@ -358,45 +461,166 @@ class QwenControllerTests(unittest.TestCase):
                     self.assertNotIn(urls[0], content)
                     self.assertNotIn(urls[1], content)
 
-    def test_guard_cannot_replace_bad_model_decisions_with_scripted_training(self):
-        with tempfile.TemporaryDirectory() as directory, servers(services := Services(bad_decisions=True)) as urls:
-            output = io.StringIO()
-            with redirect_stdout(output):
-                result = self.execute(services, Path(directory), urls)
-            self.assertEqual(result['status'], 'failed')
-            self.assertEqual(len(services.decisions), 3)
-            self.assertEqual(services.jobs, {})
+    def test_model_can_finish_immediately_without_training_or_execution(self):
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=['finish'])) as urls:
+            result = self.execute(service, Path(directory), urls)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(service.jobs, {})
+            self.assertEqual(len(service.decisions), 1)
             self.assertEqual(result['completed_directives'], 0)
-            diagnostics = [json.loads(line) for line in output.getvalue().splitlines()]
-            self.assertEqual([entry['attempt'] for entry in diagnostics], [1, 2, 3])
-            for entry in diagnostics:
-                self.assertEqual(entry['event'], 'decision_validation_error')
-                self.assertEqual(entry['phase'], 'train')
-                self.assertEqual(entry['error_type'], 'ValueError')
-                self.assertEqual(entry['error_summary'],
-                                 'Expected kind="explore" with mode, strategy and arguments; received kind="finish"')
-            monitor = (Path(directory) / 'monitor.json').read_text()
-            self.assertNotIn('received kind=', monitor)
-            self.assertNotIn('error_summary', monitor)
+            self.assertEqual(result['training_submissions'], 0)
+            self.assertEqual(result['round_results'], [])
+            self.assertEqual(result['rounds_completed'], 0)
+            self.assertEqual(result['selection'], 'not_selected')
+            self.assertEqual(result['actor_revision'], 'baseline')
 
-    def test_invoke_train_requires_a_new_model_decision_with_specific_retry_feedback(self):
+    def test_issued_directives_keep_original_objective_without_research_prompt_accumulation(self):
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(
+                plan=['execute', 'execute', 'finish'])) as urls:
+            root = Path(directory)
+            result = self.execute(service, root, urls)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['rounds_completed'], 2)
+            for context in service.contexts:
+                self.assertEqual(context['objective'].count('You are the researcher.'), 1)
+                for entry in context['history']:
+                    directive = entry['details'].get('directive')
+                    if directive:
+                        self.assertEqual(directive['objective'], OBJECTIVE)
+            history = json.loads((root / 'decision_memory.json').read_text())['history']
+            directives = [row['details']['directive'] for row in history
+                          if row['kind'] == 'decision' and row['details'].get('directive')]
+            self.assertEqual([directive['objective'] for directive in directives], [OBJECTIVE, OBJECTIVE])
+            self.assertNotIn('You are the researcher.', json.dumps(history))
+
+    def test_unavailable_invoke_train_requires_a_new_model_response(self):
         with tempfile.TemporaryDirectory() as directory, servers(service := Services(invoke_first=True)) as urls:
-            output = io.StringIO()
-            with redirect_stdout(output):
-                result = self.execute(service, Path(directory), urls)
+            result = self.execute(service, Path(directory), urls)
             self.assertEqual(result['status'], 'completed')
             self.assertEqual(service.decisions[0]['kind'], 'invoke')
             self.assertEqual(service.decisions[1]['kind'], 'explore')
-            diagnostics = [json.loads(line) for line in output.getvalue().splitlines()]
-            self.assertEqual(len(diagnostics), 1)
-            chats = [payload for role, path, payload in service.calls
-                     if role == 'baseline' and path == '/v1/chat/completions']
-            second = json.loads(chats[1]['messages'][-1]['content'])['objective']
-            self.assertIn('Validation feedback (data):', second)
-            self.assertIn(json.dumps(diagnostics[0]['error_summary']), second)
+            self.assertIn('validation error (data):', service.contexts[1]['objective'])
             before_train = service.calls[:next(i for i, (_, path, _) in enumerate(service.calls) if path == '/train')]
             self.assertEqual(sum(path == '/v1/chat/completions' for _, path, _ in before_train), 2)
             self.assertEqual(len(service.jobs), 2)
+
+    def test_model_executes_baseline_then_trains_and_repeats_evaluation_and_execution(self):
+        plan = ['execute', 'train', 'evaluate', 'evaluate', 'apply_candidate', 'execute', 'execute', 'finish']
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=plan)) as urls:
+            root = Path(directory)
+            result = self.execute(service, root, urls, rounds=1)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual([r['mode'] for r in result['experiments']], plan[:-1])
+            self.assertEqual(result['training_submissions'], 1)
+            self.assertEqual(result['rounds_requested'], 1)
+            self.assertEqual(result['rounds_completed'], 3)
+            self.assertEqual([r['actor_revision'] for r in result['round_results']],
+                             ['baseline', 'candidate-1', 'candidate-1'])
+            self.assertEqual([r['selection'] for r in result['round_results']],
+                             ['not_selected', 'accepted', 'accepted'])
+            self.assertIsNone(result['round_results'][0]['candidate_id'])
+            self.assertTrue(all(r['answer_correct'] for r in result['round_results']))
+            evaluations = [payload for _, path, payload in service.calls if path == '/evaluate']
+            self.assertEqual(len(evaluations), 2)
+            self.assertNotEqual(evaluations[0]['idempotency_key'], evaluations[1]['idempotency_key'])
+            self.assertEqual(evaluations[0]['request'], evaluations[1]['request'])
+            for number, observation in enumerate(result['round_results'], 1):
+                self.assertEqual(json.loads((root / f'round-{number}.json').read_text()), observation)
+
+    def test_model_can_apply_a_version_valid_candidate_despite_negative_delta(self):
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(
+                delta=-0.5, plan=['train', 'evaluate', 'apply_candidate', 'execute', 'finish'])) as urls:
+            root = Path(directory)
+            result = self.execute(service, root, urls)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['metrics']['delta_nll'], -0.5)
+            self.assertEqual(result['selection'], 'accepted')
+            self.assertTrue(result['applied'])
+            self.assertEqual(result['actor_revision'], 'candidate-1')
+            self.assertEqual(service.contexts[2]['last_feedback']['quality_metrics']['delta_nll'], -0.5)
+            self.assertEqual(json.loads((root / 'monitor.json').read_text())['candidates'][0]['status'], 'applied')
+
+    def test_evaluated_candidates_remain_proposed_without_an_apply_decision(self):
+        for delta in (-0.5, 0.5):
+            with self.subTest(delta=delta), tempfile.TemporaryDirectory() as directory:
+                service = Services(delta=delta, plan=['train', 'evaluate', 'finish'])
+                with servers(service) as urls:
+                    result = self.execute(service, Path(directory), urls)
+                self.assertEqual(result['status'], 'completed')
+                self.assertEqual(result['selection'], 'not_selected')
+                self.assertFalse(result['applied'])
+                self.assertEqual(result['actor_revision'], 'baseline')
+                self.assertEqual(result['rounds_completed'], 0)
+                monitor = json.loads((Path(directory) / 'monitor.json').read_text())
+                self.assertEqual(monitor['candidates'][0]['status'], 'proposed')
+                self.assertEqual(monitor['candidates'][0]['metrics']['delta_nll'], delta)
+
+    def test_model_invokes_an_advertised_tool_and_receives_its_observation(self):
+        operation = {'kind': 'invoke', 'operation': 'query_exploration_model', 'arguments': {}}
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=[operation, 'finish'])) as urls:
+            root = Path(directory)
+            result = self.execute(service, root, urls)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(service.jobs, {})
+            self.assertEqual(result['completed_directives'], 0)
+            observed = service.contexts[1]['operation_results'][0]
+            self.assertEqual(observed['status'], 'completed')
+            self.assertEqual(observed['data']['data']['items'][0]['model']['revision'], 'baseline')
+            monitor = json.loads((root / 'monitor.json').read_text())
+            self.assertEqual(monitor['decisions'][0]['operation'], 'query_exploration_model')
+            self.assertEqual(monitor['decisions'][0]['status'], 'completed')
+
+    def test_training_and_directive_budgets_reject_extra_model_actions(self):
+        for mode, extra in (('train', ()), ('execute', ('--max-directives', '1'))):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                service = Services(plan=[mode] * 4)
+                with servers(service) as urls:
+                    result = self.execute(service, Path(directory), urls, rounds=1, extra_args=extra)
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['completed_directives'], 1)
+                self.assertEqual(len(service.decisions), 4)
+                self.assertEqual(len(service.jobs), 1 if mode == 'train' else 0)
+                self.assertEqual(len(result['experiments']), 1)
+                self.assertNotIn(mode, service.contexts[1]['directive_modes'])
+                self.assertIn('validation error (data):', service.contexts[2]['objective'])
+
+    def test_model_call_budget_counts_validation_retries(self):
+        invalid = {'kind': 'invoke', 'operation': 'not_installed', 'arguments': {}}
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=[invalid] * 3)) as urls:
+            result = self.execute(service, Path(directory), urls, extra_args=('--max-model-calls', '2'))
+            self.assertEqual(result['status'], 'timed_out')
+            self.assertEqual(result['model_calls'], 2)
+            self.assertEqual(len(service.decisions), 2)
+            self.assertEqual(service.jobs, {})
+            self.assertEqual(result['completed_directives'], 0)
+
+    def test_permissions_reject_directives_and_tools_without_side_effects(self):
+        operation = {'kind': 'invoke', 'operation': 'query_exploration_model', 'arguments': {}}
+        for action, permissions in (('train', {'directives': []}), (operation, {'operations': []})):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / 'permissions.json'
+                config.write_text(json.dumps(permissions))
+                service = Services(plan=[action] * 3)
+                with servers(service) as urls:
+                    result = self.execute(service, root, urls, extra_args=('--permissions', str(config)))
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(service.jobs, {})
+                self.assertEqual(result['completed_directives'], 0)
+                self.assertEqual(len(service.decisions), 3)
+                self.assertTrue(all(not context['operation_results'] for context in service.contexts))
+                self.assertIn('validation error (data):', service.contexts[1]['objective'])
+
+    def test_model_may_omit_review_schedule_despite_controller_hint(self):
+        train = {'kind': 'explore', 'mode': 'train', 'strategy': 'No scheduled review',
+                 'arguments': {'recipe_ref': 'toy-lora', 'method': 'sft'}}
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(
+                plan=[train, 'finish'], poll_delay=0.03)) as urls:
+            result = self.execute(service, Path(directory), urls, review_after=0.005)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['training_submissions'], 1)
+            self.assertEqual(result['training_reviews'], [])
+            self.assertEqual(service.reviews, [])
 
     def test_wrong_revision_or_bad_smoke_inference_never_binds(self):
         for kwargs in ({'wrong_revision': True}, {'wrong_activation_json': True}):
@@ -409,10 +633,13 @@ class QwenControllerTests(unittest.TestCase):
                 self.assertEqual(result['actor_revision'], 'baseline')
 
     def test_worker_failure_is_persisted_without_remote_error_secrets(self):
-        with tempfile.TemporaryDirectory() as directory, servers(service := Services(failed=True)) as urls:
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(failed=True, plan=['train', 'execute', 'finish'])) as urls:
             root = Path(directory)
             result = self.execute(service, root, urls)
-            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(result['experiments'][0]['status'], 'failed')
+            self.assertEqual(service.contexts[1]['last_feedback']['status'], 'failed')
+            self.assertTrue(result['answer_correct'])
             self.assertFalse(result['applied'])
             for path in root.rglob('*.json'):
                 self.assertNotIn('SECRET_REMOTE_ERROR', path.read_text())
@@ -507,23 +734,17 @@ class QwenControllerTests(unittest.TestCase):
             self.assertFalse(result['cancellation_confirmed'])
             self.assertTrue(result['remote_job_may_still_run'])
 
-    def test_nonfinite_measurements_reject_then_execute_baseline_without_nan_json(self):
+    def test_fixture_skips_nonfinite_measurement_and_executes_baseline_without_nan_json(self):
         with tempfile.TemporaryDirectory() as directory, servers(service := Services(delta=float('nan'))) as urls:
             result = self.execute(service, Path(directory), urls)
             self.assertEqual(result['status'], 'completed')
-            self.assertEqual(result['selection'], 'rejected')
+            self.assertEqual(result['selection'], 'not_selected')
             self.assertEqual(result['actor_revision'], 'baseline')
             self.assertNotIn('delta_nll', result['metrics'])
             self.assertEqual(result['metrics']['measurement_valid'], 0)
             self.assertTrue(result['answer_correct'])
             json.dumps(result, allow_nan=False)
 
-    def test_guard_fails_closed_for_nonfinite_missing_and_nonpositive_values(self):
-        for value in (None, True, '1', float('nan'), float('inf'), -float('inf'), 0, -1):
-            with self.subTest(value=value):
-                self.assertFalse(eligible({'delta_nll': value}))
-        self.assertFalse(eligible({}))
-        self.assertTrue(eligible({'delta_nll': 0.01}))
 
 
 class QwenMultiRoundWorkerTests(unittest.TestCase):

@@ -81,3 +81,30 @@ prepare 失败会形成失败回执并重新抛出异常；调用方交付并 ac
 `advance_job` 的不确定提交、轮询、证据写入失败保留回执供重试。应用阶段抛出 `ModelActivationPending` 时同样保持未终态，下次 advance 对同一 job 重试应用；其他应用异常生成 FAILED 回执后重新抛出。取消后不再应用候选，已发生的外部应用不回滚。开始前的取消仍由框架的 cancel_before_start 处理。这些 helper 应在 handler 生命周期内使用，不替代 Harness 的本地控制入口。
 
 Harness 检测到已缓存终态结果的类型、base、角色、candidate ID 内容或评测 candidate/protocol 不匹配时，抛出 `InvalidJobResult`（ValueError 子类）。命令将该确定的协议错误转为 FAILED 回执后重新抛出，供调用方交付并 acknowledge；不会发布错误候选或伪造有效训练/评测证据。RL 序列也结束为 failed，避免残留控制占用。后端本身抛出的异常和 Experience 写入异常不因此转为终态，仍可按原请求、job 与记录 ID 重试。
+
+`ConcurrentExplorationHarness(factory, max_in_flight=2)` 是可替换的实验容器。
+factory 接收完整 Directive，必须为每个 ID 创建独立的 harness、policy、environment、
+memory、state、job books 和命令处理组件；容器检查这些可见对象的共享别名并拒绝复用。
+嵌套在自定义组件内的资源隔离由 factory 负责，不能靠浅层检查保证。共享的 backend
+客户端必须以完整 JobRef 路由异步任务，并支持并发在途请求；GPU/服务容量由 backend
+或 factory 分配。容器不会复制模型权重、跨实验修改 prompt 或自动晋升模型。
+
+`pending_all()` 返回未 ack 的回执，`execution_views()` 按 ID 返回模型和任务绑定。
+已 ack 子 harness 继续保留，用于幂等回执和候选读取；没有自动淘汰或持久化策略。
+共享 Experience 是显式的跨实验反馈来源，局部 memory 和状态不会共享。
+
+候选跨实验读取通过 `candidate_result(id)`，同 ID 不同结果会拒绝。
+`apply_candidate(id, target_directive_id=..., expected_model=...)` 要求目标先终态并 ack，
+同时检查目标当前完整 ModelRef 和 TrainingResult.base；只更改这个目标。
+`apply_candidate` 指令也可由 factory 安装的 ApplyCandidateHandler 执行，容器会向新目标
+显式导入候选结果并检查 base。不会把这个绑定隐式传播到其他实验或新 factory 实例。
+
+动态控制使用 `DirectiveUpdate`，标准 CommandHandler 默认拒绝更新。
+自定义 handler 必须实现纯验证 `validate_update(harness, state, request)` 和
+确认应用的 `update(harness, state, request)`。`TrainingCommandHandler` 可适配显式提供
+`backend.validate_update(job, request)` / `backend.update(job, request)` 的训练后端。
+后端负责支持的字段、应用时机和请求去重；成功返回表示已确认生效，失败响应保留原请求供显式重试。
+未确认更新只阻止另一条更新，不阻止现有任务的状态推进和取消。handler.advance 在这种情况下
+须继续轮询/取消已有任务，不重放更新、不把未知响应记成成功。取消发起后拒绝未确认更新的重试，
+继续推进直至终态；原 pending_update 留作证据，版本保持最后确认值。
+当前内置训练后端没有通用热更新能力；示例仅修改 mock 的剩余轮询次数。

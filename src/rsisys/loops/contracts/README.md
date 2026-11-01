@@ -53,3 +53,11 @@ Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。
 [TrainingResult](training.py) 关联 base / model / candidate / metrics / simulated。[Candidate](candidate.py) 描述变更产物和受影响角色，不表示已经验收。默认 Harness 校验角色归属和基础版本；应用结果需要 policy 支持模型更新。
 
 [model_service.py](model_service.py) 定义 ModelRef、ModelBackend、ModelUpdatable、请求/响应和 TokenUsage；[ArtifactRef](artifacts.py) 只携带产物身份、URI、版本和摘要，不含内容，解析与校验由产物存储负责。模型引用相同不表示角色同步；真实权重加载归模型后端。
+
+可选并行协议位于 `coordination.py`：`ConcurrentExplorationEndpoint.pending_all()` /
+`execution_views()` 和 `ConcurrentDecisionEndpoint.pending_all()` / `update_executions()`。
+单条 accept/advance/inspect/cancel/acknowledge 始终使用 directive_id。
+`ExplorationProgress.version` 从 0 开始；`DirectiveUpdate(directive_id, expected_version,
+idempotency_key, changes)` 是独立控制请求，不替换原始 Directive。
+确认后的 `UpdateReceipt` 版本恰好增加 1；同键同请求重复返回原回执，不能用同键改变内容。
+支持哪些字段由可选 backend/handler 声明与验证，协议不承诺任意训练超参可热更新。

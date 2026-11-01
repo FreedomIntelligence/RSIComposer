@@ -45,8 +45,11 @@ def decision_summary(details, *, ident, round_number, at=None, source='model'):
                     row[key] = payload[key][:1000]
             if isinstance(payload.get('candidate'), dict):
                 row['candidate_id'] = payload['candidate'].get('candidate_id')
+    elif details.get('kind') == 'invoke':
+        operation = details.get('operation') or {}
+        row.update(kind='operation', operation=operation.get('name'), status='proposed')
     else:
-        row.update(kind='finish', reason=str(details.get('reason', ''))[:2000], status='completed')
+        row.update(kind=details.get('kind', 'finish'), reason=str(details.get('reason', ''))[:2000], status='completed')
     return row
 
 
@@ -118,6 +121,11 @@ class Monitor:
 
     def advance(self, result):
         event, current = result.event, self.data['current']
+        if event.get('kind') == 'progressed':
+            for row in reversed(self.data['decisions']):
+                if row.get('kind') == 'operation' and row.get('status') == 'proposed':
+                    row['status'] = (event.get('operation_result') or {}).get('status', 'completed')
+                    break
         if result.directive_id and current.get('directive_id') == result.directive_id:
             progress = event.get('progress') or {}
             feedback = event.get('feedback') or {}

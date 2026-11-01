@@ -23,6 +23,21 @@ class TrainingCommandHandler(CommandHandler):
         state.request = ActorTrainingRequest(base, state.directive.input_refs,
                                              spec.recipe_ref, method=spec.method)
 
+    def validate_update(self, harness, state, request):
+        backend = harness.learner
+        validate = getattr(backend, 'validate_update', None)
+        update = getattr(backend, 'update', None)
+        if not callable(validate) or not callable(update):
+            raise NotImplementedError('Training backend does not support live updates')
+        if state.job is None:
+            raise RuntimeError('Live training updates require a confirmed submitted job')
+        validate(state.job, deepcopy(request))
+
+    def update(self, harness, state, request):
+        # The backend must confirm application and deduplicate the full request.
+        # It owns the allowed fields; this adapter promises no generic hot tuning.
+        harness.learner.update(state.job, deepcopy(request))
+
     def advance(self, harness, state, action_space):
         # Reuse submission, polling, cancellation, evidence and model-application
         # semantics. The backend owns rollout and updates inside this one job.

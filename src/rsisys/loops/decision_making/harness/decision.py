@@ -25,7 +25,9 @@ class Decision:
         if self.kind not in expected:
             raise ValueError(f"Unknown decision kind: {self.kind}")
         present = {key for key in ("operation", "directive", "job") if getattr(self, key) is not None}
-        wanted = set() if expected[self.kind] is None else {expected[self.kind]}
+        # Waiting without a job yields one scheduling turn. A supplied job keeps
+        # the existing explicit external-operation completion handoff semantics.
+        wanted = set() if expected[self.kind] is None or (self.kind == 'wait' and self.job is None) else {expected[self.kind]}
         if present != wanted:
             raise ValueError(f"Decision {self.kind} requires only {expected[self.kind]}")
 

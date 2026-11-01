@@ -40,3 +40,27 @@
 系统反馈写入共享 [Experience](../../../experience/README.md)，原始准备过程留在默认 Harness 的本地 history。自定义 Harness 的[快照](../../../snapshot/README.md)需显式集成。
 
 运行中操作返回 JobRef 时，Harness 将它作为 submitted 回执连同作业引用交给模型并记录 history，不宣称后台任务已完成，也不替换当前实验指令。后续查询/取消由该能力的 provider 或调用方负责；框架没有因此获得多实验调度器。普通决策阶段的异步操作仍使用原有 wait/resume 路径。
+
+`max_outstanding=1` 默认保持等待单条反馈的行为；配置为大于 1 后，未终态时仍可研究、
+调用工具或提交下一实验。`DecisionContext.outstanding` 和 `executions` 按指令保留
+独立意图与执行视图，反馈、review 重试和候选来源使用各自 ID。满容量时不再向模型
+展示 directive_modes，执行端仍检查容量。`Decision('wait')` / 模型 JSON
+`{"kind":"wait"}` 只让出一次调度机会，不设置外部 pending_job；已有带 job 的 wait
+仍保留显式 resume 的外部操作语义。finish 停止新决策，runner 继续收齐在途实验。
+`can_step()` 向 runner 提供可选的决策就绪信号；max_outstanding=1 的在途反馈保护
+不会阻止并行 runner 推进或取消已提交实验。直接调用 step 的默认串行保护保持不变。
+
+`compare_candidates(ids, metric=..., higher_is_better=True)` 显式排序评测结果。
+要求已完成、有有限数值指标、相同协议/输入/模拟标记，以及已知相同完整训练 ModelRef。
+仅 Candidate.base_version 字符串相同不够，未知完整训练来源会拒绝比较。
+当前索引保留每候选最新评测；历史原始证据仍在 memory/Experience。
+
+`rsisys.loops.exploration.control.ExperimentControls(exploration_loop, decision_loop)`
+提供 `definitions` / `bindings` / `capabilities`，注册到现有 Action Space 和 Tools 即可
+供 researcher 调用 `experiment_inspect/cancel/update/compare`。取消和更新是写操作，
+按已有 operations / review_operations 权限检查，默认 review 只开放只读工具。
+这些能力不自动安装，也不替代 backend 的版本/字段验证。
+
+`feedback_selector=None` 默认使用 `RecentFeedbackSelector`。
+`_context` 调用 `select(experience, objective, limit=...)` 并复制输出，避免自定义 selector
+把可变记录引用直接暴露给 policy。

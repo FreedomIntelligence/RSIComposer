@@ -172,6 +172,9 @@ class DefaultExplorationHarness:
         from .queries import ExplorationQueries
         return ExplorationQueries(self).query(request)
 
+    def update(self, request):
+        return self.commands.update(request)
+
     def cancel(self, directive_id):
         return self.commands.cancel(directive_id)
 

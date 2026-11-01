@@ -25,3 +25,5 @@
 自定义集成需定义空闲边界、状态保存与恢复，以及组件间引用一致性。目前没有通用适配器注册接口；本地捕获显式检查内置组件类型和共享实例关系，恢复则按配置重建内置 Application，只支持内置 Harness 及其内部组件，不能自动恢复自定义组件。整体替换 Harness（包括无 memory 的实现）或替换内部 MemoryStore 都不会自动获得快照支持，需另行实现保存、恢复与引用校验。
 
 通过工厂参数装配的 Application、自定义 DirectiveDefinitions，以及新增或覆盖 command_handlers 都由内置捕获器在写文件前拒绝；即使工厂返回内置组件，也不能据 JSON 配置推断其重建方式。恢复支持需要单独集成，不会静默还原为默认实现。内置 Exploration 的 episode / learning / evaluation / local RL 执行组件也检查类型和共享引用；组件使用不同 state 或脱离原绑定时拒绝捕获。恢复时统一重绑新状态，后续执行使用恢复后的计数、候选和版本信息。
+
+并行 Runner、max_outstanding 不为 1，以及自定义 FeedbackSelector 暂不由本地快照重建，捕获时明确拒绝；默认 RecentFeedbackSelector 可正常恢复。

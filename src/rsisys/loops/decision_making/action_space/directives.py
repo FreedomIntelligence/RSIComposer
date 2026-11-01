@@ -70,7 +70,9 @@ class DirectiveDefinitions:
 
 def _arguments(arguments, required=(), optional=()):
     if not set(required) <= arguments.keys() or arguments.keys() - set(required) - set(optional):
-        raise ValueError('Directive arguments do not match the declared fields')
+        missing = sorted(set(required) - arguments.keys())
+        unexpected = sorted(arguments.keys() - set(required) - set(optional))
+        raise ValueError(f'Directive arguments do not match the declared fields: missing={missing}, unexpected={unexpected}')
 
 
 def _execute(arguments, candidates):

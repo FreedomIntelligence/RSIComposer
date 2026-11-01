@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from copy import deepcopy
 from uuid import uuid4
@@ -8,7 +9,7 @@ from rsisys.loops._memory import MemoryStore, HistoryEntry
 from .memory import DecisionMemory
 
 from rsisys.experience.records import ExperienceRecord
-from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.experience.retrieval import ExperienceSystem, RecentFeedbackSelector
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
@@ -35,7 +36,8 @@ class DefaultDecisionHarness:
     def __init__(self, policy: DecisionPolicy, tools: DecisionTools,
                  experience: ExperienceSystem, learner: DecisionLearner | None = None,
                  *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32,
-                 model_activator: ModelActivator | None = None, review_tool_limit: int = 4):
+                 model_activator: ModelActivator | None = None, review_tool_limit: int = 4,
+                 max_outstanding: int = 1, feedback_selector=None):
         self.policy, self.tools, self.experience, self.learner = policy, tools, experience, learner
         if type(experience_limit) is not int or experience_limit < 1:
             raise ValueError("experience_limit must be a positive integer")
@@ -43,6 +45,10 @@ class DefaultDecisionHarness:
             raise ValueError("memory_limit must be a positive integer")
         if type(review_tool_limit) is not int or review_tool_limit < 0:
             raise ValueError('review_tool_limit must be a nonnegative integer')
+        if type(max_outstanding) is not int or max_outstanding < 1:
+            raise ValueError('max_outstanding must be a positive integer')
+        self.max_outstanding = max_outstanding
+        self.feedback_selector = feedback_selector if feedback_selector is not None else RecentFeedbackSelector()
         self.review_tool_limit = review_tool_limit
         self.memory = memory if memory is not None else DecisionMemory()
         self.memory_limit = memory_limit
@@ -80,19 +86,29 @@ class DefaultDecisionHarness:
         if not isinstance(view, ExecutionView):
             raise TypeError('Expected an ExecutionView')
         self.state.execution = deepcopy(view)
+        if view.progress is not None:
+            self._bind_execution(view.progress.directive_id, view)
+
+    def _bind_execution(self, ident, view):
+        self.state.executions[ident] = deepcopy(view)
+        provenance = self.state.directive_provenance.get(ident)
+        if provenance is not None and provenance.execution_model is None and view.model is not None:
+            self.state.directive_provenance[ident] = replace(provenance, execution_model=view.model)
 
     def _context(self, objective: str, action_space: DecisionActionSpace | None = None) -> DecisionContext:
         model = getattr(self.policy, 'model', None)
         return DecisionContext(
-            objective, self.experience.retrieve(limit=self.experience_limit),
+            objective, deepcopy(tuple(self.feedback_selector.select(
+                self.experience, objective, limit=self.experience_limit))),
             action_space.describe() if action_space is not None else (),
             deepcopy(tuple(self.state.operation_results)), self.memory.recall(limit=self.memory_limit),
             deepcopy(self.state.last_feedback), self.memory.history(limit=self.memory_limit),
-            action_space.directive_modes() if action_space is not None else (),
+            action_space.directive_modes() if action_space is not None and len(self.pending_all()) < self.max_outstanding else (),
             candidates=deepcopy(tuple(self.state.candidates.values())),
             execution=deepcopy(self.state.execution), decision_model=model if isinstance(model, ModelRef) else None,
             directive_provenance=deepcopy(tuple(self.state.directive_provenance.values())),
             candidate_evaluations=deepcopy(tuple(self.state.candidate_evaluations.values())),
+            outstanding=self.pending_all(), executions=deepcopy(self.state.executions),
         )
 
     def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
@@ -106,16 +122,41 @@ class DefaultDecisionHarness:
             return self.review(objective, progress)
         return self._review(objective, progress, action_space)
 
+    @contextmanager
+    def _review_scope(self, directive_id):
+        if self.max_outstanding == 1:
+            yield
+            return
+        old_session, old_record = self.state.review_session, self.state.pending_review_record
+        self.state.review_session = self.state.review_sessions.get(directive_id)
+        self.state.pending_review_record = self.state.review_records.get(directive_id)
+        try:
+            yield
+        finally:
+            for mapping, value in ((self.state.review_sessions, self.state.review_session),
+                                   (self.state.review_records, self.state.pending_review_record)):
+                if value is None:
+                    mapping.pop(directive_id, None)
+                else:
+                    mapping[directive_id] = value
+            self.state.review_session, self.state.pending_review_record = old_session, old_record
+
     def _review(self, objective: str, progress: ExplorationProgress,
                 action_space: DecisionActionSpace | None = None) -> ReviewDecision:
+        if not isinstance(progress, ExplorationProgress):
+            raise TypeError('Expected an ExplorationProgress')
+        with self._review_scope(progress.directive_id):
+            return self._review_one(objective, progress, action_space)
+
+    def _review_one(self, objective: str, progress: ExplorationProgress,
+                    action_space: DecisionActionSpace | None = None) -> ReviewDecision:
         if action_space is None:
             from ..action_space import ModularDecisionActionSpace
             action_space = ModularDecisionActionSpace((), directive_modes=())
         action_space = authorized_space(action_space, 'review')
         if not isinstance(progress, ExplorationProgress):
             raise TypeError('Expected an ExplorationProgress')
-        if (progress.directive_id != self.state.pending_directive_id
-                or progress.directive != self.state.pending_directive):
+        if progress.directive != self.state.outstanding.get(progress.directive_id, self.state.pending_directive):
             raise ValueError('Review does not match the pending directive')
         pending = self.state.pending_review_record
         if pending is not None:
@@ -226,6 +267,10 @@ class DefaultDecisionHarness:
         self.state.pending_review_record = None
         return deepcopy(result)
 
+    def can_step(self) -> bool:
+        """Optional scheduler readiness; the serial feedback guard remains intact."""
+        return self.max_outstanding > 1 or self.state.pending_directive_id is None
+
     def step(self, objective: str, action_space: DecisionActionSpace) -> LoopStepResult:
         action_space = authorized_space(action_space, 'decision')
         if self.state.pending_review_record is not None or self.state.review_session is not None:
@@ -234,7 +279,7 @@ class DefaultDecisionHarness:
             return LoopStepResult("progressed", operation_result=self._flush_operation_record())
         if self.state.finished:
             return LoopStepResult("finished")
-        if self.state.pending_directive_id is not None:
+        if self.max_outstanding == 1 and self.state.pending_directive_id is not None:
             raise RuntimeError("Consume pending exploration feedback before another decision.")
         if self.state.pending_job is not None:
             return LoopStepResult("waiting", job=self.state.pending_job)
@@ -263,6 +308,8 @@ class DefaultDecisionHarness:
                 raise execution.error
             return LoopStepResult("progressed", operation_result=result)
         if decision.kind == "explore":
+            if len(self.pending_all()) >= self.max_outstanding:
+                raise RuntimeError("Outstanding experiment capacity exhausted; research or control existing experiments")
             directive = replace(decision.directive,
                                 simulated=decision.directive.simulated or decision.simulated)
             action_space.validate_directive(directive)
@@ -273,8 +320,11 @@ class DefaultDecisionHarness:
             self.state.pending_directive_id = directive.directive_id
             self.state.pending_directive = deepcopy(directive)
             self.state.directive_provenance[directive.directive_id] = DirectiveProvenance(
-                directive.directive_id, context.decision_model, context.execution.model)
+                directive.directive_id, context.decision_model,
+                context.execution.model if self.max_outstanding == 1 else None)
             self.state.feedback_record_id = str(uuid4())
+            self.state.outstanding[directive.directive_id] = deepcopy(directive)
+            self.state.feedback_record_ids[directive.directive_id] = self.state.feedback_record_id
             return LoopStepResult("dispatch", directive=directive)
         if decision.kind == "wait":
             self.state.pending_job = decision.job
@@ -299,25 +349,34 @@ class DefaultDecisionHarness:
         self._record_operation(self.state.pending_operation, normalized, resume_result=result)
 
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
+        with self._review_scope(directive.directive_id):
+            self._receive_feedback(directive, feedback)
+
+    def _receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
         """Record the outcome and advance control state; retry the latest delivery safely."""
         if not isinstance(feedback, Feedback):
             raise TypeError('Expected a Feedback')
         feedback.__post_init__()
-        if (self.state.pending_directive_id is None
+        previous = self.state.delivered_feedback.get(directive.directive_id)
+        if previous is not None:
+            if previous != (directive, feedback):
+                raise ValueError('Delivered feedback differs from its original receipt')
+            return
+        if (not self.state.outstanding and self.state.pending_directive_id is None
                 and directive == self.state.last_directive and feedback == self.state.last_feedback):
             return
-        if not (feedback.directive_id == directive.directive_id == self.state.pending_directive_id):
-            raise ValueError("Feedback does not match the pending directive.")
-        if self.state.pending_directive != directive:
+        pending = self.state.outstanding.get(directive.directive_id, self.state.pending_directive)
+        if feedback.directive_id != directive.directive_id or pending is None or pending.directive_id != directive.directive_id:
+            raise ValueError('Feedback does not match the pending directive')
+        if pending != directive:
             raise ValueError('Directive content differs from the dispatched request')
-        if self.state.review_session is not None:
-            if self.state.review_session.directive_id != directive.directive_id:
-                raise ValueError('Research session belongs to another directive')
+        record_id = self.state.feedback_record_ids.get(directive.directive_id, self.state.feedback_record_id)
+        if (self.state.review_session is not None
+                and self.state.review_session.directive_id == directive.directive_id):
             self._flush_review_query()
             self.state.review_session = None
-        if self.state.pending_review_record is not None:
-            if self.state.pending_review_record.directive_id != directive.directive_id:
-                raise ValueError('Pending review belongs to another directive')
+        if (self.state.pending_review_record is not None
+                and self.state.pending_review_record.directive_id == directive.directive_id):
             # Completion can overtake a review whose bookkeeping failed. Preserve
             # its evidence without returning (or executing) an obsolete cancel.
             self._flush_review_record()
@@ -325,18 +384,28 @@ class DefaultDecisionHarness:
         provenance = self.state.directive_provenance.get(directive.directive_id)
         provenance_details = asdict(provenance) if provenance is not None else None
         candidates = dict(self.state.candidates)
+        bases = dict(self.state.candidate_bases)
         # Validate the entire batch before any write, including duplicate IDs
         # within this feedback. Publish the index only after both records succeed.
         for candidate in deepcopy(feedback.candidates):
             if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
                 raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
             candidates[candidate.candidate_id] = candidate
+            if directive.mode in ('train', 'sft'):
+                base = getattr(directive.payload, 'base', None) or (provenance.execution_model if provenance else None)
+                if isinstance(base, ModelRef):
+                    if base.revision != candidate.base_version:
+                        raise ValueError('Candidate base revision differs from the dispatched model')
+                    if candidate.candidate_id in bases and bases[candidate.candidate_id] != base:
+                        raise ValueError('Candidate has conflicting full model base identities')
+                    bases[candidate.candidate_id] = base
         evaluations = dict(self.state.candidate_evaluations)
         evaluation = None
         if directive.mode == 'evaluate' and isinstance(directive.payload, EvaluationSpec):
             candidate = directive.payload.candidate
             if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
                 raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
+            candidates[candidate.candidate_id] = deepcopy(candidate)
             evaluation = CandidateEvaluation(
                 candidate.candidate_id, directive.directive_id, directive.payload.protocol_ref,
                 directive.input_refs, feedback.status, deepcopy(feedback.quality_metrics),
@@ -344,13 +413,13 @@ class DefaultDecisionHarness:
             )
             evaluations[candidate.candidate_id] = evaluation
         self.memory.append(HistoryEntry(
-            record_id=self.state.feedback_record_id, kind="feedback", task_id=directive.directive_id,
+            record_id=record_id, kind="feedback", task_id=directive.directive_id,
             summary=feedback.summary, simulated=feedback.simulated, source_refs=feedback.evidence_refs,
             details={"directive": asdict(directive), "feedback": asdict(feedback),
                      "provenance": provenance_details},
         ))
         self.experience.record(ExperienceRecord(
-            record_id=self.state.feedback_record_id, kind="improvement", scope="decision_maker",
+            record_id=record_id, kind="improvement", scope="decision_maker",
             directive_id=directive.directive_id, summary=f"Strategy outcome: {feedback.status.value}",
             simulated=feedback.simulated, source_refs=feedback.evidence_refs,
             details={"strategy": directive.strategy, "mode": directive.mode,
@@ -362,17 +431,66 @@ class DefaultDecisionHarness:
                      "provenance": provenance_details},
         ))
         self.state.candidates = candidates
+        self.state.candidate_bases = bases
         self.state.candidate_evaluations = evaluations
         self.state.last_feedback = feedback
         self.state.last_directive = directive
-        self.state.pending_directive_id = None
-        self.state.pending_directive = None
-        self.state.feedback_record_id = None
-        self.state.operation_results.clear()
+        self.state.delivered_feedback[directive.directive_id] = (deepcopy(directive), deepcopy(feedback))
+        self.state.outstanding.pop(directive.directive_id, None)
+        self.state.feedback_record_ids.pop(directive.directive_id, None)
+        self.state.executions.pop(directive.directive_id, None)
+        oldest = next(iter(self.state.outstanding.values()), None)
+        self.state.pending_directive = deepcopy(oldest)
+        self.state.pending_directive_id = oldest.directive_id if oldest else None
+        self.state.feedback_record_id = self.state.feedback_record_ids.get(self.state.pending_directive_id)
+        if self.max_outstanding == 1:
+            self.state.operation_results.clear()
         self.state.completed += 1
 
     def pending(self) -> Directive | None:
+        if len(self.state.outstanding) > 1:
+            raise RuntimeError('Multiple directives: use pending_all()')
         return deepcopy(self.state.pending_directive)
+
+    def pending_all(self) -> tuple[Directive, ...]:
+        if self.state.outstanding:
+            return deepcopy(tuple(self.state.outstanding.values()))
+        return () if self.state.pending_directive is None else (deepcopy(self.state.pending_directive),)
+
+    def update_executions(self, views: dict[str, ExecutionView]) -> None:
+        if not isinstance(views, dict) or any(not isinstance(view, ExecutionView) or
+                (view.progress is not None and view.progress.directive_id != ident)
+                for ident, view in views.items()):
+            raise ValueError('Execution views must be indexed by their directive IDs')
+        self.state.executions = deepcopy(views)
+        for ident, view in views.items():
+            self._bind_execution(ident, view)
+
+    def compare_candidates(self, candidate_ids, *, metric: str, higher_is_better: bool = True):
+        """Rank completed evaluations only when base, protocol and inputs agree."""
+        import math
+        ids = tuple(candidate_ids)
+        if len(ids) < 2 or len(set(ids)) != len(ids):
+            raise ValueError('Comparison requires at least two distinct candidates')
+        candidates = [self.state.candidates[ident] for ident in ids]
+        rows = [self.state.candidate_evaluations[ident] for ident in ids]
+        first = rows[0]
+        bases = [self.state.candidate_bases.get(ident) for ident in ids]
+        if any(base is None for base in bases):
+            raise ValueError('Comparison requires known full training base identities')
+        if any(base != bases[0] for base in bases[1:]):
+            raise ValueError('Cannot compare candidates from different full model bases')
+        for candidate, row in zip(candidates, rows):
+            if candidate.base_version != candidates[0].base_version:
+                raise ValueError('Cannot compare candidates from different bases')
+            if (row.protocol_ref, row.input_refs, row.simulated) != (first.protocol_ref, first.input_refs, first.simulated):
+                raise ValueError('Cannot compare different evaluation protocols, inputs or simulation modes')
+            if row.status != ExecutionStatus.COMPLETED or metric not in row.quality_metrics:
+                raise ValueError('Comparison requires completed evaluations with the requested metric')
+            value = row.quality_metrics[metric]
+            if type(value) not in (float, int) or not math.isfinite(value):
+                raise ValueError('Comparison metric must be finite')
+        return deepcopy(tuple(sorted(rows, key=lambda row: row.quality_metrics[metric], reverse=higher_is_better)))
 
     def submit_learning(self, request: DecisionTrainingRequest, *, idempotency_key: str) -> JobRef:
         """Submit local learning explicitly; no cross-loop scheduling is implied."""

@@ -71,7 +71,7 @@ with Application(config, action_permissions=ActionPermissions.unrestricted()) as
     app.run()
 ```
 
-完全开放仅针对已接入能力，仍保留参数校验和单个在途实验等协同规则。默认使用 ActionPermissions()：普通决策允许全部已接入能力，运行中仅允许只读操作。也可指定 operations / directives / review_operations 名称集合，或 check 回调检查实际请求的参数和资源。运行时替换 `app.runner.decision_making.action_space.permissions` 即可更新默认 Harness 的权限；已提交任务不会被自动撤回。静态权限配置会随内置快照恢复；外部权限回调需自定义快照适配。
+完全开放仅针对已接入能力，仍保留参数校验、实验容量和交付一致性等协同规则。默认使用 ActionPermissions()：普通决策允许全部已接入能力，运行中仅允许只读操作。也可指定 operations / directives / review_operations 名称集合，或 check 回调检查实际请求的参数和资源。运行时替换 `app.runner.decision_making.action_space.permissions` 即可更新默认 Harness 的权限；已提交任务不会被自动撤回。静态权限配置会随内置快照恢复；外部权限回调需自定义快照适配。
 
 显式/provider 能力装配和参数级检查见 [Action Space](../src/rsisys/loops/decision_making/action_space/README.md)。整体替换 Harness 时，应在操作执行前复用 authorized_space 或提供等效权限检查。
 
@@ -207,3 +207,13 @@ PYTHONPATH=src pixi run python -m rsisys resume \
 恢复目标必须是新目录，原目录不被修改。快照保存内置 Harness 的控制状态、两份 memory 和共享 Experience；整体替换 Harness 或更换其持久化组件后，需显式集成保存恢复。旧快照受源码版本精确匹配约束，不提供自动迁移。保存内容、版本一致性要求及自定义组件边界统一见 [Snapshot](../src/rsisys/snapshot/README.md)。
 
 CLI 不是常驻作业服务：waiting 时不会保存快照，resume 不能找回在途任务。需要持续推进异步任务时使用进程内 Runner。
+
+## 自主研究与并行实验
+
+[Qwen toycase](../examples/qwen_toy/README.md) 使用模型自主选择的步骤，外部配置能力、权限和预算。提前结束、没有训练或未采纳候选都按实际结果记录，不自动补齐工作流。
+
+[parallel_experiments.py](../examples/parallel_experiments.py) 演示两个隔离实验、乱序完成、运行中更新和候选比较。它使用明确标记的 Mock 后端与脚本 policy，仅验证接口；不代表实际 GPU 并行训练。装配使用 `ConcurrentExplorationHarness(factory, max_in_flight=2)`、`DefaultDecisionHarness(max_outstanding=2)` 与 `Runner(parallel=True)`；factory 决定后端资源放置。
+
+`ExperimentControls(exploration_loop, decision_loop)` 的 definitions / bindings 接入普通 Action Space / tools，可供模型调用 inspect、cancel、update、compare，沿用外部权限。动态更新只对实现 validate_update / update 的后端开放；它不是任意训练参数热更新。比较与候选应用仍检查来源、协议和版本，不隐式改动其他实验的模型。
+
+反馈提取可通过 `DefaultDecisionHarness(..., feedback_selector=...)` 替换；接口和默认实现见 [Experience](../src/rsisys/experience/README.md)。工作区基础读取见 [tools](../src/rsisys/loops/decision_making/harness/tools/README.md)，宿主资源隔离由沙箱/部署层实现。

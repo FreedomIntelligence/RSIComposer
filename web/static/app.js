@@ -437,6 +437,7 @@ function renderExecution(snapshot) {
 function decisionAction(row) {
   // A review's action (continue/cancel) is distinct from its directive mode (train).
   if (row.kind === "review") return present(row.action) ? row.action : row.mode;
+  if (row.kind === "operation") return row.operation;
   return present(row.mode)
     ? row.mode
     : present(row.action)
@@ -505,7 +506,7 @@ function renderDecisions() {
         el(
           "span",
           "record-kind",
-          { directive: "执行指令", review: "运行复查", finish: "结束决策" }[
+          { directive: "执行指令", review: "运行复查", finish: "结束决策", operation: "研究操作" }[
             row.kind
           ] || asText(row.kind, "类型未报告"),
         ),

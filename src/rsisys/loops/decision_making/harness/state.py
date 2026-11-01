@@ -16,7 +16,7 @@ from ..action_space import OperationCall, OperationResult, OperationSpec
 
 @dataclass(frozen=True)
 class DirectiveProvenance:
-    """Bindings observed before deciding; not inferred from a later training result."""
+    """Bindings observed at dispatch/accept; not inferred from a later training result."""
     directive_id: str
     decision_model: ModelRef | None = None
     execution_model: ModelRef | None = None
@@ -55,6 +55,8 @@ class DecisionContext:
     directive_provenance: tuple[DirectiveProvenance, ...] = ()
     candidate_evaluations: tuple[CandidateEvaluation, ...] = ()
     review_actions: tuple[str, ...] = ('continue', 'cancel')
+    outstanding: tuple[Directive, ...] = ()
+    executions: dict[str, ExecutionView] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -118,3 +120,10 @@ class DecisionState:
     candidate_evaluations: dict[str, CandidateEvaluation] = field(default_factory=dict)
     pending_review_record: _PendingReviewRecord | None = None
     review_session: _ReviewSession | None = None
+    outstanding: dict[str, Directive] = field(default_factory=dict)
+    feedback_record_ids: dict[str, str] = field(default_factory=dict)
+    delivered_feedback: dict[str, tuple[Directive, Feedback]] = field(default_factory=dict)
+    executions: dict[str, ExecutionView] = field(default_factory=dict)
+    candidate_bases: dict[str, ModelRef] = field(default_factory=dict)
+    review_sessions: dict[str, _ReviewSession] = field(default_factory=dict)
+    review_records: dict[str, _PendingReviewRecord] = field(default_factory=dict)

@@ -104,7 +104,7 @@ def system_flow():
             'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
             'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
             'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
-            'Loop protocol 与 Runner 协同是框架骨架，保留单 inflight 约束。')
+            'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。')
     s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
     s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
     legend(s)
@@ -199,7 +199,7 @@ def system_flow():
     s.path('M 960 710 H 1045 V 465 H 1060', BLUE, arrow='blue')
     s.path('M 1290 465 H 1390', BLUE, arrow='blue')
     s.node('runner', 1060, 680, 230, 180, 'Runner', (
-        '框架协同 / 交付', '单 inflight', '推进·复查·取消',
+        '框架协同 / 交付', '串行 / 可选并行', '推进·控制·交付',
     ), INK, '#EAF0F6', LINE, title_size=26)
     s.node('feedback', 1060, 960, 230, 120, 'Feedback', (
         '状态 / 指标', '候选 / 证据引用',
@@ -212,7 +212,7 @@ def system_flow():
         s.label(x, 1424, '系统反馈', PURPLE, 20)
     replaceable(s, 'experience', 100, 1450, 2200, 150, 'Experience / 共享系统反馈与改进证据', (
         '运行反馈 · 训练与评测 · 改进结论与证据引用',
-        'Experience 实现 / 检索 / 存储后端可换；两个 Loop 各自保留工作记忆',
+        'FeedbackSelector 提取 / 检索 / 存储实现可换；各 Harness 保留工作记忆',
     ), PURPLE, '#F2EBFB', title_size=30)
     s.path('M 100 1525 H 55 V 505 H 170', PURPLE, arrow='purple', dash='9 7')
     s.label(55, 1410, '检索', PURPLE, 18)
@@ -267,8 +267,8 @@ def file_architecture():
                      'directives.py · queries.py：指令与查询定义',
                      'review：默认只读 / 全部操作 / allowlist')
         else:
-            s.text(x+60, 685, 'engine.py · commands.py：仅装配与指令协调', 22, MUTED, max_width=610)
-            s.text(x+60, 721, 'state.py · memory/；下列执行实现可换', 21, color, max_width=610)
+            s.text(x+60, 685, 'engine.py · commands.py · concurrent.py', 22, MUTED, max_width=610)
+            s.text(x+60, 721, '隔离实验状态 / memory；下列执行实现可换', 21, color, max_width=610)
             s.parts.append('<g id="exploration-dir-internals">')
             s.rect(x+60, 740, 610, 225, '#FFFFFF', color, rx=16, dash='8 5')
             for y, source, execution, dependencies in [
@@ -299,7 +299,7 @@ def file_architecture():
         '记录类型与来源关联',
     ), PURPLE, stroke='#D7C5EC', title_size=26)
     replaceable(s, 'experience-retrieval', 1680, 610, 580, 160, 'retrieval.py', (
-        'Experience 写入与检索实现',
+        'Experience 写入 / 检索 · FeedbackSelector 提取',
     ), PURPLE, title_size=27)
     replaceable(s, 'experience-storage', 1680, 830, 580, 160, 'storage.py · sqlite.py', (
         '存储后端；内置内存 / SQLite',
@@ -310,7 +310,7 @@ def file_architecture():
 
     s.node('framework', 100, 1380, 2200, 140, '框架骨架 / Loop protocol + Runner 协同', (
         'loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training',
-        'runtime/runner.py：交付 / 推进 / 复查 / 取消；单 inflight；科研决策由 Harness 内的 Policy 负责',
+        'runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较',
     ), INK, '#EAF0F6', LINE, title_size=28)
     replaceable(s, 'runtime-dir', 100, 1570, 1050, 170, 'runtime/ · 共享后端', (
         'model.py · sandbox.py · local_process.py · artifacts.py',

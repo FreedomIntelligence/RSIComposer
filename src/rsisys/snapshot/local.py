@@ -135,6 +135,11 @@ class LocalSnapshotCapture:
                     (actor.local_rl.episodes, actor.episodes), (actor.local_rl.learning, actor.learning))
         if any(actual is not expected for actual, expected in bindings):
             raise TypeError('Custom execution component bindings need explicit snapshot integration')
+        if app.runner.parallel or dm.max_outstanding != 1:
+            raise TypeError('Concurrent decisions need explicit snapshot integration')
+        from rsisys.experience.retrieval import RecentFeedbackSelector
+        if type(dm.feedback_selector) is not RecentFeedbackSelector:
+            raise TypeError('Custom feedback selectors need explicit snapshot integration')
         if dm.model_activator is not None or actor.model_activator is not None:
             raise TypeError('Custom model activators need explicit snapshot integration')
         if app.runner.busy or actor.command_busy:

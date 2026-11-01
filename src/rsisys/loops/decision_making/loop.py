@@ -13,8 +13,27 @@ class DecisionMakingLoop:
     def step(self, objective: str):
         return self.harness.step(objective, self.action_space)
 
+    def can_step(self):
+        ready = getattr(self.harness, 'can_step', None)
+        return ready() if ready is not None else True
+
     def pending(self):
         return self.harness.pending()
+
+    def pending_all(self):
+        discover = getattr(self.harness, 'pending_all', None)
+        if discover is not None:
+            return discover()
+        pending = self.pending()
+        return () if pending is None else (pending,)
+
+    def update_executions(self, views):
+        update = getattr(self.harness, 'update_executions', None)
+        if update is not None:
+            update(views)
+
+    def compare_candidates(self, candidate_ids, *, metric, higher_is_better=True):
+        return self.harness.compare_candidates(candidate_ids, metric=metric, higher_is_better=higher_is_better)
 
     def receive_feedback(self, directive, feedback):
         self.harness.receive_feedback(directive, feedback)

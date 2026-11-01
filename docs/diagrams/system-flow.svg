@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1920" viewBox="0 0 2400 1920" role="img" aria-labelledby="title desc">
 <title id="title">RSISys 系统流程图</title>
-<desc id="desc">两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。Loop protocol 与 Runner 协同是框架骨架，保留单 inflight 约束。</desc>
+<desc id="desc">两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -154,8 +154,8 @@
 <rect x="1060" y="680" width="230" height="180" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="1084" y="720" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#14243B" text-anchor="start">Runner</text>
 <text x="1084" y="754" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">框架协同 / 交付</text>
-<text x="1084" y="783" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">单 inflight</text>
-<text x="1084" y="812" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">推进·复查·取消</text>
+<text x="1084" y="783" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">串行 / 可选并行</text>
+<text x="1084" y="812" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">推进·控制·交付</text>
 </g>
 <g id="feedback">
 <rect x="1060" y="960" width="230" height="120" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
@@ -176,7 +176,7 @@
 <text x="124" y="1475" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#7445C0" text-anchor="start">实现可换</text>
 <text x="124" y="1514" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="30" font-weight="650" fill="#7445C0" text-anchor="start">Experience / 共享系统反馈与改进证据</text>
 <text x="124" y="1548" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">运行反馈 · 训练与评测 · 改进结论与证据引用</text>
-<text x="124" y="1577" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Experience 实现 / 检索 / 存储后端可换；两个 Loop 各自保留工作记忆</text>
+<text x="124" y="1577" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">FeedbackSelector 提取 / 检索 / 存储实现可换；各 Harness 保留工作记忆</text>
 </g>
 <path d="M 100 1525 H 55 V 505 H 170" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)" stroke-dasharray="9 7"/>
 <rect x="27.0" y="1393" width="56" height="28" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>

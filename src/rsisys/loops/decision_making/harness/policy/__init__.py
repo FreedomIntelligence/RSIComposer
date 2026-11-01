@@ -54,6 +54,9 @@ class ModelDecisionPolicy:
                     "For EVERY system directive in context.directive_modes use "
                     "{\"kind\":\"explore\",\"strategy\":text,\"mode\":mode,\"arguments\":{...}}. "
                     "A directive mode is never an operation name. "
+                    "If directive_modes is empty, no new experiment can be submitted this turn; "
+                    "you may still research or control existing experiments using context.operations. "
+                    "Use {\"kind\":\"wait\"} to yield a scheduling turn while outstanding experiments run. "
                     "Put mode-specific parameters in arguments, following its listed input_schema. "
                     "System instruction execution is owned by the exploration harness. "
                     "Optional input_ids selects only artifacts from current operation results or last_feedback; "
@@ -106,7 +109,8 @@ class ModelDecisionPolicy:
             )
             return Decision("explore", directive=directive, simulated=response.simulated, usage=response.usage)
         if kind == "wait":
-            return Decision("wait", job=JobRef(**payload["job"]), simulated=response.simulated, usage=response.usage)
+            return Decision("wait", job=JobRef(**payload["job"]) if payload.get("job") is not None else None,
+                            simulated=response.simulated, usage=response.usage)
         if kind == "finish":
             return Decision("finish", reason=payload.get("reason", ""), simulated=response.simulated, usage=response.usage)
         raise ValueError(f"Unsupported decision kind: {kind}")

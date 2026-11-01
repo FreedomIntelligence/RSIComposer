@@ -8,7 +8,7 @@
 
 Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策侧定义与探索侧 handler 映射扩展，无需修改核心分派。接入方式见[使用指南](docs/GUIDE.md#使用-python-接入组件)。
 
-长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，当前仍为单条在途指令与进程内状态，见 [Runtime](src/rsisys/runtime/README.md)。
+长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，默认串行，可选隔离的并行实验；待交付状态仍在进程内，见 [Runtime](src/rsisys/runtime/README.md)。
 
 ## 快速开始
 
@@ -27,7 +27,9 @@ pixi run test
 
 `pixi run backend-demo` 运行 [backend_training.py](examples/backend_training.py)：在独立子进程中进行真实 CPU 标量回归并回传权重产物和 MSE。它不是 LLM 训练或 verl 现成适配，也不演示 RL rollout。
 
-[Qwen3.5 toycase](examples/qwen_toy/README.md) 提供真实模型决策、LoRA 训练、独立评测、候选应用与后续 Actor 执行的装配例子；服务默认使用 CPU，小规模验证使用 0.8B，也可接入 9B。[监视前端](web/README.md) 使用标准库 HTTP 服务读取 `runs/*/monitor.json`，展示双 loop、作业、候选指标和事件时间线。
+[Qwen3.5 toycase](examples/qwen_toy/README.md) 提供模型自主选择步骤的真实决策、LoRA 训练、评测、候选应用和 Actor 执行装配；外部配置能力、权限及预算，未预设流程或采纳阈值。服务默认使用 CPU，小规模验证使用 0.8B，也可接入 9B。[监视前端](web/README.md) 使用标准库 HTTP 服务读取 `runs/*/monitor.json`，展示双 loop、作业、候选指标和事件时间线。
+
+[并行实验示例](examples/parallel_experiments.py) 展示隔离实验、动态控制和候选比较（Mock 验证）；反馈提取与工作区查询都可替换。
 
 ## 系统文档
 

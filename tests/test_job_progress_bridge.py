@@ -12,14 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from examples.qwen_toy.adapters import WorkerJobs
-from examples.qwen_toy.run import GuardedDecisionPolicy
+from examples.qwen_toy.run import ResearchBudget, ResearchDecisionPolicy
 from rsisys.config import DemoConfig, build_demo
 from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.jobs import JobOutcome, JobProgress, JobRef, JobStatus
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef, TokenUsage
 from rsisys.loops.contracts.requests import SFTSpec
-from rsisys.loops.decision_making.action_space import OperationCall
+from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace, OperationCall
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.decision import Decision
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
@@ -194,14 +194,16 @@ class ToyReviewInvocationTests(unittest.TestCase):
     def fixture(self):
         model = ModelRef('review', 'model', 'baseline')
         monitor = Mock()
-        policy = GuardedDecisionPolicy(Mock(), model, DirectiveDefinitions(), monitor, attempts=1)
+        catalog = DirectiveDefinitions()
+        policy = ResearchDecisionPolicy(Mock(), model, catalog, monitor,
+            ModularDecisionActionSpace((), directives=catalog), budget=ResearchBudget(), attempts=1)
         directive = Directive('live', 'task', 'train', mode='train')
         context = DecisionContext('task', (), (), (), execution=ExecutionView(
             model, ExplorationProgress('live', 'running', directive,
                 job_progress=JobProgress(2, 8, {'loss': 0.7}))))
         return policy, context, monitor
 
-    def test_guard_returns_invocation_intact_for_harness_validation(self):
+    def test_research_policy_returns_invocation_intact_for_harness_validation(self):
         policy, context, monitor = self.fixture()
         invocation = Decision('invoke', operation=OperationCall('query_experiments', {}),
                               simulated=True, usage=TokenUsage(11, 7))
@@ -215,14 +217,19 @@ class ToyReviewInvocationTests(unittest.TestCase):
         self.assertEqual(len(policy.reviews), 1)
         monitor.review.assert_called_once()
 
-    def test_guard_rejects_non_review_decisions_and_invalid_final_action(self):
-        for returned in (Decision('finish'), SimpleNamespace(action='apply')):
+    def test_research_policy_parses_and_rejects_non_review_model_responses(self):
+        for payload in ({'kind': 'finish'}, {'action': 'apply'}):
             policy, context, monitor = self.fixture()
-            with patch.object(ModelDecisionPolicy, 'review', return_value=returned):
-                with self.assertRaisesRegex(ValueError, 'bounded training review'):
+            with self.subTest(payload=payload):
+                backend = policy.backend.backend
+                backend.generate.return_value = GenerationResponse(json.dumps(payload), policy.model, False)
+                with self.assertRaisesRegex(ValueError, 'bounded review validation'):
                     policy.review(context)
-            self.assertEqual(policy.reviews, [])
-            monitor.review.assert_not_called()
+                self.assertEqual(policy.reviews, [])
+                monitor.review.assert_not_called()
+                backend.generate.assert_called_once()
+                prompt = json.loads(backend.generate.call_args.args[0].prompt)
+                self.assertEqual(prompt['execution']['progress']['job_progress']['metrics'], {'loss': 0.7})
 
 
 if __name__ == '__main__':

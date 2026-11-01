@@ -68,11 +68,11 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 4. Exploration Harness 汇总终态 Feedback；Runner 通过 Decision 的 `receive_feedback` 交付。默认 Decision Harness 将策略结果记为 improvement，供下一次决策使用。
 5. 反馈交付成功后 acknowledge，释放探索流程占用。
 
-当前一次只有一个未完成交付的指令；一条 RL 指令内部可以多次采样和更新 Actor。后端轮询由调用方驱动，决策复查由 Directive / ReviewDecision 设定频率，两者不绑定。时间/token 自训练触发、多 Actor 并发及共享模型更新事务尚未实现。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
+默认串行装配一次协调一个未完成交付的指令；可选 `Runner(parallel=True)` 与 `ConcurrentExplorationHarness(factory, max_in_flight=...)` 支持多个独立实验。Decision Harness 用 `max_outstanding` 限制未完成指令数，模型从 outstanding / executions 查看各实验；每 tick 公平推进一个实验，未完成时仍可进行研究或提交新实验。一条 RL 指令内部可以多次采样和更新 Actor。后端轮询由调用方驱动，决策复查由 Directive / ReviewDecision 设定频率，两者不绑定。时间/token 自训练触发及共享模型更新事务尚未实现。并行实验由工厂创建隔离的 Actor、environment、memory 和执行状态；资源分配、作业是否物理并行由后端决定。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
 
-运行中的控制先支持 continue / cancel，不修改已提交指令。换策略需确认旧指令终态并完成交付后，再发送新 ID 的指令。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
+运行中的 review 保留 continue / cancel。安装 `ExperimentControls` 后，研究者可通过普通获授权工具按 ID inspect / cancel / update / compare。`DirectiveUpdate` 携带 expected_version、幂等键和 changes；原指令不可变，支持更新的 handler/backend 应用控制变更并确认版本，不支持的字段或后端明确拒绝。候选比较要求已知完整训练 base、相同评测协议/输入及有效指标；排序不自动采纳。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
 
-Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。外部权限配置决定当前可用 Action Space；默认运行中只读，也可开放其他操作或全部已接入能力。Harness 在展示和执行前检查权限，read_only 是操作属性而非固定限制。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。
+Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。`WorkspaceTools` 提供挂载工作区内的 list/read/search 基础操作，研究者可自行读日志、数据、配置和代码；实时服务内部状态仍需后端提供读取途径。外部权限配置决定当前可用 Action Space；默认运行中只读，也可开放其他操作或全部已接入能力。Harness 在展示和执行前检查权限，read_only 是操作属性而非固定限制。权限表达“当前允许做什么”，沙箱限制“执行代码实际能接触哪些资源”；例如允许训练但禁止删除候选，由能力权限检查，限制文件、网络和设备访问则由部署的沙箱承担。两者互补；本地进程后端不是宿主安全隔离。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。
 
 默认 Decision 上下文另含当前 Exploration 模型/进度、Decision 模型、发出指令时的版本归因，以及每个候选最近一次评测的协议、输入引用、结果和证据。这些事实不依赖有限长度的任务 history；完整评测档案仍由 Experience 保存。
 
@@ -85,19 +85,19 @@ Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration
 | Experience | 跨轮共享的系统证据，记录执行、训练、评测与策略结果 |
 | memory | Harness 内部的任务上下文，默认包含本地 history 与工作记忆；替代 Harness 不必提供 |
 
-Experience 收集 runtime_feedback / training_run / evaluation / improvement / insight。scope 仅标记来源，不限制可见性，也不指定优化对象。默认 Decision policy 可检索全部来源并选择策略；Actor policy 默认只接收 Harness 提供的任务上下文。improvement / insight 是记录接口，不表示已实现自动系统自修改。
+Experience 收集 runtime_feedback / training_run / evaluation / improvement / insight。scope 仅标记来源，不限制可见性，也不指定优化对象。默认 Decision Harness 使用可替换 `FeedbackSelector.select(experience, objective, limit=...)` 形成模型的反馈输入；默认 RecentFeedbackSelector 选取最近记录，自定义实现可筛选或派生带 source_refs 的视图，不改写原始库、不自动训练。默认 Decision policy 可检索全部来源并选择策略；Actor policy 默认只接收 Harness 提供的任务上下文。improvement / insight 是记录接口，不表示已实现自动系统自修改。
 
 默认 Harness 将原始 test-time history 留在自身实现中。每个 Actor episode 写一条 runtime_feedback，`Feedback.evidence_refs` 引用系统记录；RL 的 `trajectory_refs` 则引用默认 Exploration Harness 的本地轨迹，不把原始轨迹复制进 Experience。
 
-Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务编排属于 Harness。Snapshot 在空闲边界保存内置 Harness 状态、模型绑定、共享 Experience 及产物，当前不自动适配替代 Harness。
+Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务编排属于 Harness。Snapshot 在空闲边界保存内置 Harness 状态、模型绑定、共享 Experience 及产物，当前不自动适配替代 Harness、并行装配或自定义反馈提取器。
 
 ## 交付与失败边界
 
-- Runner.step 最多调用一次普通决策或一次复查流程，并推进一个探索阶段；复查内部允许有界的模型/查询往返。run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数。
-- 新决策使用新 ID；同 ID 同内容重复接收返回原进度，内容不同则拒绝。指令交付确认前独占探索流程。
+- 串行 Runner.step 最多调用一次普通决策或一次复查流程，并推进一个探索阶段；并行 tick 可调用一次普通决策并推进一个实验，该实验到期时可额外复查。复查内部允许有界的模型/查询往返。run 遇到 waiting 返回，不连续轮询。等待可以没有 JobRef，rounds 统计已交付反馈的指令数。
+- 新决策使用新 ID；同 ID 同内容重复接收返回原进度，内容不同则拒绝。串行默认实现中，指令交付确认前独占探索流程；并行装配中占用对应实验实例。
 - 取消只提出请求，后续推进确认终态；取消与训练成功竞速时不自动应用候选。同步环境调用不能由下一 tick 中途抢占。
 - 提交响应丢失后保留请求与幂等键，不重新生成任务。后端须兑现幂等提交；非终态查询或记录异常允许后续推进重试。
-- Runner 保留待交付反馈；默认 Decision Harness 使用稳定记录 ID，仅接受最近一次相同交付的重试。写入失败只重试交付，不重跑 Actor。
+- Runner 保留待交付反馈；默认 Decision Harness 使用稳定记录 ID，按指令 ID 识别相同交付的重试。写入失败只重试交付，不重跑 Actor。
 - 默认 Exploration 端点可发现未确认的指令；重建 Runner 后先恢复交付，避免决策侧已接收、探索侧未确认时错误发出下一条指令。两侧身份冲突时停止推进。
 - 后端终态结果违反请求身份/角色/协议时，指令转为失败反馈并可正常确认退出；暂时的网络或记录失败继续保留原任务供重试。
 - 默认 Harness 在操作或 episode 已执行但记录失败时保留结果和稳定 ID，下次推进只补写。结果保存前不交付终态，不重复执行或 rollout；执行异常仍抛给调用方，清理异常附加到原异常。

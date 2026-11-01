@@ -12,6 +12,7 @@ from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgre
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.requests import TrainSpec
+from rsisys.loops.decision_making.action_space import OperationCall
 from rsisys.loops.decision_making.harness.decision import Decision
 from rsisys.loops.decision_making.harness.state import DecisionContext
 from rsisys.runtime.runner import RunnerStep
@@ -72,6 +73,34 @@ class MonitorProducerTests(unittest.TestCase):
     def test_activation_readiness_does_not_claim_a_binding_change(self):
         self.monitor.event('activation_verified', revision='v2')
         self.assertEqual(self.monitor.data['models']['actor']['revision'], 'v1')
+
+    def test_tool_observation_completes_operation_without_claiming_actor_execution(self):
+        decision = Decision('invoke', operation=OperationCall('workspace_read',
+            {'root': 'run', 'path': 'PRIVATE_PATH'}))
+        self.monitor.decision(decision, self.context, 0)
+        self.assertEqual(self.monitor.data['decisions'][0]['status'], 'proposed')
+        self.monitor.advance(RunnerStep('progressed', {'kind': 'progressed',
+            'operation_result': {'status': 'completed', 'data': {'text': 'PRIVATE_FILE_CONTENT'}}}))
+        self.monitor.decision(Decision('finish', reason='Enough evidence'), self.context, 0)
+        self.monitor.stage('finished', status='completed')
+        snapshot = json.loads((self.root / 'monitor.json').read_text())
+        self.assertEqual(snapshot['decisions'][0]['operation'], 'workspace_read')
+        self.assertEqual(snapshot['decisions'][0]['status'], 'completed')
+        self.assertEqual(snapshot['decisions'][1]['kind'], 'finish')
+        self.assertEqual(snapshot['workflow']['completed_directives'], 0)
+        self.assertEqual(snapshot['current'], {})
+        for private in ('PRIVATE_MODEL_PROMPT', 'PRIVATE_PATH', 'PRIVATE_FILE_CONTENT'):
+            self.assertNotIn(private, json.dumps(snapshot))
+
+    def test_finish_and_measurement_delta_do_not_infer_candidate_rejection(self):
+        self.monitor.candidates['v2'] = {'candidate_id': 'v2', 'status': 'proposed',
+                                        'metrics': {'delta_nll': -0.5}}
+        self.monitor.decision(Decision('finish', reason='Keep current model'), self.context, 1)
+        self.monitor.stage('finished', status='completed')
+        snapshot = json.loads((self.root / 'monitor.json').read_text())
+        self.assertEqual(snapshot['candidates'][0]['status'], 'proposed')
+        self.assertEqual(snapshot['models']['actor']['revision'], 'v1')
+        self.assertEqual(snapshot['workflow']['completed_directives'], 0)
 
     def test_completed_run_export_uses_recorded_evidence_and_keeps_observation_time(self):
         before = json.loads((self.root / 'monitor.json').read_text())['updated_at']

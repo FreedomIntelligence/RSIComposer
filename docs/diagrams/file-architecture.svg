@@ -67,8 +67,8 @@
 <text x="954" y="579" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">policy/ · Actor Policy</text>
 <text x="954" y="613" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">ActorPolicy · act(context)</text>
 </g>
-<text x="930" y="685" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">engine.py · commands.py：仅装配与指令协调</text>
-<text x="930" y="721" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#178164" text-anchor="start">state.py · memory/；下列执行实现可换</text>
+<text x="930" y="685" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">engine.py · commands.py · concurrent.py</text>
+<text x="930" y="721" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="21" font-weight="400" fill="#178164" text-anchor="start">隔离实验状态 / memory；下列执行实现可换</text>
 <g id="exploration-dir-internals">
 <rect x="930" y="740" width="610" height="225" rx="16" fill="#FFFFFF" stroke="#178164" stroke-width="1.5" stroke-dasharray="8 5"/>
 <text x="950" y="770" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="600" fill="#178164" text-anchor="start">environment/__init__.py → EpisodeExecution</text>
@@ -103,7 +103,7 @@
 <rect x="1680" y="610" width="580" height="160" rx="16" fill="#FFFFFF" stroke="#7445C0" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="1704" y="635" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#7445C0" text-anchor="start">实现可换</text>
 <text x="1704" y="674" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="27" font-weight="650" fill="#7445C0" text-anchor="start">retrieval.py</text>
-<text x="1704" y="708" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Experience 写入与检索实现</text>
+<text x="1704" y="708" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Experience 写入 / 检索 · FeedbackSelector 提取</text>
 </g>
 <g id="experience-storage">
 <rect x="1680" y="830" width="580" height="160" rx="16" fill="#FFFFFF" stroke="#7445C0" stroke-width="1.8" stroke-dasharray="8 5"/>
@@ -118,7 +118,7 @@
 <rect x="100" y="1380" width="2200" height="140" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="124" y="1420" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">框架骨架 / Loop protocol + Runner 协同</text>
 <text x="124" y="1454" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training</text>
-<text x="124" y="1483" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py：交付 / 推进 / 复查 / 取消；单 inflight；科研决策由 Harness 内的 Policy 负责</text>
+<text x="124" y="1483" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py：默认串行 / 可选并行；control.py：按实验查询 / 取消 / 更新 / 比较</text>
 </g>
 <g id="runtime-dir">
 <rect x="100" y="1570" width="1050" height="170" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>

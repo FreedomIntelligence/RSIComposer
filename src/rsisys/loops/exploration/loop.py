@@ -28,6 +28,25 @@ class ExplorationLoop:
         discover = getattr(self.harness, 'pending', None)
         return discover() if discover is not None else None
 
+    def pending_all(self):
+        discover = getattr(self.harness, 'pending_all', None)
+        if discover is not None:
+            return discover()
+        pending = self.pending()
+        return () if pending is None else (pending,)
+
+    def execution_views(self):
+        describe = getattr(self.harness, 'execution_views', None)
+        if describe is not None:
+            return describe()
+        return {p.directive_id: self.execution_view() for p in self.pending_all()}
+
+    def update(self, request):
+        update = getattr(self.harness, 'update', None)
+        if update is None:
+            raise NotImplementedError('This exploration harness does not support updates')
+        return update(request)
+
     def execution_view(self):
         view = getattr(self.harness, 'execution_view', None)
         return view() if view is not None else ExecutionView(progress=self.pending())

@@ -9,7 +9,7 @@ from uuid import uuid4
 from time import monotonic
 
 from rsisys.experience.records import ExperienceRecord
-from rsisys.loops.contracts.coordination import ExplorationProgress
+from rsisys.loops.contracts.coordination import ExplorationProgress, DirectiveUpdate, UpdateReceipt
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobProgress
@@ -37,6 +37,9 @@ class CommandState:
     started_at: float | None = None
     elapsed_seconds: float | None = None
     job_progress: JobProgress | None = None
+    version: int = 0
+    updates: dict[str, UpdateReceipt] = field(default_factory=dict)
+    pending_update: DirectiveUpdate | None = None
 
     @property
     def idempotency_key(self) -> str:
@@ -51,6 +54,10 @@ class CommandHandler:
     while waiting. An exception without terminal feedback retains the receipt.
     After work starts, advance must honor state.cancel_requested. Use the stable
     state.idempotency_key for submissions whose response may be lost.
+    An uncertain live update does not block advance/status or cancellation.
+    When state.pending_update is set, advance must keep using the existing job
+    and must not replay the update or infer that it succeeded. Only update()
+    retries that exact request; cancel_requested forbids further live updates.
     """
 
     def prepare(self, harness, state: CommandState) -> None:
@@ -58,6 +65,18 @@ class CommandHandler:
 
     def advance(self, harness, state: CommandState, action_space) -> Feedback | None:
         raise NotImplementedError
+
+    def validate_update(self, harness, state: CommandState, request: DirectiveUpdate) -> None:
+        """Pure validation before recording an intent; unsupported by default."""
+        raise NotImplementedError('This command/backend does not support live updates')
+
+    def update(self, harness, state: CommandState, request: DirectiveUpdate) -> None:
+        """Confirm an idempotent backend update, or raise and retain the intent.
+
+        Implementations must honor the complete request's key and version. A lost
+        response is retried with identical data; validation must not mutate state.
+        """
+        raise NotImplementedError('This command/backend does not support live updates')
 
     def cancel_before_start(self, harness, state: CommandState, action_space) -> Feedback | None:
         return Feedback(state.directive.directive_id, ExecutionStatus.CANCELLED,
@@ -181,7 +200,7 @@ class ExplorationCommands:
                    if feedback is not None else state.job_progress.metrics if state.job_progress is not None else {})
         return deepcopy(ExplorationProgress(directive_id, state.phase, state.directive, state.job, feedback,
                                             metrics=metrics, elapsed_seconds=elapsed,
-                                            job_progress=state.job_progress))
+                                            job_progress=state.job_progress, version=state.version))
 
     def _finish(self, state, feedback):
         if not isinstance(feedback, Feedback) or feedback.directive_id != state.directive.directive_id:
@@ -198,6 +217,34 @@ class ExplorationCommands:
             ExecutionStatus.FAILED if isinstance(exc, Exception) else ExecutionStatus.CANCELLED,
             'Exploration command failed', state.directive.simulated,
             error=f'{type(exc).__name__}: {exc}'))
+
+    def update(self, request: DirectiveUpdate) -> UpdateReceipt:
+        if not isinstance(request, DirectiveUpdate):
+            raise TypeError('Expected DirectiveUpdate')
+        request.__post_init__()
+        request = deepcopy(request)
+        state = self.receipts[request.directive_id]
+        previous = state.updates.get(request.idempotency_key)
+        if previous is not None:
+            if previous.request != request:
+                raise ValueError('Update key reused with different content')
+            return deepcopy(previous)
+        if state.feedback is not None or state.cancel_requested:
+            raise RuntimeError('Cannot update a terminal or cancelling directive')
+        if state.pending_update is not None and state.pending_update != request:
+            raise RuntimeError('Resolve the uncertain update before another update')
+        if request.expected_version != state.version:
+            raise ValueError('Stale update version')
+        handler = self.handlers[state.directive.mode]
+        if state.pending_update is None:
+            handler.validate_update(self.loop, state, deepcopy(request))
+            state.pending_update = deepcopy(request)
+        handler.update(self.loop, state, deepcopy(request))
+        receipt = UpdateReceipt(request, state.version + 1)
+        state.updates[request.idempotency_key] = deepcopy(receipt)
+        state.version = receipt.version
+        state.pending_update = None
+        return deepcopy(receipt)
 
     def advance(self, directive_id, action_space):
         state = self.receipts[directive_id]
@@ -355,6 +402,8 @@ class ExplorationCommands:
     def cancel(self, directive_id):
         state = self.receipts[directive_id]
         if state.feedback is None:
+            # Preserve any uncertain update as evidence, without retrying it.
+            # Cancellation uses an independent backend path and takes precedence.
             state.cancel_requested = True
         return self.inspect(directive_id)
 

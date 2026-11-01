@@ -58,8 +58,11 @@ class ExplorationProgress:
     metrics: dict[str, float] = field(default_factory=dict)
     elapsed_seconds: float | None = None
     job_progress: JobProgress | None = None
+    version: int = 0
 
     def __post_init__(self):
+        if type(self.version) is not int or self.version < 0:
+            raise ValueError('Progress version must be a nonnegative integer')
         if self.directive_id != self.directive.directive_id:
             raise ValueError('Progress identity does not match its directive')
         if self.feedback is not None:
@@ -127,3 +130,51 @@ class ReviewingDecisionEndpoint(DecisionEndpoint, Protocol):
 class ReviewAuthorizingEndpoint(DecisionEndpoint, Protocol):
     """Optional last-moment check for model-proposed controls, including retries."""
     def authorize_review(self, result: ReviewDecision) -> None: ...
+
+
+@dataclass(frozen=True)
+class DirectiveUpdate:
+    """Versioned backend control, not replacement of the immutable directive.
+
+    The backend explicitly defines supported changes. The same key must always
+    identify the same request, including expected_version, even after completion.
+    """
+    directive_id: str
+    expected_version: int
+    idempotency_key: str
+    changes: dict[str, object]
+
+    def __post_init__(self):
+        import json
+        if not isinstance(self.directive_id, str) or not self.directive_id:
+            raise ValueError('An update requires a directive ID')
+        if not isinstance(self.idempotency_key, str) or not self.idempotency_key:
+            raise ValueError('An update requires an idempotency key')
+        if type(self.expected_version) is not int or self.expected_version < 0:
+            raise ValueError('expected_version must be a nonnegative integer')
+        if not isinstance(self.changes, dict) or not self.changes:
+            raise ValueError('An update requires nonempty changes')
+        if any(not isinstance(key, str) for key in self.changes):
+            raise ValueError('Update fields must be strings')
+        json.dumps(self.changes, allow_nan=False)
+
+
+@dataclass(frozen=True)
+class UpdateReceipt:
+    request: DirectiveUpdate
+    version: int
+
+    def __post_init__(self):
+        if self.version != self.request.expected_version + 1:
+            raise ValueError('An accepted update increments the version exactly once')
+
+
+class ConcurrentExplorationEndpoint(ExplorationEndpoint, Protocol):
+    def pending_all(self) -> tuple[ExplorationProgress, ...]: ...
+    def execution_views(self) -> dict[str, ExecutionView]: ...
+    def update(self, request: DirectiveUpdate) -> UpdateReceipt: ...
+
+
+class ConcurrentDecisionEndpoint(DecisionEndpoint, Protocol):
+    def pending_all(self) -> tuple[Directive, ...]: ...
+    def update_executions(self, views: dict[str, ExecutionView]) -> None: ...
