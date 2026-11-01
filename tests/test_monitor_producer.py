@@ -1,5 +1,5 @@
 """Monitor projections use explicit decisions and observed progress, not raw prompts."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import sys
@@ -57,6 +57,39 @@ class MonitorProducerTests(unittest.TestCase):
         self.assertEqual(self.monitor.data['workflow']['completed_directives'], 1)
         self.assertEqual(self.monitor.data['current']['metrics'], {'train_loss': .01})
         self.assertEqual(self.monitor.data['decisions'][0]['metrics'], {'train_loss': .01})
+
+    def test_second_round_job_uses_its_decision_round_instead_of_legacy_workflow_counter(self):
+        self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)
+        self.monitor.event('job', job_id='first', kind='train', status='succeeded', step=32)
+        second = replace(self.directive, directive_id='d2')
+        self.monitor.decision(Decision('explore', directive=second), self.context, 2)
+        self.monitor.event('job', job_id='second', kind='train', status='running', step=5)
+        snapshot = json.loads((self.root / 'monitor.json').read_text())
+        jobs = {row['job_id']: row for row in snapshot['jobs']}
+        self.assertEqual((jobs['first']['directive_id'], jobs['first']['round']), ('d1', 1))
+        self.assertEqual((jobs['second']['directive_id'], jobs['second']['round']), ('d2', 2))
+        self.assertEqual(snapshot['current']['round'], 2)
+
+    def test_late_first_job_progress_does_not_move_it_to_current_second_directive(self):
+        self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)
+        self.monitor.event('job', job_id='first', kind='train', status='running', step=1)
+        self.monitor.decision(Decision('explore', directive=replace(self.directive, directive_id='d2')),
+                              self.context, 2)
+        self.monitor.event('job', job_id='second', kind='train', status='running', step=2)
+        self.monitor.event('job', job_id='first', kind='train', status='succeeded', step=32)
+        self.assertEqual((self.monitor.jobs['first']['directive_id'], self.monitor.jobs['first']['round']),
+                         ('d1', 1))
+        self.assertEqual(self.monitor.data['current']['job_id'], 'second')
+        self.assertEqual(self.monitor.data['current']['step'], 2)
+
+    def test_explicit_other_job_identity_and_round_do_not_attach_to_current_directive(self):
+        self.monitor.decision(Decision('explore', directive=self.directive), self.context, 2)
+        self.monitor.event('job', job_id='other', kind='train', status='running',
+                           directive_id='foreign', round=7, step=11)
+        self.assertEqual((self.monitor.jobs['other']['directive_id'], self.monitor.jobs['other']['round']),
+                         ('foreign', 7))
+        self.assertNotIn('job_id', self.monitor.data['current'])
+        self.assertNotIn('step', self.monitor.data['current'])
 
     def test_feedback_metrics_merge_public_numeric_groups_and_project_with_operation(self):
         from web.server import project_snapshot

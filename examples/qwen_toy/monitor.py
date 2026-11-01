@@ -216,8 +216,10 @@ class Monitor:
                 details['metric_history'] = metric_history(
                     self.jobs.get(details['job_id'], {}).get('metric_history'), details['metric_history'])
             row = {**self.jobs.get(details['job_id'], {}), **deepcopy(details)}
-            if current.get('status') in ACTIVE and current.get('mode') == details.get('kind'):
-                row.update(directive_id=current['directive_id'], round=self.data['workflow']['round'])
+            if (current.get('status') in ACTIVE and current.get('mode') == details.get('kind')
+                    and row.get('directive_id') in (None, current['directive_id'])):
+                row.setdefault('directive_id', current['directive_id'])
+                row.setdefault('round', current.get('round', self.data['workflow']['round']))
                 current['job_id'] = row['job_id']
                 for key in ('step', 'total_steps', 'elapsed_seconds', 'metrics'):
                     if key in row:
