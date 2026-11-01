@@ -269,6 +269,24 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.process.requests), 1)
         self.assertNotIn('train', self.serving.contexts[1]['directive_modes'])
 
+    def test_named_kind_and_flat_action_use_the_same_registered_contract(self):
+        def named_train(context):
+            value = train(context)
+            value['kind'] = value['operation'] = value.pop('mode')
+            return value
+        measure = {'action': 'evaluate', 'arguments': {}}
+        result = self.execute([named_train, measure, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(self.process.requests), 1)
+        self.assertEqual(len(self.read('evaluations.json')), 2)
+
+    def test_conflicting_names_do_not_choose_an_action(self):
+        conflict = {'kind': 'train', 'operation': 'define_recipe', 'arguments': {}}
+        result = self.execute([conflict, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertFalse(self.process.requests)
+        self.assertIn('Conflicting action names', self.serving.contexts[-1]['objective'])
+
     def test_operation_normalization_rejects_nonempty_directive_inputs(self):
         denied = {'kind': 'explore', 'mode': 'define_recipe', 'strategy': 'Invalid input scope',
                   'arguments': {}, 'input_ids': ['unrelated']}

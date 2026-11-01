@@ -486,19 +486,29 @@ class ResearchPolicy(ModelDecisionPolicy):
         operations = {spec.name for spec in context.operations}
         directives = set(context.directive_modes)
         kind = payload.get('kind') if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            raise ValueError('Decision must be a JSON object')
+        names = [payload[key] for key in ('action', 'operation', 'mode') if key in payload]
+        if kind not in (None, 'invoke', 'explore', 'finish', 'wait'):
+            names.append(kind)
+        if any(not isinstance(name, str) or not name for name in names):
+            raise ValueError('Action names must be nonempty strings')
+        if len(set(names)) > 1 or (names and kind in ('finish', 'wait')):
+            raise ValueError('Conflicting action names; request exactly one action')
+        name = names[0] if names else None
         normalized = None
-        if kind == 'explore' and payload.get('mode') in operations - directives:
-            if (set(payload) - {'kind', 'mode', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}
-                    or payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None):
-                raise ValueError('Operation envelope cannot consume directive inputs or scheduling fields')
-            normalized = {'kind': 'invoke', 'operation': payload['mode'], 'arguments': payload.get('arguments', {})}
-        elif kind == 'invoke' and payload.get('operation') in directives - operations:
-            if set(payload) - {'kind', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}:
-                raise ValueError('Unexpected fields in directive envelope')
-            normalized = {key: value for key, value in payload.items() if key not in ('kind', 'operation')}
-            normalized.update(kind='explore', mode=payload['operation'],
-                              strategy=payload.get('strategy', 'Model requested '+payload['operation']))
-        if normalized is not None:
+        if name in operations ^ directives:
+            if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}:
+                raise ValueError('Unexpected fields in action envelope')
+            if name in operations:
+                if payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None:
+                    raise ValueError('Operation envelope cannot consume directive inputs or scheduling fields')
+                normalized = {'kind': 'invoke', 'operation': name, 'arguments': payload.get('arguments', {})}
+            else:
+                normalized = {'kind': 'explore', 'mode': name, 'arguments': payload.get('arguments', {}),
+                              'strategy': payload.get('strategy', 'Model requested '+name)}
+                normalized.update({key: payload[key] for key in ('input_ids', 'review_after_seconds') if key in payload})
+        if normalized is not None and normalized != payload:
             self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
             response = replace(response, text=json.dumps(normalized))
         return super()._parse_decision(response, context)
