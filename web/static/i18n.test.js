@@ -14,7 +14,8 @@ const hasClass = (node, name) => (node.className || "").split(" ").includes(name
 const findClass = (root, name) => nodes(root).filter(n => hasClass(n, name));
 const text = root => nodes(root).map(n => n.textContent || "").join(" ");
 function api(storage) {
-  const ctx = vm.createContext({ localStorage: storage }); vm.runInContext(i18nSource, ctx); return ctx.RSII18n;
+  const ctx = vm.createContext({ localStorage: storage }); vm.runInContext(i18nSource, ctx);
+  vm.runInContext(fs.readFileSync(`${__dirname}/lineage.js`, "utf8"), ctx); return ctx.RSII18n;
 }
 function monitor(options = {}) {
   const calls = [];
@@ -68,8 +69,7 @@ test("static translation touches only explicit UI markers and preserves adjacent
 test("switching language rerenders cached graph/run, preserves selection/step/zoom/cache/filter and model prose", () => {
   const h=monitor();fixture(h);
   findClass(h.get("project-graph"),"flow-choice")[1].listeners.click();
-  h.run('state.activeScope.flowLimits.set("a",60); state.decisionLimit=60; state.eventLimit=60; $("dashboard").open=true; $("project-graph").graphView.autoFit=false; $("project-graph").graphView.scale=.75; $("project-graph").graphView.viewport.scrollLeft=123; $("project-graph").graphView.viewport.scrollTop=45;');
-  h.get("job-filter").value="completed";h.get("decision-filter").value="review";
+  h.run('state.activeScope.flowLimits.set("a",60); $("project-graph").graphView.autoFit=false; $("project-graph").graphView.scale=.75; $("project-graph").graphView.viewport.scrollLeft=123; $("project-graph").graphView.viewport.scrollTop=45;');
   const before=h.json('[state.activeScope.selected,[...state.activeScope.flowSelected],[...state.activeScope.positions],state.activeScope.cache.size]');
   const snapshot=h.run("state.snapshot"),cache=h.run("state.activeScope.cache");
   h.get("lang-en").listeners.click();
@@ -77,10 +77,9 @@ test("switching language rerenders cached graph/run, preserves selection/step/zo
   assert.deepEqual(h.json('[state.activeScope.selected,[...state.activeScope.flowSelected],[...state.activeScope.positions],state.activeScope.cache.size]'),before);
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
   assert.equal(h.get("project-graph").graphView.scale,.75);assert.equal(h.get("project-graph").graphView.viewport.scrollLeft,123);assert.equal(h.get("project-graph").graphView.viewport.scrollTop,45);
-  assert.equal(h.get("job-filter").value,"completed");assert.equal(h.get("decision-filter").value,"review");assert.equal(h.get("dashboard").open,true);assert.equal(h.run("state.decisionLimit"),60);
-  assert.match(text(h.get("project-graph")),/Metrics at review/);assert.match(text(h.get("project-graph")),/继续训练 原文 strategy/);assert.equal(h.get("objective").textContent,"保留目标 objective");
-  assert.match(text(h.get("current-execution")),/执行原文 strategy/);assert.match(text(h.get("event-list")),/错误 原文 log/);assert.match(text(h.get("event-list")),/Other event/);
-  assert.match(text(h.get("job-list")),/Training|Train model/);assert.match(text(h.get("candidate-list")),/Candidate/);assert.match(text(h.get("round-list")),/Answer verified correct/);
+  assert.match(text(h.get("project-graph")),/Metrics at review/);assert.match(text(h.get("project-graph")),/继续训练 原文 strategy/);
+  assert.match(text(h.get("project-graph")),/保留目标 objective/);assert.match(text(h.get("project-graph")),/错误 原文 log/);
+  assert.match(text(h.get("project-graph")),/custom.event/);
   assert.match(text(h.get("graph-tools")),/Fit/);assert.equal(findClass(h.get("graph-tools"),"graph-control-group").length,2);assert.equal(findClass(h.get("graph-tools"),"zoom-reset")[0].textContent,"75%");
   assert.equal(findClass(h.get("project-graph"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
@@ -92,12 +91,12 @@ test("unknown events and application errors/empty states switch without refetchi
   assert.equal(h.get("connection").textContent,"Disconnected");assert.equal(h.get("notice").textContent,"Request timed out.");assert.equal(h.get("empty-title").textContent,"Projects temporarily unavailable");assert.deepEqual(h.calls,[]);
   fixture(h);h.run('state.activeScope.cache.get("a").status="error"; state.activeScope.cache.get("a").errorInfo=uiError("运行快照协议或 ID 不匹配。"); renderProject(); RSII18n.setLanguage("zh"); RSII18n.setLanguage("en")');
   assert.match(text(h.get("project-graph")),/Run snapshot schema or ID mismatch/);assert.match(text(h.get("project-graph")),/Retaining the previous snapshot/);
-  assert.equal(h.get("event-filter").children[1].textContent,"Other event");assert.equal(h.get("event-filter").children[1].value,"custom.event");
+  assert.match(text(h.get("project-graph")),/custom.event/);
 });
 
-test("metrics navigation expands the selected dashboard, and remains hidden without a snapshot", () => {
+test("flow navigation targets selected execution view and remains hidden without a snapshot", () => {
   const h=monitor();assert.equal(h.get("nav-metrics").hidden,true);let prevented=false;h.get("nav-metrics").listeners.click({preventDefault(){prevented=true;}});assert.equal(prevented,true);
-  fixture(h);assert.equal(h.get("nav-metrics").hidden,false);h.get("dashboard").open=false;h.get("nav-metrics").listeners.click({preventDefault(){throw Error("should navigate");}});assert.equal(h.get("dashboard").open,true);
+  fixture(h);assert.equal(h.get("nav-metrics").hidden,false);h.get("nav-metrics").listeners.click({preventDefault(){throw Error("should navigate");}});assert.ok(html.includes('href="#execution-flow"'));assert.equal(findClass(h.get("project-graph"),"execution-sequence")[0].id,"execution-flow");
   h.run('selectRun("")');assert.equal(h.get("nav-metrics").hidden,true);
 });
 

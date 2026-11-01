@@ -43,15 +43,15 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 
 ## 界面语言 / Interface language
 
-右上角「中 / EN」切换完整界面语言，默认中文。选择保存在浏览器 localStorage 的 `rsisys-language`（`zh` / `en`），重载后恢复；存储不可用时保留当前页面内的选择。按钮、状态、空态、筛选、指标名、图表提示、流程和详情标题及导出报告均跟随语言；日期使用相应 locale。
+右上角「中 / EN」切换完整界面语言，默认中文。选择保存在浏览器 localStorage 的 `rsisys-language`（`zh` / `en`），重载后恢复；存储不可用时保留当前页面内的选择。按钮、状态、空态、指标名、图表提示、流程和详情标题及导出报告均跟随语言；日期使用相应 locale。
 
-切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，不重置所选运行、执行步骤、筛选、分页、图谱缩放、平移或节点位置。拖拽与 RAF 松弛期间，图谱沿用原有延后重绘机制。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
+切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，不重置所选运行、执行步骤、分页、图谱缩放、平移或节点位置。拖拽与 RAF 松弛期间，图谱沿用原有延后重绘机制。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
 
-无外部依赖或翻译 API。`/i18n.js` 必须先于 `/app.js` 以 `defer` 加载，并加入静态服务白名单。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态节点。
+无外部依赖或翻译 API。`/i18n.js` 与 `/lineage.js` 必须先于 `/app.js` 以 `defer` 加载，并加入静态服务白名单。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态节点。
 
-Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected run, execution step, filters and graph view. Reported model text and logs stay verbatim. Exported reports follow the selected interface language.
+Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected run, execution step, graph view. Reported model text and logs stay verbatim. Exported reports follow the selected interface language.
 
-验证语言覆盖、持久化、原文保留、无额外请求、错误与空态、筛选、图工具、导航和 RAF 期间切换：
+验证语言覆盖、持久化、原文保留、无额外请求、错误与空态、图工具、导航和 RAF 期间切换：
 
 ```sh
 node --test web/static/i18n.test.js web/static/project.test.js
@@ -61,20 +61,18 @@ node --test web/static/i18n.test.js web/static/project.test.js
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- 首页主图只展示一个项目及其全部运行，节点仅有 project 和 run。点击运行只选择并按需加载详情；重复点击保持选中，不展开或收起内部节点。decision、job、candidate 均留在下方的运行详情中。旧 `?run=<id>` 或 `?project=<id>&run=<id>` 链接仍会定位归属项目并选择该 run。
-- 首屏只请求 `/api/projects` 的项目与运行元信息；选择运行后请求 `/api/runs/<id>`。缓存按真实 / 示例、项目、run 隔离；切回已读取运行复用缓存，自动 / 手动刷新只重读当前选中的 run，其余缓存保留。读取中和失败状态在运行节点与详情中显示，失败保留上次快照并提供重试。切换运行、项目或示例时取消旧请求，并拒绝迟到响应。
-- 图使用原生 HTML 圆点与 SVG 连线，无额外依赖。初次打开按实际节点边界适应并居中，画布尺寸变化时自动适应；手动缩放或平移后保留视角，可用“适应”恢复。支持拖拽节点、拖动空白平移、滚动、按钮或 Ctrl/⌘ + 滚轮缩放与恢复 100%。圆点命中框为 24×24px，标签不拦截指针；hover、聚焦或选中时高亮一阶邻居及直接连线。Tab 聚焦节点，左右键 / Home / End 移动，Enter / 空格选择。
-- 布局从左到右展开，项目作为最左侧的 0 节点，标签为 `0 · 项目名`；run 按 `runRows` 的 `updated_at` 从早到晚排列，同时间按 run ID 排序，无效或未报告时间列在末尾。节点的 `layoutOrder` 保留该顺序，输入数组重排不改变布局。初始项目坐标为 `(70, 245)`，第 i 个 run 的目标 x 为 `230 + i × 140`，目标 y 交替为 `245 - 35`、`245 + 35`（i 从 0 开始），减少节点和连线重叠。布局采用确定性、有限步松弛，`networkLayout` 的 `steps` 默认 64，仍受计算预算限制；未手动固定的 run 在松弛时，x 限制在对应目标位置 ±25 内。新增运行、关系变化或 `updated_at` 导致排列顺序变化时重新调整未固定节点。
-- 拖拽时释放先前的手动固定，仅保持当前拖动节点跟随指针；其他节点通过 `requestAnimationFrame` 每帧执行 2 步松弛，同时更新全部节点与直线，镜头保持稳定。每次移动将热度补至 40 帧，复用已有动画回调；松手后仅固定当前节点，再松弛 18 帧后停止，无常驻动画。无 RAF 时每次移动和松手各同步松弛一次。拖拽不触发选择；拖动或缓动中的刷新延后到停止后统一重绘。切换项目或真实 / 示例、替换图谱、隐藏页面时取消动画并清理拖动状态，图谱脱离页面后也会停止。普通刷新保持位置与选中状态；“重排”清除手动固定并重新布局、适应画布。位置使用 localStorage v4 按真实 / 示例和项目保存，忽略旧版位置缓存；重载页面恢复位置，手动固定仅在当前页面会话内保留。存储不可用时继续使用页面内缓存。
-- 左右位置顺序仅表示记录的 `updated_at` 排序，不表示继承、运行开始时间或因果关系；同时间按 ID 排序、未知时间置后也不代表真实先后。主图不绘制跨 run 的 `time` 虚线，仅保留项目归属（membership）与显式运行父引用（run-parent）连线。跨 run 实线只使用显式 `parent_run_id` / `source_run_ids`，仅连接本项目唯一可解析的 run ID；自引用、缺失、歧义引用不画线。不根据 baseline、模型 revision、名称、目标或候选名推断继承。浅线表示项目归属；归属线和运行父引用线均使用 SVG `M … L …` 直线，父引用线保留箭头。
-- 图下的运行流程子视图以横向步骤导航展示当前快照的 executionSequence，默认选择第一步，每次只展示所选步骤的决策、执行反馈和公开指标。已知时间从早到晚排列；未报告时间的记录保留快照顺序，列在末尾并明确提示，不伪造先后或因果关系。首批最多 30 个导航按钮，点击“显示更多执行步骤”继续展示；切换步骤、重复选择运行或切回已读运行会保留各 run 的步骤选择。重复 finish 聚合保留全部原始记录。运行 ID、模型 ID / revision、协议字段与关联依据放入折叠详情；候选结果与所选 run 报告导出仍保留。下方“所选运行 · 训练指标与报告”是次级折叠区，保留当前执行、完整指标、筛选、事件和候选结果。
-- 次级折叠区中的决策列表保留按决策时间倒序排列，每项并排展示中文动作与对应反馈；图下的运行执行流程按上述正序规则排列。直接使用决策的公开 `metrics`，同时兼容按 `job_id` / `directive_id` 精确关联任务指标；存在但未找到或重复而歧义的 job_id 不回退关联其他任务，多任务歧义时不猜测。复查记录不把任务当前指标冒充复查时点指标。
-- 连续、同理由、同轮次、同状态和版本的重复 finish 聚合为一项，保留数量及每条原始记录。finish 统一称为「结束本轮研究」，不推断整个运行已经停止。
-- 动作、指标名称使用中文友好映射。未知操作显示「其他操作」，原始名称保留在详情；技术 ID、模型绑定与事件收进详情。reason / strategy 原文保留在可展开区，不替换 candidate、baseline 或协议名称，不调用模型翻译。
-- 当前执行只在 step / total_steps 均有效时显示百分比；训练 100% 不代表评测、应用、整个运行或目标验证完成。
-- 训练任务展示原生 SVG 损失与学习率图，无图表库或外部资源。支持鼠标查看最近采样点、聚焦图表后用左右键逐点查看，Home / End 跳到首尾；一个历史点只画一个点，无历史时明确显示当前指标或空态。
-- 候选比较、轮次结果与原始事件默认折叠，保留状态筛选、搜索、加载更多和指标详情。对比差值只表示候选减基线，不自动判断优劣。
-- 默认每 5 秒刷新，可暂停或手动刷新；后台页面暂停轮询。请求超时为 8 秒；断连保留旧快照并明确提示，选择运行更新下方流程子视图和次级详情，主图始终只含项目与运行；刷新保留筛选和详情展开状态。
+- 主图只显示项目与运行。项目作为最左侧固定的 `0 · 项目名` 节点；点击运行后，下方显示该次运行的执行流程。decision、job、candidate 不进入主图。旧 `?run=<id>` 与 `?project=<id>&run=<id>` 深链接仍有效。
+- **树的层级代表明确的续接关系。** 新运行的 `parent_run_id` 指向沿用的父运行：如 run6、run7 都从 run5 继续，它们就是 run5 的两个子分支。首个独立运行的迭代深度为 0，后续每条有效父链加 1；它不等于训练次数或已验证提升次数。生产端需要写入真实来源，前端不会根据分数、名称、时间或模型 revision 自动认定采纳。
+- `source_run_ids` 只表示资料引用，以细虚线展示，不增加树深度；`parent_run_id` 使用带箭头直线。没有父运行的分支连接项目根；有效子运行只连父运行，不重复连根。缺失、歧义、自引用和环不会建立虚假父关系，异常链保留在根下，诊断放在运行详情。来源关系使用当前项目内的唯一 run ID。
+- `lineage.js` 是无依赖纯数据模块：`RSILineage.build(nodes, edges)` 生成有效树、深度与分支位置。应用将 API 中的项目归属和完整快照作为权威输入。`networkLayout` 再进行有限步松弛：同深度目标 x 相同，相邻深度相距 180；分支按树行错开。根坐标固定 `(70,245)`。运行编号与同层顺序使用 `updated_at` / ID 稳定排序，不表示采纳。
+- 运行节点可拖动，其他运行节点通过 RAF 自适应，根始终固定。每帧 2 步，移动补充 40 帧热度，松手后 18 帧停止；无常驻动画。拖动或缓动时延后合并刷新。切换项目、示例或隐藏页面会取消动画。支持空白平移、适应、缩放、恢复 100%、重排和键盘选择。v5 位置缓存按真实 / 示例及项目隔离；忽略旧布局缓存。
+- 首屏只读取 `/api/projects`，选择运行后才读取 `/api/runs/<id>`。缓存隔离每个项目和运行，切换时取消旧请求并拒绝迟到响应。默认每 5 秒刷新当前选中运行，可暂停；隐藏页面暂停轮询。已有快照时静默刷新，不展示“正在刷新”。失败保留旧数据并提供重试。
+- 刷新无数据变化时复用运行详情 DOM；有新反馈时，按稳定决策身份保留所选步骤、展开记录及流程横向滚动。中英切换同样保留状态。运行详情、候选结果和历史指标均纳入展开状态管理。
+- 执行流程按已报告时间从早到晚排列；未知时间保留快照顺序列于末尾，不补造因果。首批显示 30 个步骤，可继续加载。每次展示一个步骤的**动作、理由 / 策略、已公开参数、反馈、进度及结果**。训练步骤带损失 / 学习率曲线与历史点，评测带基线 / 候选对比。重复 finish 聚合并保留全部原始记录；“结束本轮研究”不代表整个运行已停止。
+- 已知动作使用中英友好名称，例如 `configure_prompt` → 调整提示词、`define_recipe` → 定义训练方案；自定义动作直接显示原名，只有没有动作字段时才显示“未命名决策”。模型理由、策略及反馈原文不改写。技术 ID 放在详情。
+- 只按明确唯一的 `job_id`、`candidate_id` 或指令引用关联反馈；找不到指定 job 或存在歧义时不回退猜测。复查时指标与关联任务当前结果分开展示。关联事件优先匹配决策 ID，再匹配任务或唯一原始指令；原始事件仍保留在运行详情。
+- 已移除重复的“指标与记录”区域。训练 / 评测详情集中在执行步骤；未能关联到步骤的任务或候选、轮次结果和原始事件保留在运行详情中，不丢弃证据。导出仍覆盖整个公开快照。
+- 百分比只使用有效的 step / total_steps；训练 100% 不代表整个运行完成。曲线只绘制真实历史点，无历史不补造。候选差值只表示候选减基线，不自动判断优劣。
 
 ### 训练历史协议
 
@@ -157,7 +155,7 @@ node --test web/static/i18n.test.js web/static/project.test.js
 
 只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持的版本保留为带 `error` 的 unavailable 清单项。
 
-运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；前端仅凭这些显式字段绘制跨 run 父引用线。
+运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；其中 parent_run_id 定义续接父节点，source_run_ids 仅定义资料引用，不增加迭代深度。
 
 `GET /api/runs/<id>`：返回协议字段的只读投影，包含 `project: {project_id, name, description, system_id}`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
@@ -177,10 +175,10 @@ node --test web/static/i18n.test.js web/static/project.test.js
 ```sh
 python3 -m unittest discover -s tests -p test_monitor.py -v
 node --check web/static/app.js
-node --test web/static/project.test.js
+node --test web/static/*.test.js
 ```
 
-服务测试覆盖读取摘要、缺省字段、flat worker metrics、空目录、损坏快照恢复、协议版本、大小限制、路径穿越、目录／文件符号链接、FIFO、字段过滤、Host／跨站防护及只读方法。前端专项测试覆盖主图仅含项目与运行、重复选择不取消、旧深链接、显式运行引用、无 time 边与按更新时间从左到右排序、同 ID 数据隔离、按需并发加载、切换后的请求取消与迟到响应、错误恢复和只刷新所选 run。布局测试覆盖 0 节点标签与最左初始位置、直线端点与父引用箭头、layoutOrder 稳定顺序、run 横向单调与目标范围、排序变化触发重排、确定性与计算预算、默认 64 步和显式 2 步、新增 run 时保留手动固定、重排清除固定、ResizeObserver 适应居中、v4 位置恢复、旧版缓存隔离与存储不可用回退。fake RAF 测试在 pointerup 前推进一帧，验证其他节点（包括先前固定节点）已移动、被拖节点不漂移、全部连线同步更新与镜头稳定；另覆盖有限热度与重新加热、松手后有限停止、回调不重复、拖拽不误选、轻触只选择一次、刷新合并延后、拖动和缓动阶段的项目 / 示例切换、重绘、隐藏与脱离页面的取消清理，以及无 RAF 的同步回退。流程子视图测试覆盖导航分页、单步详情、步骤选择保留、反馈和指标隔离、未知时间、重复 finish 原始记录及复查时点边界。测试文件不在静态服务白名单内。Node 只用于前端语法检查和测试，运行服务不依赖 Node。
+服务测试覆盖快照投影、读取边界、错误恢复与只读接口。前端测试覆盖命名 / 双语、显式父链与引用、分叉 / 环 / 歧义 / 长链、根固定、拖拽 RAF 与计算预算、按需读取与并发取消、刷新保留原生展开状态和稳定步骤身份、训练历史和反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
 
 视觉参考：[Zotero Style 关系图谱演示](https://zotero-chinese.com/user-guide/plugins/style#关系图谱)，仅参考小圆点、极细连线和下方标签的视觉形式，未引入其代码。保留暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 

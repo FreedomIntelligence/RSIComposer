@@ -3,8 +3,8 @@ const { t } = RSII18n;
 const $ = (id) => document.getElementById(id);
 const state = {
   demo: false, runId: "", realRunId: "", snapshot: null, controller: null,
-  epoch: 0, timer: null, auto: true, eventLimit: 30, decisionLimit: 30,
-  openEvents: new Set(), openDecisions: new Set(), openJobs: new Set(), queryApplied: false,
+  epoch: 0, timer: null, auto: true,
+  queryApplied: false,
   projects: [], projectId: "", realProjectId: "", scopes: new Map(), activeScope: null, demoSnapshots: new Map(),
 };
 const ACTIVE = new Set(["running", "active", "training", "evaluating", "queued", "pending", "starting", "submitted", "in_progress"]);
@@ -12,7 +12,6 @@ const DONE = new Set(["completed", "complete", "succeeded", "success", "done", "
 const FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled"]);
 const ACCEPTED = new Set(["accepted", "applied", "adopted", "promoted", "bound"]);
 const REJECTED = new Set(["rejected", "discarded", "failed"]);
-const PENDING = new Set(["pending", "proposed", "evaluating", "ready", "validated", "awaiting_evaluation", "awaiting_review", "training"]);
 const labels = {
   running: "运行中", active: "进行中", training: "训练中", evaluating: "评测中", queued: "排队中", pending: "等待中", starting: "启动中", submitted: "已提交", in_progress: "进行中",
   completed: "已完成", complete: "已完成", succeeded: "已完成", success: "已完成", done: "已完成", finished: "已完成",
@@ -20,6 +19,7 @@ const labels = {
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
+  configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
   evaluate: "评测候选", evaluation: "评测候选", candidate_evaluation: "评测候选", select: "选择候选", apply_candidate: "应用候选", execute: "执行任务",
   finish: "结束本轮研究", finished: "结束本轮研究", continue: "继续执行", continue_training: "继续训练", cancel: "请求取消", cancel_training: "请求取消训练", stop: "停止训练", wait: "等待", review: "复查执行", prepare: "准备", queued: "排队", starting: "准备运行", collecting_result: "收集结果", accepted: "指令已接收", completed: "已完成",
@@ -37,7 +37,7 @@ const number = (v) => typeof v === "number" && Number.isFinite(v);
 const present = (v) => v !== undefined && v !== null && v !== "";
 const statusKey = (v) => asText(v, "unknown").toLowerCase();
 const statusText = (v) => t(labels[statusKey(v)]) || t("状态未报告或未归类");
-const actionText = (v) => t(actionLabels[asText(v, "")]) || t("其他操作");
+const actionText = (v) => t(actionLabels[asText(v, "")]) || asText(v, "").trim() || t("未命名决策");
 const metricText = (v) => t(metricLabels[v]) || asText(v, t("其他指标"));
 function el(tag, className = "", text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = asText(text); return e; }
 function badge(v) { const k = statusKey(v); return el("span", `badge ${FAILED.has(k) || REJECTED.has(k) ? "failure" : DONE.has(k) || ACCEPTED.has(k) ? "success" : ACTIVE.has(k) ? "active" : ""}`, statusText(v)); }
@@ -52,16 +52,12 @@ function uiError(key, params = {}) { return Object.assign(new Error(t(key, param
 function errorText(error, fallback = "无法连接服务。") { return error?.uiKey ? t(error.uiKey, error.uiParams) : asText(error?.message || error?.error, t(fallback)); }
 function connection(text, tone = "") { chrome.connection=text;chrome.tone=tone;$("connection").textContent = copy(text); $("connection").className = `connection ${tone}`; }
 function notice(text, error = false) { chrome.notice=text;chrome.noticeError=error;const value=copy(text);$("notice").textContent = value; $("notice").hidden = !value; $("notice").className = `notice${error ? " error" : ""}`; }
-function showEmpty(title, text) { chrome.emptyTitle=title;chrome.emptyDescription=text; $("dashboard").hidden = true; $("empty").hidden = false; $("empty-title").textContent = copy(title); $("empty-description").textContent = copy(text); $("export-report").disabled = !state.snapshot; }
+function showEmpty(title, text) { chrome.emptyTitle=title;chrome.emptyDescription=text; $("empty").hidden = false; $("empty-title").textContent = copy(title); $("empty-description").textContent = copy(text); $("export-report").disabled = !state.snapshot; }
 // Keep reported prose verbatim. Identifiers and long text live in disclosures.
-const publicText = (value, fallback = t("未报告")) => asText(value, fallback);
-function proseView(value, title = t("决策原文")) {
-  const details=el("details","record-details");details.append(el("summary","",title),el("p","decision-reason",asText(value)));return details;
-}
 function fieldList(entries) { const dl = el("dl", "detail-grid"); for (const [k, v] of entries.filter(([, v]) => present(v))) dl.append(el("dt", "", k), el("dd", "", asText(v))); return dl; }
 function rawFields(row) { return fieldList(Object.entries(object(row)).filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))); }
 function retainedDetails(key, store, title, content) {
-  const d = el("details", "record-details"); d.open = store.has(key); d.append(el("summary", "", title), content);
+  const d = el("details", "record-details"); d.dataset.retainKey=key; d.open = store.has(key); d.append(el("summary", "", title), content);
   d.addEventListener("toggle", () => { if (d.isConnected) { if (d.open) store.add(key); else store.delete(key); } }); return d;
 }
 function flattenMetrics(source, prefix = "", output = {}, depth = 0) {
@@ -81,7 +77,7 @@ function progressView(step, total) {
   } else wrap.append(el("p", "progress-unknown", Number.isInteger(step) && step >= 0 ? t("已报告 {p0} 步；总步数未报告或待核对", {p0: step}) : t("步骤进度未报告")));
   return wrap;
 }
-function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation; return row.mode || row.action || (row.kind === "finish" ? "finish" : undefined); }
+function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation || row.action || row.mode; return row.mode || row.action || (row.kind === "finish" ? "finish" : undefined); }
 function decisionKey(row) { return asText(row.decision_id, JSON.stringify([row.timestamp, row.kind, row.round, row.directive_id, decisionAction(row), row.job_id])); }
 function sortedDecisions(s) { return list(s.decisions).map((row, i) => ({ row, i })).sort((a,b) => (Date.parse(b.row.timestamp) || 0) - (Date.parse(a.row.timestamp) || 0) || a.i - b.i).map(x => x.row); }
 function decisionGroups(s) {
@@ -106,26 +102,26 @@ function hashUnit(key) {
 }
 function readPositions(key) {
   try {
-    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v4:${key}`) || "[]");
+    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v5:${key}`) || "[]");
     return new Map((Array.isArray(rows) ? rows : []).slice(-LAYOUT.cache).filter(r => Array.isArray(r) && typeof r[0] === "string" && number(r[1]?.x) && number(r[1]?.y) && r[1].x >= 36 && r[1].y >= 36 && r[1].x <= 100000 && r[1].y <= 100000));
   } catch { return new Map(); }
 }
 function savePositions(scope) {
-  try { localStorage.setItem(`rsisys-runs-v4:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
+  try { localStorage.setItem(`rsisys-runs-v5:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
 }
 function networkLayout(model, positions = new Map(), { relax = false, pinned = new Set(), steps = LAYOUT.iterations } = {}) {
   const ordered = model.nodes.slice().sort((a,b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const byKey = new Map(ordered.map(n => [n.key,n])), anchors = ordered.filter(n => n.type === "run"), fresh = new Set();
   const center = { x: 70, y: 245 };
   anchors.sort((a,b)=>(a.layoutOrder??0)-(b.layoutOrder??0)||(a.key<b.key?-1:a.key>b.key?1:0));
-  const targets = new Map(anchors.map((n,i)=>[n.key,{x:230+i*140,y:245+(i%2?35:-35)}]));
+  const targets = new Map(anchors.map((n,i)=>[n.key,{x:70+(n.depth??i+1)*180,y:80+(n.treeRow??i)*110}]));
   for(const n of ordered.filter(n=>n.type==="project"))targets.set(n.key,center);
   const initialize = (n, origin, radius, angle) => {
     const cached = positions.get(n.key);
     if (cached && number(cached.x) && number(cached.y)) { n.x = cached.x; n.y = cached.y; if (relax && !pinned.has(n.key)) fresh.add(n.key); }
     else { n.x = Math.max(44, origin.x + radius * Math.cos(angle)); n.y = Math.max(44, origin.y + radius * Math.sin(angle)); fresh.add(n.key); }
   };
-  for (const n of ordered.filter(n => n.type === "project")) initialize(n, center, 0, 0);
+  for (const n of ordered.filter(n => n.type === "project")) { n.x=center.x; n.y=center.y; }
   anchors.forEach(n => initialize(n, targets.get(n.key), 0, 0));
   const counts = new Map();
   for (const n of ordered.filter(n => !["project","run"].includes(n.type))) {
@@ -207,13 +203,14 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const draw = ({ edge,path }) => { const a=byKey.get(edge.from),b=byKey.get(edge.to); path.setAttribute("d",`M${a.x},${a.y} L${b.x},${b.y}`); };
   for (const edge of model.edges) {
     if (!byKey.has(edge.from) || !byKey.has(edge.to)) continue;
-    const path = svgEl("path",{ class:`graph-edge ${edge.kind === "time" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}` });
+    const path = svgEl("path",{ class:`graph-edge ${edge.kind === "time" || edge.kind === "run-source" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}` });
     if (["explicit","run-parent","directive"].includes(edge.kind)) path.setAttribute("marker-end",`url(#${host.id}-arrow)`);
-    path.append(svgEl("title",{},edge.evidence.join(t("、")))); const item={edge,path}; paths.push(item); draw(item); lines.append(path);
+    path.append(svgEl("title",{},(edge.evidence || [edge.kind==="run-parent"?t("运行续接"):edge.kind==="run-source"?t("资料引用"):t("项目归属")]).join(t("、")))); const item={edge,path}; paths.push(item); draw(item); lines.append(path);
     for (const k of [edge.from,edge.to]) { const entries=incident.get(k)||[]; entries.push(item); incident.set(k,entries); }
   }
   plane.append(lines);
-  const details = detailFor ? el("section","graph-detail") : null;
+  const details = detailFor ? (same && previous.details || el("section","graph-detail")) : null;
+  view.details=details;
   if (details) details.setAttribute("aria-label",t("所选节点的执行流程与结果"));
   const highlight = key => {
     const neighbors=graphNeighborhood(model,key);
@@ -223,7 +220,20 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const select = (node, notify=true) => {
     view.selected=node.key;
     for (const [id,button] of buttons) button.setAttribute("aria-pressed",String(id===node.key));
-    if (details) details.replaceChildren(detailFor(node)); highlight(node.key);
+    if (details) {
+      const entry=state.activeScope?.cache.get(node.runId);
+      const fingerprint=JSON.stringify([node.key,RSII18n.getLanguage(),node.row,node.missing,node.ambiguous,node.ancestryStatus,entry?.snapshot,entry?.status==="pending"&&entry?.snapshot?"ready":entry?.status,entry?.error||""]);
+      if(view.detailFingerprint!==fingerprint) {
+        // Store native disclosure state synchronously before replacing the DOM.
+        for(const d of details.querySelectorAll?.("details[data-retain-key]")||[]) {
+          const store=state.activeScope?.flowOpen;if(store){if(d.open)store.add(d.dataset.retainKey);else store.delete(d.dataset.retainKey);}
+        }
+        const scroll=view.detailNodeKey===node.key?(details.querySelector?.(".flow-map")?.scrollLeft||0):0;
+        details.replaceChildren(detailFor(node));
+        const map=details.querySelector?.(".flow-map");if(map)map.scrollLeft=scroll;
+        view.detailFingerprint=fingerprint;view.detailNodeKey=node.key;
+      }
+    } highlight(node.key);
     if (notify) onSelect?.(node);
   };
   const place = node => { const button=buttons.get(node.key); button.style.left=`${node.x}px`; button.style.top=`${node.y}px`; };
@@ -276,7 +286,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     button.addEventListener("focus",()=>highlight(node.key)); button.addEventListener("blur",()=>highlight(view.selected));
     button.addEventListener("click",()=>{ if(suppressClick===node.key){suppressClick="";return;} select(node); });
     button.addEventListener("pointerdown",e=>{
-      if(e.button!==0)return; e.stopPropagation(); suppressClick="";
+      if(e.button!==0)return; e.stopPropagation(); if(node.type==="project")return; suppressClick="";
       nodeDrag={node,x:e.clientX,y:e.clientY,left:node.x,top:node.y,moved:false}; view.dragging=true; button.setPointerCapture(e.pointerId);
     });
     button.addEventListener("pointermove",e=>{
@@ -413,48 +423,6 @@ function feedbackFor(row, s) {
   if (explicit) text = t("已报告执行反馈，见详情。");
   return { text, metrics, job, status, source: row.kind === "review" ? t("复查记录") : t("当前公开快照") };
 }
-function renderExecution(s) {
-  const current = object(s.current), workflow = object(s.workflow);
-  const ended = DONE.has(statusKey(current.status)) || FAILED.has(statusKey(current.status)) || current.status === "stopped";
-  $("execution-title").textContent = ended ? t("最近执行") : t("当前执行");
-  $("workflow-summary").textContent = [number(workflow.round) ? t("第 {p0} 轮", {p0: workflow.round}) : "", number(workflow.elapsed_seconds) ? t("耗时 {p0}", {p0: secondsText(workflow.elapsed_seconds)}) : ""].filter(Boolean).join(" · ");
-  if (!Object.keys(current).length) { $("current-execution").replaceChildren(empty(t("尚未报告当前执行。"))); return; }
-  const card = el("div", "execution-card"), head = el("div", "execution-head"), body = el("div", "execution-content");
-  head.append(el("h3", "", actionText(current.operation || current.mode || current.phase)), badge(current.status));
-  if (present(current.strategy)) body.append(proseView(current.strategy, t("执行原文")));
-  const job = linkedJob(current, s), telemetry = el("div");
-  if (present(current.step) || present(job?.step)) telemetry.append(progressView(current.step ?? job?.step, current.total_steps ?? job?.total_steps));
-  telemetry.append(metricStrip({ ...object(job?.metrics), ...object(current.metrics) }));
-  if (number(current.next_review_seconds) && current.next_review_seconds >= 0) telemetry.append(el("p", "execution-timing", t("下次复查：{p0}后（快照）", {p0: secondsText(current.next_review_seconds)})));
-  body.append(telemetry); card.append(head, body, retainedDetails("current", state.openJobs, t("执行详情"), rawFields(current))); $("current-execution").replaceChildren(card);
-}
-function renderDecisions() {
-  if (!state.snapshot) return;
-  const s = state.snapshot, filter = $("decision-filter").value, query = $("decision-search").value.trim().toLowerCase();
-  const groups = decisionGroups(s).filter(g => (filter === "all" || g.row.kind === filter) && g.rows.some(row => `${JSON.stringify(row)} ${actionText(decisionAction(row))} ${JSON.stringify(feedbackFor(row,s).metrics)} ${feedbackFor(row,s).text}`.toLowerCase().includes(query)));
-  const records = groups.reduce((n, g) => n + g.rows.length, 0);
-  $("decision-count").textContent = t("{p0} 项{p1}", {p0: groups.length, p1: records !== groups.length ? t(" · {p0} 条记录", {p0: records}) : ""});
-  $("more-decisions").hidden = groups.length <= state.decisionLimit;
-  $("decision-list").replaceChildren(...(groups.length ? groups.slice(0, state.decisionLimit).map(g => {
-    const row = g.row, card = el("article", "decision-card"), meta = el("div", "decision-meta"), body = el("div", "decision-body"), action = el("div"), feedback = el("div", "feedback"), f = feedbackFor(row,s);
-    const time = el("time", "", dateText(row.timestamp)); if (Number.isFinite(Date.parse(row.timestamp))) time.dateTime = row.timestamp;
-    meta.append(time); if (number(row.round)) meta.append(el("span", "", t("第 {p0} 轮", {p0: row.round}))); if (row.kind === "review") meta.append(el("span", "", t("复查")));
-    if (g.rows.length > 1) meta.append(el("span", "repeat-count", t("重复报告 {p0} 次", {p0: g.rows.length})));
-    action.append(el("h3", "", actionText(decisionAction(row))));
-    if (present(row.reason) || present(row.strategy)) action.append(proseView(row.reason || row.strategy));
-    feedback.append(el("h4", "", t("反馈")), el("p", "", f.text));
-    const metrics = metricStrip(f.metrics); if (metrics.childElementCount) feedback.append(metrics);
-    if (f.job && row.kind !== "review" && present(f.job.step)) feedback.append(progressView(f.job.step, f.job.total_steps));
-    if (f.job && row.kind === "review") feedback.append(el("p", "quiet-note", t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
-    if (decisionAction(row) === "finish") feedback.append(el("p", "quiet-note", t("运行当前{p0}。", {p0: statusText(s.status)})));
-    body.append(action, feedback); card.append(meta, body);
-    const detail = el("div");
-    for (const record of g.rows) { const raw = el("div", "raw-record"); raw.append(rawFields(record)); const m = feedbackFor(record,s).metrics; if (Object.keys(flattenMetrics(m)).length) raw.append(metricsDetail(m)); detail.append(raw); }
-    card.append(retainedDetails(`decision:${decisionKey(g.rows[g.rows.length-1])}`, state.openDecisions, g.rows.length > 1 ? t("展开 {p0} 条记录与详情", {p0: g.rows.length}) : t("决策与反馈详情"), detail));
-    return card;
-  }) : [empty(list(s.decisions).length ? t("没有符合筛选条件的决策。") : t("尚无决策记录。未报告的决策与反馈不会补全。")) ]));
-}
-function jobGroup(j) { const k = statusKey(j.status); return ACTIVE.has(k) ? "active" : DONE.has(k) ? "completed" : FAILED.has(k) ? "failed" : "other"; }
 function historyRows(j) {
   return list(j.metric_history).slice(-1000).map(p => ({
     step: Number.isInteger(p.step) && p.step >= 0 ? p.step : undefined,
@@ -513,23 +481,6 @@ function historyDetail(j) {
   for (const p of rows) { const row = el("tr"); row.append(el("td", "", fmt(p.step)),el("td", "", fmt(p.elapsed_seconds)), el("td", "", Object.entries(p.metrics).map(([k,v])=>`${k}: ${fmt(v)}`).join(t("；")) || t("未报告"))); body.append(row); }
   table.append(head,body); wrap.append(table); return wrap;
 }
-function renderJobs() {
-  if (!state.snapshot) return;
-  const rows = list(state.snapshot.jobs), shown = rows.filter(j => $("job-filter").value === "all" || jobGroup(j) === $("job-filter").value);
-  $("jobs-count").textContent = t("{p0} 项", {p0: shown.length});
-  $("job-list").replaceChildren(...(shown.length ? shown.map(j => {
-    const card = el("article", "job-record"), heading = el("div", "job-heading"), meta = el("p", "job-sub");
-    heading.append(el("h3", "", actionText(j.kind)), badge(j.status));
-    meta.textContent = [number(j.round) ? t("第 {p0} 轮", {p0: j.round}) : "", number(j.elapsed_seconds) ? t("耗时 {p0}", {p0: secondsText(j.elapsed_seconds)}) : ""].filter(Boolean).join(" · "); card.append(heading,meta);
-    const telemetry = el("div", "job-telemetry"); if (present(j.step) || present(j.total_steps)) telemetry.append(progressView(j.step,j.total_steps)); telemetry.append(metricStrip(j.metrics)); card.append(telemetry);
-    const history = historyRows(j), isTraining = /train|sft|finetun|fine_tun/.test(asText(j.kind,"")) || history.some(p => number(metricValue(p.metrics,lossKeys)) || number(metricValue(p.metrics,lrKeys))) || number(metricValue(object(j.metrics),lossKeys));
-    if (isTraining) { const charts = el("div", "charts"); charts.append(chartView(j,lossKeys,t("损失")), chartView(j,lrKeys,t("学习率"))); card.append(charts); }
-    const detail = el("div"); detail.append(rawFields(j), metricsDetail(j.metrics));
-    const historyDisclosure = el("details", "record-details"); historyDisclosure.append(el("summary", "", t("历史指标 · {p0} 点", {p0: history.length})));
-    let loaded = false; historyDisclosure.addEventListener("toggle", () => { if (historyDisclosure.open && !loaded) { historyDisclosure.append(historyDetail(j)); loaded = true; } }); detail.append(historyDisclosure);
-    card.append(retainedDetails(`job:${asText(j.job_id,JSON.stringify([j.kind,j.round,j.directive_id]))}`,state.openJobs,t("指标与任务详情"),detail)); return card;
-  }) : [empty(rows.length ? t("没有符合筛选条件的任务。") : t("尚无任务记录；无法确认是否执行了训练或评测。")) ]));
-}
 const baseAliases = ["baseline", "base", "before", "old"], newAliases = ["candidate", "new", "after", "current"];
 function metricRows(source) {
   const metrics = object(source), pairs = [], used = new Set();
@@ -541,25 +492,14 @@ function metricRows(source) {
   return { pairs:[...pairs,...grouped.values()],extra:Object.fromEntries(Object.entries(flat).filter(([k])=>!paired.has(k))) };
 }
 function comparisonView(metrics) {
-  const wrap = el("div"), { pairs } = metricRows(metrics);
+  const wrap = el("div"), { pairs, extra } = metricRows(metrics);
   if (!pairs.length) { const strip=metricStrip(metrics); wrap.append(strip.childElementCount ? strip : empty(t("评测指标未报告。"))); return wrap; }
   const table=el("table","metric-table"), head=el("thead"), hr=el("tr"), body=el("tbody");
   for (const name of [t("指标"),t("基线"),t("候选"),t("候选 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
-  for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);return wrap;
-}
-function candidateGroup(c) { const k=statusKey(c.status);return ACCEPTED.has(k)?"accepted":REJECTED.has(k)?"rejected":PENDING.has(k)?"pending":"other"; }
-function renderCandidates() {
-  if(!state.snapshot)return;const rows=list(state.snapshot.candidates),shown=rows.filter(c=>$("candidate-filter").value==="all"||candidateGroup(c)===$("candidate-filter").value);$("candidate-count").textContent=t("{p0} 项", {p0: shown.length});
-  $("candidate-list").replaceChildren(...(shown.length?shown.map(c=>{const card=el("article","candidate-card"),head=el("div","candidate-top");head.append(el("h3","",t("候选 {p0}", {p0: rows.indexOf(c)+1})),badge(c.status));card.append(head,comparisonView(c.metrics));const content=el("div");content.append(rawFields(c),metricsDetail(c.metrics));card.append(retainedDetails(`candidate:${asText(c.candidate_id,rows.indexOf(c))}`,state.openJobs,t("候选与指标详情"),content));return card;}):[empty(rows.length?t("没有符合筛选条件的候选。"):t("尚无候选记录。")) ]));
-}
-function renderRounds(s) {
-  const rows=list(s.round_results).slice().sort((a,b)=>(b.round||0)-(a.round||0));$("round-count").textContent=t("{p0} 轮", {p0: rows.length});
-  $("round-list").replaceChildren(...(rows.length?rows.map(row=>{const card=el("article","round-card"),head=el("div","round-heading");head.append(el("h3","",number(row.round)?t("第 {p0} 轮", {p0: row.round}):t("轮次未报告")),el("span","badge",row.applied===true?t("已应用"):row.applied===false?t("未应用"):t("应用状态未报告")));card.append(head,el("p","",row.answer_correct===true?t("答案验证正确"):row.answer_correct===false?t("答案验证不正确"):t("答案验证未报告")),comparisonView(row.metrics));const detail=el("div");detail.append(rawFields(row),metricsDetail(row.metrics));card.append(retainedDetails(`round:${row.round}`,state.openJobs,t("轮次详情"),detail));return card;}):[empty(t("尚无轮次结果；不能据此推断是否完成过执行。")) ]));
+  for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
 const eventLabels={job:"任务状态更新",progress:"执行进度更新",phase:"运行阶段更新",inference:"模型推理",feedback:"执行反馈",model_decision_requested:"请求模型决策",model_decision_validated:"决策通过校验",model_decision_rejected:"决策未通过校验",training_review_requested:"请求训练复查",training_review_completed:"训练复查完成",activation_verified:"候选验证通过","training.started":"训练开始","evaluation.completed":"评测完成","candidate.accepted":"候选已采纳","candidate.rejected":"候选未采纳","model.bound":"模型绑定更新","run.started":"运行开始"};
-function updateEventTypes(){const select=$("event-filter"),previous=select.value,types=[...new Set(list(state.snapshot?.events).map(e=>asText(e.kind,"unclassified")))].sort();select.replaceChildren(...[["all",t("全部类型")],...types.map(kind=>[kind,t(eventLabels[kind])||t("其他事件")])].map(([v,t])=>{const o=el("option","",t);o.value=v;return o;}));select.value=types.includes(previous)?previous:"all";}
-function renderEvents(){if(!state.snapshot)return;const rows=list(state.snapshot.events),query=$("event-search").value.trim().toLowerCase(),filter=$("event-filter").value,shown=rows.filter(e=>(filter==="all"||asText(e.kind,"unclassified")===filter)&&JSON.stringify(e).toLowerCase().includes(query)).slice().sort((a,b)=>(Date.parse(b.timestamp)||0)-(Date.parse(a.timestamp)||0));$("event-count").textContent=t("{p0} 条", {p0: shown.length});$("more-events").hidden=shown.length<=state.eventLimit;$("event-list").replaceChildren(...(shown.length?shown.slice(0,state.eventLimit).map(e=>{const row=el("article","event"),content=el("div","event-content");content.append(el("p","",t(eventLabels[e.kind])||t("其他事件")),retainedDetails(JSON.stringify(e),state.openEvents,t("事件详情"),rawFields({...e,...object(e.details)})));row.append(el("time","event-time",dateText(e.timestamp)),content);return row;}):[empty(rows.length?t("没有符合筛选条件的事件。"):t("尚无事件。")) ]));}
-function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;updateMetricsNavigation();$("objective").textContent=publicText(s.objective,t("运行目标未报告"));$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?t("示例时间"):t("更新")} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?t("执行模型"):t("决策模型")),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?t("探索循环"):t("决策循环")),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();$("run-label").textContent=t("{p0} / 当前运行", {p0: projectName(projectMeta(s.project))});}
+function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true; $("export-report").disabled=false; updateMetricsNavigation(); }
 // Pure snapshot-to-Markdown conversion: no model call, network request or upload.
 const md = value => asText(value, t("未报告")).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
 function reportMetrics(metrics) {
@@ -619,9 +559,6 @@ function clearRun() {
   state.snapshot = null;
   updateMetricsNavigation();
   $("export-report").disabled = true;
-  $("dashboard").hidden = true;
-  state.openEvents.clear(); state.openDecisions.clear(); state.openJobs.clear();
-  state.decisionLimit = 30; state.eventLimit = 30;
 
 }
 function projectMeta(value) {
@@ -661,29 +598,14 @@ function activateProject() {
 // Build only evidenced relationships; geometry is handled separately by networkLayout.
 function projectModel(project, scope) {
   const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: `0 · ${projectName(project)}`, label: t("项目"), x: 20, y: 90 }], edges = [];
-  const ids = new Map();
   runs.forEach((row, i) => {
-    const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
-    const n = { key, type: "run", row, runId: row.run_id, title: t("运行 {p0}", {p0: i + 1}), label: t("运行"), summary: statusText(row.status),
-       layoutOrder: i, loadStatus: entry?.status,
-      missing: [], ambiguous: [] };
-    nodes.push(n); const matches = ids.get(row.run_id) || []; matches.push(n); ids.set(row.run_id, matches);
-    edges.push({ from: "project-root", to: key, kind: "membership", evidence: [t("项目归属")] });
+    const key=JSON.stringify(["run",row.run_id]),entry=scope.cache.get(row.run_id);
+    nodes.push({key,type:"run",projectId:project.project_id,row:entry?.snapshot||row,runId:row.run_id,title:t("运行 {p0}",{p0:i+1}),label:t("运行"),summary:statusText(row.status),layoutOrder:i,loadStatus:entry?.status==="pending"&&entry.snapshot?"ready":entry?.status,missing:[],ambiguous:[]});
   });
-  const runNodes = nodes.slice(1);
-  for (const node of runNodes) {
-    const snapshot = scope.cache.get(node.runId)?.snapshot;
-    // A loaded snapshot is authoritative, including absence of optional parents.
-    for (const id of runParentIds(snapshot || node.row)) {
-      const matches = ids.get(id);
-      if (!matches) node.missing.push(id);
-      else if (matches.length !== 1) node.ambiguous.push(id);
-      else if (matches[0] !== node) edges.push({ from: matches[0].key, to: node.key, kind: "run-parent", evidence: [t("显式运行引用 {p0}", {p0: id})] });
-    }
-  }
-  const signature = JSON.stringify([nodes.map(n => [n.key,n.layoutOrder]).sort(), edges.map(e => [e.from,e.to,e.kind]).sort()]);
+  const topology=RSILineage.build(nodes,edges);
+  const signature = JSON.stringify([topology.nodes.map(n => [n.key,n.depth,n.treeRow]).sort(), topology.edges.map(e => [e.from,e.to,e.kind]).sort()]);
   const changed = scope.layoutSignature !== undefined && scope.layoutSignature !== signature;
-  const model = networkLayout({ nodes, edges }, scope.positions, { relax: changed || !!scope.needsRelax, pinned: scope.pinned });
+  const model = networkLayout(topology, scope.positions, { relax: changed || !!scope.needsRelax, pinned: scope.pinned });
   model.topologyChanged = changed;
   scope.layoutSignature = signature; scope.needsRelax = false;
   if (model.layoutStats.iterations) savePositions(scope);
@@ -700,6 +622,7 @@ function executionGroups(s) {
 function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),heading=el("div","section-heading"),groups=executionGroups(s);
+  section.id="execution-flow";
   heading.append(el("h4","", t("执行流程")),el("span","quiet-note",t("{p0} 步", {p0: groups.length})));section.append(heading);
 
   const navigation=el("ol","flow-map");navigation.setAttribute("aria-label",t("运行内执行步骤"));section.append(navigation);
@@ -708,7 +631,7 @@ function executionSequence(s, scope) {
     let selectedButton;
     entries.replaceChildren();navigation.replaceChildren();
     const limit=scope.flowLimits.get(s.run_id)||30;
-    const keyOf=(g,i)=>JSON.stringify([decisionKey(g.rows[g.rows.length-1]),i]);
+    const keyOf=g=>decisionKey(g.rows[g.rows.length-1]);
     let selected=scope.flowSelected.get(s.run_id);
     if(!groups.slice(0,limit).some((g,i)=>keyOf(g,i)===selected))selected=groups.length?keyOf(groups[0],0):null;
     scope.flowSelected.set(s.run_id,selected);
@@ -726,14 +649,38 @@ function executionSequence(s, scope) {
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
       decision.append(el("p","flow-label",t("决策")),el("h4","",actionText(decisionAction(row))),meta);
       if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
-      if(present(row.reason)||present(row.strategy))decision.append(retainedDetails(JSON.stringify([s.run_id,"reason",decisionKey(row)]),scope.flowOpen,t("决策原文"),el("p","decision-reason",row.reason||row.strategy)));
+      if(present(row.reason))decision.append(el("p","decision-reason",row.reason));
+      if(present(row.strategy)&&row.strategy!==row.reason)decision.append(el("p","decision-reason",row.strategy));
+      const parameters=fieldList([[t("训练方法"),row.method],[t("训练方案"),row.recipe_ref],[t("评测方案"),row.protocol_ref],[t("复查间隔（秒）"),row.review_after_seconds]]);
+      if(parameters.childElementCount)decision.append(parameters);
       feedback.append(el("p","flow-label",t("执行反馈")),el("p","",object(row.feedback).summary||row.feedback_summary||f.text));
       if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
       if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
-      metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),metricsDetail(f.metrics));
+      if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
+      if(f.job&&number(f.job.elapsed_seconds))feedback.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(f.job.elapsed_seconds)})));
       const records=el("div");for(const record of g.rows)records.append(rawFields(record));
       feedback.append(retainedDetails(JSON.stringify([s.run_id,"step",decisionKey(row)]),scope.flowOpen,t("记录详情（{p0} 条）", {p0: g.rows.length}),records));
-      step.append(index,decision,feedback,metrics);entries.append(step);
+      step.append(index,decision,feedback);if(metrics.childElementCount)step.append(metrics);
+      const results=el("div","flow-results");
+      if(f.job){
+        const j=f.job,h=historyRows(j),isTraining=/train|sft|finetun/.test(asText(j.kind,""))||h.some(p=>number(metricValue(p.metrics,lossKeys)));
+        if(row.kind==="review")results.append(el("p","quiet-note",t("关联任务当前快照")));
+        if(isTraining){const charts=el("div","charts");charts.append(chartView(j,lossKeys,t("损失")),chartView(j,lrKeys,t("学习率")));results.append(charts);}
+        const detail=el("div");detail.append(rawFields(j));
+        if(h.length)detail.append(retainedDetails(JSON.stringify([s.run_id,"history",j.job_id]),scope.flowOpen,t("历史指标 · {p0} 点",{p0:h.length}),historyDetail(j)));
+        results.append(retainedDetails(JSON.stringify([s.run_id,"job",j.job_id]),scope.flowOpen,t("任务详情"),detail));
+      }
+      for(const result of relatedResults(row,s).filter(r=>r.type==="candidate")){
+        const card=el("div","candidate-card");card.append(el("h4","",t("候选结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
+      }
+      const events=list(s.events).filter(e=>{
+        const d={...e,...object(e.details)};
+        if(present(d.decision_id))return sameId(d.decision_id,row.decision_id);
+        if(present(d.job_id))return sameId(d.job_id,f.job?.job_id);
+        return row.kind==="directive"&&sameId(d.directive_id,row.directive_id)&&list(s.decisions).filter(r=>r.kind==="directive"&&sameId(r.directive_id,row.directive_id)).length===1;
+      });
+      if(events.length)results.append(retainedDetails(JSON.stringify([s.run_id,"events",decisionKey(row)]),scope.flowOpen,t("执行记录 · {p0} 条",{p0:events.length}),eventRecords(events)));
+      if(results.childElementCount)step.append(results);entries.append(step);
     }
     more.hidden=groups.length<=limit;
     if(restoreFocus)selectedButton?.focus({preventScroll:true});
@@ -742,38 +689,53 @@ function executionSequence(s, scope) {
   section.append(more);fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
   return section;
 }
+function eventRecords(events) {
+  const box=el("div");
+  for(const event of events){const row=el("article","event");row.append(el("time","event-time",dateText(event.timestamp)),el("p","",t(eventLabels[event.kind])||asText(event.kind,t("未分类事件"))),rawFields({...event,...object(event.details)}));box.append(row);}
+  return box;
+}
 function runDetail(node, scope) {
-  const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail");
+  const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail"); scope.flowOpen ||= new Set();
   const heading=el("div","detail-heading"),identity=el("div");
   identity.append(el("h3","",node.title));
   heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
   box.append(el("p","detail-objective",s?.objective||node.row.objective||t("目标未报告")));
-  if(entry?.status==="pending")box.append(el("p","load-message",s?t("正在刷新，保留上次快照。"):t("正在读取决策与反馈…")));
+  if(entry?.status==="pending"&&!s)box.append(el("p","load-message",t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
     box.append(el("p","load-message error",t("{p0}读取失败：{p1}", {p0: s?t("保留上次快照。"):"", p1: errorText(entry.errorInfo || {error:entry.error})})));
     const retry=el("button","",t("重试读取"));retry.addEventListener("click",()=>loadRun(node.runId,scope,true));box.append(retry);
   }
   if(s){
     box.append(executionSequence(s,scope));
-    if(list(s.candidates).length){
-      const candidates=el("details","record-details");candidates.append(el("summary","",t("候选结果 · {p0}", {p0: list(s.candidates).length})));
-      list(s.candidates).forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics),rawFields(c));candidates.append(card);});box.append(candidates);
+    const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
+    if(unlinkedCandidates.length){
+      const candidates=el("div");
+      unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics),rawFields(c));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("候选结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
     }
 
   }
-  const technical=el("details","record-details");technical.append(el("summary","",t("运行详情")),fieldList([[t("运行"),node.runId],[t("记录更新"),dateText(s?.updated_at||node.row.updated_at)]]));
+  const technical=el("div");technical.append(fieldList([[t("运行"),node.runId],[t("记录更新"),dateText(s?.updated_at||node.row.updated_at)]]));
   for(const [role,model] of Object.entries(object(s?.models))){technical.append(el("h4","",role==="actor"?t("执行模型"):role==="decision_maker"?t("决策模型"):role),rawFields(model));}
   if(s&&!Object.keys(object(s.models)).length)technical.append(empty(t("模型 revision 未报告。")));
+  if(s){
+    for(const [name,loop] of Object.entries(object(s.loops)))technical.append(el("h4","",name==="exploration"?t("探索循环"):t("决策循环")),rawFields(loop));
+    if(list(s.events).length)technical.append(retainedDetails(JSON.stringify([node.runId,"events"]),scope.flowOpen,t("运行事件 · {p0} 条",{p0:list(s.events).length}),eventRecords(list(s.events))));
+    for(const round of list(s.round_results)){const r=el("div");r.append(rawFields(round),comparisonView(round.metrics));technical.append(retainedDetails(JSON.stringify([node.runId,"round",round.round]),scope.flowOpen,t("第 {p0} 轮",{p0:round.round}),r));}
+    const unlinked=list(s.jobs).filter(j=>!list(s.decisions).some(d=>linkedJob(d,s)===j));
+    for(const job of unlinked){const data=el("div");data.append(rawFields(job),metricsDetail(job.metrics));if(historyRows(job).length)data.append(historyDetail(job));technical.append(retainedDetails(JSON.stringify([node.runId,"unlinked",job.job_id]),scope.flowOpen,t("未关联任务"),data));}
+  }
+  if(node.ancestryStatus==="unknown")technical.append(el("p","quiet-note",t("续接关系不完整，暂不认定完整迭代次数。")),rawFields({ancestry_reason:node.ancestryReason}));
+  else technical.append(fieldList([[t("续接次数"),node.iterationDepth]]));
   const parents=runParentIds(s||node.row);
   technical.append(el("h4","",t("运行关联依据")),el("p","quiet-note",parents.length?t("显式引用：{p0}", {p0: parents.join(t("、"))}):t("未报告显式父运行。")));
   if(node.missing.length)technical.append(el("p","quiet-note",t("父引用不在本项目：{p0}", {p0: node.missing.join(t("、"))})));
   if(node.ambiguous.length)technical.append(el("p","quiet-note",t("父 ID 歧义，未连线：{p0}", {p0: node.ambiguous.join(t("、"))})));
   technical.append(el("h4","",t("流程顺序说明")),el("p","quiet-note",t("按已报告时间从早到晚展示，不表示因果。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。")));
-  box.append(technical);return box;
+  box.append(retainedDetails(JSON.stringify([node.runId,"technical"]),scope.flowOpen,t("运行详情"),technical));return box;
 }
 function projectDetail(node, model, scope) {
   if (node.type === "project") {
-    const box = el("div"); box.append(el("p", "eyebrow", t("项目")), el("h3", "", node.title), el("p", "", node.row.description || t("项目说明未报告。"))); const technical=el("details","record-details");technical.append(el("summary","",t("关系说明")),el("p","quiet-note",t("深灰：项目；灰色：运行。实线箭头：显式运行引用；浅线：项目归属。左右顺序按记录更新时间排列，不表示继承或实际开始时间；时间缺失时按运行标识稳定排序。")),el("p","quiet-note",t("图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。")));box.append(technical);return box;
+    const box = el("div"); box.append(el("p", "eyebrow", t("项目")), el("h3", "", node.title), el("p", "", node.row.description || t("项目说明未报告。"))); const technical=el("details","record-details");technical.append(el("summary","",t("关系说明")),el("p","quiet-note",t("根节点固定在左侧。每向右一层表示一次明确的运行续接；同一父运行可以派生多个分支。资料引用不计入迭代深度。")),el("p","quiet-note",t("图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。")));box.append(technical);return box;
   }
   if (node.type === "run") return runDetail(node, scope);
   return el("div");
@@ -856,14 +818,14 @@ async function loadRun(id, scope, force = false) {
   if (!entry) { entry = { status: "idle", snapshot: null, token: 0 }; scope.cache.set(id, entry); }
   if (entry.status === "pending" || (!force && entry.snapshot && entry.status !== "error")) return;
   const controller = new AbortController(), token = ++entry.token;
-  entry.controller = controller; entry.status = "pending"; entry.error = ""; renderProject();
+  entry.controller = controller; entry.status = "pending"; entry.error = ""; if(!entry.snapshot)renderProject();
   const timeout = setTimeout(() => controller.abort(), 8000);
   const current = () => scope === state.activeScope && entry.token === token;
   try {
     const s = state.demo ? state.demoSnapshots.get(id) : await fetchJSON(`/api/runs/${encodeURIComponent(id)}`, controller.signal);
     if (!current() || controller.signal.aborted) return;
     if (s?.schema_version !== 1 || s.run_id !== id) throw uiError("运行快照协议或 ID 不匹配。");
-    entry.snapshot = s; entry.status = "ready";
+    if(JSON.stringify(entry.snapshot)!==JSON.stringify(s))entry.snapshot = s; entry.status = "ready"; entry.errorInfo=null;
   } catch (error) {
     if (!current()) return;
     entry.status = "error"; entry.errorInfo = controller.signal.aborted ? uiError("请求超时。") : error; entry.error = errorText(entry.errorInfo);
@@ -948,22 +910,10 @@ function switchDemo() {
   clearRun();
   state.snapshot = null;
     $("export-report").disabled = true;
-  state.openEvents.clear();
-  state.openDecisions.clear();
-  state.openJobs.clear();
-  state.decisionLimit = 30;
-  state.eventLimit = 30;
   $("demo").textContent = state.demo ? t("返回") : t("示例");
   $("demo").setAttribute("aria-pressed", String(state.demo));
   $("auto-refresh").checked = state.demo ? false : state.auto;
   $("auto-refresh").disabled = state.demo;
-  $("job-filter").value = "all";
-  $("candidate-filter").value = "all";
-  $("event-filter").value = "all";
-  $("event-search").value = "";
-  $("decision-filter").value = "all";
-  $("decision-search").value = "";
-  $("dashboard").hidden = true;
   $("empty").hidden = false;
   refresh();
 }
@@ -980,26 +930,6 @@ $("auto-refresh").addEventListener("change", () => {
 $("run-select").addEventListener("change", () => selectRun($("run-select").value));
 $("project-select").addEventListener("change", () => { state.controller?.abort(); ++state.epoch; state.projectId = $("project-select").value; activateProject(); chooseProjects(state.projects); refresh(); });
 $("project-overview").addEventListener("click", () => selectRun(""));
-$("job-filter").addEventListener("change", renderJobs);
-$("candidate-filter").addEventListener("change", renderCandidates);
-for (const id of ["decision-search", "decision-filter"])
-  $(id).addEventListener(id === "decision-search" ? "input" : "change", () => {
-    state.decisionLimit = 30;
-    renderDecisions();
-  });
-$("more-decisions").addEventListener("click", () => {
-  state.decisionLimit += 30;
-  renderDecisions();
-});
-for (const id of ["event-search", "event-filter"])
-  $(id).addEventListener(id === "event-search" ? "input" : "change", () => {
-    state.eventLimit = 30;
-    renderEvents();
-  });
-$("more-events").addEventListener("click", () => {
-  state.eventLimit += 30;
-  renderEvents();
-});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(state.timer); $("project-graph").graphView?.stopSimulation?.(); }
   else if (state.auto && !state.demo) refresh();
@@ -1016,14 +946,12 @@ function renderLanguage() {
   connection(chrome.connection,chrome.tone);notice(chrome.notice,chrome.noticeError);
   $("empty-title").textContent=copy(chrome.emptyTitle);$("empty-description").textContent=copy(chrome.emptyDescription);
   $("footer-source").textContent=state.demo?t("示例数据 · 静态快照"):t("本地监控 · 只读");
-  if(!state.snapshot)$("execution-title").textContent=t("当前执行");
   if(state.projects.length || state.activeScope)renderSelectors();
   if(state.snapshot)renderSnapshot(state.snapshot);
   renderProject();updateMetricsNavigation();
 }
 $("nav-metrics")?.addEventListener("click",event=>{
   if(!state.runId || !state.snapshot){event.preventDefault();return;}
-  $("dashboard").open=true;
 });
 for(const lang of ["zh","en"])$("lang-"+lang)?.addEventListener("click",()=>RSII18n.setLanguage(lang));
 RSII18n.subscribe(renderLanguage);

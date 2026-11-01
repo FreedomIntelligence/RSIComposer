@@ -50,6 +50,7 @@ function harness(fetcher = async () => { throw new Error("unexpected fetch"); },
   const ctx = vm.createContext({ ResizeObserver, document, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher,
     ...(frames ? { requestAnimationFrame: callback => frames.request(callback), cancelAnimationFrame: id => frames.cancel(id) } : {}) });
   vm.runInContext(i18nSource, ctx);
+  vm.runInContext(fs.readFileSync(`${__dirname}/lineage.js`, "utf8"), ctx);
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
   vm.runInContext('state.auto = false;', ctx);
   if (!fullSnapshot) vm.runInContext('renderSnapshot = function(s) { state.snapshot = s; };', ctx);
@@ -104,25 +105,28 @@ test("same decision/job/directive/candidate IDs in different runs keep their own
   assert.deepEqual(graph.nodes.map(n => n.type), ["project", "run", "run"]);
 });
 
-test("runs follow updated_at left to right without time edges; only explicit run parents connect runs", () => {
+test("run continuation determines horizontal depth; source references do not imply parentage", () => {
   const h = harness(); setup(h, [project("p", [run("c", { updated_at: "invalid", parent_run_id: "missing" }), run("b", { updated_at: "2026-11-01T01:00:00Z", parent_run_id: "a", source_run_ids: ["a", "b", "outside"] }), run("a"), run("tie")])]);
   const graph = model(h);
   assert.equal(graph.edges.filter(e => e.kind === "run-parent").length, 1);
   assert.equal(graph.edges.filter(e => e.kind === "time").length, 0);
-  assert.ok(graph.edges.every(e => ["membership", "run-parent"].includes(e.kind)));
+  assert.ok(graph.edges.every(e => ["membership", "run-parent", "run-source"].includes(e.kind)));
   const runs = graph.nodes.filter(n => n.type === "run");
   assert.deepEqual(runs.map(n => n.runId), ["a", "tie", "b", "c"]);
   assert.deepEqual(runs.map(n => n.layoutOrder), [0, 1, 2, 3]);
-  assert.ok(runs.every((n, i) => i === 0 || n.x > runs[i - 1].x));
+  assert.ok(runs.find(n=>n.runId==="b").x>runs.find(n=>n.runId==="a").x);
+  assert.deepEqual(runs.map(n=>n.depth),[1,1,2,1]);
+  assert.equal(graph.edges.filter(e=>e.kind==="membership").length,3);
   assert.deepEqual(graph.nodes.find(n => n.runId === "b").missing, ["outside"]);
   assert.deepEqual(graph.nodes.find(n => n.runId === "c").missing, ["missing"]);
   const unrelated = harness(); setup(unrelated, [project("p", [run("a", { base_revision: "v1" }), run("b", { base_revision: "v2", objective: "same" })])]);
   assert.equal(model(unrelated).edges.filter(e => e.kind === "run-parent").length, 0);
 });
 
-test("ambiguous or self run references never guess a parent; multiple explicit parents work", () => {
+test("ambiguous or self references never guess a parent; source links remain distinct", () => {
   const h = harness(); setup(h, [project("p", [run("a"), run("b"), run("c", { parent_run_id: "a", source_run_ids: ["a", "b", "c", null, 9] })])]);
-  assert.equal(model(h).edges.filter(e => e.kind === "run-parent").length, 2);
+  assert.equal(model(h).edges.filter(e => e.kind === "run-parent").length, 1);
+  assert.equal(model(h).edges.filter(e => e.kind === "run-source").length, 2);
   setup(h, [project("p", [run("dup"), run("dup"), run("child", { parent_run_id: "dup" })])]);
   assert.equal(model(h).edges.filter(e => e.kind === "run-parent").length, 0);
 });
@@ -283,7 +287,7 @@ test("network layout is deterministic under input reorder and keeps cached coord
   const cached=h.json('networkLayout(graph,new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}])))');
   assert.deepEqual(coords(cached),coords(a));assert.equal(cached.layoutStats.iterations,0);
   const runs = a.nodes.filter(n => n.type === "run").sort((a, b) => a.layoutOrder - b.layoutOrder);
-  assert.ok(runs.every((n, i) => Math.abs(n.x - (230 + i * 140)) <= 25));
+  assert.ok(runs.every((n, i) => Math.abs(n.x - (70 + (i+1) * 180)) <= 25));
   assert.ok(runs.every((n, i) => i === 0 || n.x > runs[i - 1].x));
   const root = a.nodes.find(n => n.type === "project");
   assert.ok(root.x < runs[0].x && Math.abs(root.y - 245) < 35);
@@ -297,7 +301,9 @@ test("project zero starts at the left-hand center and renders its numbered name 
   setup(h, [project("p", [run("a"), run("b", { parent_run_id: "a" }), run("c")])]);
   const graph = model(h), runs = graph.nodes.filter(n => n.type === "run");
   assert.ok(runs.every(n => n.x > graph.nodes[0].x));
-  assert.ok(runs[0].y < 245 && runs[1].y > 245 && runs[2].y < 245);
+  assert.equal(runs[0].depth,1);assert.equal(runs[1].depth,2);assert.equal(runs[2].depth,1);
+  assert.ok(runs[1].x>runs[0].x);assert.ok(runs[2].y>runs[0].y);
+  assert.deepEqual([graph.nodes[0].x,graph.nodes[0].y],[70,245]);
   assertStraightEdges(h);
   assert.equal(findClass(h.get("project-graph"), "linked")[0].attributes["marker-end"], "url(#project-graph-arrow)");
 });
@@ -311,9 +317,9 @@ test("network layout defaults to 64 steps and supports two-step relaxation with 
   assert.notDeepEqual(short.nodes.map(n => [n.x, n.y]), full.nodes.map(n => [n.x, n.y]));
   h.ctx.graph = JSON.parse(JSON.stringify(short));
   const relaxed = h.json('networkLayout(graph, new Map(graph.nodes.map(n => [n.key, {x:n.x,y:n.y}])), {relax:true, pinned:new Set(["a"]), steps:2})');
-  assert.equal(relaxed.layoutStats.iterations, 2);
+  assert.equal(relaxed.layoutStats.iterations, 0);
   assert.deepEqual(relaxed.nodes.find(n => n.key === "a"), short.nodes.find(n => n.key === "a"));
-  assert.notDeepEqual(relaxed.nodes[0], short.nodes[0]);
+  assert.deepEqual(relaxed.nodes[0], short.nodes[0]);
 });
 
 test("large dense graph has finite budget and bounded grid probes; stationary layout does no relaxation", () => {
@@ -353,8 +359,8 @@ test("updated_at order changes relax cached runs even when nodes and edges stay 
   assert.equal(after.topologyChanged, true);
   assert.ok(after.layoutStats.iterations > 0 && after.layoutStats.iterations <= 64);
   assert.deepEqual(runs.map(n => [n.runId, n.layoutOrder]), [["b", 0], ["a", 1]]);
-  assert.ok(runs[0].x < runs[1].x);
-  assert.ok(runs.every((n, i) => Math.abs(n.x - (230 + i * 140)) <= 25));
+  assert.ok(runs[0].treeRow < runs[1].treeRow);
+  assert.ok(runs.every(n => n.depth===1 && Math.abs(n.x - 250) <= 25));
   assert.equal(model(h).layoutStats.iterations, 0);
 });
 
@@ -398,13 +404,13 @@ test("position storage survives reload, rejects malformed coordinates and handle
   const h=harness(),saved=new Map();h.ctx.localStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
   setup(h,[project("p",[run("a")])]);
   h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});state.activeScope.pinned.add(JSON.stringify(["run","a"]));savePositions(state.activeScope)');
-  assert.ok(saved.has('rsisys-runs-v4:' + h.run('state.activeScope.key')));
+  assert.ok(saved.has('rsisys-runs-v5:' + h.run('state.activeScope.key')));
   for (const version of [2, 3]) saved.set(`rsisys-runs-v${version}:legacy`, JSON.stringify([["old", {x:900,y:900}]]));
   assert.equal(h.run('readPositions("legacy").size'), 0);
   const reloaded=harness();reloaded.ctx.localStorage=h.ctx.localStorage;setup(reloaded,[project("p",[run("a")])]);
   assert.deepEqual(model(reloaded).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[801,312]]);
   assert.equal(reloaded.run("state.activeScope.pinned.size"),0);
-  saved.set('rsisys-runs-v4:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
+  saved.set('rsisys-runs-v5:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
   assert.deepEqual(h.json('[...readPositions("bad")]'),[["ok",{x:44,y:55}]]);
   h.ctx.localStorage={getItem(){throw Error("denied");},setItem(){throw Error("full");}};
   assert.equal(h.run('readPositions("denied").size'),0);assert.doesNotThrow(()=>h.run('savePositions(state.activeScope)'));
@@ -646,4 +652,54 @@ test("execution detail keeps review metrics separate from exact current job and 
   assert.doesNotMatch(textOf(findClass(detail,"flow-metrics")[0]),/0\.1/);
   assert.equal(h.json('relatedResults({job_id:"missing",directive_id:"dir"},fixture)').length,0);
   assert.equal(h.json('relatedResults({job_id:"dup"},{jobs:[{job_id:"dup"},{job_id:"dup"}]})').length,0);
+});
+
+test("known research actions have distinct names and custom operations retain their names in both languages",()=>{
+  const h=harness();
+  assert.equal(h.run('actionText(decisionAction({kind:"directive",mode:"configure_prompt"}))'),"调整提示词");
+  assert.equal(h.run('actionText(decisionAction({kind:"operation",operation:"define_recipe"}))'),"定义训练方案");
+  assert.equal(h.run('actionText(decisionAction({kind:"operation",action:"custom.compare"}))'),"custom.compare");
+  assert.equal(h.run('actionText(undefined)'),"未命名决策");
+  h.run('RSII18n.setLanguage("en")');
+  assert.equal(h.run('actionText("configure_prompt")'),"Adjust prompt");
+  assert.equal(h.run('actionText("define_recipe")'),"Define training recipe");
+  assert.equal(h.run('actionText("custom.compare")'),"custom.compare");
+});
+
+test("root cannot be dragged and stays fixed while other nodes relax",()=>{
+  const h=harness(undefined,"",{raf:true});setup(h,[project("p",[run("a"),run("b")])]);
+  const root=findClass(h.get("project-graph"),"graph-node")[0];
+  root.setPointerCapture=()=>{throw Error("fixed root must not capture drag");};
+  root.listeners.pointerdown(pointer(0,0));root.listeners.pointermove(pointer(100,150));root.listeners.pointerup();
+  assert.equal(h.frames.size,0);assert.deepEqual(model(h).nodes.filter(n=>n.type==="project").map(n=>[n.x,n.y]),[[70,245]]);
+  const button=startDrag(h);h.frames.step();button.listeners.pointerup();h.frames.drain();
+  assert.deepEqual(model(h).nodes.filter(n=>n.type==="project").map(n=>[n.x,n.y]),[[70,245]]);
+});
+
+test("unchanged polling reuses run detail DOM without a refreshing message",async()=>{
+  const next=deferred(),snapshot=run("a",{decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",reason:"Choose a short training run"}]});
+  const h=harness(()=>next.promise);setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');
+  const detail=findClass(h.get("project-graph"),"run-detail")[0],record=findClass(detail,"record-details")[0];record.open=true;
+  const pending=h.run('loadRun("a",state.activeScope,true)');
+  assert.equal(findClass(h.get("project-graph"),"run-detail")[0],detail);
+  assert.doesNotMatch(textOf(detail),/正在刷新|正在读取/);
+  next.resolve(response(JSON.parse(JSON.stringify(snapshot))));await pending;
+  assert.equal(findClass(h.get("project-graph"),"run-detail")[0],detail);assert.equal(record.open,true);
+  assert.equal(h.run('state.activeScope.cache.get("a").snapshot'),h.ctx.fixture);
+});
+
+test("new feedback preserves native disclosures and selected step with a stable decision identity",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",timestamp:"2026-11-01T00:00:02Z"}]}));h.run('selectRun("a")');
+  const detail=findClass(h.get("project-graph"),"graph-detail")[0];
+  // Real DOM selectors, represented by the existing fake-DOM tree for this test.
+  detail.querySelectorAll=()=>findClass(detail,"record-details").filter(d=>d.dataset.retainKey);
+  detail.querySelector=()=>findClass(detail,"flow-map")[0];
+  const disclosure=findClass(detail,"record-details")[0];disclosure.open=true;
+  const nav=findClass(detail,"flow-map")[0];nav.scrollLeft=123;
+  h.run('state.activeScope.cache.get("a").snapshot={...state.snapshot,decisions:[{decision_id:"earlier",kind:"directive",mode:"configure_prompt",timestamp:"2026-11-01T00:00:01Z"},{...state.snapshot.decisions[0],feedback:{summary:"Recipe saved"}}]}; renderProject()');
+  assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"d");
+  assert.match(textOf(findClass(detail,"flow-step")[0]),/Recipe saved/);
+  assert.equal(findClass(detail,"record-details").find(d=>d.dataset.retainKey===disclosure.dataset.retainKey).open,true);
+  assert.equal(findClass(detail,"flow-map")[0].scrollLeft,123);
 });

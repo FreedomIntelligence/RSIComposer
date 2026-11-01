@@ -8,13 +8,14 @@
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/style.css" />
   <script src="/i18n.js" defer></script>
+  <script src="/lineage.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main" data-i18n="跳至内容">跳至内容</a>
   <header class="masthead">
     <a class="wordmark" href="/" aria-label="RSISys 首页" data-i18n-aria-label="RSISys 首页">RSISys<span>.</span></a>
-    <div class="header-actions"><nav aria-label="页面导航" data-i18n-aria-label="页面导航"><a href="#projects" data-i18n="项目">项目</a><a id="nav-metrics" href="#jobs" data-i18n="指标">指标</a><button id="demo" class="text-button" aria-pressed="false">示例</button></nav><div class="language-switch" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言"><button id="lang-zh" type="button" lang="zh-CN" aria-pressed="true">中</button><button id="lang-en" type="button" lang="en" aria-pressed="false">EN</button></div></div>
+    <div class="header-actions"><nav aria-label="页面导航" data-i18n-aria-label="页面导航"><a href="#projects" data-i18n="项目">项目</a><a id="nav-metrics" href="#execution-flow" data-i18n="流程">流程</a><button id="demo" class="text-button" aria-pressed="false">示例</button></nav><div class="language-switch" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言"><button id="lang-zh" type="button" lang="zh-CN" aria-pressed="true">中</button><button id="lang-en" type="button" lang="en" aria-pressed="false">EN</button></div></div>
   </header>
   <main id="main">
     <div class="toolbar">
@@ -37,30 +38,6 @@
       <p id="empty-description">尚无运行快照。</p>
       <button id="empty-demo" data-i18n="浏览示例数据">浏览示例数据</button>
     </section>
-    <details id="dashboard" class="secondary-section" hidden><summary data-i18n="指标与记录">指标与记录</summary>
-      <section id="overview" aria-labelledby="objective">
-        <div class="run-heading"><div><p id="run-label" class="eyebrow"></p><h2 id="objective"></h2></div><div class="run-meta"><span id="run-status"></span><p id="updated"></p></div></div>
-        <section id="execution" aria-labelledby="execution-title"><div class="section-heading"><h2 id="execution-title">当前执行</h2><span id="workflow-summary"></span></div><div id="current-execution"></div></section>
-      </section>
-      <section id="decisions" class="section" aria-labelledby="decisions-title">
-        <div class="section-heading"><h2 id="decisions-title"><span data-i18n="决策与反馈">决策与反馈</span> <span id="decision-count"></span></h2>
-          <div class="decision-tools"><input id="decision-search" type="search" placeholder="搜索决策或反馈" data-i18n-placeholder="搜索决策或反馈" aria-label="搜索决策或反馈" data-i18n-aria-label="搜索决策或反馈" /><select id="decision-filter" aria-label="决策类型" data-i18n-aria-label="决策类型"><option value="all" data-i18n="全部决策">全部决策</option><option value="directive" data-i18n="执行指令">执行指令</option><option value="operation" data-i18n="研究操作">研究操作</option><option value="review" data-i18n="运行复查">运行复查</option><option value="finish" data-i18n="结束决策">结束决策</option></select></div>
-        </div>
-        <div id="decision-list"></div><button id="more-decisions" class="more-button" hidden data-i18n="显示更多决策">显示更多决策</button>
-      </section>
-      <section id="jobs" class="section" aria-labelledby="jobs-title">
-        <div class="section-heading"><h2 id="jobs-title"><span data-i18n="训练与评测">训练与评测</span> <span id="jobs-count"></span></h2><select id="job-filter" aria-label="任务状态" data-i18n-aria-label="任务状态"><option value="all" data-i18n="全部状态">全部状态</option><option value="active" data-i18n="进行中">进行中</option><option value="completed" data-i18n="已完成">已完成</option><option value="failed" data-i18n="失败或取消">失败或取消</option><option value="other" data-i18n="其他">其他</option></select></div>
-        <div id="job-list"></div>
-      </section>
-      <details class="secondary-section" id="results-disclosure"><summary data-i18n="候选与轮次结果">候选与轮次结果</summary>
-        <section id="candidates" class="section" aria-labelledby="candidates-title"><div class="section-heading"><h2 id="candidates-title"><span data-i18n="候选评测">候选评测</span> <span id="candidate-count"></span></h2><select id="candidate-filter" aria-label="候选状态" data-i18n-aria-label="候选状态"><option value="all" data-i18n="全部状态">全部状态</option><option value="accepted" data-i18n="已采纳">已采纳</option><option value="pending" data-i18n="待评估">待评估</option><option value="rejected" data-i18n="未采纳">未采纳</option><option value="other" data-i18n="其他">其他</option></select></div><div id="candidate-list"></div></section>
-        <section id="rounds" class="section" aria-labelledby="rounds-title"><div class="section-heading"><h2 id="rounds-title"><span data-i18n="轮次结果">轮次结果</span> <span id="round-count"></span></h2></div><div id="round-list" class="round-grid"></div></section>
-      </details>
-      <details class="secondary-section"><summary data-i18n="运行详情与事件">运行详情与事件</summary>
-        <div id="run-info"></div>
-        <section id="events" class="section" aria-labelledby="events-title"><div class="section-heading"><h2 id="events-title"><span data-i18n="事件">事件</span> <span id="event-count"></span></h2><div class="event-tools"><input id="event-search" type="search" placeholder="搜索事件" data-i18n-placeholder="搜索事件" aria-label="搜索事件" data-i18n-aria-label="搜索事件" /><select id="event-filter" aria-label="事件类型" data-i18n-aria-label="事件类型"><option value="all" data-i18n="全部类型">全部类型</option></select></div></div><div id="event-list"></div><button id="more-events" class="more-button" hidden data-i18n="显示更多事件">显示更多事件</button></section>
-      </details>
-    </details>
   </main>
   <span id="footer-source" hidden></span>
   <noscript><p class="notice" data-i18n="请启用 JavaScript 以读取监控状态。">请启用 JavaScript 以读取监控状态。</p></noscript>

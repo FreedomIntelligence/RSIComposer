@@ -326,7 +326,7 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.get("/api/runs", headers={"Sec-Fetch-Site": "cross-site"})[0], 403)
 
     def test_static_allowlist_head_and_demo(self):
-        for path in ["/", "/style.css", "/i18n.js", "/app.js", "/demo.json"]:
+        for path in ["/", "/style.css", "/i18n.js", "/lineage.js", "/app.js", "/demo.json"]:
             self.assertEqual(self.get(path)[0], 200)
         self.assertEqual(self.get("/", method="HEAD")[2], b"")
         self.assertEqual(json.loads(self.get("/demo.json")[2])["run_id"], "example-dual-loop-001")
