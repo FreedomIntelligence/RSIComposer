@@ -35,18 +35,24 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 
 Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the current page, selected experiment and decision, graph scroll and expanded records. Reported model text and logs stay verbatim.
 
-## 多主机部署约定
+## 统一监控入口
 
-两个正式入口共用仓库 `web/` 的同一版本，实验数据保持按主机读取：
+正式入口统一为 **`http://127.0.0.1:18777/`**，通过 SSH 访问 modelmate 的
+`127.0.0.1:8877`。旧地址 `http://localhost:8767/` 保留兼容隧道，也指向同一服务，
+不再读取 lion 的独立监控服务。两个入口应返回相同前端文件及实验清单。
 
-| 浏览器入口 | 监控服务 | 部署目录 | 数据目录 |
-|---|---|---|---|
-| `http://localhost:8767/` | lion `127.0.0.1:8765` | `/home/jovyan/projects/RSISys/web` | 同仓库 `runs/` |
-| `http://127.0.0.1:18777/` | modelmate `127.0.0.1:8877` | modelmate 的 `RSISys/monitor-ui/web` | `RSISys/runs/` |
+部署目录是 modelmate 的 `RSISys/monitor-ui/web`，数据目录是 `RSISys/runs/`。
+前端源码仍以本仓库 `web/` 为准；发布时同步 `server.py` 和 `static/`，服务端投影
+变化时只重启该监控进程。`monitor-ui/version.json` 记录前端来源版本与文件摘要，
+`process.json` 记录实际 PID；重启前核验身份并保留旧前端备份。
 
-前端发布须同时更新两个部署的 `web/server.py` 和 `web/static/`，核对首页、app.js、decisions.js、style.css、i18n.js 的内容一致；服务端投影变化时仅重启监控服务。modelmate 的 `monitor-ui/version.json` 记录前端来源版本及文件摘要，`process.json` 记录实际监控 PID。更新前核验进程身份，保留旧前端备份。
+lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记录附有
+`monitor-import.json`，保留原始主机、目录和文件摘要。这是历史监控元数据的导入，
+不是模型权重、训练代码或运行进程的迁移，也不是自动双向同步。后续新实验需把监控
+输出发布到统一数据目录，不能默认其他主机的新增 run 会自动出现。
 
-研究运行的 `runs/<run>/code` 是冻结实验代码，不作为前端发布源；更新监控不能覆盖它、重启模型服务或改变运行预算。两个入口不是数据镜像，列表不同不表示前端版本不同。`8769` / `8770` 等本地预览端口不作为会话间共享入口。
+研究运行的 `runs/<run>/code` 是冻结代码，不作为前端发布源。更新监控不覆盖冻结代码、
+重启模型或重置预算。`8769` / `8770` 等临时预览端口不作为会话间共享入口。
 
 ## 数据与交互
 
