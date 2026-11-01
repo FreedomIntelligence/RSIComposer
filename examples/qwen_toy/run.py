@@ -37,8 +37,10 @@ from rsisys.loops.decision_making.action_space.directives import (
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
 from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.harness.research import ResearchAgenda
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.decision_making.harness.tools.queries import QueryTools
+from rsisys.loops.decision_making.harness.tools.research import ResearchTools
 from rsisys.loops.decision_making.harness.tools.workspace import WorkspaceTools
 from rsisys.loops.decision_making.loop import DecisionMakingLoop
 from rsisys.loops.exploration.action_space import ActionProposal, EchoActionSpace
@@ -305,15 +307,19 @@ def run(args):
                        if args.permissions else ActionPermissions.unrestricted())
         workspace = WorkspaceTools({'run': root, 'source': Path(__file__).resolve().parents[2] / 'src',
                                     'example': Path(__file__).resolve().parent}, max_bytes=2048, max_output_bytes=8192)
-        definitions = (*queries.definitions, *workspace.definitions)
-        bindings = {**queries.bindings, **workspace.bindings}
+        memory = DecisionMemory(root / 'decision_memory.json')
+        agenda = ResearchAgenda(root / 'decision_research.json')
+        research = ResearchTools(agenda, memory, experience=experience)
+        definitions = (*queries.definitions, *workspace.definitions, *research.definitions)
+        bindings = {**queries.bindings, **workspace.bindings, **research.bindings}
         space = ModularDecisionActionSpace(definitions, directives=catalog, permissions=permissions)
         budget = ResearchBudget(args.rounds, args.max_directives, args.max_model_calls,
+                                max_output_tokens=args.max_output_tokens,
                                 max_context_chars=args.max_context_chars)
         policy = ResearchDecisionPolicy(models, base, catalog, monitor, space, budget=budget,
                                         review_hint=args.review_after_seconds)
         decision = DefaultDecisionHarness(policy, BoundDecisionTools(bindings), experience,
-            memory=DecisionMemory(root / 'decision_memory.json'), memory_limit=16, experience_limit=16)
+            memory=memory, research_agenda=agenda, memory_limit=16, experience_limit=16)
         runner = Runner(DecisionMakingLoop(decision, space), exploration_loop,
                         run_policy=make_run_policy(args), cleanup_timeout_seconds=30)
         status, error_code, remote_may_run = 'running', None, False
@@ -496,6 +502,8 @@ def parse_args(argv=None):
                         help='Training submission budget, not a prescribed number of rounds')
     parser.add_argument('--max-directives', type=int, default=16)
     parser.add_argument('--max-model-calls', type=int, default=32)
+    parser.add_argument('--max-output-tokens', type=int, default=200,
+                        help='Positive researcher output-token limit per model call')
     parser.add_argument('--max-context-chars', type=int, default=20000)
     parser.add_argument('--permissions', type=Path, help='External ActionPermissions JSON; default all installed capabilities')
     parser.add_argument('--run-dir', type=Path, default=Path('runs/qwen-toy'))
@@ -522,8 +530,9 @@ def parse_args(argv=None):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f'{name} must be finite and positive')
-    if min(args.max_steps, args.max_directives, args.max_model_calls, args.max_context_chars) < 1:
-        parser.error('step, directive and model-call budgets must be positive')
+    if min(args.max_steps, args.max_directives, args.max_model_calls,
+           args.max_output_tokens, args.max_context_chars) < 1:
+        parser.error('step, directive, model-call, output-token and context-character budgets must be positive')
     if args.run_seconds is not None and (not math.isfinite(args.run_seconds) or args.run_seconds <= 0):
         parser.error('--run-seconds must be finite and positive')
     if args.run_mode == 'time' and args.run_seconds is None:

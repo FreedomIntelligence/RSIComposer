@@ -7,10 +7,10 @@ Decision-maker 自己选择研究步骤；没有 train → evaluate → apply �
 ## 能力、权限与预算
 
 - 系统指令：train、evaluate、apply_candidate、execute、configure_prompt。
-- 研究操作：已有实验查询，以及 workspace_list / workspace_read / workspace_search。默认只挂载本次 run、框架 src 和本例源码三个命名工作区；远端 worker 的未共享文件仍需后端显式暴露。
+- 研究操作：已有实验查询、workspace_list / workspace_read / workspace_search，以及默认研究笔记工具 research_read / research_patch / research_archive。笔记工具与 DefaultDecisionHarness 共享 agenda 和 DecisionMemory；archive 可分页读取完整历史、工具回执、研究笔记修订和 experience。模型自行决定是否维护笔记，笔记不代表已验证结论。默认只挂载本次 run、框架 src 和本例源码三个命名工作区；远端 worker 的未共享文件仍需后端显式暴露。
 - 默认开放所有已安装操作；`--permissions FILE` 使用 ActionPermissions JSON 覆盖权限。文件工具的路径约束不替代 OS / 容器沙箱。
 - `--max-trainings` 默认 2，是训练提交上限；兼容旧参数名 `--rounds`，不再表示必须执行的轮数。当前 worker 最多允许两次训练尝试。
-- `--max-directives` 默认 16；`--max-model-calls` 默认 32，包含研究决策、复查及解析失败重试；单次输出上限 200 tokens。`--max-context-chars` 默认 20000，按字符限制输入视图：先移除最旧记录，必要时省略大段 details/data 并明确标注，可查询完整来源；这不是 tokenizer 精确 token 计数。原始记录不裁剪。另有整体时间、HTTP 超时及推进 tick 预算。
+- `--max-directives` 默认 16；`--max-model-calls` 默认 32，包含研究决策、复查及解析失败重试；`--max-output-tokens` 必须为正整数，默认保留 200 tokens，可显式设为 512 或 1024，为 research_patch 等较长 JSON 响应留出空间。`--max-context-chars` 默认 20000，按字符限制输入视图：先移除最旧记录，必要时省略大段 details/data 并明确标注，可查询完整来源；这不是 tokenizer 精确 token 计数。原始记录不裁剪。另有整体时间、HTTP 超时及推进 tick 预算。
 - `--review-after-seconds` 仅提供提示，首次复查时间由模型写入 Directive，后续时间由 ReviewDecision 决定。`--require-training-review` 是可选的运行结果检查，不替模型插入复查。
 
 训练次数上限会隐藏进一步 train 能力；实验指令预算用尽后仍可在剩余模型调用预算内查询或结束。模型直接 finish 会如实记录零训练，不会被宣称为训练链路成功。跨研究周期重启时，训练提交、实验指令、模型调用及验证重试的预算累计保留，不重置；上下文、权限与 worker 上限继续生效。
@@ -80,7 +80,7 @@ worker 为每个候选保存独立 LoRA adapter；从父候选训练时复制父
 - result.json：模型选择的 `experiments` 序列、状态、预算、模型调用次数、训练提交次数、候选与 Actor 版本、取消确认，以及 `run_mode`、`run_stop`、`stop_reason`、`goal_reached`。
 - round_results / round-N.json：每次 Actor execute 的观察记录。保留旧字段名供前端读取，**不是预设实验轮次或训练次数**。
 - monitor.json：研究操作、实验指令、复查、任务进度、候选与版本，以及同样的停止原因和清理状态，供[监控前端](../../web/README.md)读取。触发目标停止的最后一次反馈仍记录为完整实验，并更新候选指标。
-- experience.sqlite3：系统反馈；两份 memory JSON：各自任务历史；artifacts：轻量引用对应的产物。
+- experience.sqlite3：系统反馈；两份 memory JSON：各自任务历史；decision_research.json：模型首次 patch 后保存的完整研究笔记和修订日志；artifacts：轻量引用对应的产物。
 - worker 的 adapter、训练/评测结果和日志由 worker 数据目录保留。
 
 `completed` 表示研究者选择结束，或配置目标已达成并完成清理；只有 `stop_reason=goal_reached` 才令 `goal_reached=true`。RunPolicy 时间预算到期且清理已确认时记录 `stopped` / `budget_exhausted`，CLI 返回 0；**stopped 不表示目标达成**。目标模式的 `--run-seconds` 到期也使用此语义。默认 researcher 模式保持 `completed` / `researcher_finished`，不宣称目标达成。是否训练、评测、应用以及是否提升，必须查看具体证据。
