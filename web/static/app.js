@@ -100,19 +100,19 @@ function hashUnit(key) {
 }
 function readPositions(key) {
   try {
-    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v3:${key}`) || "[]");
+    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v4:${key}`) || "[]");
     return new Map((Array.isArray(rows) ? rows : []).slice(-LAYOUT.cache).filter(r => Array.isArray(r) && typeof r[0] === "string" && number(r[1]?.x) && number(r[1]?.y) && r[1].x >= 36 && r[1].y >= 36 && r[1].x <= 100000 && r[1].y <= 100000));
   } catch { return new Map(); }
 }
 function savePositions(scope) {
-  try { localStorage.setItem(`rsisys-runs-v3:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
+  try { localStorage.setItem(`rsisys-runs-v4:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
 }
-function networkLayout(model, positions = new Map(), { relax = false, pinned = new Set() } = {}) {
+function networkLayout(model, positions = new Map(), { relax = false, pinned = new Set(), steps = LAYOUT.iterations } = {}) {
   const ordered = model.nodes.slice().sort((a,b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const byKey = new Map(ordered.map(n => [n.key,n])), anchors = ordered.filter(n => n.type === "run"), fresh = new Set();
-  const center = { x: 70, y: 120 };
+  const center = { x: 70, y: 245 };
   anchors.sort((a,b)=>(a.layoutOrder??0)-(b.layoutOrder??0)||(a.key<b.key?-1:a.key>b.key?1:0));
-  const targets = new Map(anchors.map((n,i)=>[n.key,{x:230+i*140,y:245}]));
+  const targets = new Map(anchors.map((n,i)=>[n.key,{x:230+i*140,y:245+(i%2?35:-35)}]));
   for(const n of ordered.filter(n=>n.type==="project"))targets.set(n.key,center);
   const initialize = (n, origin, radius, angle) => {
     const cached = positions.get(n.key);
@@ -129,7 +129,7 @@ function networkLayout(model, positions = new Map(), { relax = false, pinned = n
   }
   const edgeOrder = e => JSON.stringify([e.from,e.to,e.kind]);
   const edges = model.edges.slice().sort((a,b) => edgeOrder(a) < edgeOrder(b) ? -1 : edgeOrder(a) > edgeOrder(b) ? 1 : 0).map(e => ({ ...e, a: byKey.get(e.from), b: byKey.get(e.to) })).filter(e => e.a && e.b);
-  const iterations = fresh.size ? Math.min(LAYOUT.iterations, Math.max(1, Math.floor(LAYOUT.budget / Math.max(1, ordered.length + edges.length)))) : 0;
+  const iterations = fresh.size ? Math.min(LAYOUT.iterations, Math.max(1, steps), Math.max(1, Math.floor(LAYOUT.budget / Math.max(1, ordered.length + edges.length)))) : 0;
   let comparisons = 0;
   for (let step = 0; step < iterations; step++) {
     const grid = new Map(), forces = new Map();
@@ -184,6 +184,7 @@ function graphNeighborhood(model, key) {
 function renderGraph(host, model, key, onSelect, detailFor) {
   const previous = host.graphView, same = previous?.key === key;
   previous?.observer?.disconnect();
+  previous?.stopSimulation?.();
   const view = same ? previous : { key, autoFit: true, scale: 1, selected: model.nodes.find(n => n.selected)?.key || "project-root", left: 0, top: 0 };
   if (same) { view.left = previous.viewport.scrollLeft; view.top = previous.viewport.scrollTop; }
   const focusedKey = host.contains(document.activeElement) ? document.activeElement?.dataset.nodeKey : null;
@@ -197,7 +198,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const marker = svgEl("marker",{ id:`${host.id}-arrow`,viewBox:"0 0 8 8",refX:18,refY:4,markerWidth:5,markerHeight:5,orient:"auto" });
   marker.append(svgEl("path",{ d:"M0,0 L8,4 L0,8",fill:"context-stroke" })); const defs = svgEl("defs"); defs.append(marker); lines.append(defs);
   const byKey = new Map(model.nodes.map(n => [n.key,n])), paths = [], incident = new Map(), buttons = new Map();
-  const draw = ({ edge,path }) => { const a=byKey.get(edge.from),b=byKey.get(edge.to); path.setAttribute("d",edge.kind==="membership" ? `M${a.x},${a.y} C${a.x},${a.y+65} ${b.x},${b.y-65} ${b.x},${b.y}` : `M${a.x},${a.y} Q${(a.x+b.x)/2},${Math.min(a.y,b.y)-55} ${b.x},${b.y}`); };
+  const draw = ({ edge,path }) => { const a=byKey.get(edge.from),b=byKey.get(edge.to); path.setAttribute("d",`M${a.x},${a.y} L${b.x},${b.y}`); };
   for (const edge of model.edges) {
     if (!byKey.has(edge.from) || !byKey.has(edge.to)) continue;
     const path = svgEl("path",{ class:`graph-edge ${edge.kind === "time" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}` });
@@ -220,7 +221,42 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     if (notify) onSelect?.(node);
   };
   const place = node => { const button=buttons.get(node.key); button.style.left=`${node.x}px`; button.style.top=`${node.y}px`; };
-  let nodeDrag=null, suppressClick="";
+  let nodeDrag=null, suppressClick="", animation=null, heat=0;
+  const positions = () => new Map(model.nodes.map(n=>[n.key,{x:n.x,y:n.y}]));
+  const cachePositions = () => {
+    const scope=state.activeScope;if(scope?.key!==key)return;
+    for(const n of model.nodes)scope.positions.set(n.key,{x:n.x,y:n.y});
+    savePositions(scope);
+  };
+  view.stopSimulation=()=>{
+    const active=view.simulating || animation!==null;
+    if(animation!==null && typeof cancelAnimationFrame!=="undefined")cancelAnimationFrame(animation);
+    animation=null;heat=0;view.simulating=false;view.dragging=false;nodeDrag=null;if(active)cachePositions();
+  };
+  const simulate = () => {
+    const scope=state.activeScope;
+    const pinned=new Set(nodeDrag?.moved?[nodeDrag.node.key]:(scope?.key===key?scope.pinned:[]));
+    networkLayout(model,positions(),{relax:true,pinned,steps:2});
+    for(const n of model.nodes)place(n);
+    for(const item of paths)draw(item);
+    // Expand the canvas without changing its camera during dragging/settling.
+    frame.right=Math.max(frame.right,...model.nodes.map(n=>n.x+65));
+    frame.bottom=Math.max(frame.bottom,...model.nodes.map(n=>n.y+65));
+    width=frame.right-frame.left;height=frame.bottom-frame.top;resize();
+    if(scope?.key===key)for(const n of model.nodes)scope.positions.set(n.key,{x:n.x,y:n.y});
+  };
+  const tick = () => {
+    animation=null;
+    if(!viewport.isConnected || document.hidden){view.stopSimulation();return;}
+    simulate();heat--;
+    if(heat>0)animation=requestAnimationFrame(tick);
+    else {view.simulating=false;cachePositions();if(view.pendingRender&&!view.dragging){view.pendingRender=false;renderProject();}}
+  };
+  const reheat = (frames=40) => {
+    if(typeof requestAnimationFrame==="undefined"){simulate();cachePositions();return;}
+    heat=frames;view.simulating=true;
+    if(animation===null)animation=requestAnimationFrame(tick);
+  };
   for (const node of model.nodes) {
     const button=el("button",`graph-node ${node.type}`); button.type="button"; button.dataset.nodeKey=node.key;
     button.setAttribute("aria-pressed",String(node.key===view.selected));
@@ -242,23 +278,35 @@ function renderGraph(host, model, key, onSelect, detailFor) {
       const dx=(e.clientX-nodeDrag.x)/view.scale,dy=(e.clientY-nodeDrag.y)/view.scale;
       if(Math.hypot(e.clientX-nodeDrag.x,e.clientY-nodeDrag.y)>4)nodeDrag.moved=true;
       if(!nodeDrag.moved)return;
-      node.x=Math.max(36,nodeDrag.left+dx); node.y=Math.max(36,nodeDrag.top+dy); place(node);
+      const scope=state.activeScope;if(scope?.key===key)scope.pinned.clear();
+      node.x=Math.max(36,nodeDrag.left+dx); node.y=Math.max(36,nodeDrag.top+dy);
+      const root=model.nodes.find(n=>n.type==="project");
+      if(node.type==="project")node.x=Math.min(node.x,Math.min(...model.nodes.filter(n=>n.type==="run").map(n=>n.x))-90);
+      else if(root)node.x=Math.max(root.x+90,node.x);
+      place(node);
       for(const item of incident.get(node.key)||[])draw(item);
       frame.right=Math.max(frame.right,node.x+65);frame.bottom=Math.max(frame.bottom,node.y+65);
-      width=frame.right-frame.left;height=frame.bottom-frame.top;resize();
+      width=frame.right-frame.left;height=frame.bottom-frame.top;resize();reheat();
     });
     const finish = () => {
       if(nodeDrag?.node!==node)return;
-      if(nodeDrag.moved){view.autoFit=false;view.frame={...frame};suppressClick=node.key;const scope=state.activeScope;if(scope?.key===key){scope.positions.set(node.key,{x:node.x,y:node.y});scope.pinned ||= new Set();scope.pinned.add(node.key);scope.needsRelax=true;savePositions(scope);view.pendingRender=true;}}
+      const moved=nodeDrag.moved;
+      if(moved){
+        view.autoFit=false;view.frame={...frame};suppressClick=node.key;
+        const scope=state.activeScope;if(scope?.key===key){scope.pinned.clear();scope.pinned.add(node.key);cachePositions();}
+      }
       nodeDrag=null;view.dragging=false;
-      if(view.pendingRender){view.pendingRender=false;renderProject();}
+      if(moved)reheat(18);
+      if(view.pendingRender&&!view.simulating){view.pendingRender=false;renderProject();}
     };
     button.addEventListener("pointerup",finish);button.addEventListener("pointercancel",finish);button.addEventListener("lostpointercapture",finish);
     buttons.set(node.key,button);place(node);plane.append(button);
   }
   const resize=()=>{
-    offsetX=Math.max(0,(viewport.clientWidth-width*view.scale)/2)-frame.left*view.scale;
-    offsetY=Math.max(0,(viewport.clientHeight-height*view.scale)/2)-frame.top*view.scale;
+    if(!view.dragging&&!view.simulating){
+      offsetX=Math.max(0,(viewport.clientWidth-width*view.scale)/2)-frame.left*view.scale;
+      offsetY=Math.max(0,(viewport.clientHeight-height*view.scale)/2)-frame.top*view.scale;
+    }
     plane.style.width=`${frame.right}px`;plane.style.height=`${frame.bottom}px`;
     plane.style.transform=`translate(${offsetX}px,${offsetY}px) scale(${view.scale})`;
     lines.setAttribute("width",frame.right);lines.setAttribute("height",frame.bottom);
@@ -588,6 +636,7 @@ function activateProject() {
   if (state.activeScope) {
     state.activeScope.view = $("project-graph").graphView;
     state.activeScope.view?.observer?.disconnect();
+    state.activeScope.view?.stopSimulation?.();
     for (const entry of state.activeScope.cache.values()) abortEntry(entry);
   }
   let scope = state.scopes.get(key);
@@ -598,7 +647,7 @@ function activateProject() {
 }
 // Build only evidenced relationships; geometry is handled separately by networkLayout.
 function projectModel(project, scope) {
-  const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: project.name, label: "项目", x: 20, y: 90 }], edges = [];
+  const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: `0 · ${project.name}`, label: "项目", x: 20, y: 90 }], edges = [];
   const ids = new Map();
   runs.forEach((row, i) => {
     const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
@@ -728,7 +777,7 @@ function setSelectedRun(id, scope) {
   }
 }
 function renderProject() {
-  if ($("project-graph").graphView?.dragging) { $("project-graph").graphView.pendingRender = true; return; }
+  if ($("project-graph").graphView?.dragging || $("project-graph").graphView?.simulating) { $("project-graph").graphView.pendingRender = true; return; }
   const project = selectedProject(); $("projects").hidden = !project;
   if (!project) return;
   const scope = state.activeScope || activateProject(), model = projectModel(project, scope);
@@ -864,6 +913,7 @@ function switchDemo() {
   if (state.activeScope) {
     state.activeScope.view = $("project-graph").graphView;
     state.activeScope.view?.observer?.disconnect();
+    state.activeScope.view?.stopSimulation?.();
     for (const entry of state.activeScope.cache.values()) abortEntry(entry);
     state.activeScope = null;
   }
@@ -932,7 +982,7 @@ $("more-events").addEventListener("click", () => {
   renderEvents();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) clearTimeout(state.timer);
+  if (document.hidden) { clearTimeout(state.timer); $("project-graph").graphView?.stopSimulation?.(); }
   else if (state.auto && !state.demo) refresh();
 });
 refresh();

@@ -15,7 +15,27 @@ class Element {
   contains() { return false; }
   focus() {}
 }
-function harness(fetcher = async () => { throw new Error("unexpected fetch"); }, search = "") {
+function fakeRAF() {
+  const pending = new Map(), cancelled = []; let next = 0, time = 0;
+  return {
+    request(callback) { const id = ++next; pending.set(id, callback); return id; },
+    cancel(id) { cancelled.push(id); pending.delete(id); },
+    get size() { return pending.size; },
+    get ids() { return [...pending.keys()]; },
+    cancelled,
+    step() {
+      time += 1000 / 60;
+      for (const [id, callback] of [...pending]) if (pending.delete(id)) callback(time);
+    },
+    drain(limit = 100) {
+      let frames = 0;
+      while (pending.size && frames < limit) { this.step(); frames++; }
+      assert.equal(pending.size, 0, `simulation must stop within ${limit} frames`);
+      return frames;
+    },
+  };
+}
+function harness(fetcher = async () => { throw new Error("unexpected fetch"); }, search = "", { raf = false } = {}) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) { const e = new Element(); e.id = id; elements.set(id, e); } return elements.get(id); };
   const observers = [];
@@ -24,10 +44,13 @@ function harness(fetcher = async () => { throw new Error("unexpected fetch"); },
     observe(target) { this.target = target; }
     disconnect() { this.disconnected = true; }
   }
-  const ctx = vm.createContext({ ResizeObserver, document: { getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), addEventListener() {}, hidden: false }, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher });
+  const documentListeners = {}, document = { getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), addEventListener(k, f) { documentListeners[k] = f; }, hidden: false };
+  const frames = raf ? fakeRAF() : null;
+  const ctx = vm.createContext({ ResizeObserver, document, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher,
+    ...(frames ? { requestAnimationFrame: callback => frames.request(callback), cancelAnimationFrame: id => frames.cancel(id) } : {}) });
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
   vm.runInContext('state.auto = false; renderSnapshot = function(s) { state.snapshot = s; };', ctx);
-  return { ctx, get, observers, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
+  return { ctx, get, observers, frames, document, documentListeners, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
 }
 const run = (id, extra = {}) => ({ schema_version: 1, run_id: id, updated_at: "2026-11-01T00:00:00Z", ...extra });
 const project = (id, runs) => ({ project_id: id, name: id, runs });
@@ -229,6 +252,20 @@ function descendants(node) { return [node,...node.children.flatMap(descendants)]
 function textOf(node) { return [node.textContent||"",...node.children.map(textOf)].join(" "); }
 function cssClass(node,name) { return (node.className||node.attributes.class||"").split(" ").includes(name); }
 function findClass(node,name) { return descendants(node).filter(n=>cssClass(n,name)); }
+const pointer = (clientX, clientY) => ({ button: 0, clientX, clientY, pointerId: 1, stopPropagation() {} });
+function graphButton(h, id) { return findClass(h.get("project-graph"), "graph-node").find(n => n.dataset.nodeKey === JSON.stringify(["run", id])); }
+function graphPositions(h) { return findClass(h.get("project-graph"), "graph-node").map(n => [n.dataset.nodeKey, parseFloat(n.style.left), parseFloat(n.style.top)]); }
+function startDrag(h, id = "a") {
+  const button = graphButton(h, id); button.setPointerCapture = () => {};
+  button.listeners.pointerdown(pointer(10, 20)); button.listeners.pointermove(pointer(40, 75));
+  return button;
+}
+function assertStraightEdges(h) {
+  const positions = new Map(graphPositions(h).map(([key, x, y]) => [key, `${x},${y}`]));
+  const edges = model(h).edges, paths = findClass(h.get("project-graph"), "graph-edge");
+  assert.equal(paths.length, edges.length);
+  paths.forEach((path, i) => assert.equal(path.attributes.d, `M${positions.get(edges[i].from)} L${positions.get(edges[i].to)}`));
+}
 
 test("network layout is deterministic under input reorder and keeps cached coordinates without further simulation", () => {
   const h=harness();
@@ -246,7 +283,34 @@ test("network layout is deterministic under input reorder and keeps cached coord
   assert.ok(runs.every((n, i) => Math.abs(n.x - (230 + i * 140)) <= 25));
   assert.ok(runs.every((n, i) => i === 0 || n.x > runs[i - 1].x));
   const root = a.nodes.find(n => n.type === "project");
-  assert.ok(root.x < runs[0].x && runs.every(n => root.y < n.y));
+  assert.ok(root.x < runs[0].x && Math.abs(root.y - 245) < 35);
+});
+
+test("project zero starts at the left-hand center and renders its numbered name with straight edges", () => {
+  const h = harness(); setup(h, [project("研究项目", [])]);
+  const root = model(h).nodes[0];
+  assert.deepEqual([root.x, root.y, root.title], [70, 245, "0 · 研究项目"]);
+  assert.equal(findClass(h.get("project-graph"), "node-label")[0].textContent, "0 · 研究项目");
+  setup(h, [project("p", [run("a"), run("b", { parent_run_id: "a" }), run("c")])]);
+  const graph = model(h), runs = graph.nodes.filter(n => n.type === "run");
+  assert.ok(runs.every(n => n.x > graph.nodes[0].x));
+  assert.ok(runs[0].y < 245 && runs[1].y > 245 && runs[2].y < 245);
+  assertStraightEdges(h);
+  assert.equal(findClass(h.get("project-graph"), "linked")[0].attributes["marker-end"], "url(#project-graph-arrow)");
+});
+
+test("network layout defaults to 64 steps and supports two-step relaxation with pinned coordinates", () => {
+  const h = harness();
+  h.ctx.graph = { nodes: [{ key: "project-root", type: "project" }, { key: "a", type: "run", layoutOrder: 0 }], edges: [{ from: "project-root", to: "a", kind: "membership" }] };
+  const full = h.json("networkLayout(JSON.parse(JSON.stringify(graph)))");
+  const short = h.json("networkLayout(JSON.parse(JSON.stringify(graph)), new Map(), {steps: 2})");
+  assert.equal(full.layoutStats.iterations, 64); assert.equal(short.layoutStats.iterations, 2);
+  assert.notDeepEqual(short.nodes.map(n => [n.x, n.y]), full.nodes.map(n => [n.x, n.y]));
+  h.ctx.graph = JSON.parse(JSON.stringify(short));
+  const relaxed = h.json('networkLayout(graph, new Map(graph.nodes.map(n => [n.key, {x:n.x,y:n.y}])), {relax:true, pinned:new Set(["a"]), steps:2})');
+  assert.equal(relaxed.layoutStats.iterations, 2);
+  assert.deepEqual(relaxed.nodes.find(n => n.key === "a"), short.nodes.find(n => n.key === "a"));
+  assert.notDeepEqual(relaxed.nodes[0], short.nodes[0]);
 });
 
 test("large dense graph has finite budget and bounded grid probes; stationary layout does no relaxation", () => {
@@ -331,13 +395,13 @@ test("position storage survives reload, rejects malformed coordinates and handle
   const h=harness(),saved=new Map();h.ctx.localStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
   setup(h,[project("p",[run("a")])]);
   h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});state.activeScope.pinned.add(JSON.stringify(["run","a"]));savePositions(state.activeScope)');
-  assert.ok(saved.has('rsisys-runs-v3:' + h.run('state.activeScope.key')));
-  saved.set('rsisys-runs-v2:legacy', JSON.stringify([["old", {x:900,y:900}]]));
+  assert.ok(saved.has('rsisys-runs-v4:' + h.run('state.activeScope.key')));
+  for (const version of [2, 3]) saved.set(`rsisys-runs-v${version}:legacy`, JSON.stringify([["old", {x:900,y:900}]]));
   assert.equal(h.run('readPositions("legacy").size'), 0);
   const reloaded=harness();reloaded.ctx.localStorage=h.ctx.localStorage;setup(reloaded,[project("p",[run("a")])]);
   assert.deepEqual(model(reloaded).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[801,312]]);
   assert.equal(reloaded.run("state.activeScope.pinned.size"),0);
-  saved.set('rsisys-runs-v3:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
+  saved.set('rsisys-runs-v4:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
   assert.deepEqual(h.json('[...readPositions("bad")]'),[["ok",{x:44,y:55}]]);
   h.ctx.localStorage={getItem(){throw Error("denied");},setItem(){throw Error("full");}};
   assert.equal(h.run('readPositions("denied").size'),0);assert.doesNotThrow(()=>h.run('savePositions(state.activeScope)'));
@@ -355,7 +419,7 @@ test("hover highlights only a run's immediate neighbors and restores project sel
   assert.ok(findClass(host, "graph-edge").every(n => n.attributes["data-related"] === "true"));
 });
 
-test("dragging pins only the moved run, redraws edges and relaxes other nodes without changing selection", () => {
+test("without RAF dragging synchronously relaxes once per move and release without changing selection", () => {
   const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
   h.run('$("project-graph").graphView.scale = .5');
   const host = h.get("project-graph"), key = JSON.stringify(["run", "a"]);
@@ -364,10 +428,14 @@ test("dragging pins only the moved run, redraws edges and relaxes other nodes wi
   const x = parseFloat(button.style.left), y = parseFloat(button.style.top), before = model(h);
   const event = (cx, cy) => ({ button: 0, clientX: cx, clientY: cy, pointerId: 1, stopPropagation() {} });
   const paths = findClass(host, "graph-edge"), geometry = paths.map(p => p.attributes.d);
+  h.run('simulationSteps=[]; originalNetworkLayout=networkLayout; networkLayout=function(...args){const result=originalNetworkLayout(...args);simulationSteps.push(result.layoutStats.iterations);return result;}');
   button.listeners.pointerdown(event(10, 20)); button.listeners.pointermove(event(40, 45));
   assert.equal(parseFloat(button.style.left), x + 60); assert.equal(parseFloat(button.style.top), y + 50);
   assert.notDeepEqual(paths.map(p => p.attributes.d), geometry);
+  assert.deepEqual(h.json("simulationSteps"), [2]);
+  assert.notDeepEqual(graphPositions(h).filter(n => n[0] !== key), before.nodes.filter(n => n.key !== key).map(n => [n.key, n.x, n.y]));
   button.listeners.pointerup(); button.listeners.click();
+  assert.deepEqual(h.json("simulationSteps"), [2, 2]);
   const after = model(h);
   assert.deepEqual(h.json("[...state.activeScope.pinned]"), [key]);
   assert.deepEqual(h.json('state.activeScope.positions.get(JSON.stringify(["run","a"]))'), { x: x + 60, y: y + 50 });
@@ -375,6 +443,136 @@ test("dragging pins only the moved run, redraws edges and relaxes other nodes wi
   assert.ok(after.nodes.some(n => n.key !== key && before.nodes.some(old => old.key === n.key && (old.x !== n.x || old.y !== n.y))));
   assert.equal(after.layoutStats.iterations, 0);
   h.run("renderProject()"); assert.deepEqual(model(h).nodes.map(n => [n.key, n.x, n.y]), after.nodes.map(n => [n.key, n.x, n.y]));
+});
+
+test("RAF moves other nodes before pointerup while the dragged node stays under the pointer", () => {
+  const calls = [], h = harness(async url => { calls.push(url); throw Error("unexpected fetch"); }, "", { raf: true });
+  setup(h, [project("p", [run("a"), run("b"), run("c", { parent_run_id: "b" })])]);
+  seed(h, "b", run("b")); h.run('selectRun("b")');
+  h.run('state.activeScope.positions.set(JSON.stringify(["run","b"]), {x:950,y:600}); state.activeScope.pinned.add(JSON.stringify(["run","b"])); renderProject(); $("project-graph").graphView.scale=.5');
+  h.run('selectionCalls=0; originalSelectRun=selectRun; selectRun=function(...args){selectionCalls++;return originalSelectRun(...args);}');
+  const host = h.get("project-graph"), view = host.graphView, button = graphButton(h, "a"), key = button.dataset.nodeKey;
+  const before = graphPositions(h), original = before.find(n => n[0] === key);
+  const unrelated = findClass(host, "linked")[0], oldLine = unrelated.attributes.d;
+  const plane = findClass(host, "graph-plane")[0];
+  button.setPointerCapture = () => {};
+  button.listeners.pointerdown(pointer(10, 20)); button.listeners.pointermove(pointer(40, 45));
+  const camera = plane.style.transform;
+  const dragged = [key, original[1] + 60, original[2] + 50];
+  assert.deepEqual(graphPositions(h).find(n => n[0] === key), dragged);
+  assert.deepEqual(graphPositions(h).filter(n => n[0] !== key), before.filter(n => n[0] !== key), "other nodes wait for RAF");
+  assert.equal(view.dragging, true); assert.equal(view.simulating, true); assert.equal(h.frames.size, 1);
+  assert.equal(h.run("state.activeScope.pinned.size"), 0, "a new drag releases earlier pins");
+
+  h.frames.step(); // Deliberately no pointerup: this is movement during the drag.
+  const live = graphPositions(h);
+  assert.equal(view.dragging, true);
+  assert.deepEqual(live.find(n => n[0] === key), dragged, "simulation must not move the dragged node");
+  assert.notDeepEqual(live.filter(n => n[0] !== key), before.filter(n => n[0] !== key));
+  assert.notDeepEqual(live.find(n => n[0] === JSON.stringify(["run", "b"])), before.find(n => n[0] === JSON.stringify(["run", "b"])), "the previously pinned run moves too");
+  assert.notEqual(unrelated.attributes.d, oldLine, "redraw includes edges not incident to the dragged node");
+  assertStraightEdges(h);
+  assert.equal(plane.style.transform, camera, "the camera stays still during simulation");
+  assert.deepEqual(new Map(h.json("[...state.activeScope.positions]")), new Map(live.map(([key, x, y]) => [key, { x, y }])));
+  h.frames.step();
+  assert.notDeepEqual(graphPositions(h).filter(n => n[0] !== key), live.filter(n => n[0] !== key), "movement continues on the next frame");
+  assert.deepEqual(graphPositions(h).find(n => n[0] === key), dragged);
+
+  button.listeners.pointerup(); button.listeners.lostpointercapture(); button.listeners.click();
+  assert.equal(view.dragging, false); assert.equal(view.simulating, true);
+  assert.equal(h.frames.size, 1, "release reuses the pending RAF instead of starting another loop");
+  assert.equal(h.frames.drain(), 18);
+  assert.deepEqual(h.json("[...state.activeScope.pinned]"), [key]);
+  assert.deepEqual(graphPositions(h).find(n => n[0] === key), dragged);
+  assert.equal(h.run("selectionCalls"), 0); assert.equal(h.run("state.runId"), "b");
+  assert.equal(view.selected, JSON.stringify(["run", "b"])); assert.deepEqual(calls, []);
+  const settled = graphPositions(h); h.frames.step();
+  assert.deepEqual(graphPositions(h), settled); assert.equal(view.simulating, false);
+  assertStraightEdges(h);
+});
+
+test("RAF heat stops after 40 frames, reheats without duplicate callbacks and settles for 18 frames", () => {
+  const h = harness(undefined, "", { raf: true }); setup(h, [project("p", [run("a"), run("b")])]);
+  const button = startDrag(h), view = h.get("project-graph").graphView;
+  for (let i = 0; i < 39; i++) { assert.equal(h.frames.size, 1); h.frames.step(); }
+  assert.equal(view.simulating, true); h.frames.step();
+  assert.equal(h.frames.size, 0); assert.equal(view.simulating, false); assert.equal(view.dragging, true);
+  const cold = graphPositions(h); h.frames.step(); assert.deepEqual(graphPositions(h), cold);
+  button.listeners.pointermove(pointer(45, 80));
+  const queued = h.frames.ids;
+  button.listeners.pointermove(pointer(50, 85)); button.listeners.pointermove(pointer(55, 90));
+  assert.deepEqual(h.frames.ids, queued, "moves replenish heat on one existing animation");
+  assert.equal(h.frames.drain(), 40); assert.equal(view.simulating, false);
+  button.listeners.pointerup(); assert.equal(view.simulating, true);
+  assert.equal(h.frames.drain(), 18); assert.equal(view.simulating, false);
+});
+
+test("renderProject defers redraw during dragging and settling, then renders once at rest", () => {
+  const h = harness(undefined, "", { raf: true }); setup(h, [project("p", [run("a"), run("b")])]);
+  const host = h.get("project-graph"), view = host.graphView, viewport = view.viewport, observer = h.observers.at(-1);
+  const button = startDrag(h);
+  h.run('state.projects[0].runs.push({run_id:"c", updated_at:"2026-11-01T01:00:00Z"}); renderProject(); renderProject()');
+  assert.equal(view.pendingRender, true); assert.equal(view.viewport, viewport);
+  assert.equal(graphPositions(h).length, 3); assert.equal(observer.disconnected, undefined);
+  h.frames.drain(); // Heat can expire while the pointer is still down.
+  assert.equal(view.dragging, true); assert.equal(view.simulating, false);
+  assert.equal(view.viewport, viewport); assert.equal(view.pendingRender, true);
+  button.listeners.pointerup(); h.run("renderProject(); renderProject()");
+  assert.equal(view.viewport, viewport); assert.equal(view.simulating, true);
+  assert.equal(h.frames.drain(), 18);
+  assert.notEqual(view.viewport, viewport); assert.equal(observer.disconnected, true);
+  assert.equal(view.pendingRender, false); assert.equal(graphPositions(h).length, 4);
+  assert.equal(h.observers.length, 2, "coalesced requests create one replacement graph");
+  assert.equal(h.frames.size, 0);
+});
+
+test("pointer taps below the drag threshold select once and start no RAF", () => {
+  const calls = [], h = harness(async url => { calls.push(url); return response(run("a")); }, "", { raf: true });
+  setup(h, [project("p", [run("a")])]); seed(h, "a", run("a"));
+  h.run('selectionCalls=0; originalSelectRun=selectRun; selectRun=function(...args){selectionCalls++;return originalSelectRun(...args);}');
+  const button = graphButton(h, "a"), before = graphPositions(h); button.setPointerCapture = () => {};
+  button.listeners.pointerdown(pointer(10, 20)); button.listeners.pointermove(pointer(12, 21));
+  button.listeners.pointerup(); button.listeners.lostpointercapture(); button.listeners.click();
+  assert.equal(h.frames.size, 0); assert.equal(h.run("selectionCalls"), 1);
+  assert.equal(h.run("state.runId"), "a"); assert.deepEqual(graphPositions(h), before);
+  assert.equal(h.run("state.activeScope.pinned.size"), 0); assert.deepEqual(calls, []);
+});
+
+for (const phase of ["dragging", "settling"]) {
+  for (const reason of ["stop", "project", "demo", "redraw", "hidden", "detached"]) {
+    test(`${reason} cancels RAF while ${phase} and leaves no later node movement`, () => {
+      const h = harness(undefined, "", { raf: true });
+      setup(h, [project("p", [run("a"), run("b")]), project("other", [run("a")])]);
+      const host = h.get("project-graph"), view = host.graphView, button = startDrag(h);
+      h.frames.step(); if (phase === "settling") button.listeners.pointerup();
+      const queued = h.frames.ids[0], oldViewport = view.viewport;
+      if (reason === "stop") { view.stopSimulation(); view.stopSimulation(); }
+      if (reason === "project") h.run('state.projectId="other"; activateProject(); renderProject()');
+      if (reason === "demo") h.run('refresh=function(){}; switchDemo()');
+      if (reason === "redraw") h.run('renderGraph($("project-graph"), projectModel(selectedProject(),state.activeScope), state.activeScope.key)');
+      if (reason === "hidden") { h.document.hidden = true; h.documentListeners.visibilitychange(); }
+      if (reason === "detached") { oldViewport.isConnected = false; h.frames.step(); }
+      assert.equal(h.frames.size, 0); assert.equal(view.simulating, false); assert.equal(view.dragging, false);
+      if (reason !== "detached") assert.ok(h.frames.cancelled.includes(queued), "the queued frame must be cancelled immediately");
+      const stable = graphPositions(h), cached = h.json("[...state.activeScope?.positions || []]");
+      // Old pointer events after cleanup must not restart the old simulation.
+      button.listeners.pointermove(pointer(80, 100)); button.listeners.pointerup(); button.listeners.lostpointercapture();
+      h.frames.step();
+      assert.equal(h.frames.size, 0); assert.deepEqual(graphPositions(h), stable);
+      assert.deepEqual(h.json("[...state.activeScope?.positions || []]"), cached);
+      if (reason === "hidden") { h.document.hidden = false; h.documentListeners.visibilitychange(); assert.equal(h.frames.size, 0); }
+    });
+  }
+}
+
+test("redrawing an idle graph preserves newly computed positions instead of caching the old model", () => {
+  const h = harness(undefined, "", { raf: true }); setup(h, [project("p", [run("a"), run("b")])]);
+  const before = graphPositions(h);
+  h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:1000,y:800}); state.activeScope.pinned.add(JSON.stringify(["run","a"])); renderProject()');
+  assert.deepEqual(graphPositions(h).find(n => n[0] === JSON.stringify(["run", "a"])), [JSON.stringify(["run", "a"]), 1000, 800]);
+  assert.notDeepEqual(graphPositions(h), before);
+  assert.deepEqual(h.json('state.activeScope.positions.get(JSON.stringify(["run","a"]))'), { x: 1000, y: 800 });
+  assert.equal(h.frames.size, 0);
 });
 
 test("node controls have a 24px hit target and labels cannot intercept another node", () => {
