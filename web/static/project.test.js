@@ -81,7 +81,8 @@ test("project graph contains only the project and all runs before and after load
   assert.deepEqual(after.nodes.map(n => [n.key, n.type, n.x, n.y]), before.nodes.map(n => [n.key, n.type, n.x, n.y]));
   assert.deepEqual(after.edges, before.edges);
   assert.equal(findClass(h.get("project-graph"), "graph-node").length, 4);
-  assert.equal(findClass(h.get("project-graph"), "flow-choice").length, 1);
+  assert.equal(findClass(h.get("project-graph"), "flow-choice").length, 0);
+  assert.equal(findClass(h.get("project-graph"), "flow-map")[0].hidden, true);
   assert.deepEqual(calls, []);
 });
 

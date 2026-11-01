@@ -559,11 +559,10 @@ function executionGroups(s) {
 }
 function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
-  const section=el("section","execution-sequence"),heading=el("div","section-heading"),groups=executionGroups(s);
+  const section=el("section","execution-sequence"),groups=executionGroups(s);
   section.id="execution-flow";
-  heading.append(el("h4","", t("决策与反馈")),el("span","quiet-note",t("{p0} 步", {p0: groups.length})));section.append(heading);
 
-  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label",t("本轮研究的决策"));section.append(navigation);
+  const navigation=el("ol","flow-map");navigation.hidden=groups.length<2;navigation.setAttribute("aria-label",t("本轮研究的决策"));section.append(navigation);
   const entries=el("ol","flow-steps");section.append(entries);
   const fill=(restoreFocus=false)=>{
     let selectedButton;
@@ -579,13 +578,13 @@ function executionSequence(s, scope) {
       button.setAttribute("aria-label",t("步骤 {p0} · {p1}", {p0: i+1, p1: actionText(decisionAction(row))}));
       button.append(el("span","flow-number",String(i+1).padStart(2,"0")),el("span","",actionText(decisionAction(row))));
       if(g.rows.length>1)button.append(el("span","quiet-note",`×${g.rows.length}`));
-      button.addEventListener("click",()=>{scope.flowSelected.set(s.run_id,key);fill(true);});item.append(button);navigation.append(item);
+      button.addEventListener("click",()=>{scope.flowSelected.set(s.run_id,key);fill(true);});item.append(button);if(groups.length>1)navigation.append(item);
       if(key!==selected)continue;
       selectedButton=button;
       const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
-      decision.append(el("p","flow-label",t("决策")),el("h4","",actionText(decisionAction(row))),meta);
+      decision.append(el("h4","",actionText(decisionAction(row))),meta);
       if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
       if(present(row.reason))decision.append(el("p","decision-reason",row.reason));
       if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row))decision.append(el("p","decision-reason",row.strategy));
