@@ -6,8 +6,37 @@ from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.artifacts import ArtifactRef
+from rsisys.loops.contracts.coordination import ExecutionView, ReviewDecision
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.model_service import ModelRef
 
 from ..action_space import OperationCall, OperationResult, OperationSpec
+
+
+@dataclass(frozen=True)
+class DirectiveProvenance:
+    """Bindings observed before deciding; not inferred from a later training result."""
+    directive_id: str
+    decision_model: ModelRef | None = None
+    execution_model: ModelRef | None = None
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    """Latest receipt per candidate, including failures and different protocols.
+
+    This is a bounded-per-candidate summary, not a complete evaluation archive;
+    full older receipts remain in history and Experience.
+    """
+    candidate_id: str
+    directive_id: str
+    protocol_ref: str
+    input_refs: tuple[ArtifactRef, ...]
+    status: ExecutionStatus
+    quality_metrics: dict[str, float]
+    simulated: bool
+    evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -21,6 +50,10 @@ class DecisionContext:
     history: tuple[HistoryEntry, ...] = ()
     directive_modes: tuple[str, ...] = ("execute",)
     candidates: tuple[Candidate, ...] = ()
+    execution: ExecutionView = field(default_factory=ExecutionView)
+    decision_model: ModelRef | None = None
+    directive_provenance: tuple[DirectiveProvenance, ...] = ()
+    candidate_evaluations: tuple[CandidateEvaluation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -31,6 +64,15 @@ class _PendingOperationRecord:
     elapsed_seconds: float | None
     job: JobRef | None
     resume_result: OperationResult | None = None
+
+
+@dataclass(frozen=True)
+class _PendingReviewRecord:
+    record_id: str
+    objective: str
+    directive_id: str
+    decision: ReviewDecision
+    details: dict[str, object]
 
 
 @dataclass
@@ -56,3 +98,7 @@ class DecisionState:
     measured_output_tokens: int = 0
     calls_with_missing_usage: int = 0
     candidates: dict[str, Candidate] = field(default_factory=dict)
+    execution: ExecutionView = field(default_factory=ExecutionView)
+    directive_provenance: dict[str, DirectiveProvenance] = field(default_factory=dict)
+    candidate_evaluations: dict[str, CandidateEvaluation] = field(default_factory=dict)
+    pending_review_record: _PendingReviewRecord | None = None

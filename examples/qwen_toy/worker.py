@@ -4,7 +4,7 @@ Data schema belongs to this example: JSONL objects with prompt and answer.
 No framework-wide dataset conversion is introduced.
 """
 import argparse
-from contextlib import nullcontext
+from contextlib import contextmanager
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -25,6 +25,8 @@ def main(argv=None):
     parser.add_argument('--served-name', default='Qwen3.5-9B')
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cpu')
     parser.add_argument('--steps', type=int, default=24)
+    parser.add_argument('--rounds', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--base-revision', default='baseline')
     parser.add_argument('--threads', type=int, default=4)
     args = parser.parse_args(argv)
     if args.steps < 1 or args.threads < 1:
@@ -78,14 +80,16 @@ def main(argv=None):
         args.model, dtype=torch.float32 if device == 'cpu' else torch.bfloat16,
         attn_implementation='sdpa', local_files_only=True).to(device)
     model.config.use_cache = False
-    model = get_peft_model(model, LoraConfig(r=8, lora_alpha=16,
-        target_modules=['q_proj', 'v_proj'], lora_dropout=0.0, task_type='CAUSAL_LM'))
+    lora_config = LoraConfig(r=8, lora_alpha=16,
+        target_modules=['q_proj', 'v_proj'], lora_dropout=0.0, task_type='CAUSAL_LM')
+    model = get_peft_model(model, lora_config)
     model.eval()
     jobs, keys, lock, job_lock = {}, {}, threading.Lock(), threading.Lock()
     cancellations = {}
     revision = 'candidate-1'
     trained = False
-    training_reserved = False
+    training_attempts = 0
+    revisions = {}
 
     def run_path(name):
         path = root / name
@@ -144,13 +148,22 @@ def main(argv=None):
             'labels': torch.tensor([r['labels']+[-100]*(size-len(r['labels'])) for r in rows]),
         }
 
-    def evaluate(ident):
+    @contextmanager
+    def use_revision(selected):
+        if selected == args.base_revision:
+            with model.disable_adapter():
+                yield
+        else:
+            model.set_adapter(revisions[selected]['adapter_name'])
+            yield
+
+    def evaluate(ident, selected):
         metrics = {}
         rows = [encode(row) for row in read_data('eval.jsonl')]
         model.eval()
-        for name, context in [('base', model.disable_adapter()), ('candidate', nullcontext())]:
+        for name, selected_revision in [('base', revisions[selected]['base_revision']), ('candidate', selected)]:
             weighted_loss, tokens = 0., 0
-            with context, torch.no_grad():
+            with use_revision(selected_revision), torch.no_grad():
                 for row in rows:
                     check_cancel(ident)
                     batch = {k:v.to(device) for k,v in collate([row]).items()}
@@ -166,16 +179,32 @@ def main(argv=None):
         return metrics
 
     def run_job(ident, kind, payload):
-        nonlocal trained
+        nonlocal trained, revision
         try:
             with lock:
                 with job_lock:
                     check_cancel(ident)
                     jobs[ident]['status'] = 'running'
+                    selected = jobs[ident]['revision']
+                    parent = jobs[ident]['base_revision']
+                    round_number = jobs[ident]['round']
+                output_root = root if round_number == 1 else run_path(f'round-{round_number}')
                 try:
                     if kind == 'train':
+                        adapter_name = 'default' if round_number == 1 else selected
+                        if round_number > 1:
+                            if parent == args.base_revision:
+                                model.add_adapter(adapter_name, lora_config)
+                            else:
+                                # Continue from a copy of the parent's learned LoRA weights;
+                                # the parent's adapter remains intact for evaluation/serving.
+                                model.load_adapter(revisions[parent]['adapter_path'],
+                                    adapter_name=adapter_name, is_trainable=True,
+                                    local_files_only=True)
+                        model.set_adapter(adapter_name)
+                        model.config.use_cache = False
                         dataset = [encode(row) for row in read_data('train.jsonl')]
-                        options = TrainingArguments(output_dir=str(run_path('trainer')), max_steps=args.steps,
+                        options = TrainingArguments(output_dir=str(output_root / 'trainer'), max_steps=args.steps,
                             per_device_train_batch_size=2, gradient_accumulation_steps=2,
                             learning_rate=2e-4, use_cpu=device == 'cpu', bf16=device == 'cuda',
                             logging_steps=2, save_strategy='no',
@@ -189,14 +218,21 @@ def main(argv=None):
                         check_cancel(ident)
                         if trainer.state.global_step < options.max_steps:
                             raise RuntimeError('Training stopped before all requested steps completed')
-                        model.save_pretrained(run_path('adapter'))
-                        tokenizer.save_pretrained(run_path('adapter'))
-                        result = {'adapter_path': str(run_path('adapter')), 'revision': revision,
+                        adapter_root = output_root / 'adapter'
+                        if round_number == 1:
+                            model.save_pretrained(adapter_root)
+                        else:
+                            model.save_pretrained(adapter_root, selected_adapters=[adapter_name])
+                        adapter_path = adapter_root if adapter_name == 'default' else adapter_root / adapter_name
+                        tokenizer.save_pretrained(adapter_path)
+                        result = {'adapter_path': str(adapter_path), 'revision': selected,
+                                  'base_revision': parent, 'round': round_number,
                                   'metrics': {k:float(v) for k,v in output.metrics.items() if isinstance(v,(int,float))}}
                     elif kind == 'evaluate':
                         if not trained:
                             raise ValueError('Candidate is not trained')
-                        result = {'metrics': evaluate(ident), 'revision': revision}
+                        result = {'metrics': evaluate(ident, selected), 'revision': selected,
+                                  'base_revision': parent, 'round': round_number}
                     else:
                         raise ValueError('Unknown job kind')
                 finally:
@@ -208,12 +244,15 @@ def main(argv=None):
                 # Never publish a partial/cancelled adapter as a trained candidate.
                 with job_lock:
                     check_cancel(ident)
-                    result_path = run_path(f'{kind}-result.json')
-                    temporary = run_path(f'{kind}-result.json.tmp')
+                    result_path = output_root / f'{kind}-result.json'
+                    temporary = output_root / f'{kind}-result.json.tmp'
                     temporary.write_text(json.dumps(result, indent=2, allow_nan=False))
                     temporary.replace(result_path)
                     if kind == 'train':
                         trained = True
+                        revision = selected
+                        revisions[selected] = {'adapter_name': adapter_name, 'adapter_path': str(adapter_path),
+                                               'base_revision': parent, 'round': round_number}
                     jobs[ident].update(status='succeeded', result=result)
         except Exception as exc:
             if not isinstance(exc, Cancelled):
@@ -236,7 +275,9 @@ def main(argv=None):
             if self.path == '/health':
                 with job_lock:
                     value = {'ready': True, 'trained': trained, 'revision': revision, 'model': args.served_name,
-                             'device': device, 'threads': args.threads}
+                             'device': device, 'threads': args.threads,
+                             'revisions': list(revisions), 'max_rounds': args.rounds,
+                             'base_revision': args.base_revision}
                 return self.reply(200, value)
             if self.path.startswith('/jobs/'):
                 with job_lock:
@@ -244,7 +285,7 @@ def main(argv=None):
                 return self.reply(200 if job else 404, job or {'error':'unknown job'})
             self.reply(404, {'error':'not found'})
         def do_POST(self):
-            nonlocal training_reserved
+            nonlocal training_attempts
             try:
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 1024*1024 or self.headers.get('Transfer-Encoding'):
@@ -278,21 +319,50 @@ def main(argv=None):
                         else:
                             if any(j['status'] in ('queued','running') for j in jobs.values()):
                                 raise ValueError('Worker is busy')
+                            request = payload.get('request', {})
+                            if not isinstance(request, dict):
+                                raise ValueError('request must be an object')
                             if kind == 'train':
-                                if training_reserved:
-                                    raise ValueError('This worker permits one training attempt; use a fresh run directory and worker')
+                                if training_attempts >= args.rounds:
+                                    raise ValueError('Training attempt budget exhausted; use a fresh worker')
+                                if len(revisions) != training_attempts:
+                                    raise ValueError('A prior training attempt failed; use a fresh worker')
+                                if args.rounds > 1 and 'base' not in request:
+                                    raise ValueError('Multi-round training requires an explicit parent model')
+                                base = request.get('base', {'revision': args.base_revision,
+                                    'model_id': args.served_name, 'backend_id': 'qwen-toy'})
+                                if (base.get('model_id') != args.served_name or base.get('backend_id') != 'qwen-toy'
+                                        or request.get('method', 'sft') != 'sft'
+                                        or request.get('recipe_ref', 'toy-lora') != 'toy-lora'):
+                                    raise ValueError('Expected the configured model and toy-lora/sft')
+                                parent = base.get('revision')
+                                if parent != args.base_revision and parent not in revisions:
+                                    raise ValueError('Unknown parent model revision')
+                                round_number = training_attempts + 1
+                                selected = f'candidate-{round_number}'
+                                output_root = root if round_number == 1 else run_path(f'round-{round_number}')
+                                output_root.mkdir(parents=True, exist_ok=True)
                                 for name in ('trainer', 'adapter', 'train-result.json'):
-                                    if run_path(name).exists():
+                                    if (output_root / name).exists():
                                         raise ValueError('Training output already exists; use a fresh run directory')
                                 read_data('train.jsonl')
-                                # Survives restart: failed/cancelled training may mutate weights.
-                                with run_path('training-attempt.json').open('x') as claim:
-                                    json.dump({'job_id': ident}, claim)
-                                training_reserved = True
-                            elif not trained:
-                                raise ValueError('Candidate is not trained')
+                                with (output_root / 'training-attempt.json').open('x') as claim:
+                                    json.dump({'job_id': ident, 'base_revision': parent,
+                                               'revision': selected, 'round': round_number}, claim)
+                                training_attempts += 1
+                            else:
+                                selected = request.get('candidate', {}).get('candidate_id', revision)
+                                if not trained or selected not in revisions:
+                                    raise ValueError('Candidate is not trained')
+                                parent = revisions[selected]['base_revision']
+                                if request.get('candidate', {}).get('base_version', parent) != parent:
+                                    raise ValueError('Evaluation parent revision mismatch')
+                                if request.get('protocol_ref', 'heldout-nll') != 'heldout-nll':
+                                    raise ValueError('Unknown evaluation protocol')
+                                round_number = revisions[selected]['round']
                             keys[key] = signature
-                            jobs[ident] = {'job_id':ident, 'status':'queued'}
+                            jobs[ident] = {'job_id':ident, 'status':'queued', 'kind': kind,
+                                           'revision': selected, 'base_revision': parent, 'round': round_number}
                             cancellations[ident] = threading.Event()
                             try:
                                 threading.Thread(target=run_job, args=(ident,kind,payload), daemon=True).start()
@@ -314,8 +384,11 @@ def main(argv=None):
                     if type(max_tokens) is not int or not 1 <= max_tokens <= 256:
                         raise ValueError('max_tokens must be an integer between 1 and 256')
                     with lock, torch.no_grad():
-                        if not trained:
-                            raise ValueError('Candidate not ready')
+                        selected = payload.get('model_revision', revision)
+                        if not trained or selected not in revisions:
+                            raise ValueError('Candidate revision not ready')
+                        model.set_adapter(revisions[selected]['adapter_name'])
+                        model.eval()
                         text = tokenizer.apply_chat_template(payload['messages'], tokenize=False,
                             add_generation_prompt=True, enable_thinking=False)
                         inputs = tokenizer(text, return_tensors='pt').to(device)
@@ -332,7 +405,7 @@ def main(argv=None):
                         answer = tokenizer.decode(generated, skip_special_tokens=True)
                         finish_reason = ('stop' if len(generated) and int(generated[-1]) in eos_ids
                                          else 'length' if len(generated) >= max_tokens else 'stop')
-                    return self.reply(200, {'model':payload['model'], 'model_revision':revision,
+                    return self.reply(200, {'model':payload['model'], 'model_revision':selected,
                         'choices':[{'finish_reason':finish_reason,'message':{'role':'assistant','content':answer}}],
                         'usage':{'prompt_tokens':inputs.input_ids.shape[1],
                                  'completion_tokens':outputs.shape[1]-inputs.input_ids.shape[1]}})

@@ -53,17 +53,22 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 1. Decision Harness 读取上下文、完成本地准备，policy 发出 Directive；Action Space 校验操作和指令模式。
 2. Runner 将 Directive 交给 Exploration 端点，Harness 接收、校验 payload 并推进对应流程。外部系统也可直接通过同一端点提交 Directive。
-3. 遇到 waiting，Runner 返回调用方，下次推进继续原任务。
+3. 遇到 waiting，Runner 返回调用方，下次推进继续原任务。指令可指定首次复查间隔；到期时 Decision Harness 根据当前执行视图复查，选择继续、取消和下一次复查间隔。
 4. Exploration Harness 汇总终态 Feedback；Runner 通过 Decision 的 `receive_feedback` 交付。默认 Decision Harness 将策略结果记为 improvement，供下一次决策使用。
 5. 反馈交付成功后 acknowledge，释放探索流程占用。
 
-当前一次只有一个未完成交付的指令；一条 RL 指令内部可以多次采样和更新 Actor。自动监控频率、时间/token 优化触发、多 Actor 并发及共享模型更新事务尚未实现。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
+当前一次只有一个未完成交付的指令；一条 RL 指令内部可以多次采样和更新 Actor。后端轮询由调用方驱动，决策复查由 Directive / ReviewDecision 设定频率，两者不绑定。时间/token 自训练触发、多 Actor 并发及共享模型更新事务尚未实现。模型可共享或独立绑定，部署在框架外；角色引用同一模型不表示训练结果自动同步。
+
+运行中的控制先支持 continue / cancel，不修改已提交指令。换策略需确认旧指令终态并完成交付后，再发送新 ID 的指令。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
+
+默认 Decision 上下文另含当前 Exploration 模型/进度、Decision 模型、发出指令时的版本归因，以及每个候选最近一次评测的协议、输入引用、结果和证据。这些事实不依赖有限长度的任务 history；完整评测档案仍由 Experience 保存。
 
 ## Experience 与持久化
 
 | 概念 | 职责与范围 |
 |---|---|
 | Feedback | 单条 Directive 的终态回执，由 Runner 交付给决策端 |
+| ExplorationProgress / ExecutionView | 当前执行阶段、模型绑定与可选指标，不是另一套记忆系统 |
 | Experience | 跨轮共享的系统证据，记录执行、训练、评测与策略结果 |
 | memory | Harness 内部的任务上下文，默认包含本地 history 与工作记忆；替代 Harness 不必提供 |
 
@@ -80,6 +85,8 @@ Runtime 提供模型、作业、产物、执行后端与 Runner 协调；业务�
 - 取消只提出请求，后续推进确认终态；取消与训练成功竞速时不自动应用候选。同步环境调用不能由下一 tick 中途抢占。
 - 提交响应丢失后保留请求与幂等键，不重新生成任务。后端须兑现幂等提交；非终态查询或记录异常允许后续推进重试。
 - Runner 保留待交付反馈；默认 Decision Harness 使用稳定记录 ID，仅接受最近一次相同交付的重试。写入失败只重试交付，不重跑 Actor。
+- 默认 Exploration 端点可发现未确认的指令；重建 Runner 后先恢复交付，避免决策侧已接收、探索侧未确认时错误发出下一条指令。两侧身份冲突时停止推进。
+- 后端终态结果违反请求身份/角色/协议时，指令转为失败反馈并可正常确认退出；暂时的网络或记录失败继续保留原任务供重试。
 - 默认 Harness 在操作或 episode 已执行但记录失败时保留结果和稳定 ID，下次推进只补写。结果保存前不交付终态，不重复执行或 rollout；执行异常仍抛给调用方，清理异常附加到原异常。
 - 待写结果和回执仅在进程内；待补写期间禁止快照，不提供崩溃恢复。
 

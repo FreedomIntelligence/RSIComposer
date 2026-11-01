@@ -18,13 +18,15 @@ from rsisys.runtime.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
-from rsisys.loops.contracts.coordination import LoopStepResult
+from rsisys.loops.contracts.coordination import LoopStepResult, ExecutionView, ExplorationProgress, ReviewDecision
+from rsisys.loops.contracts.requests import EvaluationSpec
 from ..action_space import DecisionActionSpace, OperationCall, OperationResult
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy
 from .tools import DecisionTools
 
-from .state import DecisionContext, DecisionState, _PendingOperationRecord
+from .state import (DecisionContext, DecisionState, _PendingOperationRecord, _PendingReviewRecord,
+                    DirectiveProvenance, CandidateEvaluation)
 
 
 class DefaultDecisionHarness:
@@ -81,7 +83,76 @@ class DefaultDecisionHarness:
         self.state.pending_operation_record = None
         return deepcopy(result)
 
+    def update_execution(self, view: ExecutionView) -> None:
+        if not isinstance(view, ExecutionView):
+            raise TypeError('Expected an ExecutionView')
+        self.state.execution = deepcopy(view)
+
+    def _context(self, objective: str, action_space: DecisionActionSpace | None = None) -> DecisionContext:
+        model = getattr(self.policy, 'model', None)
+        return DecisionContext(
+            objective, self.experience.retrieve(limit=self.experience_limit),
+            action_space.describe() if action_space is not None else (),
+            deepcopy(tuple(self.state.operation_results)), self.memory.recall(limit=self.memory_limit),
+            deepcopy(self.state.last_feedback), self.memory.history(limit=self.memory_limit),
+            action_space.directive_modes() if action_space is not None else (),
+            candidates=deepcopy(tuple(self.state.candidates.values())),
+            execution=deepcopy(self.state.execution), decision_model=model if isinstance(model, ModelRef) else None,
+            directive_provenance=deepcopy(tuple(self.state.directive_provenance.values())),
+            candidate_evaluations=deepcopy(tuple(self.state.candidate_evaluations.values())),
+        )
+
+    def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
+        if not isinstance(progress, ExplorationProgress):
+            raise TypeError('Expected an ExplorationProgress')
+        if (progress.directive_id != self.state.pending_directive_id
+                or progress.directive != self.state.pending_directive):
+            raise ValueError('Review does not match the pending directive')
+        pending = self.state.pending_review_record
+        if pending is not None:
+            if pending.objective != objective or pending.directive_id != progress.directive_id:
+                raise ValueError('Review differs from the pending review recording')
+            return self._flush_review_record()
+        if progress.terminal:
+            raise ValueError('Cannot review a terminal execution')
+        self.update_execution(replace(self.state.execution, progress=progress))
+        context = self._context(objective)
+        review = getattr(self.policy, 'review', None)
+        result = review(context) if callable(review) else ReviewDecision()
+        if not isinstance(result, ReviewDecision):
+            raise TypeError('Policy review must return a ReviewDecision')
+        result.__post_init__()
+        self.state.pending_review_record = _PendingReviewRecord(
+            str(uuid4()), objective, progress.directive_id, deepcopy(result),
+            {"event": "review", "review": asdict(result), "execution": asdict(context.execution),
+             "decision_model": asdict(context.decision_model) if context.decision_model else None,
+             "provenance": (asdict(self.state.directive_provenance[progress.directive_id])
+                            if progress.directive_id in self.state.directive_provenance else None)},
+        )
+        if callable(review):
+            self._record_usage(result.usage)
+        return self._flush_review_record()
+
+    def _flush_review_record(self) -> ReviewDecision:
+        pending = self.state.pending_review_record
+        if pending is None:
+            raise RuntimeError('No review recording is pending')
+        result = pending.decision
+        self.memory.append(HistoryEntry(
+            pending.record_id, 'decision', pending.directive_id, f'Review: {result.action}',
+            result.simulated, details=deepcopy(pending.details),
+        ))
+        self.experience.record(ExperienceRecord(
+            pending.record_id, 'runtime_feedback', 'decision_maker', pending.directive_id,
+            f'Execution review: {result.action}', result.simulated,
+            source_refs=(f'history:decision_maker:{pending.record_id}',), details=deepcopy(pending.details),
+        ))
+        self.state.pending_review_record = None
+        return deepcopy(result)
+
     def step(self, objective: str, action_space: DecisionActionSpace) -> LoopStepResult:
+        if self.state.pending_review_record is not None:
+            raise RuntimeError('Record the pending review before another decision')
         if self.state.pending_operation_record is not None:
             return LoopStepResult("progressed", operation_result=self._flush_operation_record())
         if self.state.finished:
@@ -90,16 +161,13 @@ class DefaultDecisionHarness:
             raise RuntimeError("Consume pending exploration feedback before another decision.")
         if self.state.pending_job is not None:
             return LoopStepResult("waiting", job=self.state.pending_job)
-        context = DecisionContext(objective, self.experience.retrieve(limit=self.experience_limit),
-                                  action_space.describe(), tuple(self.state.operation_results),
-                                  self.memory.recall(limit=self.memory_limit),
-                                  deepcopy(self.state.last_feedback),
-                                  self.memory.history(limit=self.memory_limit), action_space.directive_modes(),
-                                  candidates=deepcopy(tuple(self.state.candidates.values())))
+        context = self._context(objective, action_space)
         decision = self.policy.decide(context)
         self._record_usage(decision.usage)
         self.memory.append(HistoryEntry(str(uuid4()), "decision", None, decision.kind,
-                                        decision.simulated, details=asdict(decision)))
+                                        decision.simulated, details={**asdict(decision),
+                                            "decision_model": asdict(context.decision_model) if context.decision_model else None,
+                                            "execution_model": asdict(context.execution.model) if context.execution.model else None}))
         if decision.kind == "invoke":
             started = perf_counter()
             call = decision.operation
@@ -132,6 +200,8 @@ class DefaultDecisionHarness:
             self.state.issued += 1
             self.state.pending_directive_id = directive.directive_id
             self.state.pending_directive = deepcopy(directive)
+            self.state.directive_provenance[directive.directive_id] = DirectiveProvenance(
+                directive.directive_id, context.decision_model, context.execution.model)
             self.state.feedback_record_id = str(uuid4())
             return LoopStepResult("dispatch", directive=directive)
         if decision.kind == "wait":
@@ -158,6 +228,9 @@ class DefaultDecisionHarness:
 
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
         """Record the outcome and advance control state; retry the latest delivery safely."""
+        if not isinstance(feedback, Feedback):
+            raise TypeError('Expected a Feedback')
+        feedback.__post_init__()
         if (self.state.pending_directive_id is None
                 and directive == self.state.last_directive and feedback == self.state.last_feedback):
             return
@@ -165,7 +238,15 @@ class DefaultDecisionHarness:
             raise ValueError("Feedback does not match the pending directive.")
         if self.state.pending_directive != directive:
             raise ValueError('Directive content differs from the dispatched request')
+        if self.state.pending_review_record is not None:
+            if self.state.pending_review_record.directive_id != directive.directive_id:
+                raise ValueError('Pending review belongs to another directive')
+            # Completion can overtake a review whose bookkeeping failed. Preserve
+            # its evidence without returning (or executing) an obsolete cancel.
+            self._flush_review_record()
         directive, feedback = deepcopy(directive), deepcopy(feedback)
+        provenance = self.state.directive_provenance.get(directive.directive_id)
+        provenance_details = asdict(provenance) if provenance is not None else None
         candidates = dict(self.state.candidates)
         # Validate the entire batch before any write, including duplicate IDs
         # within this feedback. Publish the index only after both records succeed.
@@ -173,10 +254,23 @@ class DefaultDecisionHarness:
             if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
                 raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
             candidates[candidate.candidate_id] = candidate
+        evaluations = dict(self.state.candidate_evaluations)
+        evaluation = None
+        if directive.mode == 'evaluate' and isinstance(directive.payload, EvaluationSpec):
+            candidate = directive.payload.candidate
+            if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
+                raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
+            evaluation = CandidateEvaluation(
+                candidate.candidate_id, directive.directive_id, directive.payload.protocol_ref,
+                directive.input_refs, feedback.status, deepcopy(feedback.quality_metrics),
+                directive.simulated or feedback.simulated, feedback.evidence_refs,
+            )
+            evaluations[candidate.candidate_id] = evaluation
         self.memory.append(HistoryEntry(
             record_id=self.state.feedback_record_id, kind="feedback", task_id=directive.directive_id,
             summary=feedback.summary, simulated=feedback.simulated, source_refs=feedback.evidence_refs,
-            details={"directive": asdict(directive), "feedback": asdict(feedback)},
+            details={"directive": asdict(directive), "feedback": asdict(feedback),
+                     "provenance": provenance_details},
         ))
         self.experience.record(ExperienceRecord(
             record_id=self.state.feedback_record_id, kind="improvement", scope="decision_maker",
@@ -186,9 +280,12 @@ class DefaultDecisionHarness:
                      "status": feedback.status.value, "error": feedback.error,
                      "quality_metrics": feedback.quality_metrics, "training_metrics": feedback.training_metrics,
                      "execution_metrics": feedback.execution_metrics,
-                     "candidates": [asdict(c) for c in feedback.candidates]},
+                     "candidates": [asdict(c) for c in feedback.candidates],
+                     "evaluation": asdict(evaluation) if evaluation else None,
+                     "provenance": provenance_details},
         ))
         self.state.candidates = candidates
+        self.state.candidate_evaluations = evaluations
         self.state.last_feedback = feedback
         self.state.last_directive = directive
         self.state.pending_directive_id = None
@@ -245,6 +342,8 @@ class DefaultDecisionHarness:
             raise RuntimeError(f"Training has no usable result: {outcome.status}")
         result = outcome.result
         if job in self.state.applied_training:
+            if getattr(self.policy, 'model', None) != result.model:
+                raise ValueError('Applied training result is stale relative to this policy')
             return result.model
         if not isinstance(self.policy, ModelUpdatable):
             raise TypeError("This policy does not support model updates")

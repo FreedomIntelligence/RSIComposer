@@ -43,6 +43,7 @@ def check_states(decision, actor):
         raise ValueError('Invalid loop state types')
     if (decision.pending_directive_id is not None or decision.pending_directive is not None
             or decision.pending_job is not None or decision.pending_operation_record is not None
+            or decision.pending_review_record is not None
             or actor.active_directive_id is not None
             or actor.pending_episode is not None):
         raise RuntimeError('Snapshot requires a boundary with no pending directive or operation')

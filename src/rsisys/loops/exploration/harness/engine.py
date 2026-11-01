@@ -11,6 +11,7 @@ from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
+from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 
@@ -26,7 +27,7 @@ from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
 
 from .state import ExplorationState, PendingEpisode
-from .commands import ExplorationCommands, CommandHandler
+from .commands import ExplorationCommands, CommandHandler, InvalidJobResult
 from collections.abc import Mapping
 
 
@@ -62,6 +63,15 @@ class DefaultExplorationHarness:
 
     def inspect(self, directive_id):
         return self.commands.inspect(directive_id)
+
+    def pending(self) -> ExplorationProgress | None:
+        """Return the unacknowledged receipt, including terminal feedback."""
+        active = self.commands.active
+        return self.commands.inspect(active) if active is not None else None
+
+    def execution_view(self) -> ExecutionView:
+        model = getattr(self.policy, 'model', None)
+        return ExecutionView(model if isinstance(model, ModelRef) else None, self.pending())
 
     def cancel(self, directive_id):
         return self.commands.cancel(directive_id)
@@ -225,13 +235,13 @@ class DefaultExplorationHarness:
         if outcome.status == JobStatus.SUCCEEDED:
             result = outcome.result
             if not isinstance(result, TrainingResult) or result.base != request.base:
-                raise ValueError("Training result does not match the submitted base")
+                raise InvalidJobResult("Training result does not match the submitted base", outcome)
             if "actor" not in result.candidate.affected_roles:
-                raise ValueError("Training result does not target this loop's role")
+                raise InvalidJobResult("Training result does not target this loop's role", outcome)
             candidate_id = result.candidate.candidate_id
             if (candidate_id in self.state.candidate_results
                     and self.state.candidate_results[candidate_id] != result):
-                raise ValueError('Candidate ID reused with different training content')
+                raise InvalidJobResult('Candidate ID reused with different training content', outcome)
             self.state.candidate_results[candidate_id] = deepcopy(result)
         if outcome.terminal and outcome.job not in self.state.recorded_training:
             self.experience.record(ExperienceRecord(
@@ -297,11 +307,13 @@ class DefaultExplorationHarness:
             raise RuntimeError('Cannot replace the model while another training job is active')
         if 'actor' not in result.candidate.affected_roles:
             raise ValueError("Training result does not target this loop's role")
-        candidate_id = result.candidate.candidate_id
-        if candidate_id in self.state.applied_candidates:
-            return result.model
         if not isinstance(self.policy, ModelUpdatable):
             raise TypeError("This policy does not support model updates")
+        candidate_id = result.candidate.candidate_id
+        if candidate_id in self.state.applied_candidates:
+            if self.policy.model != result.model:
+                raise ValueError('Previously applied candidate is stale relative to this policy')
+            return result.model
         if self.policy.model != result.base:
             raise ValueError("Training base is stale relative to this policy")
         ready = prepare_model_activation(result, self.model_activator,
@@ -332,7 +344,7 @@ class DefaultExplorationHarness:
             if (not isinstance(result, EvaluationResult)
                     or result.candidate_id != request.candidate.candidate_id
                     or result.protocol_ref != request.protocol_ref):
-                raise ValueError("Evaluation result does not match the candidate and protocol")
+                raise InvalidJobResult("Evaluation result does not match the candidate and protocol", outcome)
         if outcome.terminal and outcome.job not in self.state.recorded_evaluation:
             self.experience.record(ExperienceRecord(
                 record_id=self.state.evaluation_record_ids.setdefault(outcome.job, str(uuid4())),
@@ -407,8 +419,7 @@ class DefaultExplorationHarness:
                 state.jobs.append(state.job)
             state.phase = "training"
         elif state.phase == "training":
-            outcome = (self.cancel_learning(state.job) if state.cancel_requested
-                       else self.poll_learning(state.job))
+            outcome = self._poll_rl_learning(state)
             state.simulated = state.simulated or outcome.simulated
             if state.cancel_requested:
                 if outcome.terminal:
@@ -427,6 +438,15 @@ class DefaultExplorationHarness:
                 state.error = outcome.error
         return deepcopy(state)
 
+    def _poll_rl_learning(self, state: RLState) -> JobOutcome[TrainingResult]:
+        try:
+            return self.cancel_learning(state.job) if state.cancel_requested else self.poll_learning(state.job)
+        except InvalidJobResult as exc:
+            state.phase = 'failed'
+            state.error = f'{type(exc).__name__}: {exc}'
+            state.simulated = state.simulated or exc.simulated
+            raise
+
     def cancel_rl(self) -> RLState:
         self._require_local_control()
         return self._cancel_rl()
@@ -444,7 +464,7 @@ class DefaultExplorationHarness:
             # A lost submit response may hide a real job. Resolve the same key before cancelling.
             return deepcopy(state)
         if state.job is not None:
-            outcome = self.cancel_learning(state.job)
+            outcome = self._poll_rl_learning(state)
             state.simulated = state.simulated or outcome.simulated
             if not outcome.terminal:
                 return deepcopy(state)

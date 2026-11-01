@@ -8,6 +8,8 @@
 
 Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策侧定义与探索侧 handler 映射扩展，无需修改核心分派。接入方式见[使用指南](docs/GUIDE.md#使用-python-接入组件)。
 
+长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，当前仍为单条在途指令与进程内状态，见 [Runtime](src/rsisys/runtime/README.md)。
+
 ## 快速开始
 
 在项目目录使用 Pixi（当前锁定 Linux / Python 3.12）：

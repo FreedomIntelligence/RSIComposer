@@ -39,9 +39,13 @@ Action Space 位于 [../action_space/](../action_space/README.md)，只描述和
 
 accept 复制并校验请求；advance 推进阶段，execute 会同步运行一个有界 episode；inspect 不推进；cancel 标记取消，后续 advance 处理；终态 Feedback 交付后 acknowledge 释放占用。进度返回副本，终态由是否携带 Feedback 判断。
 
+`pending()` 返回当前未 acknowledge 的 ExplorationProgress 副本，包括已经终态但尚未交付确认的回执；空闲时返回 None。`execution_view()` 返回当前 policy 的 ModelRef（若有）和 pending 进度，不执行或轮询后端。elapsed_seconds 从首次 advance 开始用进程内单调时钟计时，终态后固定，不承诺跨进程恢复；尚未开始时为 None。metrics 只来自已取得的 Feedback，等待后端时保持空字典，不补做 poll。
+
 内置本地控制通过 `loop.harness` 使用：`run(directive, loop.action_space)`、`submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning`、`submit_evaluation` / `poll_evaluation` / `cancel_evaluation`，以及 `start_rl` / `step_rl(loop.action_space)` / `cancel_rl`。示例见 [loop_internals.py](../../../../../examples/loop_internals.py)。
 
 训练成功后，默认 Harness 按 candidate_id 保存完整 TrainingResult。`candidate_result(id)` 返回副本，`apply_candidate(id)` 在本地空闲边界应用已保存候选，不依赖原训练 job 继续存在。指令路径需显式配对决策侧 `apply_candidate_directive()` 与 `ApplyCandidateHandler()`；验收标准由 policy 或调用方负责，handler 不假定评测通过。应用仍校验 base 是否过时、模型 readiness 和控制占用；同一候选重试不会重复切换绑定。应用成功后的证据写入失败只重试记录。
+
+已应用候选只有在 policy 仍绑定其目标版本时才可幂等返回；切换到其他版本后，新应用请求会被拒绝为 stale，不虚报成功或回滚模型。旧 directive 的回执重放仍返回当时的结果，不重复执行。
 
 指令未 acknowledge 前，禁止本地执行、新提交、模型应用和 RL 控制；已有 job 仍可 poll / cancel。本地 RL 占用执行、训练提交与模型更新，评测可独立提交。SFT/RL 取消与成功竞速时不自动应用本次候选，已应用的版本不回滚。RL 当前顺序采样与训练，不支持并行采样或异步权重广播。
 
@@ -69,3 +73,5 @@ prepare 失败会形成失败回执并重新抛出异常；调用方交付并 ac
 - `advance_job(state, *, training)`：handler 先在 prepare 中冻结 `state.request`，再在 advance 中调用。training 为真使用训练作业，为假使用评测作业；每次推进一个提交或轮询/取消阶段，复用请求和幂等键，记录终态证据，并按 payload.apply_result 应用训练结果。该 helper 返回 None，直接更新 state.phase、state.job 和终态 state.feedback；调用方无需再返回 Feedback。
 
 `advance_job` 的不确定提交、轮询、证据写入失败保留回执供重试。应用阶段抛出 `ModelActivationPending` 时同样保持未终态，下次 advance 对同一 job 重试应用；其他应用异常生成 FAILED 回执后重新抛出。取消后不再应用候选，已发生的外部应用不回滚。开始前的取消仍由框架的 cancel_before_start 处理。这些 helper 应在 handler 生命周期内使用，不替代 Harness 的本地控制入口。
+
+Harness 检测到已缓存终态结果的类型、base、角色、candidate ID 内容或评测 candidate/protocol 不匹配时，抛出 `InvalidJobResult`（ValueError 子类）。命令将该确定的协议错误转为 FAILED 回执后重新抛出，供调用方交付并 acknowledge；不会发布错误候选或伪造有效训练/评测证据。RL 序列也结束为 failed，避免残留控制占用。后端本身抛出的异常和 Experience 写入异常不因此转为终态，仍可按原请求、job 与记录 ID 重试。

@@ -28,6 +28,10 @@ parser 的候选按 candidate_id 合并去重，以 context.candidates 为准，
 
 explore 未提供 input_ids 时使用全部当前准备产物；提供时必须是产物 ID 列表，只能引用当前准备结果或最新反馈的 artifact_refs，空列表表示不传输入。
 
+指令的 simulated 标记合并模型响应与实际选中输入的来源标记；未选中的模拟准备产物不会污染真实输入，模拟反馈中的已选产物也不会丢失标记。
+
+explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`ModelDecisionPolicy.review(context)` 使用独立请求读取当前执行视图，解析 `{"action":"continue","next_review_seconds":30,"reason":"..."}`；仅允许 continue / cancel，None 停止自动复查。自定义 policy 可选择实现 review，也可只保留 decide。调用时机、反馈归因和写入重试由 [Harness](../README.md) / [Runner](../../../../runtime/README.md) 管理。
+
 自定义策略实现 `decide` 并通过默认 Harness 的 policy 参数注入，不要求使用 JSON。需要应用学习结果时，另实现 [ModelUpdatable](../../../contracts/model_service.py) 的 model 与 update_model。
 
 内置 update_model 只更改当前策略的模型引用，拒绝切换 backend_id。explore 的系统指令交给 Exploration Harness；训练/评测仍需配置对应后端。`configure_prompt` 使用 PromptSpec(instructions)，空字符串清空 Actor 指令配置，结构见[共享协议](../../../contracts/README.md)。

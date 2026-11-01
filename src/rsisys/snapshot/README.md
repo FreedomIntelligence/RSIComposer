@@ -12,6 +12,8 @@
 
 在空闲边界保存两个默认 Harness 的状态、模型绑定、配置、共享 Experience SQLite、本地产物及父快照关系。Decision memory 与 Actor memory 分别保存为 decision_memory.json 和 exploration_memory.json，包含各自 history 与工作记忆，不混入 Experience。待交付指令、待补写的操作/执行反馈、在途训练/评测、活跃 RL 或执行 session 都禁止捕获。
 
+候选最近评测摘要、指令版本归因与当前执行视图随内置状态保存；待补写复查记录也禁止捕获。复查计时和消息交付的进程内状态不是 Snapshot 的恢复承诺。
+
 恢复要求目标目录不存在，保留原 run_id 和任务目标；检查文件清单、摘要、框架源码指纹及 Python 主/次版本。源码版本必须精确匹配；旧快照不自动迁移。Experience SQLite schema 2 显式拒绝旧 schema。已完成准备结果可继续使用，训练与评测终态反馈从 Experience 读取，准备历史与执行轨迹从各自 memory 读取，旧 JobHandle 不重建，不能据旧 JobRef 继续轮询或调用后端 result。
 
 不捕获外部模型权重、优化器、在途作业、随机数生成器状态，也不保证逐位重放。保存 ModelRef 不代表已保存权重或验证远端版本可恢复；外部服务仍须提供绑定的模型版本。

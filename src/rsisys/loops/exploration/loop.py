@@ -1,6 +1,7 @@
 """Receives system directives; Actor actions are a separate environment vocabulary."""
 from .action_space import ActionSpace
 from .harness import ExplorationHarness
+from rsisys.loops.contracts.coordination import ExecutionView
 
 
 class ExplorationLoop:
@@ -21,3 +22,11 @@ class ExplorationLoop:
 
     def acknowledge(self, directive_id):
         self.harness.acknowledge(directive_id)
+
+    def pending(self):
+        discover = getattr(self.harness, 'pending', None)
+        return discover() if discover is not None else None
+
+    def execution_view(self):
+        view = getattr(self.harness, 'execution_view', None)
+        return view() if view is not None else ExecutionView(progress=self.pending())

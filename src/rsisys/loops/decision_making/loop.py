@@ -2,6 +2,7 @@
 from .action_space import DecisionActionSpace
 from .harness import DecisionHarness
 from .harness.decision import DecisionRunResult
+from rsisys.loops.contracts.coordination import ReviewDecision
 
 
 class DecisionMakingLoop:
@@ -16,6 +17,15 @@ class DecisionMakingLoop:
 
     def receive_feedback(self, directive, feedback):
         self.harness.receive_feedback(directive, feedback)
+
+    def update_execution(self, view):
+        update = getattr(self.harness, 'update_execution', None)
+        if update is not None:
+            update(view)
+
+    def review(self, objective, progress):
+        review = getattr(self.harness, 'review', None)
+        return review(objective, progress) if review is not None else ReviewDecision()
 
     def run(self, objective: str, *, max_steps: int = 16) -> DecisionRunResult:
         if type(max_steps) is not int or max_steps < 1:

@@ -6,12 +6,13 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from hashlib import sha256
 from uuid import uuid4
+from time import monotonic
 
 from rsisys.experience.records import ExperienceRecord
 from rsisys.loops.contracts.coordination import ExplorationProgress
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
-from rsisys.loops.contracts.jobs import JobRef, JobStatus
+from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobOutcome
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
@@ -19,6 +20,15 @@ from rsisys.loops.contracts.training import ModelActivationPending
 from .learner import ActorTrainingRequest
 from .evaluation import EvaluationRequest
 from .rl import RLPlan
+
+
+class InvalidJobResult(ValueError):
+    """A cached terminal result violates this harness's request/identity contract."""
+
+    def __init__(self, message: str, outcome: JobOutcome):
+        super().__init__(message)
+        self.job = outcome.job
+        self.simulated = outcome.simulated or bool(getattr(outcome.result, 'simulated', False))
 
 
 @dataclass
@@ -32,6 +42,8 @@ class CommandState:
     record: ExperienceRecord | None = None
     data: dict[str, object] = field(default_factory=dict)
     started: bool = False
+    started_at: float | None = None
+    elapsed_seconds: float | None = None
 
     @property
     def idempotency_key(self) -> str:
@@ -173,7 +185,14 @@ class ExplorationCommands:
 
     def inspect(self, directive_id):
         state = self.receipts[directive_id]
-        return deepcopy(ExplorationProgress(directive_id, state.phase, state.directive, state.job, state.feedback))
+        elapsed = state.elapsed_seconds
+        if elapsed is None and state.started_at is not None:
+            elapsed = monotonic() - state.started_at
+        feedback = state.feedback
+        metrics = ({**feedback.training_metrics, **feedback.quality_metrics, **feedback.execution_metrics}
+                   if feedback is not None else {})
+        return deepcopy(ExplorationProgress(directive_id, state.phase, state.directive, state.job, feedback,
+                                            metrics=metrics, elapsed_seconds=elapsed))
 
     def _finish(self, state, feedback):
         if not isinstance(feedback, Feedback) or feedback.directive_id != state.directive.directive_id:
@@ -181,6 +200,8 @@ class ExplorationCommands:
         feedback = replace(feedback, simulated=feedback.simulated or state.directive.simulated)
         state.feedback = deepcopy(feedback)
         state.phase = feedback.status.value
+        if state.started_at is not None and state.elapsed_seconds is None:
+            state.elapsed_seconds = monotonic() - state.started_at
         self.loop.state.last_feedback = deepcopy(feedback)
 
     def _fail(self, state, exc):
@@ -198,6 +219,8 @@ class ExplorationCommands:
             feedback = handler.cancel_before_start(self.loop, state, action_space)
         else:
             # An uncertain first advance may already have started external work.
+            if not state.started:
+                state.started_at = monotonic()
             state.started = True
             feedback = handler.advance(self.loop, state, action_space)
         if feedback is not None:
@@ -267,7 +290,17 @@ class ExplorationCommands:
             poll = loop.cancel_learning if state.cancel_requested else loop.poll_learning
         else:
             poll = loop.cancel_evaluation if state.cancel_requested else loop.poll_evaluation
-        outcome = poll(state.job)
+        try:
+            outcome = poll(state.job)
+        except InvalidJobResult as exc:
+            # Validation of an already-terminal result cannot recover by polling
+            # or cancelling it again. Do not catch transport or evidence errors.
+            self._finish(state, Feedback(
+                directive.directive_id, ExecutionStatus.FAILED,
+                f'{directive.mode} result rejected', exc.simulated,
+                jobs=(exc.job,), error=f'{type(exc).__name__}: {exc}',
+            ))
+            raise
         if not outcome.terminal:
             return
         result = outcome.result

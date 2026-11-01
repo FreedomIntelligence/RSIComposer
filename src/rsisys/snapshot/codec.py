@@ -7,19 +7,24 @@ from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
+from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision
 from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, TokenUsage
 from rsisys.loops.contracts.training import TrainingResult
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 from rsisys.loops.decision_making.action_space import OperationCall, OperationResult
-from rsisys.loops.decision_making.harness.state import DecisionState
+from rsisys.loops.decision_making.harness.state import (
+    DecisionState, DirectiveProvenance, CandidateEvaluation,
+)
 from rsisys.loops.exploration.harness.state import ExplorationState
 from rsisys.loops.exploration.harness.rl import RLPlan, RLState
 from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 
 TYPES = {cls.__name__: cls for cls in (
     ArtifactRef, Candidate, Directive, Feedback, JobRef, ModelRef, TokenUsage,
+    ExecutionView, ExplorationProgress, ReviewDecision,
+    DirectiveProvenance, CandidateEvaluation,
     TrainingResult, OperationCall, OperationResult, DecisionState, ExplorationState,
     RLPlan, RLState, ActorTrainingRequest, SFTSpec, RLSpec, EvaluationSpec, PromptSpec,
 )}

@@ -20,3 +20,11 @@ class Feedback:
     candidates: tuple[Candidate, ...] = ()
     jobs: tuple[JobRef, ...] = ()
     error: str | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.status, ExecutionStatus):
+            raise TypeError('Feedback status must be a terminal ExecutionStatus')
+        if self.status == ExecutionStatus.FAILED and not self.error:
+            raise ValueError('Failed feedback requires an error')
+        if self.status == ExecutionStatus.COMPLETED and self.error is not None:
+            raise ValueError('Completed feedback cannot carry an error')

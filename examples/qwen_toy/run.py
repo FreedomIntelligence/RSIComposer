@@ -1,4 +1,4 @@
-"""Run one real, bounded Qwen train/evaluate/select/execute cycle.
+"""Run one or two real, bounded Qwen SFT/evaluate/select/execute rounds.
 
 PYTHONPATH=src python examples/qwen_toy/run.py --baseline-url http://HOST:18095 \
     --worker-url http://HOST:8766
@@ -48,7 +48,7 @@ from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.runner import Runner
 
 
-OBJECTIVE = 'Improve parity JSON answers using one LoRA training run and heldout NLL evaluation.'
+OBJECTIVE = 'Improve parity JSON answers using bounded LoRA SFT rounds and heldout NLL evaluation.'
 EXECUTION_PROMPT = 'Return only JSON with key "parity" and value "even" or "odd" for integer 113.'
 
 
@@ -92,11 +92,13 @@ class Monitor:
 
 class GuardedDecisionPolicy(ModelDecisionPolicy):
     """Validate real model outputs; never synthesize a Decision on its behalf."""
-    def __init__(self, backend, base, catalog, monitor, *, attempts=3):
+    def __init__(self, backend, base, catalog, monitor, *, attempts=3, rounds=1, review_after_seconds=2):
         super().__init__(backend, base, directives=catalog)
         self.monitor, self.attempts = monitor, attempts
         self.phase, self.metrics, self.candidate_id = 'train', {}, None
         self.selection = 'pending'
+        self.round, self.rounds = 1, rounds
+        self.review_after_seconds, self.reviews = review_after_seconds, []
 
     def decide(self, context):
         modes = {'train': ('train',), 'evaluate': ('evaluate',),
@@ -107,7 +109,7 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
             'evaluate': ('Training is complete. Submit mode="evaluate" with arguments exactly '
                          + json.dumps({'candidate_id': self.candidate_id, 'protocol_ref': PROTOCOL}) + '.'),
             'select': ('Evaluation is complete. Choose apply_candidate if and only if delta_nll is finite and >0; '
-                       'otherwise choose execute to reject the candidate and keep the baseline. '
+                       'otherwise choose execute to reject the candidate and keep the current Actor. '
                        f'Observed heldout metrics: {json.dumps(self.metrics)}. '
                        'For apply_candidate the arguments must be exactly '
                        + json.dumps({'candidate_id': self.candidate_id})
@@ -117,7 +119,8 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
             'finish': 'The Actor has already executed the task. The experiment is complete. Return kind="finish" with a short reason.',
         }[self.phase]
         instruction = (
-            f'Current workflow phase: {self.phase}. One bounded experiment only. '
+            f'Current workflow phase: {self.phase}. Round {self.round} of {self.rounds}. '
+            'Train only once in this round from the current Actor. '
             + stage_instruction + ' '
             'There are no local operations. For a system directive use '
             '{"kind":"explore","mode":one_of_the_current_directive_modes,"strategy":short_text,"arguments":{...}}. '
@@ -157,7 +160,8 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
                             raise ValueError('Apply only the evaluated candidate')
                         self.selection = 'accepted' if mode == 'apply_candidate' else 'rejected'
                     # A hard step bound changes execution budget, never the proposed action.
-                    decision = replace(decision, directive=replace(directive, max_steps=1))
+                    decision = replace(decision, directive=replace(directive, max_steps=1,
+                        review_after_seconds=self.review_after_seconds if mode == 'train' else None))
                     self.monitor.stage(mode)
                 self.monitor.event('model_decision_validated', kind=decision.kind)
                 return decision
@@ -178,6 +182,33 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
                               'do not use kind="invoke" for training, evaluation or application.')
         raise ValueError('Model failed bounded decision validation attempts')
 
+    def review(self, context):
+        progress = context.execution.progress
+        if progress is None or progress.terminal or progress.directive.mode != 'train':
+            raise ValueError('Toy review requires a running SFT directive')
+        for attempt in range(self.attempts):
+            self.monitor.event('training_review_requested', source='llm', round=self.round,
+                               directive_id=progress.directive_id, attempt=attempt + 1)
+            try:
+                reviewed = super().review(replace(context, objective=context.objective +
+                    '\nReview only the running SFT job. Continue if no failure or cancellation is reported; '
+                    'cancel only for an observed failure or explicit cancellation. '
+                    'Use next_review_seconds=null for a single review. Do not propose a new directive.'))
+                entry = {'source': 'llm', 'round': self.round, 'action': reviewed.action,
+                         'next_review_seconds': reviewed.next_review_seconds,
+                         'directive_id': progress.directive_id,
+                         'job_id': progress.job.job_id if progress.job else None,
+                         'phase': progress.phase, 'elapsed_seconds': progress.elapsed_seconds,
+                         'decision_revision': self.model.revision,
+                         'actor_revision': context.execution.model.revision if context.execution.model else None}
+                self.reviews.append(entry)
+                self.monitor.event('training_review_completed', **entry)
+                return reviewed
+            except (ValueError, KeyError, TypeError):
+                self.monitor.event('training_review_rejected', source='llm', round=self.round,
+                                   directive_id=progress.directive_id, attempt=attempt + 1)
+        raise ValueError('Model failed bounded training review validation attempts')
+
     def feedback(self, directive, feedback):
         if feedback.status != ExecutionStatus.COMPLETED or feedback.simulated:
             raise RuntimeError('Real directive did not complete successfully')
@@ -192,7 +223,14 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
         elif directive.mode == 'apply_candidate':
             self.phase = 'execute'
         elif directive.mode == 'execute':
-            self.phase = 'finish'
+            self.phase = 'finish' if self.round == self.rounds else 'next_round'
+
+    def next_round(self):
+        if self.phase != 'next_round':
+            raise ValueError('Next round requires completed execution')
+        self.round += 1
+        self.phase, self.metrics, self.candidate_id = 'train', {}, None
+        self.selection = 'pending'
 
 
 class ParityActorPolicy:
@@ -250,7 +288,8 @@ def run(args):
         builtin = {definition.spec.mode: definition for definition in builtin_directives()}
         catalog = DirectiveDefinitions((training_directive(), builtin['evaluate'],
                                         apply_candidate_directive(), builtin['execute']))
-        policy = GuardedDecisionPolicy(models, base, catalog, monitor)
+        policy = GuardedDecisionPolicy(models, base, catalog, monitor, rounds=args.rounds,
+                                       review_after_seconds=args.review_after_seconds)
         store = SQLiteExperienceStore(root / 'experience.sqlite3')
         experience = BasicExperienceSystem(store, run_id=root.name)
         decision = DefaultDecisionHarness(policy, BoundDecisionTools({}), experience,
@@ -266,6 +305,7 @@ def run(args):
         status, error_code, remote_may_run = 'running', None, False
         cancel_attempted, cancel_requested, cancellation_confirmed = False, False, False
         service_devices = {}
+        round_results = []
         started = time.monotonic()
         try:
             health = baseline.call('/health')
@@ -276,6 +316,8 @@ def run(args):
             service_devices['worker'] = worker_health.get('device')
             if worker_health.get('ready') is not True:
                 raise ValueError('Worker health check failed')
+            if worker_health.get('max_rounds', 1) < args.rounds:
+                raise ValueError('Worker does not support the requested round count')
             monitor.stage(policy.phase)
             for _ in range(args.max_steps):
                 deadline.remaining()
@@ -289,14 +331,34 @@ def run(args):
                 if result.kind == 'completed':
                     directive, feedback = decision.state.last_directive, decision.state.last_feedback
                     policy.feedback(directive, feedback)
-                    for ident, training in models.candidates.items():
+                    ident = policy.candidate_id
+                    if ident is not None:
+                        training = models.candidates[ident]
                         monitor.candidates[ident] = {
-                            'candidate_id': ident, 'base_revision': base.revision,
-                            'revision': training.model.revision,
+                            'candidate_id': ident, 'base_revision': training.base.revision,
+                            'revision': training.model.revision, 'round': policy.round,
                             'status': ('applied' if ident in exploration.state.applied_candidates else
                                        'rejected' if policy.selection == 'rejected' else 'proposed'),
                             'metrics': policy.metrics or training.metrics,
                         }
+                    if directive.mode == 'execute':
+                        reviews = [r for r in policy.reviews if r['round'] == policy.round]
+                        if args.require_training_review and not reviews:
+                            raise ValueError('Round finished without a real training review')
+                        row = {'round': policy.round, 'base_revision': training.base.revision,
+                               'candidate_id': ident, 'candidate_revision': training.model.revision,
+                               'selection': policy.selection, 'metrics': dict(policy.metrics),
+                               'actor_revision': actor_policy.model.revision,
+                               'applied': ident in exploration.state.applied_candidates,
+                               'answer': environment.answer,
+                               'answer_correct': environment.answer == {'parity': 'odd'},
+                               'training_review_count': len(reviews)}
+                        round_results.append(row)
+                        atomic_write(root / f'round-{policy.round}.json', json_bytes(row))
+                        monitor.data['round_results'] = list(round_results)
+                        if policy.phase == 'next_round':
+                            policy.next_round()
+                    monitor.data.update(round=policy.round, rounds=args.rounds)
                     monitor.stage(policy.phase)
                 else:
                     monitor.event('progress', status=result.kind)
@@ -345,6 +407,10 @@ def run(args):
         result = {
             'schema_version': 1, 'status': status, 'simulated': False,
             'model_name': args.model_name, 'service_devices': service_devices,
+            'rounds_requested': args.rounds, 'rounds_completed': len(round_results),
+            'round_results': round_results,
+            'training_reviews': policy.reviews, 'training_review_source': 'llm',
+            'training_review_required': args.require_training_review,
             'phase': 'finished' if status == 'completed' else monitor.phase,
             'selection': policy.selection, 'metrics': policy.metrics,
             'candidate_id': policy.candidate_id, 'applied': bool(exploration.state.applied_candidates),
@@ -375,13 +441,19 @@ def parse_args(argv=None):
     parser.add_argument('--worker-url', required=True)
     parser.add_argument('--model-name', default='Qwen3.5-9B')
     parser.add_argument('--base-revision', default='baseline')
+    parser.add_argument('--rounds', type=int, choices=(1, 2), default=1,
+                        help='Sequential SFT/eval/select/execute rounds (default: 1)')
     parser.add_argument('--run-dir', type=Path, default=Path('runs/qwen-toy'))
     parser.add_argument('--timeout', type=float, default=3600, help='Whole controller budget, plus at most 5s cancellation')
     parser.add_argument('--request-timeout', type=float, default=120)
+    parser.add_argument('--review-after-seconds', type=float, default=2,
+                        help='Schedule a real model review during each SFT job')
+    parser.add_argument('--require-training-review', action='store_true',
+                        help='Fail verification if a round completes without an LLM training review')
     parser.add_argument('--poll-interval', type=float, default=2)
     parser.add_argument('--max-steps', type=int, default=4096)
     args = parser.parse_args(argv)
-    for name in ('timeout', 'request_timeout', 'poll_interval'):
+    for name in ('timeout', 'request_timeout', 'poll_interval', 'review_after_seconds'):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f'{name} must be finite and positive')

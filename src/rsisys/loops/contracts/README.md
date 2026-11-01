@@ -22,7 +22,13 @@ Directive 由 decision policy 或外部系统发给 Exploration Harness，不是
 
 [Feedback](feedback.py) 关联原指令，携带状态、质量/训练/执行指标、产物、证据、候选、作业及错误。completed / failed / cancelled / partial 都是终态；缺失指标保持为空。evidence_refs 引用系统反馈记录；Actor RL 请求的 trajectory_refs 引用 Actor 本地 history，两者不能互换。
 
+Feedback 构造时要求 `ExecutionStatus`，拒绝 `JobStatus.RUNNING` 等作业状态；failed 必须含 error，completed 不得含 error。`ExplorationProgress` 表达在途阶段、作业引用、可选的实时指标与耗时，只有包含合法 Feedback 才表示终态。未知指标留空，不推测后端训练进度。
+
 [coordination.py](coordination.py) 定义 DecisionEndpoint、ExplorationEndpoint、ExplorationProgress、LoopStepResult 和 OperationResult。DecisionEndpoint 统一通过 receive_feedback(directive, feedback) 接收反馈；它们是 Runtime 协调的公开边界，结果类型不依赖具体 Harness，可直接用于自定义端点和运行时类型反射。
+
+可选端口 `RecoverableExplorationEndpoint.pending()` 返回当前未 acknowledge 的进度；`ObservableExplorationEndpoint.execution_view()` 返回 `ExecutionView(model, progress)`；`ReviewingDecisionEndpoint` 接收该视图并提供 `review(objective, progress)`。不要求外部 Harness 暴露 policy、memory 或后端实例。
+
+Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。`ReviewDecision` 只允许 continue / cancel，`next_review_seconds` 设定下一次复查间隔；None 停止自动复查。进展是当前执行事实，选定的复查事件进入 Experience，不另建 history/memory 系统。任务最终结果仍只通过 Feedback 交付。
 
 ## 作业与版本
 

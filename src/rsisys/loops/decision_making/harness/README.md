@@ -10,6 +10,10 @@
 
 `DecisionState.candidates` 按 candidate_id 保存历轮已接收候选，`DecisionContext.candidates` 提供其深拷贝 tuple；该字段追加在原上下文字段之后，默认空 tuple，兼容旧位置参数。候选不受 experience_limit / memory_limit 截断，评测等不含候选的反馈不会清空它们。同 ID 同内容去重；同 ID 不同内容（含单次反馈内冲突）在写入 history / Experience 前拒绝。两份反馈记录成功后才更新候选和交付状态，写入失败可用原反馈重试。
 
+`DecisionContext.execution` 是探索侧当前模型与进度，`decision_model` 是当前决策模型；`directive_provenance` 保留每条已发出指令当时观察到的两侧模型引用，后续角色更新不改写旧归因。`candidate_evaluations` 按候选提供最近一次评测的协议、输入引用、指标、状态与证据；失败或另一协议的评测也会替换该摘要，完整记录留在 Experience。它们不受短 history 截断，也不推断未知模型版本。
+
+运行中可调用 `review(objective, progress)`，默认 Harness 用同类上下文调用可选 `policy.review(context)`。结果只允许继续或取消，不发布新指令；取消由 Runner 执行。未实现 review 的 policy 返回不再复查的 continue。复查写入 history 和 Experience 时使用稳定记录 ID，写入失败只补写；任务终态先到时补齐证据后接收结果，不执行过时的取消建议。频率设置见 [Runtime](../../../runtime/README.md)。
+
 ## 内部组件
 
 | 组件 | 默认职责 |

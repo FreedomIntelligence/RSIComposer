@@ -6,6 +6,12 @@
 
 [runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../docs/ARCHITECTURE.md)。
 
+支持可选的探索侧 `pending()` 发现未确认指令，Runner 重建时先核对两侧所有权、补交反馈和确认，再允许新决策。默认 Harness 实现此接口；只实现基础端口的外部 Harness 仍能运行，但不具备该恢复能力。此机制依赖仍存活的端点状态，不是跨进程崩溃恢复。
+
+Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 到期时调用可选的 Decision `review`，由其返回 `ReviewDecision('continue' | 'cancel', next_review_seconds=...)`；None 停止后续自动复查。模型调用次数与后端轮询次数独立；每 tick 最多一次普通决策或复查。Runner 不 sleep、不自行创建后台线程，实际复查发生在截止时间之后的下一次 tick。调用方负责轮询间隔，重建 Runner 后从恢复时刻重新计算首次复查时间。
+
+取消响应不确定时保留复查结果，重试取消不重新问模型。当前仍只有一个在途指令，不支持原地替换、通用 pause/resume 或并发修改模型。决策者按时间/token 自训练的触发器仍未实现。
+
 [jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。记账仅在进程内，不保证重启恢复；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
 
 ## 模型调用

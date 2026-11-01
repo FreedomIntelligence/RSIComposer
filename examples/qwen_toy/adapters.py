@@ -100,10 +100,11 @@ class RevisionBackend:
     def __init__(self, baseline, worker, base, *, notify=lambda *args, **kwargs: None):
         self.baseline, self.worker, self.base = baseline, worker, base
         self.candidates = {}
+        self.active = base
         self.notify = notify
 
     def register(self, result):
-        if result.base != self.base or result.model.backend_id != self.base.backend_id:
+        if result.base != self.active or result.model.backend_id != self.base.backend_id:
             raise ValueError('Candidate has a different backend or training base')
         if result.model.model_id != self.base.model_id or result.model == self.base:
             raise ValueError('Candidate model identity is invalid')
@@ -127,6 +128,7 @@ class RevisionBackend:
                          {'role': 'user', 'content': request.prompt}],
             'max_tokens': min(request.max_output_tokens, 200), 'temperature': 0,
             'stream': False, 'chat_template_kwargs': {'enable_thinking': False},
+            **({'model_revision': request.model.revision} if verify else {}),
         })
         if response.get('model') != request.model.model_id:
             raise ValueError('Inference model identity mismatch')
@@ -164,7 +166,6 @@ class WorkerJobs:
         return self.pending_submission is not None
 
     def submit(self, request, *, idempotency_key):
-        self.validate(request)
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError('A stable request key is required')
         if idempotency_key in self.keys:
@@ -172,6 +173,7 @@ class WorkerJobs:
             if self.requests[job] != request:
                 raise ValueError('Request key reused with different content')
             return job
+        self.validate(request)
         pending = self.pending_submission
         if pending is not None:
             if pending.idempotency_key != idempotency_key or pending.request != request:
@@ -249,12 +251,14 @@ class WorkerTrainer(WorkerJobs):
         super().__init__(worker, backend, kind='train', **kwargs)
 
     def validate(self, request):
-        if (request.base != self.models.base or request.method != 'sft' or request.recipe_ref != RECIPE
+        if (request.base != self.models.active or request.method != 'sft' or request.recipe_ref != RECIPE
                 or request.data_refs not in ((), (TRAIN_REF,)) or request.trajectory_refs):
             raise ValueError('Toy worker requires the configured base, toy-lora/sft and train.jsonl')
 
     def convert(self, request, raw):
         revision = identifier(raw['revision'])
+        if raw.get('base_revision', request.base.revision) != request.base.revision:
+            raise ValueError('Worker training parent revision mismatch')
         path = raw['adapter_path']
         if not isinstance(path, str) or not path.startswith('/') or '..' in PurePosixPath(path).parts:
             raise ValueError('Worker adapter path must be absolute')
@@ -278,7 +282,8 @@ class WorkerEvaluator(WorkerJobs):
             raise ValueError('Toy evaluation requires a known candidate and heldout-nll on eval.jsonl')
 
     def convert(self, request, raw):
-        if raw['revision'] != request.candidate.candidate_id:
+        if (raw['revision'] != request.candidate.candidate_id
+                or raw.get('base_revision', request.candidate.base_version) != request.candidate.base_version):
             raise ValueError('Evaluation revision mismatch')
         metrics = numeric_metrics(raw['metrics'])
         # Missing/nonfinite measurements fail closed. Preserve finite observed
@@ -307,7 +312,7 @@ class WorkerActivator:
             raise ValueError('Activation requires a registered training result')
         health = self.backend.worker.call('/health')
         if (health.get('ready') is not True or health.get('trained') is not True
-                or health.get('revision') != result.model.revision):
+                or result.model.revision not in health.get('revisions', [health.get('revision')])):
             raise ValueError('Candidate service is not ready at the expected revision')
         response = self.backend.generate(GenerationRequest('actor', result.model,
             'Return only JSON with key "parity" and value "even" or "odd" for integer 114.',
@@ -318,5 +323,6 @@ class WorkerActivator:
         if not isinstance(value, dict) or set(value) != {'parity'} or value['parity'] not in ('even', 'odd'):
             raise ValueError('Candidate inference failed the JSON smoke test')
         self.activated[idempotency_key] = deepcopy(result)
+        self.backend.active = result.model
         self.backend.notify('activation_verified', revision=result.model.revision)
         return result.model
