@@ -83,12 +83,12 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .graph-extent { position: relative; overflow: hidden; min-width: 100%; min-height: 100%; }
 .graph-plane { position: relative; transform-origin: 0 0; }
 .graph-plane > svg { position: absolute; inset: 0; pointer-events: none; }
-.graph-edge { fill: none; stroke: #bdbab2; stroke-width: .65; }
-.graph-edge.temporal { stroke: #aaa69d; stroke-dasharray: 3 5; stroke-width: .7; }
-.graph-edge.linked { stroke: #a7a299; stroke-width: .85; }
-.graph-edge.membership { stroke: #d0cdc6; stroke-width: .65; }
-.graph-edge[data-related="false"] { opacity: .2; }
-.graph-edge[data-related="true"] { stroke: #827565; stroke-width: 1.15; }
+.graph-edge { fill: none; stroke: #aaa69d; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.graph-edge.temporal { stroke: #aaa69d; stroke-dasharray: 3 5; stroke-width: 1; }
+.graph-edge.linked { stroke: #938d83; stroke-width: 1; }
+.graph-edge.membership { stroke: #b3aea4; stroke-width: 1; }
+.graph-edge[data-related="false"] { opacity: .7; }
+.graph-edge[data-related="true"] { stroke: #827565; stroke-width: 1.5; }
 .graph-node { position: absolute; width: 24px; height: 24px; min-height: 0; padding: 0; display: flex; flex-direction: column; align-items: center; text-align: center; border: 0; border-radius: 0; background: transparent; line-height: 1.4; cursor: grab; transform: translate(-50%, -50%); touch-action: none; user-select: none; z-index: 1; }
 .graph-node:active { cursor: grabbing; }
 .graph-node:hover, .graph-node[aria-pressed="true"] { background: transparent; z-index: 2; }
