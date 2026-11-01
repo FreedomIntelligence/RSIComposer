@@ -36,7 +36,7 @@
       "elapsed_seconds": 138,
       "metrics": {
         "loss": 0.0784,
-        "learning_rate": 0.00002
+        "learning_rate": 2e-05
       },
       "metric_history": [
         {
@@ -44,7 +44,7 @@
           "elapsed_seconds": 7,
           "metrics": {
             "loss": 0.43,
-            "learning_rate": 0.000005
+            "learning_rate": 5e-06
           }
         },
         {
@@ -52,7 +52,7 @@
           "elapsed_seconds": 29,
           "metrics": {
             "loss": 0.28,
-            "learning_rate": 0.000012
+            "learning_rate": 1.2e-05
           }
         },
         {
@@ -60,7 +60,7 @@
           "elapsed_seconds": 58,
           "metrics": {
             "loss": 0.19,
-            "learning_rate": 0.00002
+            "learning_rate": 2e-05
           }
         },
         {
@@ -68,7 +68,7 @@
           "elapsed_seconds": 87,
           "metrics": {
             "loss": 0.126,
-            "learning_rate": 0.00002
+            "learning_rate": 2e-05
           }
         },
         {
@@ -76,7 +76,7 @@
           "elapsed_seconds": 116,
           "metrics": {
             "loss": 0.092,
-            "learning_rate": 0.00002
+            "learning_rate": 2e-05
           }
         },
         {
@@ -84,7 +84,7 @@
           "elapsed_seconds": 138,
           "metrics": {
             "loss": 0.0784,
-            "learning_rate": 0.00002
+            "learning_rate": 2e-05
           }
         }
       ]
@@ -222,8 +222,8 @@
     "total_steps": 120,
     "metrics": {
       "loss": 0.0784,
-      "heldout_nll_delta": 7.21e-7,
-      "learning_rate": 0.00002
+      "heldout_nll_delta": 7.21e-07,
+      "learning_rate": 2e-05
     }
   },
   "decisions": [
@@ -268,7 +268,8 @@
       "job_id": "train-actor-008",
       "candidate_id": "candidate-008",
       "review_after_seconds": 60,
-      "next_review_seconds": 42
+      "next_review_seconds": 42,
+      "parent_decision_id": "decision-011"
     },
     {
       "decision_id": "decision-011",
@@ -291,8 +292,12 @@
       "review_after_seconds": 60,
       "metrics": {
         "loss": 0.0784,
-        "learning_rate": 0.00002
-      }
+        "learning_rate": 2e-05
+      },
+      "source_decision_ids": [
+        "decision-009",
+        "decision-010"
+      ]
     },
     {
       "decision_id": "decision-010",
@@ -306,7 +311,8 @@
       "status": "completed",
       "decision_revision": "dm-r003",
       "actor_revision": "actor-r007",
-      "candidate_id": "candidate-007"
+      "candidate_id": "candidate-007",
+      "parent_decision_id": "decision-009"
     },
     {
       "decision_id": "decision-009",
@@ -374,6 +380,58 @@
         "delta_nll": -0.161,
         "eval_samples": 128
       }
+    }
+  ],
+  "project": {
+    "project_id": "example-rsi-system",
+    "name": "推理能力研究 · 示例",
+    "description": "围绕同一 RSI 系统进行多次运行，检查决策、实验反馈与策略调整。",
+    "system_id": "example-reasoning-system"
+  },
+  "demo_runs": [
+    {
+      "schema_version": 1,
+      "run_id": "example-baseline-001",
+      "project": {
+        "project_id": "example-rsi-system",
+        "name": "推理能力研究 · 示例",
+        "description": "围绕同一 RSI 系统进行多次运行，检查决策、实验反馈与策略调整。",
+        "system_id": "example-reasoning-system"
+      },
+      "objective": "建立固定评测协议下的推理基线。",
+      "status": "completed",
+      "updated_at": "2026-10-30T14:00:00+08:00",
+      "decisions": [
+        {
+          "decision_id": "baseline-plan",
+          "kind": "directive",
+          "directive_id": "baseline-eval",
+          "mode": "evaluate",
+          "timestamp": "2026-10-30T13:00:00+08:00",
+          "status": "completed",
+          "reason": "先测量固定基线，为后续研究提供可比较的指标。"
+        },
+        {
+          "decision_id": "baseline-finish",
+          "kind": "finish",
+          "timestamp": "2026-10-30T14:00:00+08:00",
+          "status": "completed",
+          "reason": "基线评测已记录。",
+          "parent_decision_id": "baseline-plan"
+        }
+      ],
+      "jobs": [
+        {
+          "job_id": "example-baseline-eval",
+          "directive_id": "baseline-eval",
+          "kind": "evaluation",
+          "status": "completed",
+          "metrics": {
+            "base_nll": 1.942,
+            "eval_samples": 128
+          }
+        }
+      ]
     }
   ]
 }

@@ -65,6 +65,44 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .event { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); } .event-time, .event-kind { font-size: 12px; color: var(--muted); } .event-content { min-width: 0; } .event-content p { overflow-wrap: anywhere; } .event-content summary { font-size: 12px; margin-top: 8px; }
 .more-button { display: block; margin: 18px auto 0; font-size: 12px; } footer { display: flex; justify-content: space-between; gap: 16px; padding: 26px 0; border-top: 1px solid var(--line); margin-top: 48px; }
 .skip { position: absolute; left: 12px; top: -60px; padding: 10px; background: var(--paper); z-index: 10; } .skip:focus { top: 12px; }
+.eyebrow { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.project-heading { padding: 34px 0 26px; max-width: 850px; overflow-wrap: anywhere; }
+.project-heading > p:not(.eyebrow) { margin-top: 10px; color: var(--muted); }
+#projects { padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+#projects .section-heading { margin-bottom: 4px; }
+#objective { font-size: clamp(23px, 2.7vw, 31px); overflow-wrap: anywhere; }
+.graph-caption { margin-bottom: 12px; }
+.graph-controls { display: flex; align-items: center; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+.graph-controls button { font-size: 12px; min-width: 36px; }
+.graph-controls > span { margin-left: 6px; font-size: 11px; }
+.graph-hint { margin-left: auto !important; }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 300px); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.graph-layout.overview-graph { display: block; }
+.graph-viewport { height: 410px; overflow: auto; overscroll-behavior: contain; min-width: 0; background: #f6f4ee; }
+.overview-graph .graph-viewport { height: 330px; }
+.graph-viewport:focus-visible { outline: 2px solid var(--orange); outline-offset: -3px; }
+.graph-extent { position: relative; overflow: hidden; }
+.graph-plane { position: relative; transform-origin: 0 0; }
+.graph-plane > svg { position: absolute; inset: 0; pointer-events: none; }
+.graph-edge { fill: none; stroke-width: 1.5; }
+.graph-edge.temporal { stroke: #aaa294; stroke-dasharray: 5 5; }
+.graph-edge.linked { stroke: var(--orange); }
+.graph-node { position: absolute; width: 240px; height: 124px; padding: 12px 15px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: var(--paper); border-radius: 5px; line-height: 1.5; }
+.graph-node:hover { background: #fffdf8; border-color: var(--orange); }
+.graph-node[aria-pressed="true"] { background: #f5e9df; border-color: var(--orange); box-shadow: inset 0 0 0 1px var(--orange); }
+.graph-node.job, .graph-node.candidate { border-left: 3px solid #9ca58e; }
+.graph-node .node-kind { font: 11px var(--sans); color: var(--muted); margin-bottom: 6px; }
+.graph-node strong { font: 18px/1.4 var(--serif); width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.graph-node .node-summary { font-size: 12px; color: var(--muted); width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+.graph-node .node-status { font-size: 11px; color: var(--orange); margin-top: auto; }
+.graph-detail { padding: 20px; border-left: 1px solid var(--line); height: 410px; overflow: auto; overflow-wrap: anywhere; }
+.graph-detail h3 { font-size: 21px; margin-bottom: 10px; }
+.graph-detail h4 { margin: 20px 0 7px; }
+.graph-detail p { font-size: 13px; }
+.graph-detail .detail-grid { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.graph-detail .detail-grid dd { margin-bottom: 6px; }
 @media (max-width: 850px) { .masthead, main, footer { width: calc(100% - 40px); } .run-heading { flex-direction: column; gap: 14px; } .run-meta { text-align: left; display: flex; align-items: center; gap: 12px; } .run-meta p { margin: 0; } .toolbar { align-items: flex-start; } .run-control { flex-basis: 100%; } .run-control select { max-width: 100%; } .decision-body { grid-template-columns: minmax(0, 1fr); gap: 16px; } .feedback { padding-left: 16px; border-left: 2px solid #d4ddcc; } .charts { gap: 14px; } }
 @media (max-width: 540px) { .masthead, main, footer { width: calc(100% - 32px); } .masthead { gap: 16px; padding: 20px 0; } nav { gap: 14px; font-size: 12px; } .read-only { display: none; } .refresh-controls { gap: 8px; } .section { margin-top: 30px; } .section-heading { align-items: flex-start; gap: 12px; } .decision-tools, .event-tools { width: 100%; gap: 8px; } .decision-tools input, .event-tools input { width: 0; min-width: 0; flex: 1; } .decision-tools select, .event-tools select { max-width: 46%; } .execution-content, .charts, .round-grid { grid-template-columns: minmax(0, 1fr); } #execution, .job-record, .candidate-card, .round-card { padding: 18px 16px; } .decision-card { padding-left: 20px; } h2 { font-size: 22px; } .event { grid-template-columns: minmax(0, 1fr); gap: 4px; } .metric-table th, .metric-table td { padding: 8px 4px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media (max-width: 850px) { .graph-layout { grid-template-columns: minmax(0, 1fr); } .graph-detail { height: auto; min-height: 80px; max-height: 360px; border-left: 0; border-top: 1px solid var(--line); } .graph-viewport { height: 350px; } .run-control select { max-width: 40%; } }
+@media (max-width: 540px) { .run-control { flex-wrap: wrap; gap: 8px; } .run-control label { width: 30px; } .run-control select { flex: 1 1 calc(100% - 42px); max-width: calc(100% - 42px); } .graph-hint { display: none; } .graph-detail { padding: 16px; } .overview-graph .graph-viewport { height: 250px; } }

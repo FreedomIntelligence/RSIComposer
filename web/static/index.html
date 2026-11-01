@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#faf9f5" />
-  <title>RSISys · 决策与反馈</title>
+  <title>RSISys · 研究脉络</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/style.css" />
   <script src="/app.js" defer></script>
@@ -13,12 +13,12 @@
   <a class="skip" href="#main">跳至内容</a>
   <header class="masthead">
     <a class="wordmark" href="/" aria-label="RSISys 首页">RSISys<span>.</span></a>
-    <nav aria-label="页面导航"><a href="#decisions">决策与反馈</a><a href="#jobs">训练与评测</a></nav>
+    <nav aria-label="页面导航"><a href="#projects">项目</a><a href="#lineage">已记录脉络</a><a href="#jobs">指标</a></nav>
     <span class="read-only">只读</span>
   </header>
   <main id="main">
     <div class="toolbar">
-      <div class="run-control"><label for="run-select">运行</label><select id="run-select"><option value="">正在读取…</option></select></div>
+      <div class="run-control"><label for="project-select">项目</label><select id="project-select"><option value="">正在读取…</option></select><label for="run-select">运行</label><select id="run-select"><option value="">项目总览</option></select></div>
       <div class="refresh-controls">
         <span id="connection" class="connection" role="status">连接中</span>
         <label class="auto"><input id="auto-refresh" type="checkbox" checked />自动刷新</label>
@@ -28,6 +28,12 @@
       </div>
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
+    <section id="projects" aria-labelledby="project-name" hidden>
+      <div class="project-heading"><p class="eyebrow">RSI 系统 · 项目</p><h1 id="project-name"></h1><p id="project-description"></p><p id="project-system" class="quiet-note"></p></div>
+      <div class="section-heading"><h2>运行入口 <span id="project-run-count"></span></h2><button id="project-overview">项目总览</button></div>
+      <p class="quiet-note graph-caption">各运行独立展示，点击进入当前快照。</p>
+      <div id="project-graph"></div>
+    </section>
     <section id="empty" class="empty-state" hidden>
       <h1 id="empty-title">等待第一次运行</h1>
       <p id="empty-description">尚无运行快照。</p>
@@ -35,8 +41,13 @@
     </section>
     <div id="dashboard" hidden>
       <section id="overview" aria-labelledby="objective">
-        <div class="run-heading"><h1 id="objective"></h1><div class="run-meta"><span id="run-status"></span><p id="updated"></p></div></div>
+        <div class="run-heading"><div><p id="run-label" class="eyebrow"></p><h2 id="objective"></h2></div><div class="run-meta"><span id="run-status"></span><p id="updated"></p></div></div>
         <section id="execution" aria-labelledby="execution-title"><div class="section-heading"><h2 id="execution-title">当前执行</h2><span id="workflow-summary"></span></div><div id="current-execution"></div></section>
+      </section>
+      <section id="lineage" class="section" aria-labelledby="lineage-title">
+        <div class="section-heading"><h2 id="lineage-title">已记录脉络 <span id="lineage-count"></span></h2></div>
+        <p class="quiet-note graph-caption">当前快照（最多 300 条决策）；虚线仅表示时间先后，实线表示显式父决策或指令关联。</p>
+        <div id="run-graph"></div>
       </section>
       <section id="decisions" class="section" aria-labelledby="decisions-title">
         <div class="section-heading"><h2 id="decisions-title">决策与反馈 <span id="decision-count"></span></h2>

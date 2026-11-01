@@ -4,6 +4,7 @@ const state = {
   demo: false, runId: "", realRunId: "", snapshot: null, controller: null,
   epoch: 0, timer: null, auto: true, eventLimit: 30, decisionLimit: 30,
   openEvents: new Set(), openDecisions: new Set(), openJobs: new Set(), queryApplied: false,
+  projects: [], projectId: "", realProjectId: "",
 };
 const ACTIVE = new Set(["running", "active", "training", "evaluating", "queued", "pending", "starting", "submitted", "in_progress"]);
 const DONE = new Set(["completed", "complete", "succeeded", "success", "done", "finished"]);
@@ -85,6 +86,164 @@ function decisionGroups(s) {
     if (decisionAction(row) === "finish" && last?.signature === signature) last.rows.push(row);
     else groups.push({ row, rows: [row], signature });
   } return groups;
+}
+const identifier = v => typeof v === "string" && v.length > 0;
+function parentIds(row) {
+  return [...new Set([row.parent_decision_id, ...(Array.isArray(row.source_decision_ids) ? row.source_decision_ids : [])].filter(identifier))];
+}
+// Edges use only identifiers reported in this run. No text, round, or version inference.
+function lineageModel(s) {
+  const groups = decisionGroups(s).reverse(), nodes = [], edges = [], ids = new Map(), directives = new Map(), edgeIndex = new Map(), occurrences = new Map();
+  groups.forEach((group, i) => {
+    const row = group.row, baseKey = `decision:${decisionKey(group.rows[group.rows.length - 1])}`, count = occurrences.get(baseKey) || 0;
+    occurrences.set(baseKey, count + 1);
+    const node = { key: `${baseKey}:${count}`, type: "decision", row, rows: group.rows,
+      label: row.kind === "review" ? "复查 / 调整" : decisionAction(row) === "apply_candidate" ? "版本调整" : "决策",
+      title: actionText(decisionAction(row)), summary: row.reason || row.strategy || "决策说明未报告", status: row.status,
+      x: 28 + i * 280, y: 54, missing: [], ambiguous: [] };
+    nodes.push(node);
+    for (const record of group.rows) {
+      if (identifier(record.decision_id)) { const matches = ids.get(record.decision_id) || new Set(); matches.add(node); ids.set(record.decision_id, matches); }
+      // Reviews are adjustments, not the origin of an experiment directive.
+      if (record.kind === "directive" && identifier(record.directive_id)) { const matches = directives.get(record.directive_id) || new Set(); matches.add(node); directives.set(record.directive_id, matches); }
+    }
+  });
+  const addEdge = (from, to, kind, evidence) => {
+    if (from.key === to.key) return;
+    const key = JSON.stringify([from.key, to.key, kind]);
+    let edge = edgeIndex.get(key);
+    if (!edge) { edge = { from: from.key, to: to.key, kind, evidence: [] }; edges.push(edge); edgeIndex.set(key, edge); }
+    if (!edge.evidence.includes(evidence)) edge.evidence.push(evidence);
+  };
+  const decisions = nodes.slice();
+  for (const node of decisions) for (const row of node.rows) for (const id of parentIds(row)) {
+    const matches = ids.get(id);
+    if (!matches) node.missing.push(id);
+    else if (matches.size !== 1) node.ambiguous.push(id);
+    else addEdge([...matches][0], node, "explicit", `父决策 ${id}`);
+  }
+  // Only disjoint, known timestamp ranges establish temporal order; missing/equal times get no edge.
+  const timeRange = node => {
+    const times = node.rows.map(r => Date.parse(r.timestamp));
+    return times.every(Number.isFinite) ? [Math.min(...times), Math.max(...times)] : null;
+  };
+  for (let i = 1; i < decisions.length; i++) {
+    const a = decisions[i - 1], b = decisions[i], at = timeRange(a), bt = timeRange(b);
+    if (at && bt && at[1] < bt[0] && !edges.some(e => e.from === a.key && e.to === b.key)) addEdge(a, b, "time", "仅时间先后");
+  }
+  const occupied = new Map();
+  let detached = 0;
+  for (const [type, rows] of [["job", list(s.jobs)], ["candidate", list(s.candidates)]]) rows.forEach((row, i) => {
+    const matches = identifier(row.directive_id) ? directives.get(row.directive_id) : null;
+    const origin = matches?.size === 1 ? [...matches][0] : null;
+    const column = origin ? decisions.indexOf(origin) : detached++;
+    const level = occupied.get(column) || 0; occupied.set(column, level + 1);
+    const node = { key: `${type}:${asText(row[`${type}_id`], i)}:${i}`, type, row,
+      label: type === "job" ? "实验反馈 · 当前快照" : "候选反馈 · 当前快照",
+      title: type === "job" ? actionText(row.kind) : `候选 ${i + 1}`, status: row.status,
+      summary: type === "job" ? (present(row.step) ? `已报告 ${asText(row.step)} 步` : "步骤未报告") : (row.revision || "版本未报告"),
+      x: 28 + column * 280, y: 236 + level * 154, missing: [], ambiguous: [] };
+    nodes.push(node);
+    if (origin) addEdge(origin, node, "directive", `指令 ${row.directive_id}`);
+  });
+  return { nodes, edges };
+}
+function graphDetail(node, model, s) {
+  const content = el("div");
+  content.append(el("p", "eyebrow", node.label), el("h3", "", node.title), badge(node.status));
+  if (node.type === "decision") {
+    content.append(el("p", "decision-reason", publicText(node.row.reason || node.row.strategy, "决策说明未报告")));
+    const f = feedbackFor(node.row, s);
+    content.append(el("h4", "", "反馈"), el("p", "", f.text), metricsDetail(f.metrics));
+    const explicit = object(node.row.feedback);
+    if (present(explicit.summary) || present(node.row.feedback_summary)) content.append(el("p", "decision-reason", explicit.summary || node.row.feedback_summary));
+    if (node.row.kind === "review" && f.job) content.append(el("p", "quiet-note", `关联任务当前${statusText(f.job.status)}；不代表复查当时状态。`));
+    if (node.rows.length > 1) content.append(el("p", "repeat-count", `重复报告 ${node.rows.length} 次，保留全部原始记录。`));
+    const records = el("details", "record-details"); records.append(el("summary", "", `原始记录（${node.rows.length} 条）`));
+    for (const row of node.rows) { const record = el("div", "raw-record"); record.append(rawFields(row)); const parents = parentIds(row); if (parents.length) record.append(fieldList([["显式父决策", parents.join("、")]])); records.append(record); }
+    content.append(records);
+  } else {
+    content.append(metricsDetail(node.row.metrics));
+    if (node.type === "job") content.append(progressView(node.row.step, node.row.total_steps), el("p", "quiet-note", `训练历史：${historyRows(node.row).length} 个采样点；曲线见下方训练与评测。`));
+    content.append(rawFields(node.row));
+  }
+  const incoming = model.edges.filter(e => e.to === node.key && e.kind !== "time");
+  content.append(el("h4", "", "关联依据"));
+  content.append(incoming.length ? fieldList(incoming.map(e => [e.kind === "explicit" ? "显式父决策" : "指令关联", e.evidence.join("、")])) : el("p", "quiet-note", "未报告可连接的父决策或指令关联。"));
+  if (node.missing.length) content.append(el("p", "quiet-note", `父引用不在当前快照：${[...new Set(node.missing)].join("、")}`));
+  if (node.ambiguous.length) content.append(el("p", "quiet-note", `父 ID 重复，未连线：${[...new Set(node.ambiguous)].join("、")}`));
+  return content;
+}
+// A scrollable HTML plane with SVG lines; node labels and details always remain plain text.
+function renderGraph(host, model, key, onSelect, detailFor) {
+  const previous = host.graphView, same = previous?.key === key;
+  const view = same ? previous : { key, scale: 1, selected: "", left: 0, top: 0 };
+  if (!detailFor) view.selected = model.nodes.find(n => n.selected)?.key || "";
+  if (same) { view.left = previous.viewport.scrollLeft; view.top = previous.viewport.scrollTop; }
+  const focusedKey = host.contains(document.activeElement) ? document.activeElement.dataset.nodeKey : null;
+  const controls = el("div", "graph-controls"), zoomLabel = el("span", "quiet-note"), viewport = el("div", "graph-viewport"), extent = el("div", "graph-extent"), plane = el("div", "graph-plane");
+  viewport.tabIndex = 0; viewport.setAttribute("role", "region"); viewport.setAttribute("aria-label", "脉络图，滚动浏览，Ctrl 或 Command 加滚轮缩放");
+  const width = Math.max(300, ...model.nodes.map(n => n.x + 268)), height = Math.max(184, ...model.nodes.map(n => n.y + 148));
+  plane.style.width = `${width}px`; plane.style.height = `${height}px`;
+  const lines = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  lines.setAttribute("width", width); lines.setAttribute("height", height); lines.setAttribute("aria-hidden", "true");
+  const defs = document.createElementNS(lines.namespaceURI, "defs"), marker = document.createElementNS(lines.namespaceURI, "marker"), arrow = document.createElementNS(lines.namespaceURI, "path");
+  marker.id = `${host.id}-arrow`; marker.setAttribute("viewBox", "0 0 8 8"); marker.setAttribute("refX", "8"); marker.setAttribute("refY", "4"); marker.setAttribute("markerWidth", "6"); marker.setAttribute("markerHeight", "6"); marker.setAttribute("orient", "auto");
+  arrow.setAttribute("d", "M0,0 L8,4 L0,8"); arrow.setAttribute("fill", "context-stroke"); marker.append(arrow); defs.append(marker); lines.append(defs);
+  const byKey = new Map(model.nodes.map(n => [n.key, n]));
+  for (const edge of model.edges) {
+    const a = byKey.get(edge.from), b = byKey.get(edge.to), path = document.createElementNS(lines.namespaceURI, "path");
+    const vertical = a.x === b.x, x1 = a.x + (vertical ? 120 : 240), y1 = a.y + (vertical ? 124 : 62), x2 = b.x + (vertical ? 120 : 0), y2 = b.y + (vertical ? 0 : 62);
+    const adjacent = Math.abs(a.x - b.x) <= 280;
+    path.setAttribute("d", vertical ? `M${x1},${y1} C${x1},${y1 + 32} ${x2},${y2 - 32} ${x2},${y2}` : adjacent ? `M${x1},${y1} C${x1 + 20},${y1} ${x2 - 20},${y2} ${x2},${y2}` : `M${x1},${y1} C${x1 + 38},8 ${x2 - 38},8 ${x2},${y2}`);
+    path.setAttribute("class", `graph-edge ${edge.kind === "time" ? "temporal" : "linked"}`);
+    path.setAttribute("marker-end", `url(#${marker.id})`);
+    const title = document.createElementNS(lines.namespaceURI, "title"); title.textContent = edge.evidence.join("、"); path.append(title); lines.append(path);
+  }
+  plane.append(lines);
+  const details = detailFor ? el("aside", "graph-detail") : null, buttons = new Map();
+  if (details) { details.setAttribute("aria-label", "所选节点详情"); details.append(empty("点击节点，查看决策、反馈与关联依据。")); }
+  const select = (node, notify = true) => {
+    view.selected = node.key;
+    for (const [id, button] of buttons) button.setAttribute("aria-pressed", String(id === node.key));
+    if (details) details.replaceChildren(detailFor(node));
+    if (notify) onSelect?.(node);
+  };
+  for (const node of model.nodes) {
+    const button = el("button", `graph-node ${node.type}`); button.type = "button"; button.dataset.nodeKey = node.key;
+    button.style.left = `${node.x}px`; button.style.top = `${node.y}px`;
+    button.setAttribute("aria-pressed", String(node.key === view.selected || node.selected === true));
+    button.append(el("span", "node-kind", node.label), el("strong", "", node.title), el("span", "node-summary", node.summary), el("span", "node-status", `${statusText(node.status)}${node.rows?.length > 1 ? ` · 重复 ${node.rows.length} 次` : ""}`));
+    button.title = `${node.title} · ${asText(node.summary, "")}`;
+    button.addEventListener("click", () => select(node)); buttons.set(node.key, button); plane.append(button);
+  }
+  const scaleTo = (scale, centered = true) => {
+    const cx = (viewport.scrollLeft + viewport.clientWidth / 2) / view.scale, cy = (viewport.scrollTop + viewport.clientHeight / 2) / view.scale;
+    view.scale = Math.max(.005, Math.min(2, scale)); plane.style.transform = `scale(${view.scale})`;
+    extent.style.width = `${width * view.scale}px`; extent.style.height = `${height * view.scale}px`; zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
+    if (centered) { viewport.scrollLeft = cx * view.scale - viewport.clientWidth / 2; viewport.scrollTop = cy * view.scale - viewport.clientHeight / 2; }
+  };
+  for (const [label, title, action] of [["−", "缩小", () => scaleTo(view.scale / 1.25)], ["+", "放大", () => scaleTo(view.scale * 1.25)], ["适应", "适应全部节点", () => { scaleTo(Math.min((viewport.clientWidth - 12) / width, (viewport.clientHeight - 12) / height, 1), false); viewport.scrollLeft = 0; viewport.scrollTop = 0; }], ["100%", "恢复原始大小", () => scaleTo(1)]]) {
+    const button = el("button", "", label); button.type = "button"; button.setAttribute("aria-label", title); button.addEventListener("click", action); controls.append(button);
+  }
+  controls.append(zoomLabel, el("span", "graph-hint quiet-note", "滚动浏览 · Ctrl/⌘ + 滚轮缩放"));
+  viewport.addEventListener("wheel", e => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); scaleTo(view.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  viewport.addEventListener("keydown", e => {
+    if (!e.target.dataset.nodeKey || !["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+    e.preventDefault(); const keys = [...buttons.keys()], index = keys.indexOf(e.target.dataset.nodeKey), next = e.key === "Home" ? 0 : e.key === "End" ? keys.length - 1 : Math.max(0, Math.min(keys.length - 1, index + (e.key === "ArrowRight" ? 1 : -1)));
+    buttons.get(keys[next]).focus();
+  });
+  extent.append(plane); viewport.append(extent);
+  const layout = el("div", details ? "graph-layout" : "graph-layout overview-graph"); layout.append(viewport); if (details) layout.append(details);
+  host.replaceChildren(controls, layout); view.viewport = viewport; host.graphView = view; scaleTo(view.scale, false); viewport.scrollLeft = view.left; viewport.scrollTop = view.top;
+  if (byKey.has(view.selected) && details) select(byKey.get(view.selected), false);
+  if (focusedKey) buttons.get(focusedKey)?.focus({ preventScroll: true });
+}
+function renderLineage(s) {
+  const model = lineageModel(s);
+  $("lineage-count").textContent = `${model.nodes.length} 个节点 · ${list(s.decisions).length} 条决策`;
+  if (!model.nodes.length) { $("run-graph").replaceChildren(empty("当前快照尚无决策、任务或候选，无法绘制脉络。")); $("run-graph").graphView = null; return; }
+  renderGraph($("run-graph"), model, `${state.demo ? "demo" : "real"}:${state.runId}`, null, node => graphDetail(node, model, s));
 }
 const sameId = (a, b) => present(a) && present(b) && a === b;
 function linkedJob(row, s) {
@@ -265,7 +424,7 @@ function renderRounds(s) {
 const eventLabels={job:"任务状态更新",progress:"执行进度更新",phase:"运行阶段更新",inference:"模型推理",feedback:"执行反馈",model_decision_requested:"请求模型决策",model_decision_validated:"决策通过校验",model_decision_rejected:"决策未通过校验",training_review_requested:"请求训练复查",training_review_completed:"训练复查完成",activation_verified:"候选验证通过","training.started":"训练开始","evaluation.completed":"评测完成","candidate.accepted":"候选已采纳","candidate.rejected":"候选未采纳","model.bound":"模型绑定更新","run.started":"运行开始"};
 function updateEventTypes(){const select=$("event-filter"),previous=select.value,types=[...new Set(list(state.snapshot?.events).map(e=>asText(e.kind,"未分类")))].sort();select.replaceChildren(...[["all","全部类型"],...types.map(t=>[t,eventLabels[t]||"其他事件"])].map(([v,t])=>{const o=el("option","",t);o.value=v;return o;}));select.value=types.includes(previous)?previous:"all";}
 function renderEvents(){if(!state.snapshot)return;const rows=list(state.snapshot.events),query=$("event-search").value.trim().toLowerCase(),filter=$("event-filter").value,shown=rows.filter(e=>(filter==="all"||e.kind===filter)&&JSON.stringify(e).toLowerCase().includes(query)).slice().sort((a,b)=>(Date.parse(b.timestamp)||0)-(Date.parse(a.timestamp)||0));$("event-count").textContent=`${shown.length} 条`;$("more-events").hidden=shown.length<=state.eventLimit;$("event-list").replaceChildren(...(shown.length?shown.slice(0,state.eventLimit).map(e=>{const row=el("article","event"),content=el("div","event-content");content.append(el("p","",eventLabels[e.kind]||"其他事件"),retainedDetails(JSON.stringify(e),state.openEvents,"事件详情",rawFields({...e,...object(e.details)})));row.append(el("time","event-time",dateText(e.timestamp)),content);return row;}):[empty(rows.length?"没有符合筛选条件的事件。":"尚无事件。") ]));}
-function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;$("objective").textContent=publicText(s.objective,"运行目标未报告");$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?"示例时间":"更新"} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?"执行模型":"决策模型"),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?"探索循环":"决策循环"),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();}
+function renderSnapshot(s){state.snapshot=s;$("empty").hidden=true;$("dashboard").hidden=false;$("export-report").disabled=false;$("objective").textContent=publicText(s.objective,"运行目标未报告");$("run-status").replaceChildren(badge(s.status));$("updated").textContent=`${state.demo?"示例时间":"更新"} ${dateText(s.updated_at)}`;const detail=el("div");detail.append(rawFields({run_id:s.run_id,status:s.status,updated_at:s.updated_at}));for(const [role,model] of Object.entries(object(s.models))){detail.append(el("h4","",role==="actor"?"执行模型":"决策模型"),rawFields(model));}for(const [name,loop] of Object.entries(object(s.loops))){detail.append(el("h4","",name==="exploration"?"探索循环":"决策循环"),rawFields(loop));}$("run-info").replaceChildren(detail);renderExecution(s);renderDecisions();renderJobs();renderCandidates();renderRounds(s);updateEventTypes();renderEvents();renderLineage(s);$("run-label").textContent=`${projectMeta(s.project).name} / 当前运行`;}
 // Pure snapshot-to-Markdown conversion: no model call, network request or upload.
 const md = value => asText(value, "未报告").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
 function reportMetrics(metrics) {
@@ -274,11 +433,12 @@ function reportMetrics(metrics) {
 }
 function reportDetails(row) {
   const lines = Object.entries(object(row)).filter(([,v])=>["string","number","boolean"].includes(typeof v)).map(([k,v])=>`- ${md(k)}：${md(v)}`);
+  if (parentIds(row).length) lines.push(`- 显式父决策：${parentIds(row).map(md).join("、")}`);
   return `<details>\n<summary>技术详情与原始记录</summary>\n\n${lines.join("\n")}\n\n</details>`;
 }
 function reportMarkdown(s) {
   const jobs=list(s.jobs), decisions=list(s.decisions), candidates=list(s.candidates), rounds=list(s.round_results);
-  const lines=["# RSISys 运行报告", "", state.demo ? "> 示例数据 · 静态演示，不代表真实运行。" : "> 来自当前公开快照；不调用模型，不上传数据。", "", `目标：${md(s.objective)}`, "", `运行状态：${md(statusText(s.status))}`, `快照时间：${md(s.updated_at)}`, `导出时间：${md(new Date().toISOString())}`, "", "本报告反映已读取的快照。缺失字段不代表零、成功或未执行；结束本轮研究不等于停止整个运行。"];
+  const lines=["# RSISys 运行报告", "", state.demo ? "> 示例数据 · 静态演示，不代表真实运行。" : "> 来自当前公开快照；不调用模型，不上传数据。", "", `项目：${md(projectMeta(s.project).name)}`, `系统：${md(projectMeta(s.project).system_id || "未报告")}`, `目标：${md(s.objective)}`, "", `运行状态：${md(statusText(s.status))}`, `快照时间：${md(s.updated_at)}`, `导出时间：${md(new Date().toISOString())}`, "", "本报告反映已读取的快照。缺失字段不代表零、成功或未执行；结束本轮研究不等于停止整个运行。"];
   if($("connection").classList.contains("offline")) lines.push("","> 连接中断：本报告使用上次成功读取的快照，数据未更新。");
   if(!state.demo && ACTIVE.has(statusKey(s.status)) && Date.now()-Date.parse(s.updated_at)>120000) lines.push("","> 快照超过 2 分钟未更新。");
   lines.push("", "## 决策与反馈", "");
@@ -310,7 +470,7 @@ function reportMarkdown(s) {
   for(const [i,c] of candidates.entries()) lines.push(`### 候选 ${i+1}`,"",`状态：${md(statusText(c.status))}`,"",reportMetrics(c.metrics),"",reportDetails(c),"");
   if(!rounds.length)lines.push("未报告轮次结果，无法确认是否执行或应用候选。", "");
   for(const r of rounds)lines.push(`### 第 ${number(r.round)?r.round:"未知"} 轮`,"",r.applied===true?"已应用候选。":r.applied===false?"未应用候选。":"是否应用：未报告。",r.answer_correct===true?"答案验证正确。":r.answer_correct===false?"答案验证不正确。":"答案验证：未报告。","",reportMetrics(r.metrics),"",reportDetails(r),"");
-  lines.push("## 数据范围", "", "仅包含当前公开快照，不代表完整实验历史。数值为上报指标；差值的定义以生产端为准，不自动判定改善。缺失指标不补零。旧运行没有历史时不生成趋势。", "",reportDetails({run_id:s.run_id,status:s.status,updated_at:s.updated_at}),"");
+  lines.push("## 数据范围", "", "仅包含当前公开快照（API 最多返回 300 条决策），不代表完整实验历史。数值为上报指标；差值的定义以生产端为准，不自动判定改善。缺失指标不补零。旧运行没有历史时不生成趋势。", "",reportDetails({run_id:s.run_id,status:s.status,updated_at:s.updated_at}),"");
   return lines.join("\n");
 }
 function downloadReport() {
@@ -320,57 +480,69 @@ function downloadReport() {
 }
 $("export-report").addEventListener("click",downloadReport);
 
-function chooseRuns(inputRuns) {
-  const valid = (run) => !run.error && run.status !== "unavailable";
-  const updated = (run) =>
-    Number.isFinite(Date.parse(run.updated_at))
-      ? Date.parse(run.updated_at)
-      : -Infinity;
-  const runs = list(inputRuns)
-    .slice()
-    .sort(
-      (a, b) =>
-        Number(valid(b)) - Number(valid(a)) ||
-        updated(b) - updated(a) ||
-        0 ||
-        asText(a.run_id, "").localeCompare(asText(b.run_id, "")),
-    );
+function clearRun() {
+  state.snapshot = null;
+  $("export-report").disabled = true;
+  $("dashboard").hidden = true;
+  state.openEvents.clear(); state.openDecisions.clear(); state.openJobs.clear();
+  state.decisionLimit = 30; state.eventLimit = 30;
+  $("run-graph").graphView = null;
+}
+function projectMeta(value) {
+  const p = object(value), id = identifier(p.project_id) ? p.project_id : "unassigned";
+  return { project_id: id, name: id === "unassigned" ? "未归属" : asText(p.name, id), description: asText(p.description, ""), system_id: asText(p.system_id, "") };
+}
+function runRows(project) {
+  return list(project?.runs).filter(r => identifier(r.run_id)).slice().sort((a, b) =>
+    Number(!b.error && b.status !== "unavailable") - Number(!a.error && a.status !== "unavailable") ||
+    (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0) || a.run_id.localeCompare(b.run_id));
+}
+function selectedProject() { return state.projects.find(p => p.project_id === state.projectId); }
+function renderProject() {
+  const project = selectedProject();
+  $("projects").hidden = !project;
+  if (!project) return;
+  const runs = runRows(project);
+  $("project-name").textContent = project.name;
+  $("project-description").textContent = project.description || "项目说明未报告。";
+  $("project-system").textContent = project.system_id ? `系统 ${project.system_id}` : "系统标识未报告";
+  $("project-run-count").textContent = `${runs.length} 次运行`;
+  $("project-overview").hidden = !state.runId;
+  const nodes = runs.map((row, i) => ({ key: row.run_id, type: "run", row, label: `运行 ${i + 1} · ${dateText(row.updated_at)}`,
+    title: row.objective || "运行目标未报告", summary: row.run_id, status: row.status,
+    x: 20 + i % 3 * 280, y: 20 + Math.floor(i / 3) * 150, selected: row.run_id === state.runId }));
+  if (nodes.length) renderGraph($("project-graph"), { nodes, edges: [] }, `project:${state.demo}:${project.project_id}`, node => selectRun(node.row.run_id));
+  else { $("project-graph").replaceChildren(empty("该项目尚无可读取的运行快照。")); $("project-graph").graphView = null; }
+}
+function chooseProjects(input) {
+  state.projects = list(input).map(p => ({ ...projectMeta(p), runs: list(p.runs) }));
   if (!state.demo && !state.queryApplied) {
-    const requested = new URLSearchParams(
-      typeof location !== "undefined" ? location.search : "",
-    ).get("run");
-    if (runs.some((run) => run.run_id === requested)) state.runId = requested;
+    const params = new URLSearchParams(location.search), run = params.get("run"), project = params.get("project");
+    const owner = state.projects.find(p => list(p.runs).some(r => r.run_id === run));
+    if (owner) { state.projectId = owner.project_id; state.runId = run; }
+    else if (state.projects.some(p => p.project_id === project)) state.projectId = project;
     state.queryApplied = true;
   }
-  const select = $("run-select"),
-    available = runs.some((r) => r.run_id === state.runId);
-  if (!available) {
-    state.runId = asText(runs[0]?.run_id, "");
-    state.snapshot = null;
-    $("export-report").disabled = true;
-    state.openEvents.clear();
-    state.openDecisions.clear();
-    state.openJobs.clear();
-    state.decisionLimit = 30;
-    state.eventLimit = 30;
+  if (!selectedProject()) { state.projectId = state.projects[0]?.project_id || ""; state.runId = ""; clearRun(); }
+  const runs = runRows(selectedProject());
+  if (state.runId && !runs.some(r => r.run_id === state.runId)) { state.runId = ""; clearRun(); }
+  const projects = state.projects.map(p => { const option = el("option", "", p.name); option.value = p.project_id; return option; });
+  if (!projects.length) { const option = el("option", "", "暂无项目"); option.value = ""; projects.push(option); }
+  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
+  const all = el("option", "", "项目总览"); all.value = "";
+  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", `运行 ${i + 1} · ${dateText(r.updated_at)} · ${statusText(r.status)}`); option.value = r.run_id; return option; }));
+  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
+  renderProject();
+}
+function selectRun(id) {
+  if (state.runId === id && state.snapshot) { $("lineage").scrollIntoView({ block: "start" }); return; }
+  state.runId = id; clearRun();
+  if (!state.demo) {
+    const url = new URL(location.href); url.searchParams.set("project", state.projectId);
+    if (id) url.searchParams.set("run", id); else url.searchParams.delete("run");
+    history.replaceState(null, "", url);
   }
-  const options = runs.map((r) => {
-    const option = el(
-      "option",
-      "",
-      `运行 ${runs.indexOf(r) + 1} · ${dateText(r.updated_at)} · ${statusText(r.status)}`,
-    );
-    option.value = asText(r.run_id, "");
-    return option;
-  });
-  if (!options.length) {
-    const option = el("option", "", "暂无运行");
-    option.value = "";
-    options.push(option);
-  }
-  select.replaceChildren(...options);
-  select.value = state.runId;
-  select.disabled = !runs.length;
+  refresh();
 }
 async function fetchJSON(url, signal) {
   const response = await fetch(url, {
@@ -406,18 +578,23 @@ async function refresh() {
     if (state.demo) {
       const s = await fetchJSON("/demo.json", controller.signal);
       if (epoch !== state.epoch) return;
-      chooseRuns([s]);
-      renderSnapshot(s);
+      const examples = list(s.demo_runs);
+      const snapshots = [s, ...examples];
+      const selected = snapshots.find(r => r.run_id === state.runId);
+      const demoProject = projectMeta(s.project);
+      chooseProjects([{ ...demoProject, runs: snapshots }]);
+      if (selected) renderSnapshot(selected);
+      else showEmpty("选择一次示例运行", "点击运行节点，查看决策、实验反馈与调整。");
       connection("示例数据", "demo");
       notice("示例数据 · 静态演示，不代表真实运行。");
       $("footer-source").textContent = "示例数据 · 静态快照";
       return;
     }
-    const data = await fetchJSON("/api/runs", controller.signal);
+    const data = await fetchJSON("/api/projects", controller.signal);
     if (epoch !== state.epoch) return;
-    if (!Array.isArray(data.runs)) throw new Error("运行清单格式无效。");
+    if (!Array.isArray(data.projects)) throw new Error("项目清单格式无效。");
     listConnected = true;
-    chooseRuns(data.runs);
+    chooseProjects(data.projects);
     connection("已连接", "online");
     $("footer-source").textContent = "本地监控 · 只读";
     if (!state.runId) {
@@ -425,8 +602,8 @@ async function refresh() {
     $("export-report").disabled = true;
       notice("");
       showEmpty(
-        "等待第一次运行",
-        "尚无运行快照；有数据后将自动显示。",
+        state.projects.length ? "选择一次运行" : "等待第一个项目",
+        state.projects.length ? "点击上方运行节点，查看已记录脉络。" : "尚无项目或运行快照；有数据后将自动显示。",
       );
       return;
     }
@@ -477,9 +654,14 @@ async function refresh() {
   }
 }
 function switchDemo() {
+  if (!state.demo) state.realProjectId = state.projectId;
   state.realRunId = state.demo ? state.realRunId : state.runId;
   state.demo = !state.demo;
   state.runId = state.demo ? "" : state.realRunId;
+  state.projectId = state.demo ? "" : state.realProjectId;
+  state.projects = [];
+  $("projects").hidden = true;
+  clearRun();
   state.snapshot = null;
     $("export-report").disabled = true;
   state.openEvents.clear();
@@ -511,17 +693,9 @@ $("auto-refresh").addEventListener("change", () => {
   state.auto = $("auto-refresh").checked;
   schedule();
 });
-$("run-select").addEventListener("change", () => {
-  state.runId = $("run-select").value;
-  state.snapshot = null;
-    $("export-report").disabled = true;
-  state.openEvents.clear();
-  state.openDecisions.clear();
-  state.openJobs.clear();
-  state.decisionLimit = 30;
-  state.eventLimit = 30;
-  refresh();
-});
+$("run-select").addEventListener("change", () => selectRun($("run-select").value));
+$("project-select").addEventListener("change", () => { state.projectId = $("project-select").value; selectRun(""); });
+$("project-overview").addEventListener("click", () => selectRun(""));
 $("job-filter").addEventListener("change", renderJobs);
 $("candidate-filter").addEventListener("change", renderCandidates);
 for (const id of ["decision-search", "decision-filter"])

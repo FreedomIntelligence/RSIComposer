@@ -35,7 +35,7 @@ CURRENT_FIELDS = ("directive_id", "mode", "status", "phase", "strategy", "decisi
                   "step", "total_steps")
 DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
                    "strategy", "reason", "status", "decision_revision", "actor_revision", "job_id", "candidate_id",
-                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation")
+                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation", "parent_decision_id")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
 JOB_FIELDS = ("job_id", "kind", "status", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
@@ -115,6 +115,9 @@ def project_snapshot(raw, run_id):
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
     result = pick(raw, ("objective", "status", "updated_at"))
     result.update(schema_version=1, run_id=run_id)
+    project = raw.get("project")
+    if isinstance(project, dict) and isinstance(project.get("project_id"), str) and RUN_ID.fullmatch(project["project_id"]):
+        result["project"] = pick(project, ("project_id", "name", "description", "system_id"))
     result["loops"] = {key: pick(raw.get("loops", {}).get(key), ("status", "summary"))
                        for key in ("decision_making", "exploration")} if isinstance(raw.get("loops"), dict) else {}
     result["models"] = {key: pick(raw.get("models", {}).get(key), ("model_id", "revision"))
@@ -124,7 +127,7 @@ def project_snapshot(raw, run_id):
     if isinstance(raw.get("current"), dict) and "metrics" in raw["current"]:
         result["current"]["metrics"] = metrics_only(raw["current"]["metrics"])
     for key, fields in (("jobs", JOB_FIELDS),
-                        ("candidates", ("candidate_id", "status", "base_revision", "revision")),
+                        ("candidates", ("candidate_id", "status", "base_revision", "revision", "directive_id")),
                         ("events", ("timestamp", "kind", "summary")),
                         ("decisions", DECISION_FIELDS), ("round_results", ROUND_FIELDS)):
         result[key] = []
@@ -142,15 +145,46 @@ def project_snapshot(raw, run_id):
                 item["details"] = pick(row.get("details"), DETAIL_KEYS)
             if key == "jobs" and "metric_history" in row:
                 item["metric_history"] = metric_history_only(row["metric_history"])
+            if key == "decisions" and isinstance(row.get("source_decision_ids"), list):
+                item["source_decision_ids"] = [v[:200] for v in row["source_decision_ids"][:100] if isinstance(v, str)]
             result[key].append(item)
     return result
 
 
 class RunStore:
-    def __init__(self, root):
+    def __init__(self, root, projects_file=None):
         # Resolve the explicitly configured root once; every child uses dir_fd +
         # O_NOFOLLOW, so replacing directories/files with links cannot escape it.
         self.root = Path(root).expanduser().resolve()
+        self.project_definitions, self.memberships = {}, {}
+        if projects_file is not None:
+            config = json.loads(Path(projects_file).read_text())
+            if not isinstance(config, dict) or not isinstance(config.get("projects"), list):
+                raise ValueError("Project registry requires projects list")
+            for entry in config["projects"]:
+                if not isinstance(entry, dict):
+                    raise ValueError("Invalid project entry")
+                ident = entry.get("project_id")
+                if not isinstance(ident, str) or not RUN_ID.fullmatch(ident) or ident == "unassigned" or ident in self.project_definitions:
+                    raise ValueError("Invalid or duplicate project id")
+                project = pick(entry, ("project_id", "name", "description", "system_id"))
+                project.setdefault("name", ident)
+                self.project_definitions[ident] = project
+                runs = entry.get("runs", [])
+                if not isinstance(runs, list):
+                    raise ValueError("Project runs must be a list")
+                for run_id in runs:
+                    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id) or run_id in self.memberships:
+                        raise ValueError("Invalid or duplicate run membership")
+                    self.memberships[run_id] = ident
+
+    def projects(self):
+        groups = {k: {**v, "runs": []} for k, v in self.project_definitions.items()}
+        for run in self.list():
+            project = run.get("project") or {"project_id": "unassigned", "name": "未归属"}
+            group = groups.setdefault(project["project_id"], {**project, "runs": []})
+            group["runs"].append(run)
+        return list(groups.values())
 
     def open_root(self):
         try:
@@ -184,7 +218,13 @@ class RunStore:
                 raw = json.loads(data, parse_constant=lambda _: None)
             except (ValueError, UnicodeError, RecursionError):
                 raise SnapshotError(503, "Monitor snapshot is being written or is invalid; retry shortly.") from None
-            return project_snapshot(raw, run_id)
+            result = project_snapshot(raw, run_id)
+            ident = self.memberships.get(run_id)
+            if ident:
+                result["project"] = dict(self.project_definitions[ident])
+            elif "project" not in result:
+                result["project"] = {"project_id": "unassigned", "name": "未归属"}
+            return result
         except FileNotFoundError:
             raise SnapshotError(404, "Monitor snapshot not found.") from None
         except OSError:
@@ -218,11 +258,15 @@ class RunStore:
                 try:
                     snapshot = self.read(name, root_fd)
                     row = pick(snapshot, ("schema_version", "run_id", "objective", "status", "updated_at"))
+                    row["project"] = snapshot["project"]
                     row["counts"] = {key: len(snapshot[key]) for key in ("jobs", "candidates", "events")}
                 except SnapshotError as error:
                     if error.status == 404:
                         continue  # Ignore unrelated directories and runs without a snapshot.
                     row = {"run_id": name, "status": "unavailable", "error": error.message}
+                    ident = self.memberships.get(name)
+                    if ident:
+                        row["project"] = dict(self.project_definitions[ident])
                 rows.append(row)
             return rows
         finally:
@@ -232,8 +276,8 @@ class RunStore:
 class MonitorServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, runs_dir):
-        self.store = RunStore(runs_dir)
+    def __init__(self, address, runs_dir, projects_file=None):
+        self.store = RunStore(runs_dir, projects_file)
         super().__init__(address, MonitorHandler)
 
 
@@ -273,6 +317,8 @@ class MonitorHandler(BaseHTTPRequestHandler):
             if path in STATIC:
                 filename, mime = STATIC[path]
                 return self.respond(200, (STATIC_DIR / filename).read_bytes(), mime)
+            if path == "/api/projects":
+                return self.respond(200, {"schema_version": 1, "projects": self.server.store.projects()})
             if path == "/api/runs":
                 return self.respond(200, {"schema_version": 1, "runs": self.server.store.list()})
             if path.startswith("/api/runs/"):
@@ -299,8 +345,9 @@ def main():
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"), help="Run directories containing monitor.json (default: ./runs)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--projects-file", type=Path, help="Explicit project/system to run registry")
     args = parser.parse_args()
-    server = MonitorServer((args.host, args.port), args.runs_dir)
+    server = MonitorServer((args.host, args.port), args.runs_dir, args.projects_file)
     print(f"RSISys monitor: http://{args.host}:{server.server_port} (read-only)", flush=True)
     try:
         server.serve_forever()

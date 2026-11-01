@@ -17,13 +17,39 @@ python3 web/server.py --runs-dir runs
 python3 web/server.py --runs-dir /path/to/runs --port 8765
 ```
 
+为现有 toy runs 启用显式项目注册：
+
+```sh
+python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.json --port 8769
+```
+
+`--projects-file` 相对当前工作目录解析，格式如下（`runs` 是运行目录 ID 的数组）：
+
+```json
+{
+  "projects": [{
+    "project_id": "qwen-parity-rsi",
+    "name": "Qwen 自主研究",
+    "description": "以奇偶判断任务验证 RSI 决策、训练、评测与模型应用链路。",
+    "system_id": "qwen-parity-system",
+    "runs": ["qwen-default-30m-20261101T042500Z", "qwen-autonomous-20261101T024815Z", "qwen-two-round-20261101T003827Z", "qwen-cpu-003", "qwen-toy-003"]
+  }]
+}
+```
+
+注册文件在启动时读取，修改后须重启服务。重复项目 ID、同一运行重复归属（包括同一项目内重复）、无效 ID 会在启动时报错。`unassigned` 是保留 ID。注册文件优先于 `monitor.json` 内的 `project: {project_id, name, description, system_id}`；无注册记录时使用快照的显式归属，两者都没有则统一为 `project_id=unassigned`、`name=未归属`。不按运行名称、目标或模型名推断项目。注册但尚无快照的项目显示空运行入口。
+
 首页默认读取真实接口。无快照时显示空态，点击「查看示例」才加载明确标记「示例数据」的静态 fixture；「返回真实运行」恢复接口。示例不会写入 runs，也不会出现在真实运行列表中。
 
 ## 数据与交互
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- 主视图按决策时间倒序排列，每项并排展示中文动作与对应反馈。直接使用决策的公开 `metrics`，同时兼容按 `job_id` / `directive_id` 精确关联任务指标；存在但未找到的 job_id 不回退关联其他任务，多任务歧义时不猜测。复查记录不把任务当前指标冒充复查时点指标。
+- 首页展示项目（RSI 系统对象）及其多次运行入口，选择运行后展示已记录脉络。仅请求 `/api/projects` 的运行元信息和选中的一个运行快照；不批量下载其他快照。可用 `?project=<id>&run=<id>` 直达，运行 ID 优先定位归属项目。
+- 图使用原生 HTML 节点与 SVG 连线，支持滚动、按钮或 Ctrl/⌘ + 滚轮缩放、适应全部节点、恢复 100%。点击节点查看原文、反馈、数值指标和关联依据；Tab 聚焦节点，左右键 / Home / End 移动，Enter / 空格选择。刷新保留缩放、滚动位置和所选节点；切换运行重置。
+- 实线只连接同一快照中明确的 `parent_decision_id` / `source_decision_ids`（允许多父）或唯一的同 `directive_id` 原始指令与实验反馈。复查记录不充当实验指令源。缺失、悬空、重复而歧义的父 ID 不创建占位节点或连线；引用保留在详情中。候选缺少可验证的指令关联时独立展示。跨运行不自动连接因果，也不根据相同目标、轮次、版本或候选名推断父子关系。
+- 相邻决策只有在时间已报告且范围严格先后时才画虚线；相同或缺失时间不补造先后。连线箭头标示方向，图与报告均注明当前快照范围（API 最多 300 条决策），不宣称完整历史。
+- 下方列表按决策时间倒序排列，每项并排展示中文动作与对应反馈。直接使用决策的公开 `metrics`，同时兼容按 `job_id` / `directive_id` 精确关联任务指标；存在但未找到的 job_id 不回退关联其他任务，多任务歧义时不猜测。复查记录不把任务当前指标冒充复查时点指标。
 - 连续、同理由、同轮次、同状态和版本的重复 finish 聚合为一项，保留数量及每条原始记录。finish 统一称为「结束本轮研究」，不推断整个运行已经停止。
 - 动作、指标名称使用中文友好映射。未知操作显示「其他操作」，原始名称保留在详情；技术 ID、模型绑定与事件收进详情。reason / strategy 原文保留在可展开区，不替换 candidate、baseline 或协议名称，不调用模型翻译。
 - 当前执行只在 step / total_steps 均有效时显示百分比；训练 100% 不代表评测、应用、整个运行或目标验证完成。
@@ -76,7 +102,23 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 
 ## HTTP 接口
 
-`GET /api/runs`：
+`GET /api/projects`：返回项目与运行元信息，不包含所有运行快照。
+
+```json
+{
+  "schema_version": 1,
+  "projects": [{
+    "project_id": "qwen-parity-rsi",
+    "name": "Qwen 自主研究",
+    "description": "…",
+    "system_id": "qwen-parity-system",
+    "runs": [{"run_id": "run-001", "objective": "…", "status": "running", "updated_at": "…", "project": {"project_id": "qwen-parity-rsi", "name": "Qwen 自主研究"}}]
+  }]
+}
+```
+
+`GET /api/runs`：每行同样含 `project` 元信息。
+
 
 ```json
 {
@@ -96,7 +138,7 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 
 只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持的版本保留为带 `error` 的 unavailable 清单项。
 
-`GET /api/runs/<id>`：返回协议字段的只读投影。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
+`GET /api/runs/<id>`：返回协议字段的只读投影，包含 `project: {project_id, name, description, system_id}`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
 建议生产端在同一目录写临时文件，再原子替换 `monitor.json`。服务不会监听或读数据库、训练样本、配置、日志、模型文件。
 
@@ -114,15 +156,14 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 ```sh
 python3 -m unittest discover -s tests -p test_monitor.py -v
 node --check web/static/app.js
+node --test web/static/lineage.test.js
 ```
 
-服务测试覆盖读取摘要、缺省字段、flat worker metrics、空目录、损坏快照恢复、协议版本、大小限制、路径穿越、目录／文件符号链接、FIFO、字段过滤、Host／跨站防护及只读方法。Node 只用于可选的 JavaScript 语法检查，运行服务不依赖 Node。
+服务测试覆盖读取摘要、缺省字段、flat worker metrics、空目录、损坏快照恢复、协议版本、大小限制、路径穿越、目录／文件符号链接、FIFO、字段过滤、Host／跨站防护及只读方法。关系专项测试覆盖多父关联、悬空 / 歧义 ID、时间边、精确指令关联、重复 finish 聚合和空快照；测试文件不在静态服务白名单内。Node 只用于前端语法检查和测试，运行服务不依赖 Node。
 
 视觉参考：[Claude 官方博客](https://claude.com/blog)、[Anthropic News](https://www.anthropic.com/news)。使用暖白纸面、深棕文字、低饱和陶土橙；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 
 浏览器 QA 截图与下载报告放在临时目录 `/tmp/rsisys-*`，不写入 runs、不作为源码入库。
-
-本次用已有两轮 GPU 运行的真实记录检查决策列表、复查理由、版本归因和轮次结果；进行中的训练进度另用明确标记的示例与 callback/HTTP 测试验证，不把历史运行补导出当作新训练。
 
 ## 生产端与历史记录
 
@@ -135,18 +176,3 @@ PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED
 ```
 
 导出只从该 run 的 decision_memory.json、result.json 和原监控事件生成公开字段，并原子更新 monitor.json；不改训练结果、时间戳或模型文件，不启动训练。source=history 表示真实历史记录，缺失的时间与中间步数保持未知。这个导出器属于 toycase；其他 Harness 自行生产同样的轻量监控字段，不需要适配统一训练数据格式。
-
-## 前端改造交付与验证（2026-11-01）
-
-本次前端修改仅涉及 `web/static/index.html`、`style.css`、`app.js`、`demo.json` 和本 README；未修改 Python、未提交。保留暖白纸面、serif 标题与陶土色，将决策与反馈设为主视图，移除英文装饰 caption、内部符号和重复说明。示例 fixture 中的六点曲线和三条重复 finish 明确属于静态演示，不用于补全真实运行。
-
-已验证：
-
-- `node --check web/static/app.js` 通过。
-- 在用户已启动的 `http://127.0.0.1:8768` 上使用真实 Chrome / Playwright 验证：真实运行连接成功，199 条决策聚合成 3 项，其中 197 条重复 finish 完整保留于详情；旧训练只有当前指标时没有伪造 SVG 曲线。
-- 示例 loss / lr 两条 SVG 曲线各有 6 个历史点；Home、方向键、End 可查看真实采样点；坐标没有 NaN / Infinity。单点历史只显示单点，零学习率有效。
-- 真实与示例报告均通过浏览器下载事件实际保存为 Markdown，并检查重复数量、无历史提示、示例标识、历史摘要与尚未开始执行的说明。临时文件为 `/tmp/rsisys-real-report.md`、`/tmp/rsisys-demo-report.md`。
-- 390px 移动视口无横向溢出；搜索、筛选、未知操作原名展开、精确关联、最多 1000 历史点、非法/缺失指标与文本安全检查通过；本轮浏览器验证没有 pageerror。
-- 后端回归由 server agent / 用户单独完成；用户报告全量 **625 tests 通过、3 skip**，本前端交付不重复运行后端回归。
-
-尚未同步远程 8767；同步和余下浏览器验收由用户接手。前端没有引入构建步骤或运行时依赖。

@@ -1,0 +1,11 @@
+{
+  "projects": [
+    {
+      "project_id": "qwen-parity-rsi",
+      "name": "Qwen 自主研究",
+      "description": "以奇偶判断任务验证 RSI 决策、训练、评测与模型应用链路。",
+      "system_id": "qwen-parity-system",
+      "runs": ["qwen-default-30m-20261101T042500Z", "qwen-autonomous-20261101T024815Z", "qwen-two-round-20261101T003827Z", "qwen-cpu-003", "qwen-toy-003"]
+    }
+  ]
+}
