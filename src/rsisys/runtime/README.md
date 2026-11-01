@@ -145,16 +145,58 @@ HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；
 `Candidate.parent_system` 表示实验父版本，`base_version` 继续表示训练权重基础 revision。
 
 `register(candidate, model=None)` 根据已知父版本合并变化，保留新清单但不改变 `current`；
-`get(version)` 与 `current` 返回独立副本。`activate(candidate_id, idempotency_key=...)`
+父版本有模型时，candidate 的 base_version 必须等于该模型的 revision，不能把系统版本 ID
+当成权重 revision。`get(version)` 与 `current` 返回独立副本。
+
+`compose(candidate_ids, *, version) -> SystemVersion` 接受至少一个、不重复的已注册候选 ID，
+要求共享同一个显式、已知 parent_system 和模型基准 revision；只合并各候选的 changes，
+再继承 parent 中未变化的组件。不同组件键直接 union，重叠键的 ArtifactRef 完全相同可接受，
+值不同则拒绝，不按候选顺序覆盖。没有修改模型的候选保留 parent 的模型；显式注册的模型
+变化可与组件变化组合，但多个不同的目标 ModelRef 会拒绝，不混合权重。组合单独保存来源
+ID 集合（顺序无关）；即使清单相同，也不能给既有组合换来源，或冒用普通候选已有的版本 ID。
+组合不是新的原始候选，不能再作为 compose 的来源。compose 可基于已知旧 parent，只登记清单。
+
+`activate(candidate_id, idempotency_key=...)` 同时接受已登记的候选和组合版本，
 检查父版本等于 current，调用 `SystemActivator.activate(system, idempotency_key=...)`，
 只在返回精确相同清单后更新 current。相同应用键返回原回执，键与候选冲突会拒绝；
 只有 `SystemActivationRejected` 明确确认无副作用或已完成回滚时才释放 pending，current 不变；
 其他异常仍保留同一意图，不能跳到另一候选。不同父版本的候选需显式 rebase。
 
+`adopt(candidate_ids, *, version, idempotency_key) -> SystemVersion` 组合后只调用一次 activate，
+返回确认应用的实际 manifest；不会逐个激活来源候选。相同 key、version 和来源集合重试
+返回原成功回执，即使 current 已继续前进；新 key 对旧 parent 的采纳仍被 stale 检查拒绝。
+同 key 换版本或来源集合会拒绝；响应丢失等不确定失败不会产生成功采纳，pending 阻止其他
+应用请求，原请求须用同 key 重试，由 activator 根据自身幂等回执确认结果。
+
+`system_adoption_capability(registry, candidates, *, simulated=False)` 返回名为 `system_adopt`
+的可选写能力，参数仅有 candidate_ids、version、idempotency_key。candidates 是每次验证和
+执行时读取的 `Callable[[], Iterable[Candidate]]`，选择必须来自该已知集合。验证不注册或激活；
+执行时按需注册组件候选，已有注册内容必须与 callback 一致。需要改变模型时，调用方必须
+提前 `register(candidate, model=明确的ModelRef)`；callback 不会从产物引用猜权重或推断模型。
+成功返回 `OperationResult(adopted_candidate_ids=tuple(ids), data={'system': asdict(actual)})`，
+simulated 明确使用装配参数（默认 False），只有 registry.adopt 确认后才报告采纳。下一步 factory
+可读取 `registry.current` 构建实际组件绑定；重试得到的旧回执仍描述原应用，不代替当前状态。
+装配沿用已有接口，并继续受 ActionPermissions / Harness 的权限校验约束：
+
+```python
+from rsisys.runtime.systems import system_adoption_capability
+from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
+from rsisys.loops.decision_making.action_space.capabilities import Capabilities
+from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+
+capabilities = Capabilities((system_adoption_capability(registry, known_candidates),))
+space = ModularDecisionActionSpace(capabilities.definitions, permissions=permissions)
+tools = BoundDecisionTools(capabilities.bindings)
+```
+
+此能力只通过显式装配启用，不会自动安装到 engine 或 Application，也不扩展权限。
+所有组件变化保持 ArtifactRef 轻量引用，不下载内容、不转换数据格式。
+
 `ReferenceSystemActivator(model=None)` 只接受模型与构造时一致的清单，适合引用级组件变化，
-不会部署权重。真实 activator 自行承担组件准备、外部效果和绑定原子性；registry 不替它回滚。
+它确认后会真实更新 registry 的 manifest，但不代表模型部署或产物内容已验证。
+自定义 SystemActivator 负责实际组件准备、部署、外部效果和绑定原子性；registry 不替它回滚。
 该 registry 无全局实例或隐式存储，不会自动加入 Application 的 durable 状态；自定义恢复必须
-同时保存版本、current、应用意图与 activator 回执。
+同时保存候选、组合来源、版本、current、应用意图与 activator 回执。
 
 ## Harness 外的具体后端
 

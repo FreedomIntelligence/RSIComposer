@@ -430,6 +430,28 @@ test("unknown execution timestamps retain snapshot order without implying chrono
   const groups=h.json("executionGroups(fixture)");assert.deepEqual(groups.map(g=>g.row.decision_id),["early","later","u1","u2","f1"]);assert.equal(groups[4].rows.length,2);
 });
 
+test("referenced legacy finish nodes survive grouping and polling for every lineage relation", async () => {
+  for(const relation of ["depends_on_decision_ids","adopted_decision_ids","source_decision_ids","parent_decision_id"]){
+    const first={decision_id:"f1",kind:"finish",reason:"done",timestamp:"2026-11-01T00:00:01Z"},second={...first,decision_id:"f2",timestamp:"2026-11-01T00:00:02Z"};
+    const next={decision_id:"next",kind:"operation",operation:"query",timestamp:"2026-11-01T00:00:03Z",[relation]:relation==="parent_decision_id"?"f1":["f1"]};
+    const updated=run("a",{decisions:[first,second,next]}),h=harness(async()=>response(updated));setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[first,second]}));await h.run('selectRun("a")');
+    assert.equal(findClass(h.get("project-content"),"decision-node").length,1);
+    await h.run('loadRun("a",state.activeScope,true)');
+    assert.deepEqual(findClass(h.get("project-content"),"decision-node").map(n=>n.dataset.key),["f1","f2","next"]);
+    const groups=h.json("executionGroups(state.snapshot)");assert.equal(groups.length,3);
+    const graph=h.renders.at(-1),model=h.ctx.RSIDecisions.layout(graph.options.rows);
+    assert.ok(model.edges.some(edge=>edge.from==="f1"&&edge.to==="next"&&edge.kind===(relation==="adopted_decision_ids"?"adoption":relation==="source_decision_ids"?"source":"dependency")));
+  }
+});
+
+test("finish records carrying their own explicit lineage are never collapsed",()=>{
+  const h=harness();
+  for(const relation of ["depends_on_decision_ids","adopted_decision_ids","source_decision_ids","parent_decision_id"]){
+    h.ctx.rows=[{decision_id:"f1",kind:"finish",reason:"done",[relation]:relation==="parent_decision_id"?"outside":[]},{decision_id:"f2",kind:"finish",reason:"done",[relation]:relation==="parent_decision_id"?"outside":[]}];
+    assert.equal(h.run("executionGroups({decisions:rows}).length"),2);
+  }
+});
+
 
 test("execution detail keeps review metrics separate from exact current job and candidate results", () => {
   const h=harness();h.ctx.fixture={decisions:[{decision_id:"d",kind:"directive",directive_id:"dir",mode:"train"},{decision_id:"r",kind:"review",action:"continue",job_id:"job",metrics:{loss:.7}}],jobs:[{job_id:"job",directive_id:"dir",kind:"train",metrics:{loss:.1}}],candidates:[{candidate_id:"candidate",directive_id:"dir",metrics:{accuracy:.9}},{candidate_id:"other",directive_id:"outside",metrics:{accuracy:.5}}]};
@@ -455,6 +477,42 @@ test("known research actions have distinct names and custom operations retain th
   assert.equal(h.run('actionText("configure_prompt")'),"Adjust prompt");
   assert.equal(h.run('actionText("define_recipe")'),"Define training recipe");
   assert.equal(h.run('actionText("custom.compare")'),"custom.compare");
+});
+
+test("wait decisions render a friendly translated node and detail title",async()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"wait",kind:"wait",reason:"Waiting for a worker"}]}));await h.run('selectRun("a")');
+  for(const [language,title] of [["zh","等待"],["en","Wait"]]){
+    h.run(`RSII18n.setLanguage("${language}")`);
+    assert.equal(findClass(h.get("project-content"),"decision-node")[0].getAttribute("aria-label"),`1 · ${title}`);
+    const heading=descendants(findClass(h.get("project-content"),"flow-decision")[0]).find(n=>n.tagName==="h4");assert.equal(heading.textContent,title);
+    assert.doesNotMatch(textOf(h.get("project-content")),/未命名决策|Unnamed decision/);
+  }
+});
+
+test("unknown actions use short readable strategy titles verbatim while known actions keep friendly labels",async()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  const cases=[
+    {mode:"propose_component",strategy:"Propose prompt change",title:"Propose prompt change",duplicate:false},
+    {mode:"propose_component",strategy:"Propose data change",title:"Propose data change",duplicate:false},
+    {mode:"consume_current",strategy:"Verify adopted changes",title:"Verify adopted changes",duplicate:false},
+    {mode:"custom_zh",strategy:"验证已采用的改动",title:"验证已采用的改动",duplicate:false},
+    {mode:"custom_mode",strategy:"custom_mode",title:"custom_mode",duplicate:false},
+    {mode:"custom_mode",strategy:"artifact://candidate-v2",title:"custom_mode",duplicate:true},
+    {mode:"custom_mode",strategy:"!!!",title:"custom_mode",duplicate:true},
+    {mode:"custom_mode",strategy:"A long explanation ".repeat(8),title:"custom_mode",duplicate:true},
+    {mode:"custom_mode",strategy:"First line\nSecond line",title:"custom_mode",duplicate:true},
+    {mode:"train",strategy:"Propose prompt change",title:{zh:"训练模型",en:"Train model"},duplicate:true},
+  ];
+  for(const [i,entry] of cases.entries()){
+    seed(h,"a",run("a",{decisions:[{decision_id:`d${i}`,kind:"directive",mode:entry.mode,strategy:entry.strategy}]}));await h.run('selectRun("a")');
+    for(const language of ["zh","en"]){
+      h.run(`RSII18n.setLanguage("${language}")`);const title=typeof entry.title==="string"?entry.title:entry.title[language];
+      assert.equal(findClass(h.get("project-content"),"decision-node")[0].getAttribute("aria-label"),`1 · ${title}`);
+      const detail=findClass(h.get("project-content"),"flow-decision")[0];assert.equal(descendants(detail).find(n=>n.tagName==="h4").textContent,title);
+      assert.equal(findClass(detail,"decision-reason").some(n=>n.textContent===entry.strategy),entry.duplicate);
+      assert.equal(h.run("state.snapshot.decisions[0].strategy"),entry.strategy);
+    }
+  }
 });
 
 

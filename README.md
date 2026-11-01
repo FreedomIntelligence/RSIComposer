@@ -39,7 +39,7 @@ pixi run test
 
 [Qwen3.5 toycase](examples/qwen_toy/README.md) 提供模型自主选择步骤的真实决策、LoRA 训练、评测、候选应用和 Actor 执行装配；外部配置能力、权限及预算，未预设流程或采纳阈值。服务默认使用 CPU，小规模验证使用 0.8B，也可接入 9B。[监视前端](web/README.md) 使用标准库 HTTP 服务读取 `runs/*/monitor.json`，展示双 loop、作业、候选指标和事件时间线。
 
-[并行实验示例](examples/parallel_experiments.py) 展示隔离实验、动态控制和候选比较（Mock 验证）；反馈提取与工作区查询都可替换。
+[并行实验示例](examples/parallel_experiments.py) 展示隔离实验、动态控制和候选比较（Mock 验证）；[决策图示例](examples/decision_graph.py) 验证两项任务并行、多个结果确认采纳后汇合、后续执行消费组合改动，并输出监控图谱。运行 `PYTHONPATH=src:. python examples/decision_graph.py --run-dir runs/decision-graph-demo`（目录须未使用）。示例使用脚本策略与 CPU 产物任务，不代表自主模型研究或权重融合。反馈提取与工作区查询都可替换。
 
 [medical/](examples/medical/README.md) 是独立装配示例：冻结本地医学选择题数据，注入 researcher 模型、候选推理、learner 与系统启用器，再通过两个默认 Harness 和 Runner 研究 prompt / 训练候选。native.py 显式接通 tokenize、原生训练与候选服务准备；数据协议、固定评测与验收规则留在示例中。准备与检查不会下载模型、启动训练或服务，接线与边界见[使用指南](docs/GUIDE.md#独立医学研究示例)。
 

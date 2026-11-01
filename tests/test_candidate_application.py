@@ -115,6 +115,7 @@ class CandidateApplicationTests(unittest.TestCase):
         restored.accept(self.directive())
         feedback = restored.advance('apply', ACTIONS).feedback
         self.assertEqual(feedback.status, 'completed')
+        self.assertEqual(feedback.adopted_candidate_ids, ('candidate',))
         self.assertEqual(feedback.candidates, (RESULT.candidate,))
         self.assertEqual(feedback.artifact_refs, tuple(RESULT.candidate.changes.values()))
         self.assertEqual(feedback.evidence_refs, (restored_store.records()[0].record_id,))
@@ -209,6 +210,7 @@ class CandidateApplicationTests(unittest.TestCase):
         harness.cancel('apply')
         feedback = harness.advance('apply', ACTIONS).feedback
         self.assertEqual(feedback.status, 'cancelled')
+        self.assertEqual(feedback.adopted_candidate_ids, ())
         self.assertEqual(feedback.candidates, (RESULT.candidate,))
         self.assertEqual(store.records(), ())
         self.assertEqual(harness.state.applied_candidates, set())
@@ -234,6 +236,7 @@ class CandidateApplicationTests(unittest.TestCase):
                         harness.apply_candidate_for_command('candidate', directive_id='apply')
                 feedback = harness.advance('apply', ACTIONS).feedback
                 self.assertEqual(feedback.status, 'cancelled' if cancel else 'completed')
+                self.assertEqual(feedback.adopted_candidate_ids, () if cancel else ('candidate',))
                 self.assertEqual(feedback.candidates, (RESULT.candidate,))
                 self.assertEqual(harness.policy.model, BASE if cancel else NEW)
                 self.assertEqual(harness.model_activator.activate.call_count, 1 if cancel else 2)

@@ -1,9 +1,28 @@
 """Versioned component application, independent of either loop or training engine."""
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import asdict
 from typing import Protocol
 
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.decision_making.action_space import OperationCall, OperationResult, OperationSpec
+from rsisys.loops.decision_making.action_space.capabilities import Capability
+
+
+def _candidate_ids(candidate_ids: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(candidate_ids, (str, bytes)):
+        raise ValueError('Expected a nonempty collection of unique candidate IDs')
+    ids = tuple(candidate_ids)
+    if (not ids or any(not isinstance(ident, str) or not ident.strip() for ident in ids)
+            or len(set(ids)) != len(ids)):
+        raise ValueError('Expected a nonempty collection of unique candidate IDs')
+    return ids
+
+
+def _application_key(idempotency_key: str) -> None:
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        raise ValueError('Application requires an idempotency key')
 
 
 class SystemActivationRejected(ValueError):
@@ -49,6 +68,7 @@ class SystemRegistry:
         self.activator = activator
         self._versions = {initial.version: deepcopy(initial)}
         self._candidates = {}
+        self._compositions = {}
         self._receipts = {}
         self._rejections = {}
         self._pending = None
@@ -64,6 +84,8 @@ class SystemRegistry:
         if not isinstance(candidate, Candidate) or not candidate.parent_system:
             raise ValueError('System candidate requires an explicit parent_system')
         parent = self._versions[candidate.parent_system]
+        if parent.model is not None and candidate.base_version != parent.model.revision:
+            raise ValueError('Candidate model base revision differs from its parent model')
         target = SystemVersion(candidate.candidate_id,
             {**parent.components, **candidate.changes},
             model if model is not None else parent.model, parent.version)
@@ -76,9 +98,58 @@ class SystemRegistry:
         self._candidates[target.version] = deepcopy(candidate)
         return deepcopy(target)
 
+    def compose(self, candidate_ids: Iterable[str], *, version: str) -> SystemVersion:
+        """Register a union of compatible changes without applying it.
+
+        Source identity is an unordered set, independent of manifest equality.
+        Candidates which retain the parent model do not override an explicit
+        model change; distinct changed models cannot be combined.
+        """
+        ids = tuple(sorted(_candidate_ids(candidate_ids)))
+        candidates = [self._candidates[ident] for ident in ids]
+        parents = {candidate.parent_system for candidate in candidates}
+        if len(parents) != 1:
+            raise ValueError('Composition requires the same explicit parent system')
+        if any(candidate.base_version != candidates[0].base_version for candidate in candidates):
+            raise ValueError('Composition requires the same model base revision')
+        parent = self._versions[candidates[0].parent_system]
+        changes = {}
+        model = parent.model
+        for candidate in candidates:
+            if parent.model is not None and candidate.base_version != parent.model.revision:
+                raise ValueError('Candidate model base revision differs from its parent model')
+            for name, ref in candidate.changes.items():
+                if name in changes and changes[name] != ref:
+                    raise ValueError(f'Conflicting component changes: {name}')
+                changes[name] = ref
+            proposed_model = self._versions[candidate.candidate_id].model
+            if proposed_model != parent.model:
+                if model != parent.model and model != proposed_model:
+                    raise ValueError('Conflicting model changes in composition')
+                model = proposed_model
+        target = SystemVersion(version, {**parent.components, **changes}, model, parent.version)
+        previous = self._versions.get(version)
+        if previous is not None:
+            if previous != target or self._compositions.get(version) != ids:
+                raise ValueError('System version identity conflicts with existing content or sources')
+            return deepcopy(previous)
+        self._versions[version] = deepcopy(target)
+        self._compositions[version] = ids
+        return deepcopy(target)
+
+    def adopt(self, candidate_ids: Iterable[str], *, version: str,
+              idempotency_key: str) -> SystemVersion:
+        """Compose and apply once, returning the activator-confirmed manifest.
+
+        compose accepts known old parents, so activate can replay a receipt even
+        after current advances, while still rejecting a fresh stale application.
+        """
+        _application_key(idempotency_key)
+        self.compose(candidate_ids, version=version)
+        return self.activate(version, idempotency_key=idempotency_key)
+
     def activate(self, candidate_id: str, *, idempotency_key: str):
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-            raise ValueError('Application requires an idempotency key')
+        _application_key(idempotency_key)
         if idempotency_key in self._rejections:
             ident, message = self._rejections[idempotency_key]
             if ident != candidate_id:
@@ -90,10 +161,12 @@ class SystemRegistry:
                 raise ValueError('Application key reused for a different candidate')
             return deepcopy(version)
         target = self._versions[candidate_id]
-        if candidate_id not in self._candidates:
-            raise ValueError('Only registered candidates can be applied')
+        if candidate_id not in self._candidates and candidate_id not in self._compositions:
+            raise ValueError('Only registered candidates or compositions can be applied')
         intent = (candidate_id, idempotency_key)
         if self._pending is not None and self._pending != intent:
+            if self._pending[1] == idempotency_key:
+                raise ValueError('Application key reused for a different candidate')
             raise RuntimeError('An unconfirmed system application must be reconciled first')
         if target.parent_version != self._current.version:
             raise ValueError('Candidate parent is stale; rebase explicitly before application')
@@ -111,3 +184,72 @@ class SystemRegistry:
         self._receipts[idempotency_key] = (candidate_id, deepcopy(target))
         self._pending = None
         return deepcopy(target)
+
+
+def system_adoption_capability(registry: SystemRegistry,
+                               candidates: Callable[[], Iterable[Candidate]], *,
+                               simulated: bool = False) -> Capability:
+    """Explicitly bind system adoption; never install it or infer model weights.
+
+    The live callback limits eligible candidates. Model changes must already be
+    registered with an explicit ModelRef; automatic registration inherits the
+    parent model. Validation is read-only and the handler rechecks the callback.
+    """
+    if not isinstance(registry, SystemRegistry) or not callable(candidates):
+        raise TypeError('System adoption requires a registry and candidate callback')
+    if type(simulated) is not bool:
+        raise TypeError('simulated must be a bool')
+    spec = OperationSpec('system_adopt', 'Adopt compatible candidates as one system manifest', {
+        'type': 'object',
+        'properties': {
+            'candidate_ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+                              'minItems': 1, 'uniqueItems': True},
+            'version': {'type': 'string', 'minLength': 1},
+            'idempotency_key': {'type': 'string', 'minLength': 1},
+        },
+        'required': ['candidate_ids', 'version', 'idempotency_key'],
+        'additionalProperties': False,
+    }, read_only=False)
+
+    def select(arguments):
+        if (not isinstance(arguments, dict)
+                or set(arguments) != {'candidate_ids', 'version', 'idempotency_key'}
+                or not isinstance(arguments['candidate_ids'], (list, tuple))):
+            raise ValueError('system_adopt requires candidate_ids, version and idempotency_key')
+        ids = _candidate_ids(arguments['candidate_ids'])
+        if not isinstance(arguments['version'], str) or not arguments['version'].strip():
+            raise ValueError('System version must be nonempty')
+        _application_key(arguments['idempotency_key'])
+        known = {}
+        for candidate in candidates():
+            if not isinstance(candidate, Candidate):
+                raise TypeError('Candidate callback must return Candidate instances')
+            if candidate.candidate_id in known and known[candidate.candidate_id] != candidate:
+                raise ValueError('Candidate callback contains conflicting identities')
+            known[candidate.candidate_id] = deepcopy(candidate)
+        if any(ident not in known for ident in ids):
+            raise ValueError('system_adopt must select known candidates from its callback')
+        selected = tuple(known[ident] for ident in ids)
+        for candidate in selected:
+            previous = registry._candidates.get(candidate.candidate_id)
+            if previous is not None and previous != candidate:
+                raise ValueError('Candidate identity conflicts with registered content')
+        return ids, selected
+
+    def validate(arguments):
+        ids, _ = select(arguments)
+        return OperationCall(spec.name, {'candidate_ids': list(ids),
+            'version': arguments['version'], 'idempotency_key': arguments['idempotency_key']})
+
+    def handle(arguments):
+        ids, selected = select(arguments)
+        for candidate in selected:
+            if candidate.candidate_id not in registry._candidates:
+                registry.register(candidate)
+        actual = registry.adopt(ids, version=arguments['version'],
+                                idempotency_key=arguments['idempotency_key'])
+        components = ', '.join(sorted({name for candidate in selected for name in candidate.changes}))
+        return OperationResult(f'Adopted {len(ids)} candidates; activated component changes: {components or "no component changes"}', (), simulated,
+            data={'system': asdict(actual)}, adopted_candidate_ids=tuple(ids))
+
+    return Capability.from_spec(spec, validate, handle)

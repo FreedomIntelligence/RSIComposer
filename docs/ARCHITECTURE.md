@@ -95,6 +95,9 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 默认串行装配一次协调一个未完成交付的指令；可选 `Runner(parallel=True)` 与 `ConcurrentExplorationHarness(factory, max_in_flight=...)` 支持多个独立实验。Decision Harness 用 `max_outstanding` 限制未完成指令数，模型从 outstanding / executions 查看各实验；每 tick 公平推进一个实验，未完成时仍可研究或提交新实验。一条 RL 指令内部可多次采样和更新 Actor。后端轮询与模型复查频率独立。时间/token 自训练触发及共享模型更新事务尚未实现。并行实验由工厂隔离 Actor、environment、memory 和执行状态；资源分配由后端决定。模型可共享或独立绑定，具体部署由 Harness 外的适配器负责；角色引用同一模型不表示训练结果自动同步。
 
+同一次 RSI run 内的决策关系记录为 DAG。`Decision` 携带稳定身份、多个前置依赖和信息引用；系统校验前置已完成后执行。多个独立指令可并行产生候选，researcher 再显式选择一个或多个结果；`SystemRegistry.compose/adopt` 合并兼容组件并通过 activator 确认启用，执行回执才记录候选来源的采纳边。后续决策可依赖该汇合决策。冲突组件或不兼容权重不自动合并，运行时消费新清单由装配实现负责。关系记录、结果和监控沿用现有状态、memory、Experience 和 monitor，不另设图数据库或调度服务。
+
+
 运行中的 review 保留 continue / cancel。安装 `ExperimentControls` 后，研究者可通过普通获授权工具按 ID inspect / cancel / update / compare。`DirectiveUpdate` 携带 expected_version、幂等键和 changes；原指令不可变，支持更新的 handler/backend 应用控制变更并确认版本，不支持的字段或后端明确拒绝。候选比较要求已知完整训练 base、相同评测协议/输入及有效指标；排序不自动采纳。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
 
 Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。`WorkspaceTools` 提供挂载工作区内的 list/read/search 基础操作，研究者可自行读日志、数据、配置和代码；实时服务内部状态仍需后端提供读取途径。外部权限配置决定当前可用 Action Space；默认运行中只读，也可开放其他操作或全部已接入能力。Harness 在展示和执行前检查权限，read_only 是操作属性而非固定限制。权限表达“当前允许做什么”，沙箱限制“执行代码实际能接触哪些资源”；例如允许训练但禁止删除候选，由能力权限检查，限制文件、网络和设备访问则由部署的沙箱承担。两者互补；本地进程后端不是宿主安全隔离。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。

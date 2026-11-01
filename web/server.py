@@ -181,8 +181,11 @@ def project_snapshot(raw, run_id):
                               if isinstance(change.get(key), str)}
                     if values:
                         item["changes"].append({"field": change["field"][:100], **values})
-            if key == "decisions" and isinstance(row.get("source_decision_ids"), list):
-                item["source_decision_ids"] = [v[:200] for v in row["source_decision_ids"][:100] if isinstance(v, str)]
+            if key == "decisions":
+                for relation in ("depends_on_decision_ids", "adopted_decision_ids", "source_decision_ids", "adopted_candidate_ids"):
+                    if isinstance(row.get(relation), list):
+                        item[relation] = [v for v in row[relation][:100]
+                                          if isinstance(v, str) and 0 < len(v) <= 200]
             result[key].append(item)
     return result
 

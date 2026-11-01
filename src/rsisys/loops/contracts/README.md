@@ -10,6 +10,12 @@
 
 [JobProgress](jobs.py) 可附在 JobOutcome 上，包含 step、total_steps、metrics、elapsed_seconds 和可选的后端样本时间 observed_at（Unix 秒）。默认命令将它暴露在 ExplorationProgress.job_progress 中，非终态 metrics 同步提供最近的后端指标；没有新样本时保留旧样本和原时间，不推算进度。查询结果 observed_at 是读取时间，两者含义不同。
 
+## 决策关系与采纳回执
+
+Decision 使用稳定 `decision_id`，`depends_on_decision_ids` 引用已成功完成的前置决策，`source_decision_ids` 只引用已知信息。多个前置形成汇合；独立分支通过并行 Runner 推进。具体执行及权限仍由原有 Action Space / Harness 负责。
+
+`OperationResult` 和 `Feedback` 的可选 `adopted_candidate_ids` 只由执行器在成功确认启用后填写，失败或取消不能携带采纳声明。决策 Harness 将已知候选映射到真实生产决策，记录 `adopted_decision_ids`；外部候选缺少来源时仍保留成功采纳回执，只省略无法证明的来源边，不把评测高分、模型提出的采纳意图或记录先后当作采纳事实。`LoopStepResult.decision_id` 将异步操作回执对应到原决策。
+
 ## 指令与反馈
 
 [Directive](directive.py) 包含身份、目标、策略、输入、允许行动、步数上限、模拟标记和 payload；payload 支持 JSON 数据及值相等的 dataclass，构造时校验可深复制、复制前后值相等及 JSON 序列化能力（拒绝 NaN/Infinity）；它是可扩展的数据对象，内置 payload 定义在 [requests.py](requests.py)。

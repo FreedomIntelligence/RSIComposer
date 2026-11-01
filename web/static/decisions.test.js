@@ -28,15 +28,15 @@ function valid(model) {
     assert.notEqual(edge.from, edge.to);
     if (edge.kind === "source") continue;
     assert.ok(byKey.get(edge.from).x < byKey.get(edge.to).x);
-    assert.ok(!structural.has(edge.to));
-    structural.set(edge.to, edge.from);
+    if(!structural.has(edge.to))structural.set(edge.to,[]);
+    structural.get(edge.to).push(edge.from);
   }
   for (const node of decisions(model)) {
     const visited = new Set();
-    let key = node.key;
-    while (key !== "root") {
-      assert.ok(!visited.has(key)); visited.add(key);
-      assert.ok(structural.has(key)); key = structural.get(key);
+    const pending=[node.key];
+    while(pending.length){
+      const key=pending.pop();if(key==="root"||visited.has(key))continue;visited.add(key);
+      assert.ok(structural.has(key));pending.push(...structural.get(key));
     }
   }
   // A label occupies at most 160px horizontally and one 16px line below its dot.
@@ -116,34 +116,115 @@ test("real parent branches occupy distinct rows and override chronological prede
   const model = layout([row("a"), row("b", 1, { parent_decision_id: "a" }),
     row("c", 2, { parent_decision_id: "a" }), row("d", 3, { parent_decision_id: "b" }),
     row("e", 4, { parent_decision_id: "b" }), row("f", 5, { parent_decision_id: "c" })]);
-  assert.deepEqual(links(model, "parent"), [["a", "b"], ["a", "c"], ["b", "d"], ["b", "e"], ["c", "f"]]);
+  assert.deepEqual(links(model, "dependency"), [["a", "b"], ["a", "c"], ["b", "d"], ["b", "e"], ["c", "f"]]);
   assert.deepEqual(links(model, "sequence"), [["root", "a"]]);
   assert.equal(get(model, "b").x, get(model, "c").x);
   assert.notEqual(get(model, "b").y, get(model, "c").y);
   assert.equal(get(model, "root").y, 100); valid(model);
 });
 
-test("missing or malformed parents fall back to sequence without fabricated references", () => {
+test("diamond dependencies retain both parents, longest-path layers and centered fork/rejoin geometry", () => {
+  const rows=freeze([row("a",3,{depends_on_decision_ids:[]}),row("b",2,{depends_on_decision_ids:["a"]}),row("c",1,{depends_on_decision_ids:["a"]}),row("d",0,{depends_on_decision_ids:["b","c"]})]);
+  const model=layout(rows);
+  assert.equal(links(model,"dependency").length,4);
+  for(const edge of [["a","b"],["a","c"],["b","d"],["c","d"]])assert.ok(links(model,"dependency").some(pair=>JSON.stringify(pair)===JSON.stringify(edge)));
+  assert.deepEqual(links(model,"sequence"),[["root","a"]]);
+  assert.deepEqual(["a","b","c","d"].map(key=>get(model,key).x),[240,440,440,640]);
+  const middle=(get(model,"b").y+get(model,"c").y)/2;
+  assert.equal(get(model,"a").y,middle);assert.equal(get(model,"d").y,middle);assert.notEqual(get(model,"b").y,get(model,"c").y);
+  assert.deepEqual(layout(rows),model);valid(model);
+  const extended=layout([...rows,row("e",4,{depends_on_decision_ids:["a","d"]})]);
+  assert.deepEqual(links(extended,"dependency").filter(([,to])=>to==="e"),[["a","e"],["d","e"]]);
+  assert.equal(get(extended,"e").x,840);valid(extended);
+});
+
+test("two confirmed adoption sources both survive and take precedence over dependency and reference duplicates", () => {
+  const model=layout([row("a",0,{depends_on_decision_ids:[]}),row("b",1,{depends_on_decision_ids:[]}),row("c",2,{parent_decision_id:"a",depends_on_decision_ids:["a","b","b"],adopted_decision_ids:["a","b","a"],source_decision_ids:["a","b"]})]);
+  assert.deepEqual(links(model,"adoption"),[["a","c"],["b","c"]]);assert.deepEqual(links(model,"dependency"),[]);assert.deepEqual(links(model,"source"),[]);
+  assert.deepEqual(links(model,"sequence"),[["root","a"],["root","b"]]);
+  assert.equal(get(model,"a").x,get(model,"b").x);assert.equal(get(model,"c").x,get(model,"a").x+200);valid(model);
+});
+
+test("explicitly empty lineage keeps independent decisions parallel; only entirely legacy data chains by order", () => {
+  for(const field of ["depends_on_decision_ids","adopted_decision_ids"]){
+    // One modern record opts the mixed catalog into explicit lineage too.
+    const model=layout([row("a",0,{[field]:[]}),row("b",1),row("c",2,{[field]:[]})]);
+    assert.deepEqual(links(model,"sequence"),[["root","a"],["root","b"],["root","c"]]);
+    assert.equal(new Set(decisions(model).map(n=>n.x)).size,1);assert.equal(new Set(decisions(model).map(n=>n.y)).size,3);
+    assert.deepEqual(links(model,"dependency"),[]);assert.deepEqual(links(model,"adoption"),[]);valid(model);
+  }
+  const legacy=layout([row("a"),row("b",1),row("c",2)]);
+  assert.deepEqual(links(legacy,"sequence"),[["root","a"],["a","b"],["b","c"]]);assert.deepEqual(links(legacy,"dependency"),[]);valid(legacy);
+});
+
+test("DAG cycles discard only internal structural edges and retain valid outside parents and descendants", () => {
+  const rows=[row("outside",0,{depends_on_decision_ids:[]}),row("a",1,{depends_on_decision_ids:["outside","b"]}),row("b",2,{adopted_decision_ids:["a"]}),row("child",3,{depends_on_decision_ids:["b"]}),row("self",4,{adopted_decision_ids:["self"]})];
+  const model=layout(rows);
+  assert.deepEqual(links(model,"dependency"),[["outside","a"],["b","child"]]);assert.deepEqual(links(model,"adoption"),[]);
+  assert.deepEqual(links(model,"sequence"),[["root","outside"],["root","b"],["root","self"]]);valid(model);
+  const cycle=layout([row("a",0,{depends_on_decision_ids:["c"]}),row("b",1,{depends_on_decision_ids:["a"]}),row("c",2,{adopted_decision_ids:["b"]})]);
+  assert.deepEqual(cycle.edges.map(e=>[e.from,e.to,e.kind]),[["root","a","sequence"],["root","b","sequence"],["root","c","sequence"]]);valid(cycle);
+});
+
+test("unknown, self, ambiguous and malformed lineage never invent parents or hide records", () => {
+  const rows=[row("dup",0,{depends_on_decision_ids:[]}),row("dup",1,{depends_on_decision_ids:[]}),row("unknown",2,{depends_on_decision_ids:["missing",null,7,{},"unknown"],adopted_decision_ids:["dup","missing"],source_decision_ids:["dup","unknown","missing"]}),row("bad",3,{depends_on_decision_ids:"dup",adopted_decision_ids:{id:"dup"}})];
+  const model=layout(freeze(rows));assert.equal(model.nodes.length,5);assert.equal(model.edges.length,4);
+  assert.ok(model.edges.every(e=>e.from==="root"&&e.kind==="sequence"));assert.equal(new Set(model.nodes.map(n=>n.key)).size,5);
+  assert.deepEqual(layout(rows),model);valid(model);
+});
+
+test("reference cycles and references to failed or later nodes do not affect dependency layers", () => {
+  const base=[row("failed",0,{status:"failed",depends_on_decision_ids:[]}),row("a",1,{depends_on_decision_ids:[]}),row("b",2,{depends_on_decision_ids:["a"]})];
+  const model=layout([{...base[0],source_decision_ids:["b"]},{...base[1],source_decision_ids:["failed","b"]},{...base[2],source_decision_ids:["failed"]}]);
+  assert.deepEqual(links(model,"source"),[["b","failed"],["failed","a"],["b","a"],["failed","b"]]);
+  const geometry=m=>m.nodes.map(n=>[n.key,n.x,n.y]);assert.deepEqual(geometry(model),geometry(layout(base)));valid(model);
+});
+
+function sourceClear(model,positions=new Map(model.nodes.map(node=>[node.key,node]))) {
+  for(const edge of model.edges.filter(e=>e.kind==="source")){
+    const a=positions.get(edge.from),b=positions.get(edge.to),dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+    assert.ok(length>0);
+    for(const [key,p] of positions){
+      if(key===edge.from||key===edge.to)continue;
+      const t=((p.x-a.x)*dx+(p.y-a.y)*dy)/length;
+      if(t>0&&t<1)assert.ok(Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy)>=18,`${edge.from} -> ${edge.to} crosses ${key}`);
+    }
+  }
+}
+
+test("source-only fan-in and fan-out separate straight references without moving dependency layers",()=>{
+  const base=[row("a",0,{depends_on_decision_ids:[],status:"failed"}),row("b",1,{depends_on_decision_ids:[]}),row("c",2,{depends_on_decision_ids:[]}),row("parent",3,{depends_on_decision_ids:[]}),row("child",4,{depends_on_decision_ids:["parent"]})];
+  const original=layout(base);
+  for(const refs of [{b:["a"],c:["a"]},{c:["a","b"]}]){
+    const rows=base.map(record=>({...record,...(refs[record.decision_id]?{source_decision_ids:refs[record.decision_id]}:{})})),model=layout(freeze(rows));
+    assert.equal(links(model,"source").length,2);assert.deepEqual(links(model,"dependency"),[["parent","child"]]);
+    for(const key of ["root","parent","child"])assert.deepEqual([get(model,key).x,get(model,key).y],[get(original,key).x,get(original,key).y]);
+    assert.equal(get(model,"child").x-get(model,"parent").x,200);
+    sourceClear(model);valid(model);assert.deepEqual(layout(rows),model);
+  }
+});
+
+test("missing or malformed parents attach to root without fabricated references", () => {
   const model = layout([row("a", 0, { parent_decision_id: "absent" }),
     row("b", 1, { parent_decision_id: "other" }), row("c", 2, { parent_decision_id: 8 }),
     row("d", 3, { parent_decision_id: "  " })]);
-  assert.deepEqual(links(model, "parent"), []);
-  assert.deepEqual(links(model, "sequence"), [["root", "a"], ["a", "b"], ["b", "c"], ["c", "d"]]);
+  assert.deepEqual(links(model, "dependency"), []);
+  assert.deepEqual(links(model, "sequence"), [["root", "a"], ["root", "b"], ["root", "c"], ["root", "d"]]);
   valid(model);
 });
 
-test("all explicit cycle members, including self cycles, downgrade to sequence", () => {
+test("all explicit cycle members, including self cycles, attach to root while descendants survive", () => {
   const model = layout([row("a", 0, { parent_decision_id: "b" }), row("b", 1, { parent_decision_id: "c" }),
     row("c", 2, { parent_decision_id: "a" }), row("child", 3, { parent_decision_id: "c" }),
     row("self", 4, { parent_decision_id: "self" })]);
-  assert.deepEqual(links(model, "parent"), [["c", "child"]]);
-  assert.deepEqual(links(model, "sequence"), [["root", "a"], ["a", "b"], ["b", "c"], ["child", "self"]]);
+  assert.deepEqual(links(model, "dependency"), [["c", "child"]]);
+  assert.deepEqual(links(model, "sequence"), [["root", "a"], ["root", "b"], ["root", "c"], ["root", "self"]]);
   valid(model);
 });
 
 test("future explicit parents survive contradictory timestamps without sequence cycles", () => {
   const model = layout([row("a", 0, { parent_decision_id: "c" }), row("b", 1), row("c", 2)]);
-  assert.deepEqual(links(model, "parent"), [["c", "a"]]);
+  assert.deepEqual(links(model, "dependency"), [["c", "a"]]);
   assert.deepEqual(links(model, "sequence"), [["a", "b"], ["root", "c"]]);
   valid(model);
 });
@@ -154,9 +235,9 @@ test("duplicate IDs get unique keys, preserve rows, and cannot resolve ambiguous
   const model = layout(rows), keys = decisions(model).map(node => node.key);
   assert.equal(new Set(keys).size, 3);
   assert.ok(!keys.includes("dup"));
-  assert.deepEqual(links(model, "parent"), []);
+  assert.deepEqual(links(model, "dependency"), []);
   assert.deepEqual(links(model, "source"), []);
-  assert.deepEqual(links(model, "sequence"), [["root", keys[0]], [keys[0], keys[1]], [keys[1], "child"]]);
+  assert.deepEqual(links(model, "sequence"), [["root", keys[0]], [keys[0], keys[1]], ["root", "child"]]);
   assert.deepEqual(keys, decisions(layout(rows)).map(node => node.key)); valid(model);
 });
 
@@ -167,13 +248,13 @@ test("fallback keys survive reordering and mutable feedback; collisions and rese
   const collision = layout([a, a, row(keys[0], 2), row("root", 3), row("child", 4, { parent_decision_id: "root" })]);
   const rootRecord = decisions(collision).find(node => node.row.decision_id === "root");
   assert.notEqual(rootRecord.key, "root");
-  assert.deepEqual(links(collision, "parent"), [[rootRecord.key, "child"]]); valid(collision);
+  assert.deepEqual(links(collision, "dependency"), [[rootRecord.key, "child"]]); valid(collision);
 });
 
 test("explicit sources are deduplicated references and never change tree geometry", () => {
   const rows = [row("a"), row("b", 1, { parent_decision_id: "a" }), row("c", 2, { parent_decision_id: "a" })];
   const model = layout([rows[0], rows[1], { ...rows[2], source_decision_ids: ["b", "a", "b", "c", "absent", null] }]);
-  assert.deepEqual(links(model, "source"), [["b", "c"], ["a", "c"]]);
+  assert.deepEqual(links(model, "source"), [["b", "c"]]);
   const geometry = m => m.nodes.map(node => [node.key, node.x, node.y]);
   assert.deepEqual(geometry(model), geometry(layout(rows))); valid(model);
   assert.deepEqual(links(layout([row("a", 0, { source_decision_ids: "b" }), row("b", 1)]), "source"), []);
@@ -240,17 +321,20 @@ test("click, Enter and Space select with key, original row and original index", 
 });
 
 test("render uses straight lines, dashed source references, and optional translated edge titles", () => {
-  const api = harness(), rows = [row("a"), row("b", 1, { parent_decision_id: "a", source_decision_ids: ["a"] })];
-  const titles = { parent: "明确父决策", sequence: "时间顺序（非因果）", source: "来源引用" };
+  const api = harness(), rows = [row("a"), row("b", 1, { parent_decision_id: "a" }),row("c",2,{depends_on_decision_ids:["a"],adopted_decision_ids:["b"],source_decision_ids:["b"]}),row("d",3,{source_decision_ids:["a"]})];
+  const titles = { dependency: "明确依赖", adoption:"确认采纳", sequence: "时间顺序（非因果）", source: "来源引用" };
   const svg = api.render({ rows, edgeLabel: kind => titles[kind] });
-  const lines = tag(svg, "line"); assert.equal(lines.length, 3);
+  const lines = tag(svg, "line"); assert.equal(lines.length, 6);
   for (const line of lines) {
     const kind = line.attributes["data-kind"];
     assert.equal(tag(line, "title")[0].textContent, titles[kind]);
     assert.equal(line.attributes["stroke-dasharray"], kind === "source" ? "4 4" : undefined);
+    assert.equal(line.attributes.stroke,kind==="adoption"?"var(--orange, #b45b35)":"var(--muted, #8a7568)");
+    if(kind==="dependency")assert.equal(line.attributes["stroke-width"],"1");
   }
+  assert.ok(Number(lines.find(l=>l.attributes["data-kind"]==="sequence").attributes.opacity)<Number(lines.find(l=>l.attributes["data-kind"]==="dependency").attributes.opacity));
   const defaults = tag(api.render({ rows }), "line").map(line => tag(line, "title")[0].textContent);
-  assert.deepEqual(defaults, ["Sequence (not causality)", "Declared parent", "Source reference"]);
+  assert.deepEqual(defaults, ["Sequence (not causality)", "Declared dependency", "Declared dependency", "Confirmed adoption", "Sequence (not causality)", "Source reference (not dependency or adoption)"]);
   assert.deepEqual(tag(svg, "path"), []); assert.deepEqual(tag(svg, "animate"), []);
 });
 
@@ -307,6 +391,57 @@ function startDrag(svg, view, index = 0) {
   pointer(node, "pointerdown", x, y);
   return { node, key, x, y };
 }
+
+function renderedDAG(svg,view,rows) {
+  const model=layout(rows),lines=tag(svg,"line");assert.equal(lines.length,model.edges.length);
+  model.edges.forEach((edge,i)=>{
+    const from=view.positions.get(edge.from),to=view.positions.get(edge.to),line=lines[i];
+    assert.equal(line.attributes["data-kind"],edge.kind);
+    assert.deepEqual(["x1","y1","x2","y2"].map(key=>Number(line.attributes[key])),[from.x,from.y,to.x,to.y]);
+    if(edge.kind!=="source")assert.ok(to.x-from.x>=60-1e-8,`${edge.from} -> ${edge.to} must keep every parent constraint`);
+  });
+  assert.deepEqual(coordinates(view.positions.get("root")),[40,100]);
+}
+
+test("diamond drag and settling preserve every dependency/adoption edge, root and all parent constraints", () => {
+  const rows=[row("a",0,{depends_on_decision_ids:[],source_decision_ids:["join"]}),row("b",1,{depends_on_decision_ids:["a"]}),row("c",2,{depends_on_decision_ids:["a"]}),row("join",3,{depends_on_decision_ids:["b","c"],adopted_decision_ids:["b","c"]}),row("end",4,{depends_on_decision_ids:["a","join"]})];
+  const h=interactive(),view={};const svg=h.api.render({rows,view});
+  assert.deepEqual(links(layout(rows),"adoption"),[["b","join"],["c","join"]]);renderedDAG(svg,view,rows);
+  for(const [key,dx,dy] of [["b",5000,120],["c",-5000,-90],["join",-5000,180],["end",-5000,30]]){
+    const index=renderedNodes(svg).findIndex(n=>n.attributes["data-key"]===key),d=startDrag(svg,view,index);
+    pointer(d.node,"pointermove",d.x+dx,d.y+dy);renderedDAG(svg,view,rows);
+    for(let i=0;i<3;i++){h.step();renderedDAG(svg,view,rows);}
+    pointer(d.node,"pointerup",d.x+dx,d.y+dy);h.drain();renderedDAG(svg,view,rows);
+  }
+  svg.zoomBy(1.5);pointer(svg,"pointerdown",100,100);pointer(svg,"pointermove",-600,800);pointer(svg,"pointerup",-600,800);
+  const camera={...view.camera},positions=[...view.positions].map(([key,p])=>[key,...coordinates(p)]);svg.dispose();
+  const restored=h.api.render({rows,view});assert.deepEqual({...view.camera},camera);assert.deepEqual([...view.positions].map(([key,p])=>[key,...coordinates(p)]),positions);renderedDAG(restored,view,rows);
+  restored.fit();renderedDAG(restored,view,rows);restored.reset();renderedDAG(restored,view,rows);restored.dispose();
+});
+
+test("new second-parent evidence repairs cached horizontal constraints without losing manual placement or camera", () => {
+  const rows=[row("a",0,{depends_on_decision_ids:[]}),row("b",1,{depends_on_decision_ids:[]}),row("join",2,{depends_on_decision_ids:["a"]})];
+  const h=interactive(),view={};const svg=h.api.render({rows,view});
+  const d=startDrag(svg,view,1);pointer(d.node,"pointermove",d.x+900,d.y+80);pointer(d.node,"pointerup",d.x+900,d.y+80);h.drain();svg.zoomBy(1.25);
+  const b=coordinates(view.positions.get("b")),joinY=view.positions.get("join").y,camera={...view.camera};assert.ok(b[0]>view.positions.get("join").x);svg.dispose();
+  const updated=[rows[0],rows[1],{...rows[2],depends_on_decision_ids:["a","b"]}];
+  const restored=h.api.render({rows:updated,view});
+  assert.equal(links(layout(updated),"dependency").length,2);assert.deepEqual(coordinates(view.positions.get("b")),b);assert.equal(view.positions.get("join").y,joinY);assert.deepEqual({...view.camera},camera);assert.ok(view.pinned.has("b"));renderedDAG(restored,view,updated);restored.dispose();
+});
+
+test("new source references separate cached parallel nodes with straight lines and preserve camera and pinned placement",()=>{
+  const base=[row("a",0,{depends_on_decision_ids:[]}),row("b",1,{depends_on_decision_ids:[]}),row("c",2,{depends_on_decision_ids:[]})];
+  for(const pinned of [false,true]){
+    const h=interactive(),view={},initial=h.api.render({rows:base,view});initial.zoomBy(1.25);
+    const camera={...view.camera},b=coordinates(view.positions.get("b"));if(pinned)view.pinned.add("b");initial.dispose();
+    const rows=[base[0],base[1],{...base[2],source_decision_ids:["a","b"]}],svg=h.api.render({rows,view});
+    assert.deepEqual({...view.camera},camera);if(pinned){assert.ok(view.pinned.has("b"));assert.deepEqual(coordinates(view.positions.get("b")),b);}
+    assert.equal(tag(svg,"path").length,0);assert.equal(tag(svg,"line").filter(line=>line.attributes["data-kind"]==="source").length,2);
+    sourceClear(layout(rows),view.positions);renderedDAG(svg,view,rows);
+    const saved=[...view.positions].map(([key,p])=>[key,...coordinates(p)]);svg.dispose();
+    const restored=h.api.render({rows,view});assert.deepEqual([...view.positions].map(([key,p])=>[key,...coordinates(p)]),saved);assert.deepEqual({...view.camera},camera);sourceClear(layout(rows),view.positions);restored.dispose();
+  }
+});
 
 test("default graph has vertical variation and readable scale; explicit fit/reset are synchronous", () => {
   const h = interactive(), view = {}, rows = Array.from({ length: 200 }, (_, i) => row(`d${i}`, i));

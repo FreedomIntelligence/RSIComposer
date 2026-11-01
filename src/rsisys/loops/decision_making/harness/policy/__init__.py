@@ -58,6 +58,10 @@ class ModelDecisionPolicy:
 
     @staticmethod
     def _envelope(properties, required):
+        if 'kind' in properties:
+            properties = {**properties, **{name: {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+                                                 'uniqueItems': True}
+                for name in ('depends_on_decision_ids', 'source_decision_ids')}}
         return {'type': 'object', 'properties': {**properties, 'reason': {'type': 'string'}},
                 'required': list(required), 'additionalProperties': False}
 
@@ -193,6 +197,12 @@ class ModelDecisionPolicy:
                     "Optional top-level review_after_seconds requests a later running-task review; "
                     "omit it or use null to disable reviews. "
                     "Use {\"kind\":\"finish\"} when done. "
+                    "Optional depends_on_decision_ids requires known completed decisions in decision_graph; "
+                    "source_decision_ids cites known decisions, including pending or failed work. "
+                    "Use candidate_origins to find producers; never infer lineage from history order. "
+                    "Unknown or unfinished dependencies cannot execute; wait and propose again later. "
+                    "Decision IDs are system generated. Never claim adopted candidates or confirmed edges; "
+                    "only successful executor receipts can confirm adoption. "
                     "For every decision, provide a brief public rationale in the optional top-level reason string: "
                     "the observed issue, why this action, and what you expect to check. "
                     "Keep reason separate from arguments. Do not provide hidden chain-of-thought or raw reasoning_content. "
@@ -216,19 +226,45 @@ class ModelDecisionPolicy:
             raise ValueError('reason must be a string')
         return reason
 
+    @staticmethod
+    def _parse_lineage(payload, context):
+        if any(key in payload for key in ('decision_id', 'adopted_candidate_ids', 'adopted_decision_ids', 'confirmed_edges')):
+            raise ValueError('Decision identity and confirmed adoption are system/executor fields')
+        known = {row['decision_id']: row for row in context.decision_graph}
+        result = {}
+        for name in ('depends_on_decision_ids', 'source_decision_ids'):
+            refs = payload.get(name, [])
+            if (not isinstance(refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in refs)
+                    or len(set(refs)) != len(refs)):
+                raise ValueError(f'{name} must contain distinct nonempty decision IDs')
+            for ref in refs:
+                if ref not in known:
+                    raise ValueError(f'Unknown or forward decision reference: {ref}')
+                if name == 'depends_on_decision_ids' and known[ref]['status'] != 'completed':
+                    raise ValueError(f'Dependency must be completed: {ref}')
+            result[name] = tuple(refs)
+        return result
+
     def _parse_decision(self, response, context):
         payload = _load_object(response.text)
         kind = payload["kind"]
         reason = self._parse_reason(payload)
+        lineage = self._parse_lineage(payload, context)
+        common = {'kind', 'reason', 'depends_on_decision_ids', 'source_decision_ids'}
+        if kind in ('invoke', 'wait', 'finish'):
+            allowed = common | {'invoke': {'operation', 'arguments'}, 'wait': {'job'}, 'finish': set()}[kind]
+            if set(payload) - allowed:
+                raise ValueError('Unexpected decision fields')
         if kind == "invoke":
             return Decision("invoke", operation=OperationCall(payload["operation"], payload["arguments"]),
-                            reason=reason, simulated=response.simulated, usage=response.usage)
+                            reason=reason, simulated=response.simulated, usage=response.usage, **lineage)
         if kind == "explore":
             mode = payload.get('mode', 'execute')
             if mode not in context.directive_modes:
                 raise ValueError(f'Disallowed exploration mode: {mode}')
             fields = {key: value for key, value in payload.items()
-                      if key not in ('kind', 'strategy', 'mode', 'input_ids', 'arguments', 'review_after_seconds', 'reason')}
+                      if key not in ('kind', 'strategy', 'mode', 'input_ids', 'arguments', 'review_after_seconds', 'reason',
+                                     'depends_on_decision_ids', 'source_decision_ids')}
             if 'arguments' in payload and fields:
                 raise ValueError('Use either arguments or top-level directive parameters, not both')
             candidates = {c.candidate_id: c for c in context.candidates}
@@ -260,12 +296,12 @@ class ModelDecisionPolicy:
                 review_after_seconds=payload.get('review_after_seconds'),
             )
             return Decision("explore", directive=directive, reason=reason,
-                            simulated=response.simulated, usage=response.usage)
+                            simulated=response.simulated, usage=response.usage, **lineage)
         if kind == "wait":
             return Decision("wait", job=JobRef(**payload["job"]) if payload.get("job") is not None else None,
-                            reason=reason, simulated=response.simulated, usage=response.usage)
+                            reason=reason, simulated=response.simulated, usage=response.usage, **lineage)
         if kind == "finish":
-            return Decision("finish", reason=reason, simulated=response.simulated, usage=response.usage)
+            return Decision("finish", reason=reason, simulated=response.simulated, usage=response.usage, **lineage)
         raise ValueError(f"Unsupported decision kind: {kind}")
 
     def review(self, context: DecisionContext) -> ReviewDecision | Decision:
@@ -296,14 +332,15 @@ class ModelDecisionPolicy:
         payload = _load_object(response.text)
         if isinstance(payload, dict) and payload.get('kind') == 'invoke':
             required = {'kind', 'operation', 'arguments'}
-            if not required <= set(payload) or set(payload) - required - {'reason'}:
+            if not required <= set(payload) or set(payload) - required - {'reason', 'depends_on_decision_ids', 'source_decision_ids'}:
                 raise ValueError('A review invocation requires kind, operation and arguments, with optional reason')
             allowed = {spec.name for spec in context.operations}
             if (not isinstance(payload['operation'], str) or payload['operation'] not in allowed
                     or not isinstance(payload['arguments'], dict)):
                 raise ValueError('Review may invoke only an available operation')
             return Decision('invoke', operation=OperationCall(payload['operation'], payload['arguments']),
-                            reason=self._parse_reason(payload), simulated=response.simulated, usage=response.usage)
+                            reason=self._parse_reason(payload), simulated=response.simulated, usage=response.usage,
+                            **self._parse_lineage(payload, context))
         if (not isinstance(payload, dict) or 'action' not in payload
                 or set(payload) - {'action', 'next_review_seconds', 'reason'}):
             raise ValueError('Expected a review action, optional next_review_seconds and reason')

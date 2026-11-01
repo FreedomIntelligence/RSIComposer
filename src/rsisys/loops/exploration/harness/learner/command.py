@@ -88,4 +88,6 @@ class ApplyCandidateHandler(CommandHandler):
             training_metrics=deepcopy(result.metrics),
             artifact_refs=tuple(deepcopy(result.candidate.changes).values()),
             evidence_refs=(state.record.record_id,), candidates=(deepcopy(result.candidate),),
+            adopted_candidate_ids=(result.candidate.candidate_id,)
+                if state.record.details['status'] == ExecutionStatus.COMPLETED.value else (),
         )

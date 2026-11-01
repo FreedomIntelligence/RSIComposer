@@ -8,6 +8,18 @@
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项。四种决策都可附顶层 `reason` 字符串，省略时保留既有空字符串默认值；显式提供 null、数字、布尔、数组或对象均拒绝。wait 的任务由外部通过 `loop.harness.resume(job, result)` 回填，见 [Harness](../README.md)。
 
+### 决策身份、依赖与采纳
+
+`Decision` 尾部增加系统默认生成 UUID 的 `decision_id`，以及 `depends_on_decision_ids: tuple[str, ...]`、`source_decision_ids: tuple[str, ...]`。模型仅可在 JSON 顶层请求后两项（字符串数组，省略为空）；原生 schema 保持 `additionalProperties=false`，不接受模型提供 decision_id、adopted_candidate_ids、adopted_decision_ids 或 confirmed_edges。复查 invoke 使用相同规则。
+
+`DecisionContext.decision_graph` 是轻量身份/状态及非空关系投影，不复制 reason、错误文本或完整边列表；`candidate_origins` 映射候选 ID 到其 producer decision。它们不依赖截断后的 history 顺序。执行前，依赖必须指向已知且 completed 的决策；引用可以指向已知的 pending/failed 决策。未知、前向、自指和重复引用会被拒绝，未满足依赖时不调用执行器，失败验证保留在 history。没有隐式队列：模型可以 wait 后重新提出决策。现有并行 Runner 和 max_outstanding 不变。
+
+`OperationResult` 和 `Feedback` 尾部的 `adopted_candidate_ids` 是执行器回执，必须是去重的非空字符串 tuple，且仅 COMPLETED 回执可以非空。成功 producer feedback 建立 origin；evaluate/apply_candidate 不建立或覆盖 origin。Harness 保留真实成功的采纳回执，并只从已知成功 origin 派生 `adopted_decision_ids` 及 confirmed adopted 边；旧快照或外部候选缺少 origin 时记入 `unresolved_adopted_candidate_ids`，不猜来源，也不把实际成功改成失败。一次决策可以采纳多个来源。
+
+`DecisionState.decision_records` 保存完整 ledger，`directive_decisions` 关联指令，`candidate_origins` 保存 producer 索引，`pending_operation_decision_id` 关联异步操作；`LoopStepResult.decision_id` 将步骤与同一决策关联。普通 decision history 的 record_id 使用 decision_id，operation/feedback history 的 details 显式包含 decision_id 和确认后的关系。操作执行与写账分开，写入重试复用冻结回执，JSON 恢复不改变判等语义；相同身份和内容的决策不重复执行，不同内容复用身份被拒绝。外部 JobRef 复用按 `(job, decision_id)` 区分；resume 的写账重试安全，完成后重复 resume 继续按既有接口报错，不重新执行。复查写操作同样注册身份、验证依赖并保存关联回执。新快照保存这些字段，旧快照只对明确新增字段使用空默认值，不从历史猜测缺失来源。
+
+复查异步 job 的提交回执独立保存在对应 ledger 记录中，不占用主 `pending_job`，也不阻止后续普通决策或替换当前实验。提交仅标记 pending；只有显式 `resume(job, result, decision_id=...)` 完成后才能满足依赖或确认采纳。无歧义的独立 review job 可以省略 decision_id；同一 JobRef 对应多个 review 决策时必须显式指定。主 pending job 的既有无关键字 resume 语义不变，无后台轮询或额外 Runner 调度。
+
 ## 实现与替换
 
 同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None, max_validation_attempts=1, structured_output=None)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：

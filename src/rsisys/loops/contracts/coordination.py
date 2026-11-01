@@ -21,8 +21,15 @@ class OperationResult:
     status: ExecutionStatus = ExecutionStatus.COMPLETED
     error: str | None = None
     data: dict[str, object] = field(default_factory=dict)
+    adopted_candidate_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
+        if (not isinstance(self.adopted_candidate_ids, tuple)
+                or any(not isinstance(ident, str) or not ident.strip() for ident in self.adopted_candidate_ids)
+                or len(set(self.adopted_candidate_ids)) != len(self.adopted_candidate_ids)):
+            raise ValueError('adopted_candidate_ids must be a tuple of distinct nonempty IDs')
+        if self.adopted_candidate_ids and self.status != ExecutionStatus.COMPLETED:
+            raise ValueError('Only completed operation receipts may confirm adoption')
         if not isinstance(self.data, dict):
             raise TypeError('Operation result data must be a dict')
         if self.status not in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
@@ -40,8 +47,11 @@ class LoopStepResult:
     job: JobRef | None = None
     operation_result: OperationResult | None = None
     reason: str = ""
+    decision_id: str | None = None
 
     def __post_init__(self):
+        if self.decision_id is not None and (not isinstance(self.decision_id, str) or not self.decision_id.strip()):
+            raise ValueError('decision_id must be nonempty or None')
         if self.kind not in ('progressed', 'dispatch', 'waiting', 'finished'):
             raise ValueError('Unknown decision step kind')
         if (self.kind == 'dispatch') != (self.directive is not None):

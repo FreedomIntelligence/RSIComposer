@@ -34,6 +34,11 @@ from .state import (DecisionContext, DecisionState, _PendingOperationRecord, _Pe
                     DirectiveProvenance, CandidateEvaluation)
 
 
+def _json_details(value):
+    """Match MemoryBuffer's JSON load representation before the first write."""
+    return json.loads(json.dumps(value))
+
+
 class DefaultDecisionHarness:
     def __init__(self, policy: DecisionPolicy, tools: DecisionTools,
                  experience: ExperienceSystem, learner: DecisionLearner | None = None,
@@ -83,10 +88,14 @@ class DefaultDecisionHarness:
         return bool(self.state.pending_operation_record is not None
                     or self.state.pending_review_record is not None
                     or self.state.review_session is not None
-                    or self.state.review_records or self.state.review_sessions)
+                    or self.state.review_records or self.state.review_sessions
+                    or any(row.get('review_completion_record') is not None for row in self.state.decision_records.values()))
 
     def flush_pending_records(self) -> None:
         """Retry existing receipts only; never decide, execute tools or finish a review."""
+        for row in self.state.decision_records.values():
+            if row.get('review_completion_record') is not None:
+                self._flush_review_completion(row)
         if self.state.pending_operation_record is not None:
             self._flush_operation_record()
         self._flush_review_query()
@@ -134,23 +143,150 @@ class DefaultDecisionHarness:
                           resume_result: OperationResult | None = None) -> None:
         if self.state.pending_operation_record is not None:
             raise RuntimeError('Record the pending operation before starting another')
+        ident = self.state.pending_operation_decision_id
+        suffix = 'authorization' if self.state.decision_records.get(ident, {}).get('authorization_rejected') else 'operation'
         self.state.pending_operation_record = _PendingOperationRecord(
-            str(uuid4()), deepcopy(call), deepcopy(result), elapsed_seconds,
+            f'{ident}:{suffix}' if ident else str(uuid4()), deepcopy(call), deepcopy(result), elapsed_seconds,
             self.state.pending_job, deepcopy(resume_result),
+            decision_id=ident,
         )
+        self.state.pending_decision = None
         self._flush_operation_record()
+
+    def _decision_graph(self):
+        graph = []
+        for row in self.state.decision_records.values():
+            item = {key: row[key] for key in ('decision_id', 'status')}
+            directive = row['proposal'].get('directive')
+            if directive:
+                item['mode'] = directive['mode']
+            for key in ('operation', 'depends_on_decision_ids', 'source_decision_ids', 'adopted_candidate_ids',
+                        'adopted_decision_ids', 'unresolved_adopted_candidate_ids'):
+                if row.get(key):
+                    item[key] = row[key]
+            graph.append(item)
+        return deepcopy(tuple(graph))
+
+    def _begin_decision(self, decision, context, *, record_history=True):
+        if not isinstance(decision, Decision):
+            raise TypeError('Policy must return a Decision')
+        decision.__post_init__()
+        ident = decision.decision_id
+        row = self.state.decision_records.get(ident)
+        if row is not None:
+            if row['proposal'] != asdict(decision):
+                raise ValueError('Decision ID has different content')
+            if row['status'] == 'executing':
+                raise RuntimeError('Decision execution outcome is unknown; refusing to execute it again')
+            if (row['status'] in ('blocked', 'failed') and not row.get('authorization_rejected') and ident not in self.state.decision_results
+                    and self.state.pending_decision is None):
+                raise ValueError(row['error'])
+        else:
+            row = dict(decision_id=ident, kind=decision.kind, status='pending', reason=decision.reason,
+                directive_id=decision.directive.directive_id if decision.directive else None,
+                operation=decision.operation.name if decision.operation else None,
+                depends_on_decision_ids=decision.depends_on_decision_ids,
+                source_decision_ids=decision.source_decision_ids,
+                adopted_candidate_ids=(), adopted_decision_ids=(), unresolved_adopted_candidate_ids=(),
+                confirmed_edges=(), error=None, validation_error=None,
+                proposal=deepcopy(asdict(decision)),
+                decision_model=asdict(context.decision_model) if context.decision_model else None,
+                execution_model=asdict(context.execution.model) if context.execution.model else None)
+            for name in ('depends_on_decision_ids', 'source_decision_ids'):
+                for ref in getattr(decision, name):
+                    known = self.state.decision_records.get(ref)
+                    if known is None or (name == 'depends_on_decision_ids' and known['status'] != 'completed'):
+                        message = f'Unknown, forward or incomplete decision dependency/reference: {ref}'
+                        row.update(status='failed', error=message, validation_error=message)
+                        break
+                if row['validation_error']:
+                    break
+            if not row['validation_error']:
+                row['confirmed_edges'] = tuple({'from': ref, 'to': ident, 'kind': kind, 'confirmed': True}
+                    for kind, refs in (('depends_on', decision.depends_on_decision_ids), ('source', decision.source_decision_ids))
+                    for ref in refs)
+            self.state.decision_records[ident] = row
+        self.state.pending_decision = deepcopy(decision)
+        if record_history or row['validation_error']:
+            self.memory.append(HistoryEntry(ident, 'decision', None, decision.kind, decision.simulated,
+                details=_json_details({**deepcopy(row['proposal']), 'decision_model': row['decision_model'],
+                         'execution_model': row['execution_model'],
+                         'status': 'failed' if row['validation_error'] else 'pending',
+                         'validation_error': row['validation_error']})))
+        if row['validation_error']:
+            self.state.pending_decision = None
+            raise ValueError(row['error'])
+        return row
+
+    def _adoption(self, ident, receipt):
+        receipt.__post_init__()
+        adopted = receipt.adopted_candidate_ids
+        origins, unresolved = [], []
+        for candidate_id in adopted:
+            source = self.state.candidate_origins.get(candidate_id)
+            if (ident is None or source is None or source == ident
+                    or self.state.decision_records.get(source, {}).get('status') != 'completed'):
+                unresolved.append(candidate_id)
+                continue
+            if source not in origins:
+                origins.append(source)
+        row = self.state.decision_records.get(ident, {})
+        edges = tuple(edge for edge in row.get('confirmed_edges', ()) if edge['kind'] != 'adopted')
+        edges += tuple({'from': source, 'to': ident, 'kind': 'adopted', 'confirmed': True} for source in origins)
+        return dict(decision_id=ident, adopted_candidate_ids=adopted,
+                    adopted_decision_ids=tuple(origins), unresolved_adopted_candidate_ids=tuple(unresolved), confirmed_edges=edges)
+
+    def _write_operation_record(self, pending, *, experience=True):
+        metadata = self._adoption(pending.decision_id, pending.result)
+        if pending.event is not None and pending.job is not None and pending.resume_result is None:
+            metadata['status'] = 'pending'
+        if pending.decision_id is None:
+            record_operation(pending, self.memory, self.experience if experience else None)
+            return metadata
+        result, call = pending.result, pending.call
+        details = {'operation': asdict(call) if call else None, 'result': asdict(result), **metadata}
+        if pending.event is not None:
+            details.update(event=pending.event, elapsed_seconds=pending.elapsed_seconds)
+        self.memory.append(HistoryEntry(pending.record_id, 'operation', pending.task_id, result.summary,
+            result.simulated, source_refs=tuple(ref.artifact_id for ref in result.artifacts), details=_json_details(details)))
+        if experience:
+            self.experience.record(ExperienceRecord(pending.record_id, 'runtime_feedback', 'decision_maker',
+                pending.task_id, f'Preparation operation {result.status.value}', result.simulated,
+                source_refs=(f'history:decision_maker:{pending.record_id}',),
+                details=_json_details({'operation': call.name if call else None, 'status': result.status.value,
+                         'error': result.error, 'elapsed_seconds': pending.elapsed_seconds,
+                         'history_ref': pending.record_id, 'history_owner': 'decision_maker', **metadata})))
+        return metadata
+
+    def _complete_operation(self, pending, metadata):
+        if pending.decision_id is not None:
+            if pending.event is not None and pending.job is not None and pending.resume_result is None:
+                self.state.decision_records[pending.decision_id].update(metadata, status='pending',
+                    review_job=pending.job, review_submission=deepcopy(pending))
+                self.state.decision_results[pending.decision_id] = LoopStepResult('waiting',
+                    job=pending.job, decision_id=pending.decision_id)
+                return
+            self.state.decision_records[pending.decision_id].update(metadata,
+                status=pending.result.status.value, error=pending.result.error,
+                operation_elapsed_seconds=pending.elapsed_seconds)
+            if not self.state.decision_records[pending.decision_id].get('authorization_rejected'):
+                self.state.decision_results[pending.decision_id] = LoopStepResult('progressed',
+                    operation_result=deepcopy(pending.result), decision_id=pending.decision_id)
 
     def _flush_operation_record(self) -> OperationResult:
         pending = self.state.pending_operation_record
         if pending is None:
             raise RuntimeError('No operation recording is pending')
         result = pending.result
-        record_operation(pending, self.memory, self.experience)
+        metadata = self._write_operation_record(pending)
+        self._complete_operation(pending, metadata)
         self.state.operation_results.append(deepcopy(result))
         if pending.job is not None:
+            self.state.operation_receipts[(pending.job, pending.decision_id)] = deepcopy(pending.resume_result or result)
             self.state.pending_job = None
             self.state.pending_operation = None
             self.state.pending_simulated = False
+        self.state.pending_operation_decision_id = None
         self.state.pending_operation_record = None
         return deepcopy(result)
 
@@ -183,6 +319,7 @@ class DefaultDecisionHarness:
             outstanding=self.pending_all(), executions=deepcopy(self.state.executions),
             run_control=deepcopy(self.state.run_control),
             research_agenda=self.research_agenda.context(),
+            decision_graph=self._decision_graph(), candidate_origins=deepcopy(self.state.candidate_origins),
         )
         return self.context_compactor.compact(context, recent_limit=self.memory_limit)
 
@@ -260,7 +397,7 @@ class DefaultDecisionHarness:
                 operations=action_space.describe() if session.queries_used < session.tool_limit else (),
                 review_actions=action_space.review_actions())
             context = session.context
-            result = self._call_policy(review, context) if callable(review) else ReviewDecision()
+            result = self.state.pending_decision or (self._call_policy(review, context) if callable(review) else ReviewDecision())
             if not isinstance(result, (ReviewDecision, Decision)):
                 raise TypeError('Policy review must return ReviewDecision or an operation invocation')
             if isinstance(result, ReviewDecision):
@@ -272,15 +409,40 @@ class DefaultDecisionHarness:
                     {spec.name for spec in context.operations}):
                 raise ValueError('Review may only invoke available operations within its budget')
             operation_spec = next(spec for spec in context.operations if spec.name == result.operation.name)
-            execution = execute_operation(self.tools, action_space, result.operation,
-                                          simulated=result.simulated, clock=perf_counter)
-            observed = execution.observation()
+            existing = self.state.decision_records.get(result.decision_id)
+            if existing is not None and existing.get('review_directive_id') not in (None, progress.directive_id):
+                # Legacy custom policies may reuse one Decision object across
+                # independent reviews. Allocate a system identity for this scope.
+                result = replace(result, decision_id=str(uuid4()))
+            row = self._begin_decision(result, context, record_history=False)
+            row['review_directive_id'] = progress.directive_id
+            prior = self.state.decision_results.get(result.decision_id)
+            if prior is None:
+                row['status'] = 'executing'
+                execution = execute_operation(self.tools, action_space, result.operation,
+                                              simulated=result.simulated, clock=perf_counter)
+                observed = execution.observation()
+                try:
+                    self._adoption(result.decision_id, observed)
+                except (TypeError, ValueError) as invalid:
+                    observed = OperationResult('Invalid executor adoption receipt', (), observed.simulated,
+                        ExecutionStatus.FAILED, str(invalid))
+                call, elapsed = execution.call, execution.elapsed_seconds
+                job = execution.outcome if isinstance(execution.outcome, JobRef) else None
+            else:
+                submission = row.get('review_submission') if prior.kind == 'waiting' else None
+                observed = submission.result if submission else prior.operation_result
+                call = submission.call if submission else result.operation
+                elapsed = submission.elapsed_seconds if submission else row.get('operation_elapsed_seconds')
+                job = submission.job if submission else None
             session.simulated = session.simulated or observed.simulated
             session.queries_used += 1
             session.pending_record = _PendingOperationRecord(
-                str(uuid4()), execution.call, observed, execution.elapsed_seconds, None,
+                f'{result.decision_id}:submission' if job else f'{result.decision_id}:operation',
+                deepcopy(call), deepcopy(observed), elapsed, job,
                 task_id=progress.directive_id,
-                event='review_query' if operation_spec.read_only else 'review_operation')
+                event='review_query' if operation_spec.read_only else 'review_operation', decision_id=result.decision_id)
+            self.state.pending_decision = None
             self._flush_review_query()
         if not isinstance(result, ReviewDecision):
             raise TypeError('Policy review must return a ReviewDecision')
@@ -303,7 +465,8 @@ class DefaultDecisionHarness:
         if session is None or session.pending_record is None:
             return
         pending = session.pending_record
-        record_operation(pending, self.memory)
+        metadata = self._write_operation_record(pending, experience=False)
+        self._complete_operation(pending, metadata)
         session.query_refs.append(f'history:decision_maker:{pending.record_id}')
         session.context = replace(session.context,
             operation_results=(*session.context.operation_results, deepcopy(pending.result)))
@@ -313,7 +476,8 @@ class DefaultDecisionHarness:
         # Reviews can append new tool results to a saved session. Re-project them
         # before every model call; full receipts remain in memory and session state.
         context = self.context_compactor.compact(replace(context,
-            history=self.memory.history(), research_agenda=self.research_agenda.context()),
+            history=self.memory.history(), research_agenda=self.research_agenda.context(),
+            decision_graph=self._decision_graph(), candidate_origins=deepcopy(self.state.candidate_origins)),
             recent_limit=self.memory_limit)
         received = 0
 
@@ -338,7 +502,7 @@ class DefaultDecisionHarness:
         result = pending.decision
         self.memory.append(HistoryEntry(
             pending.record_id, 'decision', pending.directive_id, f'Review: {result.action}',
-            result.simulated, details=deepcopy(pending.details),
+            result.simulated, details=_json_details(pending.details),
         ))
         self.experience.record(ExperienceRecord(
             pending.record_id, 'runtime_feedback', 'decision_maker', pending.directive_id,
@@ -357,69 +521,145 @@ class DefaultDecisionHarness:
         if self.state.pending_review_record is not None or self.state.review_session is not None:
             raise RuntimeError('Record the pending review before another decision')
         if self.state.pending_operation_record is not None:
-            return LoopStepResult("progressed", operation_result=self._flush_operation_record())
+            ident = self.state.pending_operation_record.decision_id
+            return LoopStepResult("progressed", operation_result=self._flush_operation_record(), decision_id=ident)
         if self.state.finished:
             return LoopStepResult("finished")
         if self.max_outstanding == 1 and self.state.pending_directive_id is not None:
             raise RuntimeError("Consume pending exploration feedback before another decision.")
         if self.state.pending_job is not None:
-            return LoopStepResult("waiting", job=self.state.pending_job)
+            return LoopStepResult("waiting", job=self.state.pending_job,
+                                  decision_id=self.state.pending_operation_decision_id)
         context = self._context(objective, action_space)
-        decision = self._call_policy(self.policy.decide, context)
-        self.memory.append(HistoryEntry(str(uuid4()), "decision", None, decision.kind,
-                                        decision.simulated, details={**asdict(decision),
-                                            "decision_model": asdict(context.decision_model) if context.decision_model else None,
-                                            "execution_model": asdict(context.execution.model) if context.execution.model else None}))
-        if decision.kind == "invoke":
-            execution = execute_operation(self.tools, action_space, decision.operation,
-                                          simulated=decision.simulated, clock=perf_counter)
-            if isinstance(execution.outcome, JobRef):
-                self.state.pending_job = execution.outcome
-                self.state.pending_operation = execution.call
-                self.state.pending_simulated = execution.simulated
-                return LoopStepResult("waiting", job=execution.outcome)
-            result = execution.observation()
-            try:
-                self._record_operation(execution.call, result, elapsed_seconds=execution.elapsed_seconds)
-            except Exception as record_error:
-                if execution.error is None:
+        decision = self.state.pending_decision or self._call_policy(self.policy.decide, context)
+        row = self._begin_decision(decision, context)
+        ident = decision.decision_id
+        previous = self.state.decision_results.get(ident)
+        if previous is not None:
+            self.state.pending_decision = None
+            return deepcopy(previous)
+        try:
+            if decision.kind == "invoke":
+                # Denial occurs before any executor call. Existing callers may
+                # retry after their external access policy changes.
+                try:
+                    action_space.validate(decision.operation)
+                except PermissionError as denied:
+                    row['authorization_rejected'] = True
+                    self.state.pending_operation_decision_id = ident
+                    self._record_operation(decision.operation, OperationResult('Decision operation failed', (),
+                        decision.simulated, ExecutionStatus.FAILED, f'PermissionError: {denied}'))
                     raise
-                execution.error.add_note(f"Could not record operation failure: {record_error}")
-            if execution.error is not None:
-                raise execution.error
-            return LoopStepResult("progressed", operation_result=result)
-        if decision.kind == "explore":
-            if len(self.pending_all()) >= self.max_outstanding:
-                raise RuntimeError("Outstanding experiment capacity exhausted; research or control existing experiments")
-            directive = replace(decision.directive,
-                                simulated=decision.directive.simulated or decision.simulated)
-            action_space.validate_directive(directive)
-            if directive.directive_id in self.state.issued_directive_ids:
-                raise ValueError('A new decision must use a fresh directive ID')
-            self.state.issued_directive_ids.add(directive.directive_id)
-            self.state.issued += 1
-            self.state.pending_directive_id = directive.directive_id
-            self.state.pending_directive = deepcopy(directive)
-            self.state.directive_provenance[directive.directive_id] = DirectiveProvenance(
-                directive.directive_id, context.decision_model,
-                context.execution.model if self.max_outstanding == 1 else None)
-            self.state.feedback_record_id = str(uuid4())
-            self.state.outstanding[directive.directive_id] = deepcopy(directive)
-            self.state.feedback_record_ids[directive.directive_id] = self.state.feedback_record_id
-            return LoopStepResult("dispatch", directive=directive)
-        if decision.kind == "wait":
-            self.state.pending_job = decision.job
-            self.state.pending_simulated = decision.simulated
-            return LoopStepResult("waiting", job=decision.job)
-        self.state.finished = True
-        return LoopStepResult("finished", reason=decision.reason)
+                except (TypeError, ValueError):
+                    pass  # Shared executor records invalid calls without running tools.
+                row.pop('authorization_rejected', None)
+                # Mark before calling the executor. If a checkpoint catches this
+                # boundary, an unknown outcome is never blindly executed again.
+                row['status'] = 'executing'
+                self.state.pending_operation_decision_id = ident
+                execution = execute_operation(self.tools, action_space, decision.operation,
+                                              simulated=decision.simulated, clock=perf_counter)
+                if isinstance(execution.outcome, JobRef):
+                    self.state.pending_job = execution.outcome
+                    self.state.pending_operation = execution.call
+                    self.state.pending_simulated = execution.simulated
+                    row['status'] = 'pending'
+                    result = LoopStepResult("waiting", job=execution.outcome, decision_id=ident)
+                else:
+                    observed, error = execution.observation(), execution.error
+                    try:
+                        self._adoption(ident, observed)
+                    except (TypeError, ValueError) as invalid:
+                        error = invalid
+                        observed = OperationResult('Invalid executor adoption receipt', (), observed.simulated,
+                            ExecutionStatus.FAILED, str(invalid))
+                    try:
+                        self._record_operation(execution.call, observed, elapsed_seconds=execution.elapsed_seconds)
+                    except Exception as record_error:
+                        if error is None:
+                            raise
+                        error.add_note(f"Could not record operation failure: {record_error}")
+                    if error is not None:
+                        raise error
+                    return LoopStepResult("progressed", operation_result=observed, decision_id=ident)
+            elif decision.kind == "explore":
+                if len(self.pending_all()) >= self.max_outstanding:
+                    raise RuntimeError("Outstanding experiment capacity exhausted; research or control existing experiments")
+                directive = replace(decision.directive, simulated=decision.directive.simulated or decision.simulated)
+                action_space.validate_directive(directive)
+                if directive.directive_id in self.state.issued_directive_ids:
+                    raise ValueError('A new decision must use a fresh directive ID')
+                self.state.issued_directive_ids.add(directive.directive_id)
+                self.state.issued += 1
+                self.state.pending_directive_id = directive.directive_id
+                self.state.pending_directive = deepcopy(directive)
+                model = ModelRef(**row['decision_model']) if row['decision_model'] else None
+                execution_model = ModelRef(**row['execution_model']) if row['execution_model'] else None
+                self.state.directive_provenance[directive.directive_id] = DirectiveProvenance(
+                    directive.directive_id, model, execution_model if self.max_outstanding == 1 else None)
+                self.state.feedback_record_id = str(uuid4())
+                self.state.outstanding[directive.directive_id] = deepcopy(directive)
+                self.state.feedback_record_ids[directive.directive_id] = self.state.feedback_record_id
+                self.state.directive_decisions[directive.directive_id] = ident
+                result = LoopStepResult("dispatch", directive=directive, decision_id=ident)
+            elif decision.kind == "wait":
+                self.state.pending_job = decision.job
+                self.state.pending_simulated = decision.simulated
+                self.state.pending_operation_decision_id = ident if decision.job else None
+                row['status'] = 'pending' if decision.job else 'completed'
+                result = LoopStepResult("waiting", job=decision.job, decision_id=ident)
+            else:
+                self.state.finished = True
+                row['status'] = 'completed'
+                result = LoopStepResult("finished", reason=decision.reason, decision_id=ident)
+        except Exception as error:
+            if self.state.pending_operation_record is None:
+                row.update(status='failed', error=f'{type(error).__name__}: {error}')
+                self.state.pending_decision = None
+                self.state.pending_operation_decision_id = None
+            raise
+        self.state.decision_results[ident] = deepcopy(result)
+        self.state.pending_decision = None
+        return result
 
-    def resume(self, job: JobRef, result: OperationResult) -> None:
-        """Explicit completion handoff; automatic polling remains future work."""
-        if self.state.pending_job != job:
-            raise ValueError("Job does not match the pending operation")
+    def _flush_review_completion(self, row):
+        pending = row['review_completion_record']
+        metadata = self._write_operation_record(pending)
+        self._complete_operation(pending, metadata)
+        self.state.operation_results.append(deepcopy(pending.result))
+        self.state.operation_receipts[(pending.job, pending.decision_id)] = deepcopy(pending.resume_result)
+        row.pop('review_completion_record')
+
+    def resume(self, job: JobRef, result: OperationResult, *, decision_id: str | None = None) -> None:
+        """Idempotent explicit completion handoff, correlated to its original decision."""
         if not isinstance(result, OperationResult):
             raise TypeError('Expected an OperationResult')
+        result.__post_init__()
+        if self.state.pending_job != job or (decision_id is not None and decision_id != self.state.pending_operation_decision_id):
+            # Review jobs are independent observations, never the main wait slot.
+            matches = [row for row in self.state.decision_records.values()
+                       if row.get('review_job') == job and row['status'] == 'pending'
+                       and (decision_id is None or row['decision_id'] == decision_id)]
+            if len(matches) > 1:
+                raise ValueError('Ambiguous review job; supply decision_id explicitly')
+            if matches:
+                row = matches[0]
+                pending = row.get('review_completion_record')
+                if pending is None:
+                    submission = row['review_submission']
+                    normalized = replace(result, simulated=result.simulated or submission.result.simulated)
+                    self._adoption(row['decision_id'], normalized)
+                    row['review_completion_record'] = _PendingOperationRecord(
+                        f"{row['decision_id']}:operation", deepcopy(submission.call), deepcopy(normalized), None,
+                        job, deepcopy(result), task_id=submission.task_id, event='review_completion',
+                        decision_id=row['decision_id'])
+                elif pending.resume_result != result:
+                    raise ValueError('Result differs from the pending review completion')
+                self._flush_review_completion(row)
+                return
+            if any(key[0] == job for key in self.state.operation_receipts):
+                raise ValueError('Operation completion was already delivered')
+            raise ValueError("Job does not match the pending operation")
         pending = self.state.pending_operation_record
         if pending is not None:
             if pending.job != job or pending.resume_result != result:
@@ -427,6 +667,7 @@ class DefaultDecisionHarness:
             self._flush_operation_record()
             return
         normalized = replace(result, simulated=result.simulated or self.state.pending_simulated)
+        self._adoption(self.state.pending_operation_decision_id, normalized)
         self._record_operation(self.state.pending_operation, normalized, resume_result=result)
 
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
@@ -462,16 +703,22 @@ class DefaultDecisionHarness:
             # its evidence without returning (or executing) an obsolete cancel.
             self._flush_review_record()
         directive, feedback = deepcopy(directive), deepcopy(feedback)
+        decision_id = self.state.directive_decisions.get(directive.directive_id)
+        metadata = self._adoption(decision_id, feedback)
         provenance = self.state.directive_provenance.get(directive.directive_id)
         provenance_details = asdict(provenance) if provenance is not None else None
         candidates = dict(self.state.candidates)
         bases = dict(self.state.candidate_bases)
+        origins = dict(self.state.candidate_origins)
         # Validate the entire batch before any write, including duplicate IDs
         # within this feedback. Publish the index only after both records succeed.
         for candidate in deepcopy(feedback.candidates):
             if candidate.candidate_id in candidates and candidates[candidate.candidate_id] != candidate:
                 raise ValueError(f'Candidate ID has different content: {candidate.candidate_id}')
             candidates[candidate.candidate_id] = candidate
+            if (feedback.status == ExecutionStatus.COMPLETED and directive.mode not in ('evaluate', 'apply_candidate')
+                    and decision_id is not None and candidate.candidate_id not in self.state.candidates):
+                origins.setdefault(candidate.candidate_id, decision_id)
             if directive.mode in ('train', 'sft'):
                 origin = getattr(directive.payload, 'origin', None)
                 base = (getattr(directive.payload, 'base', None) or
@@ -499,8 +746,8 @@ class DefaultDecisionHarness:
         self.memory.append(HistoryEntry(
             record_id=record_id, kind="feedback", task_id=directive.directive_id,
             summary=feedback.summary, simulated=feedback.simulated, source_refs=feedback.evidence_refs,
-            details={"directive": asdict(directive), "feedback": asdict(feedback),
-                     "provenance": provenance_details},
+            details=_json_details({"directive": asdict(directive), "feedback": asdict(feedback),
+                     "provenance": provenance_details, **metadata}),
         ))
         self.experience.record(ExperienceRecord(
             record_id=record_id, kind="improvement", scope="decision_maker",
@@ -512,11 +759,14 @@ class DefaultDecisionHarness:
                      "execution_metrics": feedback.execution_metrics,
                      "candidates": [asdict(c) for c in feedback.candidates],
                      "evaluation": asdict(evaluation) if evaluation else None,
-                     "provenance": provenance_details},
+                     "provenance": provenance_details, **metadata},
         ))
         self.state.candidates = candidates
         self.state.candidate_bases = bases
         self.state.candidate_evaluations = evaluations
+        if decision_id is not None:
+            self.state.decision_records[decision_id].update(metadata, status=feedback.status.value, error=feedback.error)
+        self.state.candidate_origins = origins
         self.state.last_feedback = feedback
         self.state.last_directive = directive
         self.state.delivered_feedback[directive.directive_id] = (deepcopy(directive), deepcopy(feedback))

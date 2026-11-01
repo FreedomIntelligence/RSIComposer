@@ -3,6 +3,9 @@
 (function (root) {
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
+  "依赖已完成决策": "Depends on completed decision",
+  "已确认采纳结果": "Confirmed result adoption",
+  "合并采用改动": "Adopt combined changes",
   "未归属": "Unassigned",
   "← 项目管理": "← Project management",
   "{p0} 个项目 · {p1} 个实验": "{p0} projects · {p1} experiments",

@@ -82,6 +82,25 @@ def result_summary(row, receipt, *, feedback=False):
             row['job_id'] = jobs[-1]['job_id']
 
 
+def record_lineage(row, receipt, origins):
+    """Project confirmed executor receipts, never requested or inferred adoption."""
+    if receipt.get('status') != 'completed' or receipt.get('error'):
+        return
+    adopted = receipt.get('adopted_candidate_ids')
+    if isinstance(adopted, (list, tuple)) and adopted:
+        if all(isinstance(ident, str) and ident for ident in adopted):
+            row['adopted_candidate_ids'] = list(dict.fromkeys(adopted))
+            row['adopted_decision_ids'] = list(dict.fromkeys(origins[ident] for ident in adopted
+                if ident in origins and origins[ident] != row.get('decision_id')))
+    # Evaluation returns the same candidate; it is not its producer.
+    if row.get('mode') not in ('evaluate', 'apply_candidate'):
+        for candidate in receipt.get('candidates') or ():
+            ident = candidate.get('candidate_id') if isinstance(candidate, dict) else None
+            if (isinstance(ident, str) and ident and row.get('decision_id')
+                    and ident not in (adopted if isinstance(adopted, (list, tuple)) else ())):
+                origins.setdefault(ident, row['decision_id'])
+
+
 def enrich_result(row, receipt, *, feedback=False):
     """Add recorded evidence without erasing earlier text/metrics with empty fields."""
     observed = {}
@@ -121,10 +140,13 @@ def decision_summary(details, *, ident, round_number, at=None, source='model'):
     progress = execution.get('progress') or {}
     decision_model = details.get('decision_model') or {}
     actor_model = details.get('execution_model') or execution.get('model') or {}
-    row = {'decision_id': ident, 'timestamp': at, 'source': source, 'round': round_number,
+    row = {'decision_id': details.get('decision_id') or ident, 'timestamp': at, 'source': source, 'round': round_number,
            'reason': public_text(details.get('reason')), 'changes': planned_changes(details),
            'feedback_summary': '', 'error': '',
            'decision_revision': decision_model.get('revision'), 'actor_revision': actor_model.get('revision')}
+    for key in ('depends_on_decision_ids', 'source_decision_ids'):
+        if isinstance(details.get(key), (list, tuple)):
+            row[key] = list(details[key])
     if review is not None:
         row.update(kind='review', action=review['action'], reason=public_text(review.get('reason')),
                    directive_id=progress.get('directive_id'), mode=(progress.get('directive') or {}).get('mode'),
@@ -146,6 +168,8 @@ def decision_summary(details, *, ident, round_number, at=None, source='model'):
         row.update(kind='operation', operation=operation.get('name'), status='proposed')
     else:
         row.update(kind=details.get('kind', 'finish'), status='completed')
+    if details.get('validation_error'):
+        row.update(status='failed', error=public_text(details['validation_error']))
     return row
 
 
@@ -169,6 +193,7 @@ class Monitor:
         self.root, self.jobs, self.candidates = root, {}, {}
         self.phase, self.started = 'starting', time.monotonic()
         self._completed = set()
+        self._candidate_origins = {}
         self.data = {'schema_version': 1, **source.to_dict(), 'objective': objective,
                      'status': 'running', 'loops': {}, 'decisions': [], 'current': {},
                      'workflow': {'phase': 'starting', 'round': 1, 'rounds': rounds, 'completed_directives': 0},
@@ -221,6 +246,10 @@ class Monitor:
                    'execution_model': asdict(context.execution.model) if context.execution.model else {}}
         ident = decision.directive.directive_id if decision.directive else str(uuid4())
         row = decision_summary(details, ident=ident, round_number=round_number, at=timestamp())
+        # A policy retry may return the same stable decision. Keep its original
+        # timestamp and confirmed feedback instead of making an ambiguous node.
+        if any(existing.get('decision_id') == row['decision_id'] for existing in self.data['decisions']):
+            return
         self.data['decisions'].append(row)
         self.data['decisions'] = self.data['decisions'][-300:]
         if row['kind'] == 'directive':
@@ -248,6 +277,7 @@ class Monitor:
                                    result.job.job_id if result.job else None)
             if row is not None:
                 result_summary(row, receipt)
+                record_lineage(row, receipt, self._candidate_origins)
         elif result.job and not result.directive_id:
             row = operation_target(self.data['decisions'], operation_event)
             if row is not None:
@@ -261,6 +291,7 @@ class Monitor:
         for row in targets:
             if feedback:
                 result_summary(row, feedback, feedback=True)
+                record_lineage(row, feedback, self._candidate_origins)
             elif result.kind == 'waiting':
                 row['status'] = 'running'
         if feedback and targets and directive_id not in self._completed:
@@ -365,7 +396,10 @@ def step_operation_receipts(history, steps):
     A truncated/missing tick or unrecorded review tool makes alignment uncertain;
     in that case operation receipts remain absent (memory receipts still work).
     """
-    expected, operation_ids = [], []
+    expected, operation_ids, explicit = [], [], {}
+    identities = {r["details"].get("decision_id", r["record_id"]): r["record_id"]
+                  for r in history if r["kind"] == "decision" and r["details"].get("kind") == "invoke"}
+    has_explicit = False
     for record in history:
         if record['kind'] != 'decision' or record['details'].get('review') is not None:
             continue
@@ -383,6 +417,11 @@ def step_operation_receipts(history, steps):
         decision = event.get('decision') if isinstance(event.get('decision'), dict) else event
         receipt = decision.get('operation_result')
         if isinstance(receipt, dict):
+            if decision.get('decision_id') is not None:
+                has_explicit = True
+                record_id = identities.get(decision['decision_id'])
+                if record_id is not None:
+                    explicit[record_id] = receipt
             observed.append(('operation',))
             receipts.append(receipt)
         directive = decision.get('directive') or {}
@@ -392,6 +431,8 @@ def step_operation_receipts(history, steps):
             seen.add(ident)
         if decision.get('kind') == 'finished':
             observed.append(('finish',))
+    if has_explicit:
+        return explicit
     return dict(zip(operation_ids, receipts)) if expected == observed else {}
 
 
@@ -421,27 +462,59 @@ def enrich_completed_run(root):
             records.append(record)
     matches, extras = existing_matches(rows, snapshot.get('decisions', []))
     rows = [merge_recorded_row(row, matches[i]) if i in matches else row for i, row in enumerate(rows)]
+    # Preserve existing presentation identities, remapping explicit history
+    # references and receipt lookups together when exporting an older snapshot.
+    aliases = {}
+    for row, record in zip(rows, records):
+        stable = record['details'].get('decision_id')
+        if stable:
+            aliases[stable] = row['decision_id']
+    for row in rows + extras:
+        for key in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_decision_ids'):
+            if isinstance(row.get(key), list):
+                row[key] = [aliases.get(ident, ident) for ident in row[key]]
+        if row.get('parent_decision_id') in aliases:
+            row['parent_decision_id'] = aliases[row['parent_decision_id']]
     by_record = {record['record_id']: row for record, row in zip(records, rows)}
+    by_decision = {row['decision_id']: row for row in rows}
+    by_decision.update({stable: by_decision[present] for stable, present in aliases.items()})
     previous = None
+    origins = {}
+    # Steps may be the only retained producer receipts. Establish origins before
+    # enriching operation receipts, without inferring them from candidate names.
+    for step in steps:
+        feedback = (step.get('event') or {}).get('feedback') or {}
+        ident = feedback.get('directive_id')
+        if ident and step.get('directive_id') in (None, ident):
+            for row in rows:
+                if row.get('kind') == 'directive' and row.get('directive_id') == ident:
+                    record_lineage(row, feedback, origins)
     for record in history:
         details = record['details']
-        if record['kind'] == 'operation' and previous is not None:
-            decision = previous['details']
-            if (previous['kind'] == 'decision' and decision.get('kind') == 'invoke'
-                    and decision.get('operation') == details.get('operation')
-                    and isinstance(details.get('result'), dict)):
-                enrich_result(by_record[previous['record_id']], details['result'])
+        if record['kind'] == 'operation' and isinstance(details.get('result'), dict):
+            row = by_decision.get(details.get('decision_id'))
+            # Legacy history has no stable call identity; require adjacency and equality.
+            if row is None and 'decision_id' not in details and previous is not None:
+                decision = previous['details']
+                if (previous['kind'] == 'decision' and decision.get('kind') == 'invoke'
+                        and decision.get('operation') == details.get('operation')):
+                    row = by_record[previous['record_id']]
+            if row is not None:
+                enrich_result(row, details['result'])
+                record_lineage(row, details['result'], origins)
         elif record['kind'] == 'feedback':
             feedback = details.get('feedback') or {}
             for row in rows:
                 if row['kind'] == 'directive' and row.get('directive_id') == feedback.get('directive_id'):
                     enrich_result(row, feedback, feedback=True)
+                    record_lineage(row, feedback, origins)
         previous = record
     for ident, receipt in step_receipts.items():
         row = by_record[ident]
         # Memory receipts are the more direct source; ticks fill missing text/status.
         observed = {**row}
         result_summary(observed, receipt)
+        record_lineage(row, receipt, origins)
         for key in ('feedback_summary', 'error', 'status'):
             if not row.get(key) or (key == 'status' and row[key] in ACTIVE):
                 row[key] = observed[key]
@@ -453,6 +526,7 @@ def enrich_completed_run(root):
                 if row['kind'] == 'directive' and row.get('directive_id') == ident:
                     observed = {**row}
                     result_summary(observed, feedback, feedback=True)
+                    record_lineage(row, feedback, origins)
                     for key, value in observed.items():
                         if not row.get(key) or (key == 'status' and row[key] in ACTIVE):
                             row[key] = value

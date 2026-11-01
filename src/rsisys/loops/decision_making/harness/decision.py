@@ -1,7 +1,8 @@
 from rsisys.loops.contracts.model_service import TokenUsage
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
+from uuid import uuid4
 
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.jobs import JobRef
@@ -19,8 +20,18 @@ class Decision:
     reason: str = ""
     simulated: bool = False
     usage: TokenUsage | None = None
+    decision_id: str = field(default_factory=lambda: str(uuid4()))
+    depends_on_decision_ids: tuple[str, ...] = ()
+    source_decision_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
+        if not isinstance(self.decision_id, str) or not self.decision_id.strip():
+            raise ValueError('decision_id must be a nonempty string')
+        for name in ('depends_on_decision_ids', 'source_decision_ids'):
+            refs = getattr(self, name)
+            if (not isinstance(refs, tuple) or any(not isinstance(ref, str) or not ref.strip() for ref in refs)
+                    or len(set(refs)) != len(refs) or self.decision_id in refs):
+                raise ValueError(f'{name} must contain distinct nonempty IDs, excluding self')
         expected = {"invoke": "operation", "explore": "directive", "wait": "job", "finish": None}
         if self.kind not in expected:
             raise ValueError(f"Unknown decision kind: {self.kind}")

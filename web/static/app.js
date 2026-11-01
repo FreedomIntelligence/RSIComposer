@@ -19,7 +19,7 @@ const labels = {
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
-  configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案",
+  system_adopt: "合并采用改动", configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
   evaluate: "验证改动效果", evaluation: "验证改动效果", candidate_evaluation: "验证改动效果", select: "选择版本", apply_candidate: "采用改动", execute: "执行任务",
   finish: "结束本轮研究", finished: "结束本轮研究", continue: "继续执行", continue_training: "继续训练", cancel: "请求取消", cancel_training: "请求取消训练", stop: "停止训练", wait: "等待", review: "复查执行", prepare: "准备", queued: "排队", starting: "准备运行", collecting_result: "收集结果", accepted: "指令已接收", completed: "已完成",
@@ -74,15 +74,27 @@ function progressView(step, total) {
   } else wrap.append(el("p", "progress-unknown", Number.isInteger(step) && step >= 0 ? t("已报告 {p0} 步；总步数未报告或待核对", {p0: step}) : t("步骤进度未报告")));
   return wrap;
 }
-function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation || row.action || row.mode; return row.mode || row.action || (row.kind === "finish" ? "finish" : undefined); }
+function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation || row.action || row.mode; return row.mode || row.action || (["finish","wait"].includes(row.kind) ? row.kind : undefined); }
+function decisionTitle(row) {
+  const action=decisionAction(row);
+  if(Object.hasOwn(actionLabels,action))return actionText(action);
+  const strategy=typeof row.strategy==="string"?row.strategy.trim():"";
+  if(strategy&&[...strategy].length<=80&&strategy!==action&&/\p{L}/u.test(strategy)&&!/^[\w.:/\\-]+$/.test(strategy)&&!/[\r\n]/.test(strategy))return strategy;
+  return actionText(action);
+}
 function decisionKey(row) { return asText(row.decision_id, JSON.stringify([row.timestamp, row.kind, row.round, row.directive_id, decisionAction(row), row.job_id])); }
 function sortedDecisions(s) { return list(s.decisions).map((row, i) => ({ row, i })).sort((a,b) => (Date.parse(b.row.timestamp) || 0) - (Date.parse(a.row.timestamp) || 0) || a.i - b.i).map(x => x.row); }
 function decisionGroups(s) {
-  const groups = [];
+  const groups = [],lineage=["depends_on_decision_ids", "source_decision_ids", "adopted_decision_ids"],references=new Set();
+  for(const row of list(s.decisions)){
+    for(const key of lineage)for(const id of listStrings(row[key]))references.add(id);
+    if(identifier(row.parent_decision_id))references.add(row.parent_decision_id);
+  }
   for (const row of sortedDecisions(s)) {
     const last = groups[groups.length - 1];
     const signature = JSON.stringify([row.kind, decisionAction(row), row.round, row.reason, row.strategy, row.status, row.actor_revision, row.decision_revision]);
-    if (decisionAction(row) === "finish" && last?.signature === signature) last.rows.push(row);
+    const referenced = references.has(row.decision_id);
+    if (decisionAction(row) === "finish" && !referenced && ![...lineage,"parent_decision_id"].some(key => Object.hasOwn(row,key)) && last?.signature === signature) last.rows.push(row);
     else groups.push({ row, rows: [row], signature });
   } return groups;
 }
@@ -300,8 +312,8 @@ function executionSequence(s, scope) {
       view:scope.graphView,
       onIdle:()=>{if(scope===state.activeScope&&state.page==="experiment"&&scope.renderPending){scope.renderPending=false;renderProject();}},
       rows:graphRows,selected,
-      startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>`${index+1} · ${actionText(decisionAction(row))}`,
-      edgeLabel:kind=>t({sequence:"记录顺序，不表示因果",parent:"明确的父决策",source:"引用的决策"}[kind]),
+      startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>`${index+1} · ${decisionTitle(row)}`,
+      edgeLabel:kind=>t({sequence:"记录顺序，不表示因果",parent:"明确的父决策",dependency:"依赖已完成决策",adoption:"已确认采纳结果",root:"实验起点",source:"引用的决策"}[kind]),
       onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
     });
     navigation.replaceChildren(scope.graph);
@@ -312,10 +324,10 @@ function executionSequence(s, scope) {
       const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
-      decision.append(el("h4","",actionText(decisionAction(row))),meta);
+      const title=decisionTitle(row);decision.append(el("h4","",title),meta);
       if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
       if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
-      if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row))decision.append(el("p","decision-reason",row.strategy));
+      if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row)&&asText(row.strategy,"").trim()!==title)decision.append(el("p","decision-reason",row.strategy));
       const changes=changesView(row,s);if(changes)decision.append(changes);
       if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
         const component=list(row.changes).find(c=>c.field==="components")?.after;

@@ -231,7 +231,8 @@ class _ApplyMedical(CommandHandler):
             ('Cancellation arrived after activation started; confirmed candidate applied' if state.cancel_requested
              else 'Candidate accepted by fixed development protocol and applied'),
             self.evaluator.measurement(system.version).simulated,
-            evidence_refs=(state.data['evidence'],), candidates=(state.request,))
+            evidence_refs=(state.data['evidence'],), candidates=(state.request,),
+            adopted_candidate_ids=(state.request.candidate_id,))
 
 
 @dataclass(frozen=True)

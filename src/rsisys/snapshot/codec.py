@@ -7,7 +7,7 @@ from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
-from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision
+from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision, LoopStepResult
 from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, TokenUsage
@@ -43,12 +43,24 @@ TYPES = {cls.__name__: cls for cls in (
     _PendingOperationRecord, _PendingReviewRecord, _ReviewSession, DecisionTrainingRequest,
     CommandState, PendingEpisode, EvaluationRequest, EvaluationResult,
     ArtifactRef, Candidate, SystemVersion, Directive, Feedback, JobRef, ModelRef, TokenUsage,
-    ExecutionView, ExplorationProgress, ReviewDecision, JobProgress,
+    ExecutionView, ExplorationProgress, ReviewDecision, LoopStepResult, JobProgress,
     DirectiveProvenance, CandidateEvaluation,
     TrainingResult, TrainingOrigin, OperationCall, OperationResult, DecisionState, ExplorationState,
     RLPlan, RLState, ActorTrainingRequest, SFTSpec, RLSpec, EvaluationSpec, PromptSpec,
 )}
 ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus, ResumeMode)}
+
+# Only these additive lineage fields may be absent in older checkpoints. Keep
+# rejecting unknown fields and missing pre-existing fields on every state type.
+LINEAGE_DEFAULTS = {
+    'Decision': {'decision_id', 'depends_on_decision_ids', 'source_decision_ids'},
+    'DecisionContext': {'decision_graph', 'candidate_origins'},
+    'DecisionState': {'decision_records', 'directive_decisions', 'candidate_origins',
+                      'pending_operation_decision_id', 'pending_decision', 'decision_results', 'operation_receipts'},
+    '_PendingOperationRecord': {'decision_id'},
+    'OperationResult': {'adopted_candidate_ids'}, 'Feedback': {'adopted_candidate_ids'},
+    'LoopStepResult': {'decision_id'},
+}
 
 
 def encode(value):
@@ -77,7 +89,9 @@ def decode(value):
         return ENUMS[value['$enum']](value['value'])
     if set(value) == {'$type', 'fields'} and value['$type'] in TYPES:
         cls = TYPES[value['$type']]
-        if set(value['fields']) != {f.name for f in fields(cls)}:
+        expected = {f.name for f in fields(cls)}
+        if (not isinstance(value['fields'], dict) or set(value['fields']) - expected
+                or expected - set(value['fields']) - LINEAGE_DEFAULTS.get(cls.__name__, set())):
             raise ValueError('Checkpoint fields do not match the current state schema')
         return cls(**{k: decode(v) for k, v in value['fields'].items()})
     if set(value) == {'$map'}:

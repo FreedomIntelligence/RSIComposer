@@ -3,15 +3,18 @@
 /**
  * layout(rows) -> {nodes, edges, width, height}; no DOM access or input mutation.
  * Nodes: {key, index, row, x, y, type}; root has key "root", index -1, row null.
- * Edges: {from, to, kind}, where kind is parent, sequence (NOT causality), or
- * source (reference only). Only unique, nonempty string IDs resolve references.
+ * Edges: {from, to, kind}: dependency, adoption, source (reference only), or
+ * sequence (NOT causality; also connects independent nodes to root). Only unique,
+ * nonempty string IDs resolve references. Adoption wins for the same pair.
  * Unique IDs are keys, except the reserved root ID; other keys use stable record
  * fields, with occurrence suffixes for indistinguishable records/collisions.
  * Valid timestamps sort ascending, ties keep input order; unknowns come last.
- * Explicit parent cycles fall back to sequence. If a chronological predecessor
- * would close a cycle with valid parents, its sequence edge starts at root.
- * Sources never affect layout. Root stays fixed; branch leaves have separate
- * lanes. This pure layout is independent of the interactive renderer.
+ * depends_on_decision_ids and adopted_decision_ids opt the dataset into explicit
+ * lineage, even when empty: independent nodes attach to root. Legacy data alone
+ * uses chronological sequence fallback. parent_decision_id remains a dependency.
+ * Cyclic structural edges are removed; valid outside edges survive. References
+ * never affect topology. Longest-path layers center forks and multi-parent joins.
+ * Root stays fixed. This pure layout is independent of the interactive renderer.
  *
  * render({rows, selected, onSelect, label, startLabel, edgeLabel, view, onIdle})
  * returns a responsive 420px SVG with dispose(), fit(), zoomBy(factor), reset().
@@ -41,6 +44,38 @@
     // Deliberately excludes input position and mutable feedback/status fields.
     return "decision:" + JSON.stringify([row.timestamp, row.kind, row.round,
       row.directive_id, row.mode, row.operation, row.action, row.job_id, row.reason]);
+  }
+
+  function separateReferences(nodes,edges,pinned=new Set()) {
+    const byKey=new Map(nodes.map(node=>[node.key,node])),fixed=new Set(["root",...pinned]);
+    // Keep every real DAG layer and legacy sequence intact. Only independent
+    // reference nodes may move sideways; references never become dependencies.
+    for(const edge of edges)if(edge.kind!=="source"&&edge.from!=="root"){
+      fixed.add(edge.from);fixed.add(edge.to);
+    }
+    const references=edges.filter(edge=>edge.kind==="source"),moves=new Map();
+    const obstructs=(a,b,p)=>{
+      const dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+      if(!length)return false;
+      const t=((p.x-a.x)*dx+(p.y-a.y)*dy)/length;
+      return t>0&&t<1&&Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy)<24;
+    };
+    for(let pass=0;pass<4;pass++){
+      let changed=false;
+      for(const edge of references){
+        const a=byKey.get(edge.from),b=byKey.get(edge.to);
+        for(const obstacle of nodes){
+          if(obstacle===a||obstacle===b||!obstructs(a,b,obstacle))continue;
+          const movable=[obstacle,b,a].find(node=>!fixed.has(node.key)&&(moves.get(node.key)||0)<4);
+          if(!movable)continue;
+          movable.x+=80;
+          // A side step must not trade a crossed dot for overlapping labels.
+          while(nodes.some(other=>other!==movable&&Math.abs(other.x-movable.x)<180&&Math.abs(other.y-movable.y)<60))movable.y+=LANE;
+          moves.set(movable.key,(moves.get(movable.key)||0)+1);changed=true;
+        }
+      }
+      if(!changed)break;
+    }
   }
 
   function layout(rows = []) {
@@ -74,69 +109,107 @@
     const rank = new Map(records.map((record, i) => [record, i]));
     const resolve = id => identifier(id) && ids.get(id)?.length === 1
       ? rank.get(ids.get(id)[0]) : -1;
-    const parent = records.map(record => resolve(record.row.parent_decision_id));
-
-    // Cut every explicit cycle member, retaining valid links to descendants.
-    const state = new Uint8Array(records.length);
+    // New lineage fields describe a DAG, including an explicitly empty list.
+    // Source references remain independent of topology, including on legacy rows.
+    const modern = records.some(({row}) => Object.hasOwn(row, "depends_on_decision_ids") || Object.hasOwn(row, "adopted_decision_ids"));
+    const parents = records.map(() => new Map());
+    records.forEach(({row}, to) => {
+      const add = (id, kind) => {
+        const from = resolve(id);
+        if (from < 0 || from === to) return;
+        if (!parents[to].has(from) || kind === "adoption") parents[to].set(from, kind);
+      };
+      add(row.parent_decision_id, "dependency");
+      for (const id of Array.isArray(row.depends_on_decision_ids) ? row.depends_on_decision_ids : []) add(id, "dependency");
+      for (const id of Array.isArray(row.adopted_decision_ids) ? row.adopted_decision_ids : []) add(id, "adoption");
+    });
+    const children = records.map(() => []);
+    parents.forEach((incoming, to) => { for (const from of incoming.keys()) children[from].push(to); });
+    // Iterative Kosaraju: remove only edges inside a strongly connected component.
+    // Other parents of a cycle member and its valid descendants remain visible.
+    const visited = new Set(), order = [];
     for (let start = 0; start < records.length; start++) {
-      if (state[start]) continue;
-      const path = [];
-      let current = start;
-      while (current >= 0 && !state[current]) {
-        state[current] = 1;
-        path.push(current);
-        current = parent[current];
+      if (visited.has(start)) continue;
+      visited.add(start);
+      const stack = [[start, 0]];
+      while (stack.length) {
+        const top = stack[stack.length - 1], next = children[top[0]][top[1]++];
+        if (next === undefined) { order.push(top[0]); stack.pop(); }
+        else if (!visited.has(next)) { visited.add(next); stack.push([next, 0]); }
       }
-      if (current >= 0 && state[current] === 1) {
-        for (let j = path.indexOf(current); j < path.length; j++) parent[path[j]] = -1;
-      }
-      for (const index of path) state[index] = 2;
     }
-    const kinds = parent.map(p => p >= 0 ? "parent" : "sequence");
-    for (let i = 0; i < records.length; i++) {
-      if (parent[i] >= 0) continue;
-      let previous = i - 1, ancestor = previous;
-      while (ancestor >= 0 && ancestor !== i) ancestor = parent[ancestor];
-      if (ancestor === i) previous = -1;
-      parent[i] = previous;
-    }
-
-    const nodes = [{ key: "root", index: -1, row: null, x: X, y: Y, type: "root" },
-      ...records.map(({ key, index, row }) => ({ key, index, row, x: 0, y: 0, type: "decision" }))];
-    const children = nodes.map(() => []);
-    for (let i = 0; i < records.length; i++) children[parent[i] + 1].push(i + 1);
-    const first = [], last = [];
-    let lane = 0;
-    const stack = [[0, false]];
-    while (stack.length) {
-      const [i, exit] = stack.pop(), node = nodes[i];
-      if (exit) {
-        first[i] = first[children[i][0]];
-        last[i] = last[children[i][children[i].length - 1]];
-        if (i) node.y = Y + (first[i] + last[i]) / 2 * LANE;
-      } else if (!children[i].length) {
-        first[i] = last[i] = lane++;
-        if (i) node.y = Y + first[i] * LANE;
-      } else {
-        stack.push([i, true]);
-        for (let j = children[i].length - 1; j >= 0; j--) {
-          const child = children[i][j];
-          nodes[child].x = node.x + COLUMN;
-          stack.push([child, false]);
+    const component = new Map(); let componentID = 0;
+    for (const start of order.reverse()) {
+      if (component.has(start)) continue;
+      const stack = [start]; component.set(start, componentID);
+      while (stack.length) {
+        for (const parent of parents[stack.pop()].keys()) if (!component.has(parent)) {
+          component.set(parent, componentID); stack.push(parent);
         }
+      }
+      componentID++;
+    }
+    parents.forEach((incoming, to) => {
+      for (const from of incoming.keys()) if (component.get(from) === component.get(to)) incoming.delete(from);
+    });
+    const hasBackward = parents.some((incoming, to) => [...incoming.keys()].some(from => from > to));
+    const reaches = (start, target) => {
+      const seen = new Set(), stack = [start];
+      while (stack.length) {
+        const next = stack.pop();
+        if (next === target) return true;
+        if (seen.has(next)) continue; seen.add(next);
+        stack.push(...parents[next].keys());
+      }
+      return false;
+    };
+    records.forEach(({row}, i) => {
+      if (parents[i].size) return;
+      const declared = Object.hasOwn(row, "parent_decision_id") && row.parent_decision_id != null && row.parent_decision_id !== "";
+      const previous = i - 1;
+      if (!modern && !declared && previous >= 0 && (!hasBackward || !reaches(previous, i))) parents[i].set(previous, "sequence");
+    });
+    for (const outgoing of children) outgoing.length = 0;
+    parents.forEach((incoming, to) => { for (const from of incoming.keys()) children[from].push(to); });
+    const degree = parents.map(incoming => incoming.size), depth = records.map(() => 1);
+    const queue = records.map((_, i) => i).filter(i => !degree[i]), topology = [];
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const from = queue[cursor]; topology.push(from);
+      for (const to of children[from]) {
+        depth[to] = Math.max(depth[to], depth[from] + 1);
+        if (--degree[to] === 0) queue.push(to);
+      }
+    }
+    const nodes = [{ key: "root", index: -1, row: null, x: X, y: Y, type: "root" },
+      ...records.map(({key, index, row}, i) => ({key, index, row, x: X + depth[i] * COLUMN, y: Y, type: "decision"}))];
+    const layers = [];
+    for (const i of topology) (layers[depth[i]] ||= []).push(i);
+    const average = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+    const place = (layer, desired) => {
+      const ordered = layer.map(i => ({i, y:desired(i)})).sort((a,b) => a.y-b.y || a.i-b.i);
+      let last = -Infinity;
+      const packed = ordered.map(item => (last = Math.max(item.y, last + LANE)));
+      const shift = Math.min(packed[0] - Y, average(packed.map((y, i) => y - ordered[i].y)));
+      ordered.forEach(({i}, rank) => { nodes[i+1].y = packed[rank] - shift; });
+    };
+    // Barycentric sweeps center forks and joins; packing keeps each layer legible.
+    for (let pass = 0; pass < 3; pass++) {
+      for (const layer of layers) if (layer) place(layer, i => parents[i].size ? average([...parents[i].keys()].map(p => nodes[p+1].y)) : Y);
+      for (let level = layers.length - 1; level > 0; level--) if (layers[level]) {
+        place(layers[level], i => children[i].length ? average(children[i].map(c => nodes[c+1].y)) : nodes[i+1].y);
       }
     }
     const edges = [];
-    records.forEach((record, i) => {
-      edges.push({ from: nodes[parent[i] + 1].key, to: record.key, kind: kinds[i] });
+    records.forEach((record, to) => {
+      if (!parents[to].size) edges.push({from:"root", to:record.key, kind:"sequence"});
+      for (const [from, kind] of parents[to]) edges.push({from:records[from].key, to:record.key, kind});
       const sources = record.row.source_decision_ids;
       for (const id of new Set(Array.isArray(sources) ? sources : [])) {
-        const source = resolve(id);
-        if (source >= 0 && source !== i) {
-          edges.push({ from: records[source].key, to: record.key, kind: "source" });
-        }
+        const from = resolve(id);
+        if (from >= 0 && from !== to && !parents[to].has(from)) edges.push({from:records[from].key, to:record.key, kind:"source"});
       }
     });
+    separateReferences(nodes,edges);
     let width = X + LABEL_WIDTH + 24, height = 240;
     for (const node of nodes) {
       width = Math.max(width, node.x + LABEL_WIDTH + 24);
@@ -192,19 +265,34 @@
       node.anchor = { x: node.x, y: node.y }; node.vx = node.vy = 0;
     }
     const byKey = new Map(model.nodes.map(node => [node.key, node]));
-    const structural = [];
+    const structural = [],incoming = new Map(model.nodes.map(node => [node,[]])),outgoing = new Map(model.nodes.map(node => [node,[]]));
     for (const edge of model.edges) {
       const from = byKey.get(edge.from), to = byKey.get(edge.to);
       const attributes = { class: `decision-edge decision-edge-${edge.kind}`, "data-kind": edge.kind,
-        stroke: "var(--muted, #8a7568)", "stroke-width": 1, "vector-effect": "non-scaling-stroke", opacity: 0.45 };
+        stroke: edge.kind === "adoption" ? "var(--orange, #b45b35)" : "var(--muted, #8a7568)",
+        "stroke-width": edge.kind === "adoption" ? 1.5 : 1, "vector-effect": "non-scaling-stroke",
+        opacity: edge.kind === "adoption" ? 0.85 : edge.kind === "dependency" ? 0.6 : edge.kind === "sequence" ? 0.25 : 0.45 };
       if (edge.kind === "source") attributes["stroke-dasharray"] = "4 4";
       const line = element("line", attributes);
-      const defaultTitle = edge.kind === "sequence" ? "Sequence (not causality)"
-        : edge.kind === "source" ? "Source reference" : "Declared parent";
+      const defaultTitle = {sequence:"Sequence (not causality)",dependency:"Declared dependency",
+        adoption:"Confirmed adoption",source:"Source reference (not dependency or adoption)"}[edge.kind];
       line.append(element("title", {}, typeof edgeLabel === "function" ? edgeLabel(edge.kind) ?? defaultTitle : defaultTitle));
       plane.append(line); lines.push({ line, from, to });
-      if (edge.kind !== "source") structural.push({ from, to, dx: to.x - from.x, dy: to.y - from.y });
+      if (edge.kind !== "source") {
+        const relation={from,to,dx:to.x-from.x,dy:to.y-from.y};structural.push(relation);
+        incoming.get(to).push(relation);outgoing.get(from).push(relation);
+      }
     }
+    // A newly reported parent can invalidate cached x positions. Project forward
+    // in topological order, retaining manual y placement and the camera.
+    separateReferences(model.nodes,model.edges,pinned);
+    const physicsOrder=model.nodes.slice().sort((a,b)=>a.home.x-b.home.x);
+    for(const node of physicsOrder){
+      for(const {from} of incoming.get(node))node.x=Math.max(node.x,from.x+60);
+      node.anchor.x=node.x;
+      node.anchor.y=node.y;
+    }
+    for(const edge of structural){edge.dx=edge.to.x-edge.from.x;edge.dy=edge.to.y-edge.from.y;}
     function notifyIdle() {
       if (!disposed && !view.interacting && !view.animating && typeof onIdle === "function") onIdle();
     }
@@ -270,10 +358,8 @@
     }
     function constrain(node) {
       let left = X + 60, right = Infinity;
-      for (const edge of structural) {
-        if (edge.to === node) left = Math.max(left, edge.from.x + 60);
-        if (edge.from === node) right = Math.min(right, edge.to.x - 60);
-      }
+      for (const edge of incoming.get(node)) left = Math.max(left, edge.from.x + 60);
+      for (const edge of outgoing.get(node)) right = Math.min(right, edge.to.x - 60);
       if (left <= right) node.x = Math.max(left, Math.min(right, node.x));
     }
     function tick() {
