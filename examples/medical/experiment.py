@@ -39,7 +39,7 @@ from rsisys.loops.exploration.harness.commands import CommandHandler
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write
 from rsisys.runtime.provenance import RunSource
-from rsisys.runtime.run_policy import RunContext, RunDecision
+from rsisys.runtime.run_policy import RunContext, RunDecision, TimeRunPolicy
 from examples.qwen_toy.monitor import Monitor
 from .evaluation import MedicalEvaluator
 from .native import MedicalTrainingBackend
@@ -89,6 +89,8 @@ class ExperimentSettings:
     experiment_name: str | None = None
     decision_harness: str = 'default'
     dsh_config: Path | None = None
+    run_mode: str = 'researcher'
+    restart_delay_seconds: float = 10.0
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -96,6 +98,9 @@ class ExperimentSettings:
                 raise TypeError(f'{name} must be a Path')
         if type(self.seconds) not in (int, float) or not math.isfinite(self.seconds) or self.seconds <= 0:
             raise ValueError('seconds must be finite and positive')
+        if self.run_mode not in ('researcher', 'time'):
+            raise ValueError('run_mode must be researcher or time')
+        TimeRunPolicy(self.seconds, self.restart_delay_seconds)
         for name, maximum in (('max_trainings', 3), ('max_train_steps', 64),
                               ('max_model_calls', 10000), ('max_seq_length', 2048)):
             value = getattr(self, name)
@@ -612,10 +617,11 @@ class ResearchPolicy(ModelDecisionPolicy):
         'Choose your own available action and research steps, or finish with a nonempty reason; '
         'these envelopes are syntax templates, not a required workflow.')
 
-    def __init__(self, backend, model, catalog, space, monitor, learner, train_ref):
+    def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher'):
         super().__init__(backend, model, directives=catalog, max_validation_attempts=1)
         self.space, self.monitor, self.learner = space, monitor, learner
         self.train_ref = train_ref
+        self.run_mode = run_mode
         self.finish_reason: str | None = None
 
     def _decision_request(self, context):
@@ -705,7 +711,12 @@ class ResearchPolicy(ModelDecisionPolicy):
         for attempt in range(3):
             # Transport/model identity/external failures are deliberately outside retry.
             current = replace(context, objective=context.objective + hint,
-                run_control={**context.run_control, 'researcher_finish_ends_run': True,
+                run_control={**context.run_control, 'mode': self.run_mode,
+                    'researcher_finish_ends_run': self.run_mode == 'researcher',
+                    'training_budget': {'limit': self.learner.max_trainings,
+                        'reserved': len(self.learner.ledger), 'remaining': self.learner.remaining},
+                    'model_call_budget': {'limit': self.backend.limit,
+                        'used': self.backend.calls, 'remaining': self.backend.limit - self.backend.calls},
                     'initial_training_data': asdict(self.train_ref)})
             response = self._generate_decision(current)
             try:
@@ -820,7 +831,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
     write_json(root / 'run.json', {**source.to_dict(), 'objective': 'Autonomous medical research'})
     serving = learner = assembly = monitor = backend = None
     result = {'status': 'failed', 'reason': 'initialization_failed', **source.to_dict(),
-              'researcher_finish_reason': None, 'baseline_seconds': None, 'research_seconds': 0.0}
+              'researcher_finish_reason': None, 'baseline_seconds': None, 'research_seconds': 0.0,
+              'run_mode': settings.run_mode, 'research_rounds': 1}
     research_started = None
     started = time.monotonic()
     try:
@@ -899,7 +911,9 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=researcher, initial_model=base,
             inference=serving, system_activator=serving, prepare_inference=serving.prepare_inference,
             learner=learner, bind_training_inputs=learner.bind_inputs, trusted_exclusions=private,
-            run_policy=ExperimentRunPolicy(settings.seconds, backend), action_permissions=permissions,
+            run_policy=(TimeRunPolicy(settings.seconds, settings.restart_delay_seconds)
+                        if settings.run_mode == 'time' else ExperimentRunPolicy(settings.seconds, backend)),
+            action_permissions=permissions,
             evaluator_factory=evaluator_factory(monitor, root))
         decision = assembly.runner.decision_making.harness
         operations = ExperimentOperations(assembly, learner, converter, private)
@@ -913,7 +927,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         def policy_factory(native_backend, model):
             if dsh_config is not None:
                 backend.serving = native_backend
-            return ResearchPolicy(backend, model, space.directives, space, monitor, learner, operations.train_ref)
+            return ResearchPolicy(backend, model, space.directives, space, monitor, learner, operations.train_ref,
+                                  run_mode=settings.run_mode)
         dependencies = dict(tools=tools, experience=decision.experience, memory=decision.memory,
             research_agenda=decision.research_agenda, directives=space.directives, model=researcher,
             policy_factory=policy_factory, backend=backend, config=dsh_config,
@@ -978,15 +993,25 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             f'Frozen train artifact_id={operations.train_ref.artifact_id}. '
             f'Evaluation protocol_ref={task.protocol_ref}. '
             'Fixed initial anchor: '+json.dumps(asdict(anchor)))
+        if settings.run_mode == 'time':
+            objective += (' Fixed-time research: finish ends only the current research cycle, not this run. '
+                'While time remains, the host starts another cycle with the same history, candidates, '
+                'incumbent and cumulative budgets. Use run_control for current remaining time and budgets. '
+                'You still choose the hypotheses and actions; no particular experiment is required.')
         monitor.stage('researching')
         research_started = time.monotonic()
         write_json(root / 'research-started.json', {'started_at': time.time(),
-            'max_seconds': settings.seconds, 'researcher_finish_ends_run': True})
+            'max_seconds': settings.seconds, 'run_mode': settings.run_mode,
+            'researcher_finish_ends_run': settings.run_mode == 'researcher'})
         if research_started_callback is not None:
             research_started_callback(settings.seconds)
         while True:
             step = assembly.runner.step(objective)
             monitor.advance(step)
+            if step.event.get('run_control') == 'research_restarted':
+                result['research_rounds'] = step.event['research_round']
+                monitor.event('research_restarted', research_round=step.event['research_round'])
+                monitor.stage('researching')
             for key, candidate in assembly.candidates.items():
                 monitor.candidates[key] = {'candidate_id': key, 'parent_system': candidate.parent_system,
                     'status': 'applied' if assembly.systems.current.version == key else 'proposed',
@@ -1001,7 +1026,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                               reason=stop.get('reason', 'runner_finished'), run_stop=stop)
                 break
             if step.kind == 'waiting':
-                time.sleep(.5)
+                remaining = max(0.0, settings.seconds - (time.monotonic() - research_started))
+                time.sleep(min(.5, step.event.get('retry_after_seconds', .5), remaining))
         result['model_calls'] = backend.calls
     except BudgetExhausted as exc:
         result.update(status='stopped', reason=str(exc))
@@ -1065,6 +1091,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     result.add_argument('--model-path', type=Path, required=True)
     result.add_argument('--seconds', type=float, default=5400)
+    result.add_argument('--run-mode', choices=('researcher', 'time'), default='researcher')
+    result.add_argument('--restart-delay-seconds', type=float, default=10.0)
     result.add_argument('--max-trainings', type=int, default=3)
     result.add_argument('--max-model-calls', type=int, default=96)
     result.add_argument('--max-seq-length', type=int, default=2048)

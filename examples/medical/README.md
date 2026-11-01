@@ -135,6 +135,16 @@ parallelism; worker evidence records the ranks that actually trained.
 Use `--seconds 1800` for a 30-minute research limit. The CLI arms its hard deadline
 after baseline evaluation, excluding initial model preparation; the job launcher
 must also bound startup time and guarantee resource cleanup.
+Add `--run-mode time --seconds 1800 --max-model-calls 10000` for continuous
+30-minute research. This selects the existing `TimeRunPolicy`: researcher finish
+ends a cycle, then restarts after `--restart-delay-seconds` (default 10), retaining
+history, candidates, incumbent, training reservations and model-call counts.
+It does not require a particular experiment. Time mode has the same hard deadline;
+model-call and training caps remain cumulative, so choose a sufficiently high
+call allowance when the clock should be the effective stop condition.
+`run_control` reports live remaining time, training slots and model calls each
+decision; `researcher_finish_ends_run` is false in time mode. The default
+`--run-mode researcher` still allows an early finish.
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.

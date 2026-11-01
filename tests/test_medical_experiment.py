@@ -2,6 +2,7 @@
 from dataclasses import asdict, replace
 from hashlib import sha256
 import json
+from itertools import repeat
 from pathlib import Path
 import re
 import tempfile
@@ -537,6 +538,36 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         result = self.execute([FINISH], seconds=1800, research_started_callback=started)
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(observed, [(1800, True, 0)])
+
+    def test_time_mode_restarts_finish_without_resetting_calls_or_state(self):
+        result = self.execute(repeat(FINISH), run_mode='time', seconds=2,
+                              restart_delay_seconds=.001, max_model_calls=1000)
+        self.assertEqual(result['status'], 'stopped', result)
+        self.assertIn(result['reason'], ('deadline', 'budget_exhausted'))
+        self.assertGreaterEqual(result['research_rounds'], 2)
+        self.assertGreaterEqual(result['model_calls'], 2)
+        self.assertEqual(result['model_calls'], self.serving.model_calls)
+        self.assertFalse(self.process.requests)
+        self.assertFalse(self.read('research-started.json')['researcher_finish_ends_run'])
+        controls = [c['run_control'] for c in self.serving.contexts]
+        self.assertTrue(all(c['mode'] == 'time' and not c['researcher_finish_ends_run'] for c in controls))
+        self.assertGreaterEqual(controls[-1]['research_round'], 2)
+        self.assertTrue(any(c['history'] for c in self.serving.contexts[1:]))
+        self.assertEqual([c['model_call_budget']['used'] for c in controls], list(range(len(controls))))
+        self.assertTrue(all(c['training_budget']['remaining'] == 3 for c in controls))
+
+    def test_training_budget_is_live_after_a_submission(self):
+        result = self.execute([train, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        budget = self.serving.contexts[-1]['run_control']['training_budget']
+        self.assertEqual(budget, {'limit': 3, 'reserved': 1, 'remaining': 2})
+
+    def test_time_mode_is_an_explicit_setting(self):
+        args = parser().parse_args(['--task', str(self.task), '--run-dir', 'timer', '--model-path', 'model',
+            '--run-mode', 'time', '--seconds', '1800', '--restart-delay-seconds', '10'])
+        self.assertEqual((args.run_mode, args.seconds, args.restart_delay_seconds), ('time', 1800, 10))
+        with self.assertRaises(ValueError):
+            ExperimentSettings(self.task, self.root/'bad', self.root/'model', run_mode='unknown')
 
     def test_tensor_parallelism_cannot_be_silently_ignored(self):
         with self.assertRaisesRegex(ValueError, 'requires the sglang'):
