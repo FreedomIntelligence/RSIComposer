@@ -498,6 +498,34 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
                             for receipt in receipts))
         self.assertFalse(self.process.requests)
 
+    def test_training_data_checkpoint_is_rejected_then_model_can_omit_origin_and_train(self):
+        def invalid(context):
+            proposal = train(context)
+            proposal['arguments']['origin'] = {
+                'parent_system': 'initial', 'initial_model': asdict(self.serving.base),
+                'resume_mode': 'restart',
+                'checkpoint': context['run_control']['initial_training_data'],
+            }
+            return proposal
+
+        def corrected(context):
+            self.assertFalse(self.process.requests, 'Invalid proposal must not start training')
+            self.assertIn('restart cannot carry a checkpoint', context['objective'])
+            self.assertIn('Normally omit arguments.origin', context['objective'])
+            return train(context)
+
+        result = self.execute([invalid, corrected, evaluate, apply, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 5)
+        self.assertEqual(len(self.process.requests), 1)
+        request, _ = next(iter(self.process.requests.values()))
+        self.assertIsNone(request.origin.checkpoint)
+        self.assertEqual(request.origin.resume_mode.value, 'restart')
+        self.assertTrue(request.data_refs)
+        self.assertTrue(all(ref.kind == 'tokenized_rows' for ref in request.data_refs))
+        source_request = next(iter(self.read('training/budget.json').values()))['request']
+        self.assertTrue(all(ref['kind'] == 'training_data' for ref in source_request['data_refs']))
+
     def test_operation_normalization_rejects_nonempty_directive_inputs(self):
         denied = {'kind': 'explore', 'mode': 'define_recipe', 'strategy': 'Invalid input scope',
                   'arguments': {}, 'input_ids': ['unrelated']}

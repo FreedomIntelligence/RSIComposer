@@ -17,6 +17,8 @@
 
 整项训练通过可选的 `training_directive()` 定义 `train` 模式，解析 recipe_ref、method 与可选 apply_result 为 TrainSpec。它不包含在 builtin_directives() 中；需显式加入 catalog / directive_modes，并在 Exploration Harness 注册 TrainingCommandHandler、注入 learner。后端可独立完成 rollout 与训练；默认 `rl` 仍执行本地采样循环。完整接入见[使用指南](../../../../../docs/GUIDE.md#接入整项训练任务)。
 
+训练数据由外层 `input_ids` 选择；`origin` 仅描述实验父版本、初始权重和恢复方式。生成 schema 与 `TrainingOrigin` 校验一致：`restart` 的 checkpoint 只能省略或为 null；`weights_only` 可选权重引用；`full_state` 必须给出 checkpoint。仅暴露后端声明的恢复模式，不支持 restart 时必须显式提供 origin 与 resume_mode。支持 restart 时可省略 origin，具体装配负责确定默认初始化语义；checkpoint 导出能力不决定已有 checkpoint 的消费能力。
+
 候选应用通过可选的 `apply_candidate_directive()` 定义 `apply_candidate` 模式，同样不加入默认模式。参数只允许 candidate_id，必须是非空字符串且存在于传给 parser 的 candidates 中，返回 `ApplyCandidateSpec(candidate_id)`，不需要 job ID。将该 builder 显式加入与 policy 共享的 catalog，并在探索侧装配同名 handler；例如可将 train / evaluate / apply_candidate / execute 组合成训练、评测、选用和执行链路。模型可发送 `{"kind":"explore","mode":"apply_candidate","strategy":"use evaluated candidate","arguments":{"candidate_id":"candidate-id"}}`，候选来源沿用跨轮 context 和最新反馈兼容逻辑。
 
 ## 当前实现

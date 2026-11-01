@@ -275,6 +275,11 @@ It also resolves an omitted `candidate_id` only when exactly one candidate exist
 multiple candidates require an explicit model choice. Raw model output and the
 resolved directive are recorded separately. Validation retries include the failed
 proposal, error and available candidate IDs, without silently selecting an experiment.
+Training inputs belong in top-level `input_ids`, never `origin.checkpoint`.
+Normally omit `arguments.origin`: the medical executor binds the current experimental
+parent and fixed initializer automatically. The restart-only backend advertises a
+checkpoint that is absent or null, not a checkpoint object; runtime validation still
+rejects incompatible initialization requests before submitting any training.
 The example policy resolves named actions (`action`, a named `kind`, or the
 `invoke`/`explore` envelopes) only when the name uniquely identifies a currently
 allowed operation or directive. Conflicting names are rejected.

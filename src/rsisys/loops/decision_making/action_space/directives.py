@@ -171,22 +171,56 @@ def training_directive(capabilities=None) -> DirectiveDefinition:
     if capabilities is not None:
         method_schema['enum'] = list(capabilities.methods)
         modes = [mode.value for mode in capabilities.resume_modes]
-    return DirectiveDefinition(DirectiveSpec('train', 'Delegate a complete training job to the configured backend', {
+
+    # Encode initialization semantics in the generation contract as well as in
+    # TrainingOrigin. Advertising a checkpoint object for restart lets a native
+    # schema-constrained provider generate proposals the parser must reject.
+    origin_branches = []
+    for mode in modes:
+        checkpoint_schema = {
+            'type': 'object', 'properties': {
+                key: {'type': 'string'} for key in ('artifact_id', 'kind', 'uri', 'version', 'digest')
+            }, 'required': ['artifact_id', 'kind', 'uri'], 'additionalProperties': False,
+            'description': 'Model weights or training state to resume; never a training_data artifact.',
+        }
+        required = ['parent_system', 'initial_model']
+        resume_schema = {'type': 'string', 'enum': [mode]}
+        if mode == 'restart':
+            checkpoint_schema = {'type': 'null', 'description': 'Restart uses initial_model; omit checkpoint or use null.'}
+            resume_schema['default'] = 'restart'
+        else:
+            required.append('resume_mode')
+            if mode == 'full_state':
+                required.append('checkpoint')
+            else:
+                checkpoint_schema['type'] = ['object', 'null']
+        origin_branches.append({
+            'type': ['object', 'null'] if mode == 'restart' else 'object',
+            'properties': {
+                'parent_system': {'type': 'string', 'minLength': 1},
+                'initial_model': {'type': 'object', 'properties': {
+                    key: {'type': 'string', 'minLength': 1} for key in ('backend_id', 'model_id', 'revision')
+                }, 'required': ['backend_id', 'model_id', 'revision'], 'additionalProperties': False},
+                'resume_mode': resume_schema, 'checkpoint': checkpoint_schema,
+            }, 'required': required, 'additionalProperties': False,
+        })
+    origin_schema = origin_branches[0] if len(origin_branches) == 1 else {'oneOf': origin_branches}
+    schema = {
         'type': 'object', 'properties': {
             'recipe_ref': {'type': 'string'}, 'method': method_schema,
             'apply_result': {'type': 'boolean', 'default': False},
-            'origin': {'type': 'object', 'properties': {
-                'parent_system': {'type': 'string'},
-                'initial_model': {'type': 'object', 'properties': {
-                    key: {'type': 'string'} for key in ('backend_id', 'model_id', 'revision')
-                }, 'required': ['backend_id', 'model_id', 'revision'], 'additionalProperties': False},
-                'resume_mode': {'type': 'string', 'enum': modes, 'default': 'restart'},
-                'checkpoint': {'type': 'object', 'properties': {
-                    key: {'type': 'string'} for key in ('artifact_id', 'kind', 'uri', 'version', 'digest')
-                }, 'required': ['artifact_id', 'kind', 'uri'], 'additionalProperties': False},
-            }, 'required': ['parent_system', 'initial_model'], 'additionalProperties': False},
+            'origin': origin_schema,
         }, 'required': ['recipe_ref', 'method'], 'additionalProperties': False,
-    }), parse)
+    }
+    if 'restart' not in modes:
+        schema['required'].append('origin')
+    if not origin_branches:
+        # A backend with no initialization modes cannot accept any training.
+        schema['properties']['origin'] = {'not': {}}
+    return DirectiveDefinition(DirectiveSpec('train',
+        'Delegate training to the backend. Select training data with top-level input_ids; '
+        'origin describes initial model weights, not data. Omit origin to use the configured '
+        'initializer when restart is supported.', schema), parse)
 
 
 def apply_candidate_directive() -> DirectiveDefinition:
