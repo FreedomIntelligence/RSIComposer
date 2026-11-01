@@ -136,6 +136,11 @@ while other permitted research actions can continue. Recipe steps are bounded by
 `--max-train-steps`; the default recipe uses 32 steps, learning rate 1e-4,
 microbatch 1 and gradient accumulation 2.
 
+The initial baseline is measured before research starts and its evidence is
+readable through `read_artifact`. It is not a proposed candidate. Candidate
+evaluation/application are exposed only once a candidate exists; this reflects
+their input precondition without prescribing which research action creates it.
+
 The frozen source selection is train/primary/guardrail **1024/128/64**. Before
 training, the tokenizer checks complete chat-template sequences, including the
 supervised answer, against the length limit. Overlong training rows are excluded

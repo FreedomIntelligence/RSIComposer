@@ -610,8 +610,15 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             if research_started is not None and time.monotonic()-research_started >= settings.seconds:
                 raise BudgetExhausted('deadline')
         backend.check_deadline = check_deadline
-        permissions = ActionPermissions(check=lambda req: not (
-            req.kind == 'directive' and req.name == 'train' and learner.remaining <= 0))
+        def permitted(request):
+            if request.kind != 'directive':
+                return True
+            if request.name == 'train':
+                return learner.remaining > 0
+            if request.name in ('evaluate', 'apply_candidate'):
+                return assembly is not None and bool(assembly.candidates)
+            return True
+        permissions = ActionPermissions(check=permitted)
         assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=base, initial_model=base,
             inference=serving, system_activator=serving, prepare_inference=serving.prepare_inference,
             learner=learner, bind_training_inputs=learner.bind_inputs, trusted_exclusions=private,
@@ -640,6 +647,10 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         persist(assembly, root)
         objective = ('Investigate whether supervised adaptation of this model on MedQA improves difficult '
             'MedXpertQA performance without degrading the MedQA guardrail. '
+            'The initial baseline has ALREADY been measured; its results and evidence IDs are below. '
+            'Read its evidence with read_artifact if useful. The initial system is not a candidate. '
+            'evaluate accepts only a candidate_id listed in context.candidates; candidate operations '
+            'are unavailable until a candidate exists. Do not invent a candidate or repeat baseline measurement. '
             'You choose the research steps and may conduct multiple rounds, change training data/recipe or prompt, '
             'evaluate, apply an accepted candidate, or finish with your reason at any time. Training is optional. '
             'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
