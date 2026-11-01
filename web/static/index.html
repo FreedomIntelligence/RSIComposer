@@ -31,9 +31,9 @@
     <section id="projects" aria-labelledby="project-name" hidden>
       <div class="project-heading"><p class="eyebrow">RSI 系统 · 项目</p><h1 id="project-name"></h1><p id="project-description"></p><p id="project-system" class="quiet-note"></p></div>
       <div class="section-heading"><h2>关系图谱 <span id="project-run-count"></span></h2><button id="project-overview">项目详情</button></div>
-      <p class="quiet-note graph-caption">选择一次运行，查看下方执行流程与结果。</p>
+      <p class="quiet-note graph-caption">从左到右浏览运行，选择后查看下方流程与结果。</p>
       <div id="project-graph"></div>
-      <details class="graph-legend"><summary>节点与连线说明</summary><p>深灰：项目；灰色：运行。实线箭头：显式运行引用；浅线：项目归属；虚线：记录更新时间顺序，不表示继承。</p><p>图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。</p></details>
+      <details class="graph-legend"><summary>节点与连线说明</summary><p>深灰：项目；灰色：运行。实线箭头：显式运行引用；浅线：项目归属。左右顺序按记录更新时间排列，不表示继承或实际开始时间；时间缺失时按运行标识稳定排序。</p><p>图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。</p></details>
     </section>
     <section id="empty" class="empty-state" hidden>
       <h1 id="empty-title">等待第一次运行</h1>

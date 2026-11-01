@@ -78,12 +78,16 @@ test("same decision/job/directive/candidate IDs in different runs keep their own
   assert.deepEqual(graph.nodes.map(n => n.type), ["project", "run", "run"]);
 });
 
-test("run timeline uses strict updated_at order; only explicit run parents create solid cross-run edges", () => {
+test("runs follow updated_at left to right without time edges; only explicit run parents connect runs", () => {
   const h = harness(); setup(h, [project("p", [run("c", { updated_at: "invalid", parent_run_id: "missing" }), run("b", { updated_at: "2026-11-01T01:00:00Z", parent_run_id: "a", source_run_ids: ["a", "b", "outside"] }), run("a"), run("tie")])]);
   const graph = model(h);
   assert.equal(graph.edges.filter(e => e.kind === "run-parent").length, 1);
-  assert.equal(graph.edges.filter(e => e.kind === "time").length, 1);
-  assert.deepEqual(graph.edges.find(e => e.kind === "time").evidence, ["记录更新时间顺序，不表示继承"]);
+  assert.equal(graph.edges.filter(e => e.kind === "time").length, 0);
+  assert.ok(graph.edges.every(e => ["membership", "run-parent"].includes(e.kind)));
+  const runs = graph.nodes.filter(n => n.type === "run");
+  assert.deepEqual(runs.map(n => n.runId), ["a", "tie", "b", "c"]);
+  assert.deepEqual(runs.map(n => n.layoutOrder), [0, 1, 2, 3]);
+  assert.ok(runs.every((n, i) => i === 0 || n.x > runs[i - 1].x));
   assert.deepEqual(graph.nodes.find(n => n.runId === "b").missing, ["outside"]);
   assert.deepEqual(graph.nodes.find(n => n.runId === "c").missing, ["missing"]);
   const unrelated = harness(); setup(unrelated, [project("p", [run("a", { base_revision: "v1" }), run("b", { base_revision: "v2", objective: "same" })])]);
@@ -228,7 +232,7 @@ function findClass(node,name) { return descendants(node).filter(n=>cssClass(n,na
 
 test("network layout is deterministic under input reorder and keeps cached coordinates without further simulation", () => {
   const h=harness();
-  const graph={nodes:[{key:"project-root",type:"project"},...Array.from({length:8},(_,i)=>({key:JSON.stringify(["run",String(i)]),type:"run",runId:String(i)}))],edges:Array.from({length:8},(_,i)=>({from:"project-root",to:JSON.stringify(["run",String(i)]),kind:"membership"}))};
+  const graph={nodes:[{key:"project-root",type:"project"},...Array.from({length:8},(_,i)=>({key:JSON.stringify(["run",String(i)]),type:"run",runId:String(i),layoutOrder:7-i}))],edges:Array.from({length:8},(_,i)=>({from:"project-root",to:JSON.stringify(["run",String(i)]),kind:"membership"}))};
   h.ctx.graph=graph;
   const a=h.json("networkLayout(structuredGraph = JSON.parse(JSON.stringify(graph)))");
   h.ctx.graph={nodes:graph.nodes.slice().reverse(),edges:graph.edges.slice().reverse()};
@@ -238,12 +242,16 @@ test("network layout is deterministic under input reorder and keeps cached coord
   h.ctx.graph=a;
   const cached=h.json('networkLayout(graph,new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}])))');
   assert.deepEqual(coords(cached),coords(a));assert.equal(cached.layoutStats.iterations,0);
-  assert.ok(new Set(a.nodes.map(n=>n.y.toFixed(1))).size>5);
+  const runs = a.nodes.filter(n => n.type === "run").sort((a, b) => a.layoutOrder - b.layoutOrder);
+  assert.ok(runs.every((n, i) => Math.abs(n.x - (230 + i * 140)) <= 25));
+  assert.ok(runs.every((n, i) => i === 0 || n.x > runs[i - 1].x));
+  const root = a.nodes.find(n => n.type === "project");
+  assert.ok(root.x < runs[0].x && runs.every(n => root.y < n.y));
 });
 
 test("large dense graph has finite budget and bounded grid probes; stationary layout does no relaxation", () => {
   const h=harness();const count=1800;
-  h.ctx.graph={nodes:Array.from({length:count},(_,i)=>({key:`n${i}`,type:"run",runId:`r${i}`})),edges:Array.from({length:count-1},(_,i)=>({from:`n${i}`,to:`n${i+1}`,kind:"time"}))};
+  h.ctx.graph={nodes:Array.from({length:count},(_,i)=>({key:`n${i}`,type:"run",runId:`r${i}`,layoutOrder:i})),edges:Array.from({length:count-1},(_,i)=>({from:`n${i}`,to:`n${i+1}`,kind:"run-parent"}))};
   const result=h.json('networkLayout(graph)');
   assert.ok(result.layoutStats.iterations<=64);
   assert.ok(result.layoutStats.iterations*(count+count-1)<=60000);
@@ -266,6 +274,21 @@ test("adding a run relaxes existing unpinned nodes while preserving the manually
   const stationary = model(h);
   assert.equal(stationary.layoutStats.iterations, 0);
   assert.deepEqual(stationary.nodes.map(n => [n.key, n.x, n.y]), after.nodes.map(n => [n.key, n.x, n.y]));
+});
+
+test("updated_at order changes relax cached runs even when nodes and edges stay the same", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b", { updated_at: "2026-11-01T01:00:00Z" })])]);
+  const before = model(h);
+  h.run('state.projects[0].runs[0].updated_at = "2026-11-01T02:00:00Z"');
+  const after = model(h), runs = after.nodes.filter(n => n.type === "run");
+  const edges = g => g.edges.slice().sort((a, b) => a.to.localeCompare(b.to));
+  assert.deepEqual(edges(after), edges(before));
+  assert.equal(after.topologyChanged, true);
+  assert.ok(after.layoutStats.iterations > 0 && after.layoutStats.iterations <= 64);
+  assert.deepEqual(runs.map(n => [n.runId, n.layoutOrder]), [["b", 0], ["a", 1]]);
+  assert.ok(runs[0].x < runs[1].x);
+  assert.ok(runs.every((n, i) => Math.abs(n.x - (230 + i * 140)) <= 25));
+  assert.equal(model(h).layoutStats.iterations, 0);
 });
 
 test("ResizeObserver fits actual graph bounds into a resized canvas and keeps them centered", () => {
@@ -308,10 +331,13 @@ test("position storage survives reload, rejects malformed coordinates and handle
   const h=harness(),saved=new Map();h.ctx.localStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
   setup(h,[project("p",[run("a")])]);
   h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});state.activeScope.pinned.add(JSON.stringify(["run","a"]));savePositions(state.activeScope)');
+  assert.ok(saved.has('rsisys-runs-v3:' + h.run('state.activeScope.key')));
+  saved.set('rsisys-runs-v2:legacy', JSON.stringify([["old", {x:900,y:900}]]));
+  assert.equal(h.run('readPositions("legacy").size'), 0);
   const reloaded=harness();reloaded.ctx.localStorage=h.ctx.localStorage;setup(reloaded,[project("p",[run("a")])]);
   assert.deepEqual(model(reloaded).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[801,312]]);
   assert.equal(reloaded.run("state.activeScope.pinned.size"),0);
-  saved.set('rsisys-runs-v2:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
+  saved.set('rsisys-runs-v3:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
   assert.deepEqual(h.json('[...readPositions("bad")]'),[["ok",{x:44,y:55}]]);
   h.ctx.localStorage={getItem(){throw Error("denied");},setItem(){throw Error("full");}};
   assert.equal(h.run('readPositions("denied").size'),0);assert.doesNotThrow(()=>h.run('savePositions(state.activeScope)'));

@@ -100,24 +100,27 @@ function hashUnit(key) {
 }
 function readPositions(key) {
   try {
-    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v2:${key}`) || "[]");
+    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v3:${key}`) || "[]");
     return new Map((Array.isArray(rows) ? rows : []).slice(-LAYOUT.cache).filter(r => Array.isArray(r) && typeof r[0] === "string" && number(r[1]?.x) && number(r[1]?.y) && r[1].x >= 36 && r[1].y >= 36 && r[1].x <= 100000 && r[1].y <= 100000));
   } catch { return new Map(); }
 }
 function savePositions(scope) {
-  try { localStorage.setItem(`rsisys-runs-v2:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
+  try { localStorage.setItem(`rsisys-runs-v3:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
 }
 function networkLayout(model, positions = new Map(), { relax = false, pinned = new Set() } = {}) {
   const ordered = model.nodes.slice().sort((a,b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const byKey = new Map(ordered.map(n => [n.key,n])), anchors = ordered.filter(n => n.type === "run"), fresh = new Set();
-  const center = { x: 560, y: 245 };
+  const center = { x: 70, y: 120 };
+  anchors.sort((a,b)=>(a.layoutOrder??0)-(b.layoutOrder??0)||(a.key<b.key?-1:a.key>b.key?1:0));
+  const targets = new Map(anchors.map((n,i)=>[n.key,{x:230+i*140,y:245}]));
+  for(const n of ordered.filter(n=>n.type==="project"))targets.set(n.key,center);
   const initialize = (n, origin, radius, angle) => {
     const cached = positions.get(n.key);
     if (cached && number(cached.x) && number(cached.y)) { n.x = cached.x; n.y = cached.y; if (relax && !pinned.has(n.key)) fresh.add(n.key); }
     else { n.x = Math.max(44, origin.x + radius * Math.cos(angle)); n.y = Math.max(44, origin.y + radius * Math.sin(angle)); fresh.add(n.key); }
   };
   for (const n of ordered.filter(n => n.type === "project")) initialize(n, center, 0, 0);
-  anchors.forEach((n,i) => initialize(n, center, 125 + 32 * Math.sqrt(i), i * 2.399963 + hashUnit(n.key) * .6));
+  anchors.forEach(n => initialize(n, targets.get(n.key), 0, 0));
   const counts = new Map();
   for (const n of ordered.filter(n => !["project","run"].includes(n.type))) {
     const origin = byKey.get(JSON.stringify(["run",n.runId])) || center;
@@ -145,8 +148,8 @@ function networkLayout(model, positions = new Map(), { relax = false, pinned = n
         const d = Math.max(1,Math.hypot(dx,dy)), strength = Math.min(9,1500/(d*d));
         f.x += dx/d*strength; f.y += dy/d*strength;
       }
-      const origin = n.type === "run" || n.type === "project" ? center : byKey.get(JSON.stringify(["run",n.runId])) || center;
-      f.x += (origin.x-n.x)*.006; f.y += (origin.y-n.y)*.006;
+      const origin = targets.get(n.key) || center;
+      f.x += (origin.x-n.x)*.12; f.y += (origin.y-n.y)*.06;
     }
     for (const e of edges) {
       const dx = e.b.x-e.a.x, dy = e.b.y-e.a.y, distance = Math.max(1,Math.hypot(dx,dy));
@@ -160,6 +163,7 @@ function networkLayout(model, positions = new Map(), { relax = false, pinned = n
     for (const n of ordered) {
       const f = forces.get(n.key); if (!f) continue;
       n.x = Math.max(44,n.x+Math.max(-temperature,Math.min(temperature,f.x)));
+      const target=targets.get(n.key);if(target)n.x=Math.max(target.x-25,Math.min(target.x+25,n.x));
       n.y = Math.max(44,n.y+Math.max(-temperature,Math.min(temperature,f.y)));
     }
   }
@@ -193,7 +197,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const marker = svgEl("marker",{ id:`${host.id}-arrow`,viewBox:"0 0 8 8",refX:18,refY:4,markerWidth:5,markerHeight:5,orient:"auto" });
   marker.append(svgEl("path",{ d:"M0,0 L8,4 L0,8",fill:"context-stroke" })); const defs = svgEl("defs"); defs.append(marker); lines.append(defs);
   const byKey = new Map(model.nodes.map(n => [n.key,n])), paths = [], incident = new Map(), buttons = new Map();
-  const draw = ({ edge,path }) => { const a=byKey.get(edge.from),b=byKey.get(edge.to); path.setAttribute("d",`M${a.x},${a.y} L${b.x},${b.y}`); };
+  const draw = ({ edge,path }) => { const a=byKey.get(edge.from),b=byKey.get(edge.to); path.setAttribute("d",edge.kind==="membership" ? `M${a.x},${a.y} C${a.x},${a.y+65} ${b.x},${b.y-65} ${b.x},${b.y}` : `M${a.x},${a.y} Q${(a.x+b.x)/2},${Math.min(a.y,b.y)-55} ${b.x},${b.y}`); };
   for (const edge of model.edges) {
     if (!byKey.has(edge.from) || !byKey.has(edge.to)) continue;
     const path = svgEl("path",{ class:`graph-edge ${edge.kind === "time" ? "temporal" : edge.kind === "membership" ? "membership" : "linked"}` });
@@ -599,7 +603,7 @@ function projectModel(project, scope) {
   runs.forEach((row, i) => {
     const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
     const n = { key, type: "run", row, runId: row.run_id, title: `运行 ${i + 1}`, label: "运行", summary: statusText(row.status),
-       loadStatus: entry?.status,
+       layoutOrder: i, loadStatus: entry?.status,
       missing: [], ambiguous: [] };
     nodes.push(n); const matches = ids.get(row.run_id) || []; matches.push(n); ids.set(row.run_id, matches);
     edges.push({ from: "project-root", to: key, kind: "membership", evidence: ["项目归属"] });
@@ -615,12 +619,7 @@ function projectModel(project, scope) {
       else if (matches[0] !== node) edges.push({ from: matches[0].key, to: node.key, kind: "run-parent", evidence: [`显式运行引用 ${id}`] });
     }
   }
-  for (let i = 1; i < runNodes.length; i++) {
-    const a = runNodes[i - 1], b = runNodes[i], at = Date.parse(a.row.updated_at), bt = Date.parse(b.row.updated_at);
-    if (Number.isFinite(at) && Number.isFinite(bt) && at < bt)
-      edges.push({ from: a.key, to: b.key, kind: "time", evidence: ["记录更新时间顺序，不表示继承"] });
-  }
-  const signature = JSON.stringify([nodes.map(n => n.key).sort(), edges.map(e => [e.from,e.to,e.kind]).sort()]);
+  const signature = JSON.stringify([nodes.map(n => [n.key,n.layoutOrder]).sort(), edges.map(e => [e.from,e.to,e.kind]).sort()]);
   const changed = scope.layoutSignature !== undefined && scope.layoutSignature !== signature;
   const model = networkLayout({ nodes, edges }, scope.positions, { relax: changed || !!scope.needsRelax, pinned: scope.pinned });
   model.topologyChanged = changed;
