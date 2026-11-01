@@ -382,7 +382,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   }
   if(byKey.has(view.selected))select(byKey.get(view.selected),false);
   if(focusedKey)buttons.get(focusedKey)?.focus({preventScroll:true});
-  if(same&&pagePosition)window.scrollTo({...pagePosition,behavior:"instant"});
+  if(same&&pagePosition&&(window.scrollX!==pagePosition.left||window.scrollY!==pagePosition.top))window.scrollTo({...pagePosition,behavior:"instant"});
 }
 const sameId = (a, b) => present(a) && present(b) && a === b;
 function linkedJob(row, s) {
