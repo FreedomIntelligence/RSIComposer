@@ -385,6 +385,11 @@
         text.setAttribute("textLength", String(Math.min(estimated, LABEL_WIDTH)));
         text.setAttribute("lengthAdjust", "spacingAndGlyphs");
       }
+      // Keep straight edges readable without drawing them through node labels.
+      const labelWidth = Math.min(estimated, LABEL_WIDTH);
+      group.append(element("rect", { class: "decision-label-backplate", x: -labelWidth / 2 - 6,
+        y: 15, width: labelWidth + 12, height: 24, rx: 3,
+        fill: "#f8f7f2", "pointer-events": "none" }));
       group.append(text); plane.append(group); groups.set(node.key, group);
     }
     listen(svg, "pointerdown", event => {
