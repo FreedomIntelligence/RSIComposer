@@ -237,7 +237,12 @@ class ProcessTrainingBackend:
         if (directory / 'progress.json').exists():
             progress = JobProgress(**json.loads((directory / 'progress.json').read_text()))
         if status == JobStatus.RUNNING and _identity(state['pid']) != state['identity']:
-            return JobOutcome(job, JobStatus.UNKNOWN, error='Supervisor identity lost; no restart attempted', progress=progress)
+            # The supervisor may have persisted its terminal receipt and exited
+            # between our first read and the identity check.
+            state = json.loads(state_path.read_text())
+            status = JobStatus(state['status'])
+            if status == JobStatus.RUNNING:
+                return JobOutcome(job, JobStatus.UNKNOWN, error='Supervisor identity lost; no restart attempted', progress=progress)
         if status != JobStatus.SUCCEEDED:
             return JobOutcome(job, status, error=state.get('error'), progress=progress)
         # Validate once and retain an immutable terminal result across reattachments.

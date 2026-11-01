@@ -169,6 +169,22 @@ class ProcessAdapterTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     backend.result(job)
 
+    def test_terminal_receipt_written_during_identity_check_is_not_unknown(self):
+        backend = self.backend()
+        job = JobRef('a' * 64, backend.backend)
+        directory = self.root / 'jobs' / job.job_id
+        directory.mkdir()
+        (directory / 'receipt.json').write_text('{}')
+        state = directory / 'state.json'
+        state.write_text(json.dumps({'status': 'running', 'pid': 123, 'identity': 'fixture'}))
+        def exited(pid):
+            state.write_text(json.dumps({'status': 'failed', 'error': 'fixture failure'}))
+            return None
+        with patch('rsisys.adapters.training._identity', side_effect=exited):
+            outcome = backend.poll(job)
+        self.assertEqual(outcome.status, JobStatus.FAILED)
+        self.assertEqual(outcome.error, 'fixture failure')
+
     def test_scheduler_visibility_is_preserved_credentials_are_not(self):
         with patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES':'3', 'NVIDIA_VISIBLE_DEVICES':'GPU-3',
             'ASCEND_RT_VISIBLE_DEVICES':'2', 'OMP_NUM_THREADS':'1', 'MKL_NUM_THREADS':'1',
