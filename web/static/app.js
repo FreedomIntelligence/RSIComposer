@@ -580,6 +580,8 @@ function changesView(row,s) {
 function concreteFeedback(row) {
   const summary=object(row.feedback).summary||row.feedback_summary;
   if(typeof summary!=="string")return "";
+  const normalized=summary.trim().replace(/[.!。]$/, "").toLowerCase();
+  if(normalized===`${decisionAction(row)} completed`.toLowerCase())return "";
   return /^(?:执行已完成[。.]?|执行完成[。.]?|completed[.!]?|done[.!]?|success[.!]?|configure_prompt completed)$/i.test(summary.trim())?"":summary;
 }
 function executionSequence(s, scope) {

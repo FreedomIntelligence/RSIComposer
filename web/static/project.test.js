@@ -794,3 +794,8 @@ test("evaluation explains what is checked and keeps a failed result visible",()=
   const text=textOf(findClass(h.get("project-graph"),"run-detail")[0]);
   assert.match(text,/验证改动效果/);assert.match(text,/检验新提示词的效果/);assert.match(text,/development/);assert.match(text,/No eligible examples/);
 });
+
+ test("operation-name completed is only a status, not result detail",()=>{
+ const h=harness();
+ assert.equal(h.run('concreteFeedback({mode:"evaluate",kind:"directive",feedback_summary:"evaluate completed"})'), "");
+ });
