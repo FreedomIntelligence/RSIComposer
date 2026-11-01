@@ -169,6 +169,9 @@ The initial baseline is measured before research starts and its evidence is
 readable through `read_artifact`. It is not a proposed candidate. Candidate
 evaluation/application are exposed only once a candidate exists; this reflects
 their input precondition without prescribing which research action creates it.
+An empty candidate list still permits `configure_prompt` and `train` to create
+new candidates, plus the available data, recipe and research-note operations.
+Only evaluation and application require an existing registered candidate.
 The medical assembly defaults an omitted `protocol_ref` to its frozen protocol.
 It also resolves an omitted `candidate_id` only when exactly one candidate exists;
 multiple candidates require an explicit model choice. Raw model output and the
