@@ -125,6 +125,9 @@ There is no subcommand or separate backend/settings/recipe JSON for this entry.
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.
+Researcher generation stops after one complete final JSON object (the policy still
+checks the action schema and permissions). Reasoning and incomplete JSON cannot
+trigger an action. Actor evaluation has no JSON stopping rule.
 Optional `--decision-thinking` enables the Qwen researcher thinking template with
 an 8192-token response limit and sampling (temperature 0.6, top-p 0.95, top-k 20).
 Only the final answer after the reasoning delimiter reaches the decision parser;

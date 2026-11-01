@@ -23,6 +23,25 @@ def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+class _DecisionJSONStop:
+    """Frame one final object; policy still validates schema and permissions."""
+    def __init__(self, tokenizer, prompt_tokens, *, thinking):
+        self.tokenizer, self.prompt_tokens, self.thinking = tokenizer, prompt_tokens, thinking
+
+    def __call__(self, input_ids, scores=None, **kwargs):
+        if '}' not in self.tokenizer.decode(input_ids[0, -1:], skip_special_tokens=True):
+            return False
+        text = self.tokenizer.decode(input_ids[0, self.prompt_tokens:], skip_special_tokens=True)
+        if self.thinking:
+            if '</think>' not in text:
+                return False
+            text = text.rsplit('</think>', 1)[1]
+        try:
+            return isinstance(json.loads(text.strip()), dict)
+        except (ValueError, TypeError):
+            return False
+
+
 def _files_identity(path, *, adapter=False):
     """Digest filenames and bytes of all weight shards and loading configuration."""
     path = Path(path).resolve()
@@ -348,6 +367,8 @@ class LocalTransformerServing:
                 pad = self._tokenizer.eos_token_id
             with context, self._torch.inference_mode():
                 sampling = {'do_sample': True, 'temperature': .6, 'top_p': .95, 'top_k': 20} if thinking else {'do_sample': False}
+                if request.role == 'decision_maker':
+                    sampling['stopping_criteria'] = [_DecisionJSONStop(self._tokenizer, count, thinking=thinking)]
                 output = self._model.generate(**inputs, max_new_tokens=request.max_output_tokens,
                     **sampling, pad_token_id=pad, use_cache=True)
             tokens = output[0, count:]

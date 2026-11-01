@@ -11,7 +11,7 @@ from types import SimpleNamespace, ModuleType
 import unittest
 from unittest.mock import patch
 
-from examples.medical.transformers_runtime import LocalTransformerServing, tokenize_factory
+from examples.medical.transformers_runtime import LocalTransformerServing, tokenize_factory, _DecisionJSONStop
 from examples.medical.task import Sample, encoded
 from rsisys.adapters.training import _native_inputs, _transformers_peft
 from rsisys.loops.contracts.candidate import SystemVersion
@@ -166,9 +166,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreater(response.usage.output_tokens, len(response.text))
         self.assertTrue(log[-1][1]['do_sample'])
         self.assertEqual(log[-1][1]['temperature'], .6)
+        self.assertEqual(len(log[-1][1]['stopping_criteria']), 1)
         self.assertEqual(serving.generate(self.request()).text, 'A')
         self.assertFalse(log[-1][1]['do_sample'])
+        self.assertNotIn('stopping_criteria', log[-1][1])
         self.assertEqual(flags, [True, False])
+
+    def test_decision_stopping_frames_one_final_object_only(self):
+        stop = _DecisionJSONStop(Tokenizer(), 3, thinking=True)
+        def check(text):
+            return stop(Tensor([list(map(ord, 'pre' + text))]))
+        self.assertFalse(check('{"reasoning_example":{}}'))
+        self.assertFalse(check('</think>{"arguments":{}'))
+        self.assertFalse(check('</think>{broken}'))
+        self.assertTrue(check('</think>{"arguments":{"text":"a } brace"}}'))
+        self.assertFalse(check('</think>{"a":1}\n{"b":2}'))
+        plain = _DecisionJSONStop(Tokenizer(), 0, thinking=False)
+        self.assertTrue(plain(Tensor([list(map(ord, '{"kind":"finish"}'))])))
 
     def test_incomplete_thinking_never_becomes_an_executable_final(self):
         class ThinkingTokenizer(Tokenizer):
