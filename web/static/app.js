@@ -276,7 +276,7 @@ function concreteFeedback(row) {
   return /^(?:执行已完成[。.]?|执行完成[。.]?|completed[.!]?|done[.!]?|success[.!]?|configure_prompt completed)$/i.test(summary.trim())?"":summary;
 }
 function executionSequence(s, scope) {
-  scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
+  scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),groups=executionGroups(s);
   const graphRows=groups.map(g=>g.row),graphKeys=new Map(RSIDecisions.layout(graphRows).nodes.filter(n=>n.row).map(n=>[groups[n.index],n.key]));
   section.id="execution-flow";
@@ -286,10 +286,9 @@ function executionSequence(s, scope) {
   const fill=(restoreFocus=false)=>{
     const scroll={left:navigation.scrollLeft,top:navigation.scrollTop};
     entries.replaceChildren();
-    const limit=groups.length;
     const keyOf=g=>graphKeys.get(g);
     let selected=scope.flowSelected.get(s.run_id);
-    if(!groups.slice(0,limit).some((g,i)=>keyOf(g,i)===selected))selected=groups.length?keyOf(groups[0],0):null;
+    if(!groups.some(g=>keyOf(g)===selected))selected=groups.length?keyOf(groups[0]):null;
     scope.flowSelected.set(s.run_id,selected);
     navigation.replaceChildren(RSIDecisions.render({
       rows:graphRows,selected,
