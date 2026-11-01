@@ -37,7 +37,8 @@ CURRENT_FIELDS = ("directive_id", "mode", "status", "phase", "strategy", "decisi
                   "step", "total_steps")
 DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
                    "strategy", "reason", "status", "decision_revision", "actor_revision", "job_id", "candidate_id",
-                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation", "parent_decision_id")
+                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation", "parent_decision_id",
+                   "feedback_summary", "error")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
 JOB_FIELDS = ("job_id", "kind", "status", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
@@ -151,6 +152,16 @@ def project_snapshot(raw, run_id):
                 item["details"] = pick(row.get("details"), DETAIL_KEYS)
             if key == "jobs" and "metric_history" in row:
                 item["metric_history"] = metric_history_only(row["metric_history"])
+            if key == "decisions" and isinstance(row.get("changes"), list):
+                # Explicit public action summaries only; never expose arbitrary payloads.
+                item["changes"] = []
+                for change in row["changes"][:20]:
+                    if not isinstance(change, dict) or not isinstance(change.get("field"), str):
+                        continue
+                    values = {key: change[key][:4000] for key in ("before", "after")
+                              if isinstance(change.get(key), str)}
+                    if values:
+                        item["changes"].append({"field": change["field"][:100], **values})
             if key == "decisions" and isinstance(row.get("source_decision_ids"), list):
                 item["source_decision_ids"] = [v[:200] for v in row["source_decision_ids"][:100] if isinstance(v, str)]
             result[key].append(item)

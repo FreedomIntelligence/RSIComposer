@@ -83,6 +83,26 @@ worker 为每个候选保存独立 LoRA adapter；从父候选训练时复制父
 - experience.sqlite3：系统反馈；两份 memory JSON：各自任务历史；decision_research.json：模型首次 patch 后保存的完整研究笔记和修订日志；artifacts：轻量引用对应的产物。
 - worker 的 adapter、训练/评测结果和日志由 worker 数据目录保留。
 
+`decisions[]` 的公开解释字段为 `reason`、`changes`、`feedback_summary` 和 `error`。
+`reason` 只来自 `Decision.reason`（复查使用 `ReviewDecision.reason`）；历史没有理由就留空，不从模型请求或推理内容补写。
+`changes` 是**提交内容**，最多 20 项，每项 `field`、`after`、可选 `before` 均为字符串，每个文本最多 4000 字符。
+默认不生成 `before`：前一次 prompt 提案即使 `completed` 也不代表 Actor 已应用，不能作为下一次的前值；只保留来源明确记录、且对应同一提交字段和值的已有 `before`。
+`configure_prompt` 公开 Actor 的 `instructions`；训练公开显式的 `recipe_ref` / `method` / `apply_result`；评测公开协议、候选 ID、底座版本和候选组件名（不读取组件 artifact）；应用候选公开候选 ID。
+`define_recipe` 仅公开有限数值超参数 `steps` / `lr` / `seed` / `weight_decay` / `warmup_ratio`。其他操作不展开任意参数或结果 `data`，也不公开训练样本、模型 request prompt 或 `reasoning_content`。
+`feedback_summary` / `error` 保留实际 Feedback 或 OperationResult 的原文摘要和错误（最多 4000 字符），无回执就留空，状态 `completed` 不替代摘要。
+例如 `Prompt proposed; evaluate before application` 表示产生了待评测提案，并未承诺 Actor 已更新；`evaluate` 的提交字段说明验证哪个候选的哪些组件，回执与数值指标说明观察结果。
+
+部署后可显式补全已结束运行的决策记录（支持 medical 的无 `phase` 结果，也支持 `stopped`）：
+
+```sh
+PYTHONPATH=src:. python -m examples.qwen_toy.monitor --run-dir runs/<finished-run>
+```
+
+补全只写 `monitor.json` 的 `decisions`，保留已有决策 ID、timestamp、source 和全部其他监控字段（包括 `updated_at`、运行状态、workflow、current、模型绑定）；不修改 memory、steps、研究结果或训练文件。
+工具使用 `decision_memory.json` 的结构化 payload/feedback；`kind=operation` 回执只与紧邻且操作及参数完全一致的决策配对。
+可选 `steps.jsonl` 的指令反馈按 directive ID 补全，工具回执仅在完整决策顺序与历史一致时逐条匹配；截断、重复或缺失导致关联不明时留空，不按重复操作名猜测。
+无法可靠对应的历史记录不会覆盖已有行；重复补全同一证据保持幂等。补全不会自动运行，也不改变运行结论。
+
 `completed` 表示研究者选择结束，或配置目标已达成并完成清理；只有 `stop_reason=goal_reached` 才令 `goal_reached=true`。RunPolicy 时间预算到期且清理已确认时记录 `stopped` / `budget_exhausted`，CLI 返回 0；**stopped 不表示目标达成**。目标模式的 `--run-seconds` 到期也使用此语义。默认 researcher 模式保持 `completed` / `researcher_finished`，不宣称目标达成。是否训练、评测、应用以及是否提升，必须查看具体证据。
 
 `--timeout`、模型调用或 tick 等硬预算耗尽，以及策略清理未确认时，记录 `timed_out`，CLI 返回 1；其他异常记录 `failed`、返回 1。这些情况不合成模型 finish。`run_stop` 保存核心返回的 `reason`、`shutdown`、`shutdown_complete`、`cleanup_timed_out`、`unresolved_directives`、`unresolved_research_job` 等字段；硬边界可能先于策略停止，此时 `run_stop` / `stop_reason` 为 null，以 `status` 和 `error_code` 表示异常。
@@ -121,5 +141,6 @@ and `parent_run_id` to `run.json`, `monitor.json` and `result.json`.
 equal their directory names, including the parent directory (`runs/run5`), since
 the web viewer identifies runs by directory name. Mismatches are rejected before
 monitor writes. Core Applications with other ID/directory combinations require
-an aligned integration. Offline `enrich_completed_run` preserves recorded ancestry
-and observation time; it never infers parents from history or sibling directories.
+an aligned integration. Offline `enrich_completed_run` validates recorded ancestry
+and preserves the snapshot's ancestry fields and observation time; it never fills
+missing parent fields or infers parents from history or sibling directories.

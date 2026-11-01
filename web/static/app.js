@@ -21,7 +21,7 @@ const labels = {
 const actionLabels = {
   configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
-  evaluate: "评测候选", evaluation: "评测候选", candidate_evaluation: "评测候选", select: "选择候选", apply_candidate: "应用候选", execute: "执行任务",
+  evaluate: "验证改动效果", evaluation: "验证改动效果", candidate_evaluation: "验证改动效果", select: "选择版本", apply_candidate: "采用改动", execute: "执行任务",
   finish: "结束本轮研究", finished: "结束本轮研究", continue: "继续执行", continue_training: "继续训练", cancel: "请求取消", cancel_training: "请求取消训练", stop: "停止训练", wait: "等待", review: "复查执行", prepare: "准备", queued: "排队", starting: "准备运行", collecting_result: "收集结果", accepted: "指令已接收", completed: "已完成",
   research_search: "检索研究资料", research_read: "阅读研究资料", research_archive: "查阅研究档案", research_patch: "更新研究笔记", research_write: "记录研究结论", research_memory: "查阅研究记忆", research_experience: "检索历史经验", research_history: "查阅决策历史",
   search: "搜索资料", read: "读取资料", web_search: "搜索网页", fetch: "获取资料", query_jobs: "查询任务", query_candidates: "查询候选", query_metrics: "查询指标", inspect_job: "查看任务", inspect_candidate: "查看候选", list_jobs: "查看任务列表", list_candidates: "查看候选列表",
@@ -493,7 +493,7 @@ function comparisonView(metrics) {
   const wrap = el("div"), { pairs, extra } = metricRows(metrics);
   if (!pairs.length) { const strip=metricStrip(metrics); wrap.append(strip.childElementCount ? strip : empty(t("评测指标未报告。"))); return wrap; }
   const table=el("table","metric-table"), head=el("thead"), hr=el("tr"), body=el("tbody");
-  for (const name of [t("指标"),t("基线"),t("候选"),t("候选 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
+  for (const name of [t("指标"),t("基线"),t("新版本"),t("新版本 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
 function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true;  }
@@ -557,6 +557,31 @@ function executionGroups(s) {
     return (Number.isFinite(at)?at:Infinity)-(Number.isFinite(bt)?bt:Infinity) || 0;
   });
 }
+const changeLabels = {instructions:"提示词内容",method:"训练方法",recipe_ref:"训练方案",protocol_ref:"评测方案",candidate_id:"待验证版本",apply_result:"训练后自动应用",steps:"训练步数",lr:"学习率",seed:"随机种子",weight_decay:"权重衰减",warmup_ratio:"预热比例",updates:"更新次数",components:"改动部分",query:"检索内容",url:"阅读地址",artifact_id:"资料引用",offset:"起始位置",limit:"数量"};
+function changesView(row,s) {
+  const changes=list(row.changes).filter(c=>typeof c.field==="string"&&c.field!=="base_version"&&(typeof c.after==="string"||typeof c.before==="string"));
+  if(!changes.length)return null;
+  const box=el("div","decision-changes");box.append(el("p","flow-label",t("提交内容")));
+  for(const change of changes){
+    const item=el("div","change-item");item.append(el("h5","",t(changeLabels[change.field])||change.field));
+    const value=text=>{
+      if(change.field==="candidate_id"){
+        const candidates=list(s.candidates),matches=candidates.filter(c=>c.candidate_id===text);
+        return matches.length===1?t("版本 {p0}",{p0:candidates.indexOf(matches[0])+1}):t("版本关联未记录");
+      }
+      return text===""?t("（清空）"):text;
+    };
+    if(typeof change.before==="string")item.append(el("p","change-before",t("原值：{p0}",{p0:value(change.before)})));
+    if(typeof change.after==="string")item.append(el("p","change-value",value(change.after)));
+    box.append(item);
+  }
+  return box;
+}
+function concreteFeedback(row) {
+  const summary=object(row.feedback).summary||row.feedback_summary;
+  if(typeof summary!=="string")return "";
+  return /^(?:执行已完成[。.]?|执行完成[。.]?|completed[.!]?|done[.!]?|success[.!]?|configure_prompt completed)$/i.test(summary.trim())?"":summary;
+}
 function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),groups=executionGroups(s);
@@ -586,14 +611,23 @@ function executionSequence(s, scope) {
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
       decision.append(el("h4","",actionText(decisionAction(row))),meta);
       if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
-      if(present(row.reason))decision.append(el("p","decision-reason",row.reason));
+      if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
       if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row))decision.append(el("p","decision-reason",row.strategy));
-      feedback.append(el("p","flow-label",t("执行反馈")),el("p","",object(row.feedback).summary||row.feedback_summary||f.text));
+      const changes=changesView(row,s);if(changes)decision.append(changes);
+      if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
+        const component=list(row.changes).find(c=>c.field==="components")?.after;
+        const prompt=typeof component==="string"&&/prompt|instructions/.test(component);
+        decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果；评测通过与实际采用是两个独立步骤。"):t("检验待验证版本的效果；评测通过与实际采用是两个独立步骤。")));
+        if(!row.protocol_ref&&!list(row.changes).some(c=>c.field==="protocol_ref"))decision.append(el("p","quiet-note",t("评测方案未记录。")));
+      }
+      const explicit=concreteFeedback(row),error=object(row.feedback).error||row.error;
+      if(explicit||error){feedback.append(el("p","flow-label",t("实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
+      else if(!DONE.has(statusKey(f.status))||row.kind==="review"||decisionAction(row)==="finish")feedback.append(el("p","",f.text));
       if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
       if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
       if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
       if(f.job&&number(f.job.elapsed_seconds))feedback.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(f.job.elapsed_seconds)})));
-      step.append(index,decision,feedback);if(metrics.childElementCount)step.append(metrics);
+      step.append(index,decision);if(feedback.childElementCount)step.append(feedback);if(metrics.childElementCount)step.append(metrics);
       const results=el("div","flow-results");
       if(f.job){
         const j=f.job,h=historyRows(j),isTraining=/train|sft|finetun/.test(asText(j.kind,""))||h.some(p=>number(metricValue(p.metrics,lossKeys)));
@@ -605,7 +639,7 @@ function executionSequence(s, scope) {
         const reported=flattenMetrics(result.row.metrics),shown=flattenMetrics(f.metrics);
         const alreadyShown=Object.keys(reported).length>0&&Object.entries(reported).every(([key,value])=>shown[key]===value);
         if(alreadyShown){metrics.append(badge(result.row.status));continue;}
-        const card=el("div","candidate-card");card.append(el("h4","",t("候选结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
+        const card=el("div","candidate-card");card.append(el("h4","",t("版本结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
       }
       if(results.childElementCount)step.append(results);entries.append(step);
     }
@@ -621,7 +655,6 @@ function runDetail(node, scope) {
   const heading=el("div","detail-heading"),identity=el("div");
   identity.append(el("h3","",node.title));
   heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
-  box.append(el("p","detail-objective",s?.objective||node.row.objective||t("目标未报告")));
   if(entry?.status==="pending"&&!s)box.append(el("p","load-message",t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
     box.append(el("p","load-message error",t("{p0}读取失败：{p1}", {p0: s?t("保留上次快照。"):"", p1: errorText(entry.errorInfo || {error:entry.error})})));
@@ -632,7 +665,7 @@ function runDetail(node, scope) {
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){
       const candidates=el("div");
-      unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("候选结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
+      unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("待验证版本 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("版本结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
     }
 
   }

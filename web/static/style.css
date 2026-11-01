@@ -196,3 +196,11 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 .graph-node.project { cursor: pointer; }
+
+.decision-changes { margin-top: 20px; }
+.change-item { margin-top: 12px; padding: 14px 18px; background: var(--panel); border-radius: 6px; }
+.change-item h5 { margin: 0 0 6px; font: 500 14px var(--sans); color: var(--muted); }
+.change-value, .change-before, .result-summary, .result-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+.change-before { color: var(--muted); margin-bottom: 8px; }
+.result-error { color: var(--red); }
+.evaluation-purpose { margin-top: 16px; }

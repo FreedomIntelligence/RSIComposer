@@ -78,7 +78,7 @@ test("switching language rerenders cached graph/run, preserves selection/step/zo
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
   assert.equal(h.get("project-graph").graphView.scale,.75);assert.equal(h.get("project-graph").graphView.viewport.scrollLeft,123);assert.equal(h.get("project-graph").graphView.viewport.scrollTop,45);
   assert.match(text(h.get("project-graph")),/Metrics at review/);assert.match(text(h.get("project-graph")),/继续训练 原文 strategy/);
-  assert.match(text(h.get("project-graph")),/保留目标 objective/);assert.doesNotMatch(text(h.get("project-graph")),/错误 原文 log/);
+  assert.doesNotMatch(text(h.get("project-graph")),/保留目标 objective/);assert.equal(h.run("state.snapshot.objective"),"保留目标 objective");assert.doesNotMatch(text(h.get("project-graph")),/错误 原文 log/);
   assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
   assert.match(text(h.get("graph-tools")),/Fit/);assert.equal(findClass(h.get("graph-tools"),"graph-control-group").length,2);assert.equal(findClass(h.get("graph-tools"),"zoom-reset")[0].textContent,"75%");
   assert.equal(findClass(h.get("project-graph"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);

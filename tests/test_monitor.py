@@ -20,6 +20,29 @@ class MonitorProjectionTests(unittest.TestCase):
     def project(self, **fields):
         return monitor.project_snapshot({'schema_version': 1, **fields}, 'run-1')
 
+    def test_explicit_action_changes_and_outcomes_are_projected_without_raw_payloads(self):
+        data = self.project(decisions=[{'reason': 'Improve the answer format',
+            'changes': [{'field': 'instructions', 'after': 'Answer concisely.', 'payload': 'PRIVATE'},
+                        {'field': 'steps', 'before': '16', 'after': '32'}],
+            'feedback_summary': 'Prompt proposed; evaluate before application',
+            'error': 'Evaluation rejected', 'payload': {'secret': 'PRIVATE'}, 'reasoning_content': 'PRIVATE'}])
+        row = data['decisions'][0]
+        self.assertEqual(row['changes'], [{'field': 'instructions', 'after': 'Answer concisely.'},
+                                         {'field': 'steps', 'before': '16', 'after': '32'}])
+        self.assertEqual(row['feedback_summary'], 'Prompt proposed; evaluate before application')
+        self.assertEqual(row['error'], 'Evaluation rejected')
+        self.assertNotIn('PRIVATE', json.dumps(data))
+
+    def test_action_change_projection_has_bounded_plain_text_fields(self):
+        changes = [{'field': 'x' * 101, 'after': '<script>' + 'x' * 5000, 'before': {'secret': 'hidden'}}] * 30
+        rows = self.project(decisions=[{'changes': changes}, {'changes': [None, 3, {},
+            {'field': 'valid', 'after': {'nested': 'hidden'}}, {'field': 'instructions', 'after': ''}]}])['decisions']
+        self.assertEqual(len(rows[0]['changes']), 20)
+        self.assertEqual(len(rows[0]['changes'][0]['field']), 100)
+        self.assertEqual(len(rows[0]['changes'][0]['after']), 4000)
+        self.assertNotIn('before', rows[0]['changes'][0])
+        self.assertEqual(rows[1]['changes'], [{'field': 'instructions', 'after': ''}])
+
     def test_public_workflow_execution_decisions_and_round_results(self):
         workflow = {'phase': 'training', 'round': 2, 'rounds': 3, 'completed_directives': 5,
                     'elapsed_seconds': 12.5}

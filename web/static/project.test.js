@@ -772,3 +772,25 @@ test("sidebar changes the deep link even when the new project has no selected cy
   const h=harness();setup(h,[project("p",[run("a")]),project("q",[run("b")])]);seed(h,"a",run("a"));h.run('selectRun("a"); refresh=function(){}; history.replaceState=function(_,__,url){savedURL=String(url)}; selectProject("q")');
   const url=new URL(h.run('savedURL'));assert.equal(url.searchParams.get('project'),'q');assert.equal(url.searchParams.has('run'),false);
 });
+
+test("decision detail shows rationale, submitted content and observed outcome without claiming application",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{objective:"Autonomous medical research",decisions:[{decision_id:"d",kind:"directive",mode:"configure_prompt",status:"completed",reason:"Responses need a consistent format",changes:[{field:"instructions",after:"Use short answers.\nDo not include a preamble."}],feedback_summary:"Prompt proposed; evaluate before application"}]}));h.run('selectRun("a")');
+  const detail=findClass(h.get("project-graph"),"run-detail")[0],text=textOf(detail);
+  assert.match(text,/Responses need a consistent format/);assert.match(text,/Use short answers/);assert.match(text,/Prompt proposed; evaluate before application/);
+  assert.doesNotMatch(text,/执行已完成|Autonomous medical research/);
+  assert.equal(findClass(detail,"change-before").length,0);
+});
+
+test("generic completed feedback does not create an empty result section",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"configure_prompt",status:"completed",feedback_summary:"执行已完成。"}]}));h.run('selectRun("a")');
+  assert.equal(findClass(h.get("project-graph"),"flow-feedback").length,0);
+});
+
+test("evaluation explains what is checked and keeps a failed result visible",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"evaluate",status:"failed",changes:[{field:"components",after:"instructions"},{field:"protocol_ref",after:"development"}],error:"No eligible examples"}]}));h.run('selectRun("a")');
+  const text=textOf(findClass(h.get("project-graph"),"run-detail")[0]);
+  assert.match(text,/验证改动效果/);assert.match(text,/检验新提示词的效果/);assert.match(text,/development/);assert.match(text,/No eligible examples/);
+});
