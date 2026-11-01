@@ -35,6 +35,19 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 
 Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the current page, selected experiment and decision, graph scroll and expanded records. Reported model text and logs stay verbatim.
 
+## 多主机部署约定
+
+两个正式入口共用仓库 `web/` 的同一版本，实验数据保持按主机读取：
+
+| 浏览器入口 | 监控服务 | 部署目录 | 数据目录 |
+|---|---|---|---|
+| `http://localhost:8767/` | lion `127.0.0.1:8765` | `/home/jovyan/projects/RSISys/web` | 同仓库 `runs/` |
+| `http://127.0.0.1:18777/` | modelmate `127.0.0.1:8877` | modelmate 的 `RSISys/monitor-ui/web` | `RSISys/runs/` |
+
+前端发布须同时更新两个部署的 `web/server.py` 和 `web/static/`，核对首页、app.js、decisions.js、style.css、i18n.js 的内容一致；服务端投影变化时仅重启监控服务。modelmate 的 `monitor-ui/version.json` 记录前端来源版本及文件摘要，`process.json` 记录实际监控 PID。更新前核验进程身份，保留旧前端备份。
+
+研究运行的 `runs/<run>/code` 是冻结实验代码，不作为前端发布源；更新监控不能覆盖它、重启模型服务或改变运行预算。两个入口不是数据镜像，列表不同不表示前端版本不同。`8769` / `8770` 等本地预览端口不作为会话间共享入口。
+
 ## 数据与交互
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
