@@ -12,6 +12,7 @@ from rsisys.config import DemoConfig, build_demo
 from rsisys.application import Application, ApplicationConfig
 from rsisys.runtime.run_policy import TimeRunPolicy
 from rsisys.loops.contracts.coordination import ReviewDecision, ExplorationProgress
+from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.loops.decision_making.harness.dsh import DSHConfig, dsh_decision_factory
 
@@ -83,6 +84,79 @@ class DSHTests(unittest.TestCase):
         self.assertEqual(runtime.opened, [('start', DSH.session_id)])
         self.assertIn('Prepared input artifact', runtime.prompts[-1])
         self.assertEqual(loop.harness.state.calls_with_missing_usage, 2)
+
+    def test_incremental_delivery_keeps_the_complete_latest_receipt(self):
+        import json
+        from rsisys.loops.decision_making.harness.context import IdentityContextCompactor
+        runtime = Runtime(['{"kind":"invoke","operation":"prepare_data","arguments":{"text":"x"}}',
+                           '{"kind":"finish","reason":"done"}'])
+        loop = self.build(runtime).decision_making
+        receipt = OperationResult('Long raw receipt '+('S'*1000), (), False,
+            data={'unknown_domain_field': {'raw': '完整最新反馈'*15000, 'tail': 'END-OF-RAW'}})
+        loop.harness.tools._bindings['prepare_data'] = lambda arguments: receipt
+        self.next_ready(loop.harness, loop.action_space)
+        self.next_ready(loop.harness, loop.action_space)
+        latest = json.loads(runtime.prompts[-1].split('Current research observations (data):\n')[1])
+        self.assertEqual(latest['operation_results'][-1]['data'], receipt.data)
+        self.assertEqual(latest['operation_results'][-1]['summary'], receipt.summary)
+        self.assertNotIn('objective', latest)
+        self.assertIn('directives', latest)  # Live schemas survive native compaction.
+        self.assertIn('RSISys action protocol for this turn:\nReturn one JSON', runtime.prompts[-1])
+        self.assertIsInstance(loop.harness.context_compactor, IdentityContextCompactor)
+        self.assertIsInstance(loop.harness.policy.parser.context_compactor, IdentityContextCompactor)
+
+    def test_transport_cursor_survives_recovery_without_replaying_history(self):
+        runtime = Runtime(['{"kind":"invoke","operation":"prepare_data","arguments":{"text":"cursor"}}'])
+        source = self.build(runtime).decision_making
+        self.next_ready(source.harness, source.action_space)
+        state = source.harness.export_recovery_state()
+        restored_runtime = Runtime(['{"kind":"finish"}'])
+        target = self.build(restored_runtime).decision_making
+        target.harness.restore_recovery_state(state)
+        self.next_ready(target.harness, target.action_space)
+        self.assertEqual(restored_runtime.opened, [('resume', DSH.session_id)])
+        self.assertNotIn('"objective"', restored_runtime.prompts[-1])
+        self.assertIn('"directives"', restored_runtime.prompts[-1])
+
+    def test_native_config_requires_explicit_chat_provider_and_valid_budgets(self):
+        self.assertEqual((DSH.trigger_tokens, DSH.target_tokens, DSH.summary_tokens), (80000, 24000, 4096))
+        with self.assertRaisesRegex(ValueError, 'base_url'):
+            replace(DSH, provider='openai-completions')
+        with self.assertRaisesRegex(ValueError, 'summary_tokens'):
+            replace(DSH, target_tokens=1024)
+        with self.assertRaisesRegex(ValueError, 'provider'):
+            replace(DSH, provider='implicit-qwen-fallback')
+
+    def test_post_compaction_aggregate_budget_withholds_oversized_proposal(self):
+        from rsisys.loops.decision_making.harness.context import ContextBudgetError
+        class Metered(Runtime):
+            def run(self, *args, **kwargs):
+                result = super().run(*args, **kwargs)
+                result.events = [{'type': 'compaction/summary'}, {'type': 'assistant/message',
+                    'data': {'usage': {'inputTokens': 1, 'outputTokens': 50, 'totalTokens': 25050}}}]
+                return result
+        loop = self.build(Metered(['{"kind":"finish"}'])).decision_making
+        loop.step('Research')
+        loop.harness.policy.future.exception(timeout=2)
+        with self.assertRaisesRegex(ContextBudgetError, 'proposal withheld'):
+            loop.step('Research')
+        self.assertFalse(loop.harness.state.finished)
+        observation = loop.harness.policy.backend.last_compaction
+        self.assertEqual(observation['full_input_tokens'], 25000)  # Includes cached input, not just uncached 1.
+        self.assertTrue(observation['full_request_checked'])
+
+    def test_post_compaction_missing_aggregate_usage_is_explicitly_unknown(self):
+        class Unmetered(Runtime):
+            def run(self, *args, **kwargs):
+                result = super().run(*args, **kwargs)
+                result.events = [{'type': 'compaction/summary'}]
+                return result
+        loop = self.build(Unmetered(['{"kind":"finish"}'])).decision_making
+        self.assertEqual(self.next_ready(loop.harness, loop.action_space).kind, 'finished')
+        observation = loop.harness.policy.backend.last_compaction
+        self.assertIsNone(observation['full_input_tokens'])
+        self.assertFalse(observation['full_request_checked'])
+        self.assertEqual(observation['count_method'], 'unknown')
 
     def test_waiting_ticks_do_not_duplicate_model_calls_or_history(self):
         gate = Event()
@@ -315,7 +389,7 @@ class DSHTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             replace(DSH, home=Path('relative'))
         with self.assertRaises(ValueError):
-            replace(DSH, max_tokens=8193)
+            replace(DSH, max_tokens=25001)
         with self.assertRaises(ValueError):
             replace(DSH, session_id='')
 

@@ -75,6 +75,36 @@ class StructuredTransportTests(unittest.TestCase):
             self.assertEqual(list(wire['oneOf'][0]['properties']['arguments']['properties']),
                              ['zeta', 'alpha'])
 
+    def test_token_counter_uses_root_endpoint_and_the_same_chat_template(self):
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.append((self.path, json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
+                body = b'{"count": 42}'
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args): pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        backend = VLLMBackend(replace(self.binding, endpoint=f'http://127.0.0.1:{server.server_port}/v1'),
+            generation_options={'chat_template_kwargs': {'enable_thinking': False}})
+        try:
+            self.assertEqual(backend.count_tokens(replace(self.request, system='Research instructions')), 42)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
+        path, payload = received[0]
+        self.assertEqual(path, '/tokenize')
+        self.assertEqual(payload['messages'], [{'role':'system','content':'Research instructions'},
+                                               {'role':'user','content':'choose'}])
+        self.assertTrue(payload['add_generation_prompt'])
+        self.assertEqual(payload['chat_template_kwargs'], {'enable_thinking':False})
+        for bad in (True, -1, '42', None):
+            with patch.object(backend, '_request', return_value={'count': bad}), self.assertRaises(ModelResponseError):
+                backend.count_tokens(self.request)
+
     def test_unstructured_requests_retain_existing_json_mode(self):
         with patch.object(self.backend, '_request', return_value=self.reply()) as call:
             self.backend.generate(replace(self.request, response_schema=None))

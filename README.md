@@ -12,9 +12,9 @@ Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策�
 
 长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，默认串行，可选隔离的并行实验；使用 `Application(..., durable=True)` 可把串行运行的回执、在途 Mock 作业和 RunPolicy 状态持久化，并通过 `Application.resume()` 重启；中断时结果不明的操作须先核对，见 [Runtime](src/rsisys/runtime/README.md)。
 
-默认 Decision Harness 提供可替换的上下文压缩、模型自主维护的计划 / todos / 阶段总结，以及原始记录分页查询。摘要只是带来源的导航，不替代原始实验结果，也不要求模型按固定研究步骤行动。
+默认 Decision Harness 使用可替换的 `BasicContextCompactor(trigger_tokens=80000, target_tokens=24000, summary_tokens=4096)`，在完整 `GenerationRequest` 构造后的 request 阶段计量输入 token，达到 80k 才压缩，24k 是压缩后总请求输入目标。VLLM 通过 `/tokenize` 精确计数；无 tokenizer 的 backend 使用明确标记的 UTF-8 保守上界。原始历史与工具回执持久保存在 raw archive，compact 不改写或删除归档原文，滚动摘要保留来源；最新工具结果及其最近 history 配对完整保留。若固定规则与最新完整反馈本身超过目标，返回明确预算错误，需分页或调整预算。模型仍自主维护计划 / todos / 阶段总结，并可分页查询原始记录；摘要只是导航，不替代原始证据或规定研究步骤。
 
-可选 [DSH Harness](src/rsisys/loops/decision_making/harness/dsh.py) 使用 DeepSeek Harness 的持久会话和原生压缩，通过同一 Action Space 提交操作。使用 `dsh_decision_factory(config)` 替换默认 Harness；其他 Harness 继续使用公开协议与 Python 工厂接入，见[使用指南](docs/GUIDE.md#使用-dsh-harness)。
+可选 [DSH Harness](src/rsisys/loops/decision_making/harness/dsh.py) 通过 `dsh_decision_factory(config)` 替换默认 Harness，可用于上下文实现的对照。持久 session 与会话压缩由原生 DSH 唯一负责，不先经过默认 context compactor；操作仍通过同一 Action Space，RSISys 保留权限、预算与双 loop 协调。其他 Harness 继续使用公开协议与 Python 工厂接入，见[使用指南](docs/GUIDE.md#使用-dsh-harness)。
 
 ## 快速开始
 
@@ -41,7 +41,7 @@ pixi run test
 
 [并行实验示例](examples/parallel_experiments.py) 展示隔离实验、动态控制和候选比较（Mock 验证）；[决策图示例](examples/decision_graph.py) 验证两项任务并行、多个结果确认采纳后汇合、后续执行消费组合改动，并输出监控图谱。运行 `PYTHONPATH=src:. python examples/decision_graph.py --run-dir runs/decision-graph-demo`（目录须未使用）。示例使用脚本策略与 CPU 产物任务，不代表自主模型研究或权重融合。反馈提取与工作区查询都可替换。
 
-[medical/](examples/medical/README.md) 是独立装配示例：冻结本地医学选择题数据，注入 researcher 模型、候选推理、learner 与系统启用器，再通过两个默认 Harness 和 Runner 研究 prompt / 训练候选。native.py 显式接通 tokenize、原生训练与候选服务准备；数据协议、固定评测与验收规则留在示例中。准备与检查不会下载模型、启动训练或服务，接线与边界见[使用指南](docs/GUIDE.md#独立医学研究示例)。
+[medical/](examples/medical/README.md) 是独立装配示例：冻结本地医学选择题数据，注入 researcher 模型、候选推理、learner 与系统启用器，再通过可选 default / DSH 决策 Harness、Exploration Harness 和 Runner 研究 prompt / 训练候选。native.py 显式接通 tokenize、原生训练与候选服务准备；数据协议、固定评测与验收规则留在示例中。准备与检查不会下载模型、启动训练或服务，接线与边界见[使用指南](docs/GUIDE.md#独立医学研究示例)。
 
 ## 系统文档
 

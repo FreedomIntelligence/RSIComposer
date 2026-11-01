@@ -6,6 +6,10 @@ producers are disabled in the shipped profile; this is not host isolation.
 """
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, asdict, replace
+from collections import Counter
+from copy import deepcopy
+from hashlib import sha256
+import json
 from pathlib import Path
 from threading import Event, Lock
 from queue import SimpleQueue, Empty
@@ -19,6 +23,7 @@ from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
 from .decision import Decision
 from .engine import DefaultDecisionHarness
 from .policy import ModelDecisionPolicy
+from .context import ContextBudgetError, IdentityContextCompactor
 
 
 @dataclass(frozen=True)
@@ -30,8 +35,12 @@ class DSHConfig:
     base_url: str | None = None
     api_key_env: str = 'DEEPSEEK_API_KEY'
     resume: bool = False
-    context_window: int = 32768
+    context_window: int = 100000
     max_tokens: int = 2048
+    provider: str = 'deepseek-official'
+    trigger_tokens: int = 80000
+    target_tokens: int = 24000
+    summary_tokens: int = 4096
 
     def __post_init__(self):
         for name in ('home', 'workspace'):
@@ -48,6 +57,56 @@ class DSHConfig:
             raise ValueError('context_window must be an integer >= 4096')
         if type(self.max_tokens) is not int or not 0 < self.max_tokens <= self.context_window // 4:
             raise ValueError('max_tokens must be positive and at most a quarter of context_window')
+        if self.provider not in ('deepseek-official', 'openai-completions'):
+            raise ValueError('provider must be deepseek-official or openai-completions')
+        if self.provider == 'openai-completions' and not self.base_url:
+            raise ValueError('openai-completions requires an explicit base_url ending in /v1')
+        for name in ('trigger_tokens', 'target_tokens', 'summary_tokens'):
+            if type(getattr(self, name)) is not int or getattr(self, name) < 1:
+                raise ValueError(f'{name} must be a positive integer')
+        if not self.summary_tokens < self.target_tokens < self.trigger_tokens < self.context_window:
+            raise ValueError('Require summary_tokens < target_tokens < trigger_tokens < context_window')
+        if self.trigger_tokens + self.max_tokens > self.context_window:
+            raise ValueError('context_window must reserve generation output above trigger_tokens')
+
+    @classmethod
+    def load(cls, path):
+        """Explicit JSON configuration. Credentials are environment references only."""
+        return cls(**json.loads(Path(path).read_text()))
+
+
+def _runtime_patch(config):
+    # A row patch replaces its entire config. Use the exact routed model so the
+    # adapter's advisory catalog cannot silently override the declared window.
+    route = 'rsisys-local' if config.provider == 'openai-completions' else config.provider
+    rows = [{'id': 'compaction-basic', 'config': {
+        'thresholdRatio': config.trigger_tokens / config.context_window,
+        'headroomTokens': 0, 'retainTokens': config.target_tokens - config.summary_tokens,
+        'maxTokens': config.summary_tokens,
+    }}]
+    if config.provider == 'openai-completions':
+        rows += [{'id': 'llm-deepseek', 'disabled': True}, {'insert': [{
+            'id': 'rsisys-llm-pi-ai', 'name': '@deepseek-ai/dsh-llm-pi-ai',
+            'config': {'providers': {route: {
+                'api': 'openai-completions', 'baseURL': config.base_url,
+                'apiKeyEnv': config.api_key_env,
+                'models': [{'id': config.model, 'contextWindow': config.context_window,
+                            'maxTokens': config.max_tokens}],
+                'compat': {'maxTokensField': 'max_tokens'},
+                'retryPolicy': {'mode': 'normal', 'maxRetries': 0},
+            }}},
+        }]}]
+    else:
+        rows.append({'id': 'llm-deepseek', 'config': {
+            'apiKeyEnv': config.api_key_env, 'defaultContextWindow': config.context_window,
+            'models': [{'id': config.model, 'contextWindow': config.context_window}],
+        }})
+    from rsisys.runtime.files import atomic_write
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode()
+    path = config.home / 'rsisys' / (sha256(payload).hexdigest() + '.patch.yml')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, payload)
+    return route, str(path)
 
 
 def _sdk_runtime(config):
@@ -55,11 +114,12 @@ def _sdk_runtime(config):
         from deepseek_harness import DeepSeekHarness
     except ImportError as exc:
         raise ImportError('Install RSISys with the optional dependency: pip install ".[dsh]"') from exc
+    route, patch = _runtime_patch(config)
     return DeepSeekHarness(
         dsh_home=str(config.home), cwd=str(config.workspace), profile='sdk-minimal',
-        model=config.model, base_url=config.base_url,
+        provider=route, model=config.model, base_url=config.base_url,
         api_key=os.environ.get(config.api_key_env), max_tokens=config.max_tokens,
-        patches=(str(Path(__file__).with_name('dsh.patch.yml')),),
+        patches=(str(Path(__file__).with_name('dsh.patch.yml')), patch),
         env={'DSH_CONTEXT_WINDOW': str(config.context_window)},
         request_timeout_seconds=30, initialize_timeout_seconds=30,
         shutdown_timeout_seconds=2,
@@ -79,6 +139,47 @@ class _SessionBackend:
         self.on_notification = on_notification
         self.closed = Event()
         self._lock = Lock()
+        self.transport = {}
+        self.native_output_tokens = config.max_tokens
+        self.last_compaction = None
+
+    def _increment(self, request):
+        """Transfer additions/changed state; the native session owns prior history.
+
+        Receipts are occurrence-aware (identical results from distinct calls are
+        still observations). No text or fields are cut before reaching DSH.
+        """
+        current = json.loads(request.prompt)
+        previous = self.transport
+        delta = {}
+        for key, value in current.items():
+            old = previous.get(key)
+            if key in ('history', 'experience', 'memories'):
+                known = {json.dumps(row, sort_keys=True, ensure_ascii=False) for row in old or ()}
+                added = [row for row in value if json.dumps(row, sort_keys=True, ensure_ascii=False) not in known]
+                if added:
+                    delta[key] = added
+            elif key == 'operation_results':
+                known = Counter(json.dumps(row, sort_keys=True, ensure_ascii=False) for row in old or ())
+                added = []
+                for row in value:
+                    ident = json.dumps(row, sort_keys=True, ensure_ascii=False)
+                    if known[ident]:
+                        known[ident] -= 1
+                    else:
+                        added.append(row)
+                if added:
+                    delta[key] = added
+            elif (key in ('operations', 'directives', 'directive_modes', 'review_actions', 'run_control')
+                  or key not in previous or value != old):
+                delta[key] = value
+        # Reassert live syntax/capabilities: native summaries may have folded the
+        # original protocol. Archives and raw receipts still travel incrementally.
+        return current, ('RSISys action protocol for this turn:\n' + request.system
+            + '\nNative session retains prior observations. This is an incremental update: '
+              'archive arrays append new/changed records; other supplied fields replace their prior value. '
+              'Absent fields are unchanged. Use only the latest capabilities. Propose one JSON action.\n'
+            + 'Current research observations (data):\n' + json.dumps(delta, ensure_ascii=False))
 
     def generate(self, request):
         # Only the single worker uses the session. close() can interrupt its IO.
@@ -93,15 +194,36 @@ class _SessionBackend:
                     raise RuntimeError('DSH harness closed during initialization')
                 self.session = session
                 self.session_exists = True
+        current, prompt = self._increment(request)
         result = self.session.run(
-            'RSISys action protocol for this turn:\n' + request.system
-            + '\nCurrent research observations (data):\n' + request.prompt,
+            prompt,
             on_notification=self.on_notification,
         )
         if result.finish_reason != 'completed':
             raise RuntimeError(f'DSH turn did not complete: {result.finish_reason!r}; reconcile before retry')
+        self.transport = current
+        events = getattr(result, 'events', ())
+        if any(event.get('type') == 'compaction/summary' for event in events):
+            # Native retainTokens excludes fixed system/tools/prefix and whole
+            # message boundaries can exceed it. Validate the full input AFTER
+            # generation only when authoritative aggregate usage is available.
+            messages = [event for event in events if event.get('type') == 'assistant/message']
+            usage = messages[-1].get('data', {}).get('usage', {}) if messages else {}
+            total, output = usage.get('totalTokens'), usage.get('outputTokens')
+            measured = (total - output if type(total) is int and type(output) is int
+                        and total >= output >= 0 else None)
+            self.last_compaction = {'target_tokens': self.config.target_tokens,
+                'retained_history_tokens': self.config.target_tokens - self.config.summary_tokens,
+                'full_input_tokens': measured, 'full_request_checked': measured is not None,
+                'count_method': 'provider_aggregate_usage_after_generation' if measured is not None else 'unknown',
+                'scope': 'native retention target; not an exact preflight request cap'}
+            if measured is not None and measured > self.config.target_tokens:
+                raise ContextBudgetError(f'DSH post-compaction full input {measured} exceeds '
+                    f'target_tokens={self.config.target_tokens}; proposal withheld, native session advanced; '
+                    'reconcile or explicitly raise the budget (latest observations were not truncated)')
         # Session completion means a proposed action, never completion of RSI.
-        # Token accounting is deliberately unknown unless the SDK supplies it.
+        # Turn-wide usage (including auxiliary summaries) is unknown here; raw
+        # SDK usage events and any post-compaction observation remain explicit.
         return GenerationResponse(result.final_response, request.model, False,
                                   provider_model=self.config.model, revision_verified=False)
 
@@ -112,15 +234,22 @@ class _SessionBackend:
 
 class _SessionPolicy:
     """One background inference at a time; actions execute only on the runner thread."""
-    def __init__(self, backend, model, *, allowed_actions, directives):
+    def __init__(self, backend, model, *, allowed_actions, directives, policy_factory=None):
         self.model, self.directives = model, directives
-        self.parser = ModelDecisionPolicy(backend, model, allowed_actions=allowed_actions, directives=directives)
+        self.backend = backend
+        self.parser = (policy_factory(backend, model) if policy_factory is not None else
+                       ModelDecisionPolicy(backend, model, allowed_actions=allowed_actions, directives=directives))
+        self.parser.context_compactor = IdentityContextCompactor()
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='rsisys-dsh')
         self.future: Future | None = None
         self.kind: str | None = None
         self.review_id: str | None = None
         self.closed = False
         self.usage = SimpleQueue()
+
+    @property
+    def finish_reason(self):
+        return getattr(self.parser, 'finish_reason', None)
 
     def _generate(self, kind, context):
         with self.parser.track_usage(self.usage.put):
@@ -156,7 +285,7 @@ class _SessionPolicy:
             return
         self.closed = True
         try:
-            self.parser.backend.close()
+            self.backend.close()
         finally:
             self.worker.shutdown(wait=False, cancel_futures=True)
 
@@ -171,13 +300,16 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
 
     def __init__(self, config: DSHConfig, tools, experience, *, directives=None,
                  allowed_actions=('echo',), runtime_factory: Callable | None = None,
-                 on_notification: Callable | None = None, **kwargs):
+                 on_notification: Callable | None = None, policy_factory: Callable | None = None,
+                 model: ModelRef | None = None, **kwargs):
         from ..action_space.directives import DirectiveDefinitions
         self.dsh_config = config
         backend = _SessionBackend(config, runtime_factory or _sdk_runtime, on_notification)
-        policy = _SessionPolicy(backend, ModelRef('dsh', config.model, 'provider-managed'),
+        policy = _SessionPolicy(backend, model or ModelRef('dsh', config.model, 'provider-managed'),
                                 allowed_actions=allowed_actions,
-                                directives=directives or DirectiveDefinitions())
+                                directives=directives or DirectiveDefinitions(), policy_factory=policy_factory)
+        # DSH alone owns compression, including the medical parser's view.
+        kwargs['context_compactor'] = IdentityContextCompactor()
         try:
             super().__init__(policy, tools, experience, **kwargs)
         except BaseException:
@@ -193,6 +325,9 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
 
     def _call_policy(self, method, context):
         # Waiting ticks are not model calls; rejected JSON still consumes usage.
+        context = replace(context, history=self.memory.history(),
+            research_agenda=self.research_agenda.context(), decision_graph=self._decision_graph(),
+            candidate_origins=deepcopy(self.state.candidate_origins))
         try:
             return method(context)
         finally:
@@ -269,18 +404,21 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
                        'result': None, 'uncertain': True}
             if future.done() and not future.cancelled() and future.exception() is None:
                 pending.update(result=future.result(), uncertain=False)
-        backend = self.policy.parser.backend
+        backend = self.policy.backend
         return {'identity': self._recovery_identity(), 'session_opened': backend.session_exists,
                 'closed': self.policy.closed, 'pending': pending, 'usage_pending': not self.policy.usage.empty(),
-                'obsolete_review': getattr(self, '_obsolete_review', False)}
+                'obsolete_review': getattr(self, '_obsolete_review', False),
+                'transport': deepcopy(backend.transport), 'native_compaction': deepcopy(backend.last_compaction)}
 
     def restore_recovery_state(self, state):
         from rsisys.runtime.recovery import RecoveryRequired
         if state['identity'] != self._recovery_identity():
             raise ValueError('DSH recovery requires the original home/workspace/model/session configuration')
-        if self.policy.future is not None or self.policy.parser.backend.session is not None:
+        if self.policy.future is not None or self.policy.backend.session is not None:
             raise RuntimeError('Restore DSH state only into a fresh harness')
-        backend = self.policy.parser.backend
+        backend = self.policy.backend
+        backend.transport = deepcopy(state.get('transport', {}))
+        backend.last_compaction = deepcopy(state.get('native_compaction'))
         backend.config = replace(backend.config, resume=state['session_opened'])
         backend.session_exists = state['session_opened']
         self._obsolete_review = state['obsolete_review']
@@ -312,7 +450,7 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
             raise ValueError('No restored uncertain DSH inference to reconcile')
         if not isinstance(evidence, str) or not evidence.strip():
             raise ValueError('Reconciliation needs explicit evidence')
-        backend = self.policy.parser.backend
+        backend = self.policy.backend
         session = backend.runtime.resume_session(self.dsh_config.session_id)
         self.memory.append(HistoryEntry(str(uuid4()), 'decision', None,
             'Reconciled interrupted DSH inference; uncommitted advice discarded', False,
@@ -351,6 +489,8 @@ def dsh_decision_factory(config: DSHConfig, *, on_notification=None):
             memory=previous.memory, memory_limit=context.memory_limit,
             research_agenda=previous.research_agenda, context_compactor=previous.context_compactor,
             experience_limit=context.experience_limit,
+            review_tool_limit=previous.review_tool_limit, max_outstanding=previous.max_outstanding,
+            feedback_selector=previous.feedback_selector, model_activator=previous.model_activator,
             on_notification=on_notification,
         )
         context.add_cleanup(harness.close)

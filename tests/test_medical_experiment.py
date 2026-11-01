@@ -332,9 +332,10 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(self.read('systems.json')['current']['version'], self.serving.activated[0].version)
         self.assertTrue(self.read('experience.json'))
         view = self.serving.contexts[-1]
-        self.assertIn('research_archive', view['context_summary']['policy_view'])
-        self.assertTrue(all('directive' not in row['details'] and 'objective' not in row['details']
-                            for row in view['history']))
+        self.assertNotIn('policy_view', view['context_summary'])
+        self.assertTrue(any('directive' in record['details'] or 'objective' in record['details']
+                            for record in view['history']))
+        self.assertEqual(view['run_control']['initial_training_data']['kind'], 'training_data')
         self.assertTrue(view['candidate_evaluations'])
         native_request, native_key = next(iter(self.process.requests.values()))
         receipt = next(iter(self.read('training/budget.json').values()))

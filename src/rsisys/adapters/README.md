@@ -162,6 +162,11 @@ needs no distributed launcher. This does not install dependencies or allocate
 cluster resources. CANN and device visibility are preserved by the process
 adapter; optional frameworks remain imported only inside the worker.
 
+`VLLMBackend.count_tokens(request)` 调用服务根路径 `/tokenize`，使用相同 model alias、
+messages 和 chat_template_kwargs，计数包含 generation prompt。原生 tokenizer 不可用或返回无效
+count 时明确报错；实现其他服务的 adapter 时，可提供同名计数方法。计数调用不产生模型决策，
+但消耗正常运行时间。模型生成、摘要调用仍由原有预算管理。
+
 `VLLMBackend.supports_response_schema` advertises native structured-output
 transport. `GenerationRequest.response_schema` becomes `response_format` with
 `type=json_schema`, `strict=true` and that exact schema. Schema property order

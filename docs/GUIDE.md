@@ -335,10 +335,12 @@ tokenize / 进程训练包装与候选路由准备；完整接线见上述 READM
 
 ## 默认长程研究能力
 
-默认 Harness 的 `ContextCompactor.compact(context, recent_limit=...)` 可替换；
-`BasicContextCompactor` 以字符预算保留近期完整记录，对超出的历史生成带来源与摘要哈希的摘录导航，
-完整历史仍可查询。它不是语义推理模型，也不是整个模型输入的 token 上限；目标、能力 schema、
-候选和运行控制字段不被静默裁剪。`IdentityContextCompactor` 可用于已有自己上下文管理的策略。
+默认 `BasicContextCompactor` 按完整模型请求预算，在 80k tokens 触发后压缩旧历史，
+压缩后以 24k 为目标。最新完整工具反馈与对应近期历史保留，旧记录生成带来源的滚动摘要，
+原始档案仍可查询。vLLM 使用 `/tokenize`；没有 tokenizer 的后端明确标记 UTF-8 保守估计。
+摘要使用同一模型预算，压缩失败不会丢弃反馈或执行动作。固定内容与最新反馈本身超出目标时
+明确报预算错误，需分页或提高预算。`IdentityContextCompactor` 用于 DSH 等自行管理会话的 Harness。
+具体配置、计数和 snapshot 约定见 [Decision Harness](../src/rsisys/loops/decision_making/harness/README.md)。
 
 `ResearchAgenda` 保存模型维护的 agenda、todo、stage_summary；默认装配注册
 `research_read`、`research_patch`、`research_archive`。模型按稳定 ID 增量修改，带 expected_revision

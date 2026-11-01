@@ -123,6 +123,7 @@ PYTHONPATH=src:. python3.12 -m examples.medical.experiment \
 ```
 
 There is no subcommand or separate backend/settings/recipe JSON for this entry.
+The optional DSH harness takes an explicit session/provider JSON as described below.
 For a single node with eight GPUs, select `--serving-backend sglang
 --tensor-parallel-size 8 --training-processes 8`. The optional
 [SGLang runtime](sglang_runtime.py) handles inference tensor parallelism;
@@ -147,8 +148,13 @@ an 8192-token response limit and sampling (temperature 0.6, top-p 0.95, top-k 20
 Only the final answer after the reasoning delimiter reaches the decision parser;
 incomplete reasoning is rejected. Token usage includes reasoning. Actor scoring
 and completion-only SFT remain non-thinking, with greedy actor inference.
-The policy sends recent history/experience summaries while preserving current
-feedback, candidate measurements, operation results and the full readable archives.
+The default policy retains complete context below 80,000 input tokens, then
+summarizes older records toward a complete request budget of 24,000 tokens.
+It protects the latest tool receipt, two newest history records and current
+feedback in full; an oversized protected request fails rather than cutting that
+feedback. A native tokenizer is used when available; otherwise the count is
+explicitly a conservative UTF-8 estimate. Full archives remain readable. The
+medical policy adds no 600-character summary, field allowlist or 8k character limit.
 It uses **LoRA SFT, not full-parameter training or RL**. The researcher chooses
 data subsets, bounded recipes, prompt experiments, evaluation and application;
 there is no fixed three-round research script. Defaults allow 90 minutes of
@@ -164,6 +170,98 @@ The research objective is to improve both MedXpertQA and MedQA performance.
 The researcher chooses data, SFT recipes, inference prompts or combinations;
 no particular method or training submission is required. It chooses its plan
 and can finish with a reason within the externally defined capabilities and budget.
+
+### Replace the decision harness with DSH
+
+`--decision-harness default` remains the default. Select `dsh` to replace the
+whole decision harness with `DeepSeekDecisionHarness`, including its persistent
+native session, asynchronous lifecycle and native compaction. Both choices use
+the same medical operation/directive registrations, execution-time permissions,
+training allowance, external run policy, actor, evaluator, candidates and evidence
+store. `ResearchPolicy` supplies medical JSON parsing/validation to either harness;
+DSH owns generation and context management. Both its parser and outer harness use
+`IdentityContextCompactor`, so there is no second Basic compaction layer.
+
+Install the pinned optional SDK in an isolated environment, outside model serving
+or training environments, after reading the [official SDK instructions](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/README.md).
+For the existing Qwen/vLLM Chat Completions endpoint, use an absolute JSON path:
+
+```json
+{
+  "home": "/absolute/isolated/dsh-medical-home",
+  "workspace": "/absolute/medical-workspace",
+  "model": "Qwen3.8-27B",
+  "session_id": "medical-independent-comparison-001",
+  "provider": "openai-completions",
+  "base_url": "http://127.0.0.1:8000/v1",
+  "api_key_env": "RESEARCHER_API_KEY",
+  "context_window": 131072,
+  "max_tokens": 2048,
+  "trigger_tokens": 80000,
+  "target_tokens": 24000,
+  "summary_tokens": 4096
+}
+```
+
+Provide the endpoint credential through the named environment variable; keyless
+local endpoints may accept an explicit placeholder. `base_url` must name the API
+root, not `/chat/completions`. The declared capacity must match the serving model.
+Each comparison uses a fresh native session and a fresh experiment run directory;
+this experiment entry rejects `resume=true` and never launches a run automatically.
+Add these flags to the ordinary explicitly launched experiment command:
+
+```bash
+--decision-harness dsh --dsh-config /absolute/dsh-medical.json
+```
+
+Fixed SDK `0.2.1rc2`'s `deepseek-official` route uses `/v1/messages`; a base URL
+override does **not** make it compatible with Qwen's `/v1/chat/completions`. The
+explicit `openai-completions` option mounts the bundled `llm-pi-ai` plugin and
+registers `rsisys-local`, with native retries disabled. Plugin/configuration errors
+fail visibly; there is no provider fallback. This route has been checked with the
+real pinned SDK/runtime, persistent-session resume and automatic compaction against
+a deterministic loopback SSE server. The same pinned SDK also completed two
+synthetic read-only turns against the existing `Qwen3.8-27B` vLLM endpoint through
+this route, with provider-reported input/output usage of 229/101 and 404/52; the
+second response retained the latest raw receipt marker. This verifies actual
+provider access, not a real medical experiment or native 80k-to-24k compaction
+against that model. The large native compaction test remains a fixture test.
+
+DSH sends new complete tool receipts and new/changed archive records incrementally.
+It reasserts the live JSON protocol, operation/directive schemas and run control
+each turn so native summaries cannot erase the current permissions or syntax.
+The fixed training input reference is published in run control; it is not appended
+after each tool receipt. The native session retains older observations and the
+transport cursor participates in DSH recovery.
+
+DSH's 80k trigger uses the native meter. Its 24k **retention target** allocates
+19,904 tokens to recent native history and caps the native summary at 4,096.
+Fixed system/tool/session-prefix tokens and indivisible message boundaries are
+outside that retention calculation. This is not the default harness's strict
+preflight check of the complete request against 24k. After a native summary, if
+the SDK supplies authoritative aggregate `totalTokens` and `outputTokens`, the
+adapter checks their difference against 24k and withholds an oversized proposal
+with `ContextBudgetError`; the native session has already advanced and requires
+reconciliation. Without those counters, full-request validation remains explicitly
+unknown. `dsh_context_budget.json` records that distinction. No tool receipt is
+shortened by the RSISys transport to meet the target.
+
+`max_model_calls` counts admitted native turns plus conservative reservations at
+SDK `compaction/start` events, including attempts that may need no model call.
+Waiting scheduler ticks consume no calls. Native notification delivery is not a
+synchronous HTTP admission hook, so this count is not an exact internal-request
+count and cannot recall an already dispatched inference. Full SDK events are
+archived in `dsh_events.jsonl`; unknown turn-wide token usage stays unknown.
+`decision_harness.json` records provider, budgets and counting mode.
+
+Programmatic `run(..., dsh_runtime_factory=...)` injects a runtime for controlled
+comparisons. `decision_harness_factory(**dependencies)` may replace construction;
+dependencies include tools, experience, memory, agenda, directives, model,
+`policy_factory(native_backend, model)`, budget backend, DSH config/runtime factory
+and native notification callback. Preserve those dependencies to keep the same
+capabilities and accounting. DSH uses its configured independent researcher;
+`decision_backend` is reserved for the default harness and is rejected with DSH.
+Neither choice requires training or a `finish` decision to consume the full budget.
 
 The initial baseline is measured before research starts and its evidence is
 readable through `read_artifact`. It is not a proposed candidate. Candidate

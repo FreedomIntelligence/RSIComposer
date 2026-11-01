@@ -4,7 +4,7 @@
 
 ## 接口
 
-[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈、directive_modes 和跨轮 candidates。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 分别限制本地 history 和工作记忆条数，两者必须为正整数；候选集合不受这两个 limit 截断。scope 仅标记证据来源，不是优化目标接口。
+[DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈、directive_modes 和跨轮 candidates。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 限制工作记忆 recall 条数，本地 history 由 token 预算管理，两者必须为正整数；候选集合不受这两个 limit 截断。scope 仅标记证据来源，不是优化目标接口。
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项。四种决策都可附顶层 `reason` 字符串，省略时保留既有空字符串默认值；显式提供 null、数字、布尔、数组或对象均拒绝。wait 的任务由外部通过 `loop.harness.resume(job, result)` 回填，见 [Harness](../README.md)。
 
@@ -66,3 +66,7 @@ explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`Model
 内置 update_model 只更改当前策略的模型引用，拒绝切换 backend_id。explore 的系统指令交给 Exploration Harness；训练/评测仍需配置对应后端。`configure_prompt` 使用 PromptSpec(instructions)，空字符串清空 Actor 指令配置，结构见[共享协议](../../../contracts/README.md)。
 
 决策者自身训练可通过 Harness 本地调用，见 [learner](../learner/README.md)；当前没有自动自优化指令或触发机制。SystemVersion / Candidate 可描述命名组件变更，具体组件校验和启用仍由消费方及 SystemActivator 实现，不自动执行任意代码修改。
+
+`context_compactor` 默认使用 80k→24k 的 `BasicContextCompactor`，在最终决策/review请求构造后
+计量，包含协议和能力定义。摘要调用也经过 backend 并记录 usage；最新完整工具结果不被删除。
+DefaultDecisionHarness 注入同一实例，避免双重压缩；DSH 使用 Identity，由原生会话管理上下文。

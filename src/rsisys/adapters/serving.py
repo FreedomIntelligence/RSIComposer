@@ -107,6 +107,23 @@ class VLLMBackend(RemoteModelBackend):
         return GenerationResponse(message['content'], request.model, False, usage, alias,
                                   revision_verified=data.get('model_revision') is not None)
 
+    token_count_mode = 'provider_tokenizer'
+
+    def count_tokens(self, request):
+        """Price the actual chat template at vLLM's root /tokenize endpoint."""
+        if request.model.backend_id != self.binding.backend_id:
+            raise ValueError('Token request does not match backend')
+        messages = ([{'role': 'system', 'content': request.system}] if request.system else [])
+        messages.append({'role': 'user', 'content': request.prompt})
+        payload = {'model': self._alias(request.model), 'messages': messages,
+                   'add_generation_prompt': True, 'return_tokens': False,
+                   'chat_template_kwargs': self.generation_options.get('chat_template_kwargs', {})}
+        result = self._request('tokenize', payload)
+        count = result.get('count')
+        if type(count) is not int or count < 0:
+            raise ModelResponseError('Malformed vLLM token count; configure a compatible token counter')
+        return count
+
     def _request(self, route, payload=None):
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
         if self.binding.credential_env:
@@ -119,7 +136,10 @@ class VLLMBackend(RemoteModelBackend):
                 return None
         # Schema property order affects constrained decoding. Canonical sorting is
         # for artifact identities, never for the inference wire representation.
-        request = Request(self.binding.endpoint.rstrip('/') + '/' + route,
+        endpoint = self.binding.endpoint.rstrip('/')
+        if route == 'tokenize' and endpoint.endswith('/v1'):
+            endpoint = endpoint[:-3]
+        request = Request(endpoint + '/' + route,
             data=None if payload is None else json.dumps(payload, allow_nan=False).encode(), headers=headers,
             method='GET' if payload is None else 'POST')
         try:

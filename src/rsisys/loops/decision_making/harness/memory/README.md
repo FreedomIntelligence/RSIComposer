@@ -12,7 +12,7 @@
 
 ## 接入与边界
 
-通过 DefaultDecisionHarness 的 memory 参数注入，默认使用 DecisionMemory；memory_limit=32 分别限制 DecisionContext 的 history 与 memories 条数。上下文同时包含全部来源的系统 experience，受独立的 experience_limit 控制。
+通过 DefaultDecisionHarness 的 memory 参数注入，默认使用 DecisionMemory；memory_limit=32 限制 DecisionContext 的工作记忆 recall 条数，history 由 80k→24k token 预算管理。上下文同时包含全部来源的系统 experience，受独立的 experience_limit 控制。
 
 实现 MemoryStore 即可替换；自定义实现的持久化和[快照集成](../../../../snapshot/README.md)需另行提供，当前快照仅支持内置实现。
 

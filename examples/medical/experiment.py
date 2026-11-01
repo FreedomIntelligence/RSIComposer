@@ -11,6 +11,7 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
+from inspect import getattr_static
 import json
 import math
 from pathlib import Path
@@ -30,7 +31,8 @@ from rsisys.loops.contracts.model_service import ModelBackend, ModelRef
 from rsisys.loops.contracts.training import ResumeMode
 from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace, OperationCall, OperationSpec
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
-from rsisys.loops.decision_making.harness.context import BasicContextCompactor
+from rsisys.loops.decision_making.harness.dsh import DSHConfig, DeepSeekDecisionHarness
+from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.exploration.harness.commands import CommandHandler
@@ -85,6 +87,8 @@ class ExperimentSettings:
     project_id: str = 'medical-rsi'
     project_name: str = '医疗自主研究'
     experiment_name: str | None = None
+    decision_harness: str = 'default'
+    dsh_config: Path | None = None
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -117,6 +121,14 @@ class ExperimentSettings:
         if self.experiment_name is not None and (not isinstance(self.experiment_name, str) or not self.experiment_name.strip()):
             raise ValueError('experiment_name must be a nonempty string when supplied')
         RunSource(self.run_dir.resolve().name, self.parent_run_id)
+        if self.decision_harness not in ('default', 'dsh'):
+            raise ValueError('decision_harness must be default or dsh')
+        if self.dsh_config is not None and not isinstance(self.dsh_config, Path):
+            raise TypeError('dsh_config must be a Path')
+        if self.decision_harness == 'dsh' and self.dsh_config is None:
+            raise ValueError('dsh requires an explicit dsh_config JSON file')
+        if self.decision_harness == 'default' and self.dsh_config is not None:
+            raise ValueError('dsh_config requires decision_harness=dsh')
 
 
 class JournalMonitor(Monitor):
@@ -135,6 +147,41 @@ class DecisionBackend:
         self.calls = 0
         self.check_deadline: Callable[[], None] = lambda: None
         self.training_active: Callable[[], bool] = lambda: False
+        self.decision_pending: Callable[[], bool] = lambda: False
+
+    def count_tokens(self, request):
+        counter = (getattr(self.serving, 'count_tokens', None)
+                   if getattr_static(self.serving, 'count_tokens', None) is not None else None)
+        if callable(counter):
+            return counter(request)
+        return len(json.dumps({'messages': [{'role': 'system', 'content': request.system},
+                                           {'role': 'user', 'content': request.prompt}]}).encode('utf-8'))
+
+    @property
+    def token_count_mode(self):
+        if getattr_static(self.serving, 'count_tokens', None) is None:
+            return 'utf8_conservative_estimate'
+        return (getattr(self.serving, 'token_count_mode')
+                if getattr_static(self.serving, 'token_count_mode', None) is not None else 'provider_tokenizer')
+
+    def native_notification(self, notification):
+        """Reserve auxiliary native compaction attempts, never scheduler ticks.
+
+        The SDK does not expose a synchronous transport admission hook. This is
+        a conservative reservation at the native compaction/start event, not an
+        exact HTTP-request count or a guarantee to interrupt an in-flight call.
+        """
+        event = notification.payload.get('event', {})
+        if notification.method == 'session.event' and event.get('type') == 'compaction/start':
+            self.check_deadline()
+            if self.calls >= self.limit:
+                raise BudgetExhausted('model_call_budget_exhausted')
+            self.calls += 1
+            write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
+                'count_mode': 'native_turns_and_compaction_reservations', 'token_usage': 'unknown'})
+            self.monitor.event('native_compaction_reserved', call=self.calls, sdk_event=event)
+        with (self.root / 'dsh_events.jsonl').open('ab') as stream:
+            stream.write(encoded({'method': notification.method, 'payload': notification.payload}) + b'\n')
 
     @property
     def supports_response_schema(self):
@@ -147,18 +194,20 @@ class DecisionBackend:
         if self.calls >= self.limit:
             raise BudgetExhausted('model_call_budget_exhausted')
         self.calls += 1
+        call_id = self.calls
         model = asdict(request.model)
         write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
                                                   'requested_model': model})
         self.monitor.event('model_decision_requested', call=self.calls, requested_model=model)
-        request = replace(request, max_output_tokens=8192 if self.decision_thinking else 1024)
+        cap = getattr(self.serving, 'native_output_tokens', 8192 if self.decision_thinking else 1024)
+        request = replace(request, max_output_tokens=min(cap, request.max_output_tokens))
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
             # Retain schema property order so request logs can reproduce decoding.
             stream.write(json.dumps({'call': self.calls, 'request': asdict(request)},
                 ensure_ascii=False, allow_nan=False).encode() + b'\n')
         response = self.serving.generate(request)
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
-            stream.write(encoded({'call': self.calls, 'requested_model': model,
+            stream.write(encoded({'call': call_id, 'requested_model': model,
                                   'response': asdict(response)}) + b'\n')
         self.check_deadline()
         return response
@@ -174,7 +223,7 @@ class ExperimentRunPolicy:
             return RunDecision('stop', 'deadline', 'cancel')
         if context.researcher_finished:
             return RunDecision('stop', 'researcher_finished', 'cancel')
-        if self.backend.calls >= self.backend.limit:
+        if self.backend.calls >= self.backend.limit and not self.backend.decision_pending():
             return RunDecision('stop', 'model_call_budget_exhausted', 'cancel')
         return RunDecision()
 
@@ -541,6 +590,12 @@ class ResearchPolicy(ModelDecisionPolicy):
         self.train_ref = train_ref
         self.finish_reason: str | None = None
 
+    def _decision_request(self, context):
+        request = super()._decision_request(context)
+        cap = getattr(self.backend.serving, 'native_output_tokens',
+                      8192 if self.backend.decision_thinking else 1024)
+        return replace(request, max_output_tokens=cap)
+
     def decision_schema(self, context):
         schema = super().decision_schema(context)
         # Match this example's existing serial execution rules, without choosing an action.
@@ -556,20 +611,6 @@ class ResearchPolicy(ModelDecisionPolicy):
                 fields['input_ids']['minItems'] = 1
                 branch['required'].append('input_ids')
         return schema
-
-    def _generate_decision(self, context):
-        # Keep the full archives in Harness/Experience, but avoid injecting the
-        # same objective/directive bodies through several history streams.
-        keep = {'status', 'error', 'quality_metrics', 'training_metrics', 'execution_metrics',
-                'metrics', 'mode', 'candidate_id', 'evaluation'}
-        def digest(record):
-            return replace(record, summary=record.summary[:600],
-                           details={k: v for k, v in record.details.items() if k in keep})
-        view = replace(context, history=tuple(digest(row) for row in context.history[-8:]),
-            experience=tuple(digest(row) for row in context.experience[-6:]), directive_provenance=(),
-            context_summary={**context.context_summary,
-                'policy_view': 'Recent record summaries; full history/experience remains in research_archive.'})
-        return super()._generate_decision(view)
 
     def _parse_decision(self, response, context):
         """Resolve envelope spelling only when an allowed action has one owner.
@@ -601,7 +642,8 @@ class ResearchPolicy(ModelDecisionPolicy):
         name = names[0] if names else None
         normalized = None
         if name in operations ^ directives:
-            if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds', 'reason'}:
+            if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids',
+                               'review_after_seconds', 'reason', 'depends_on_decision_ids', 'source_decision_ids'}:
                 raise ValueError('Unexpected fields in action envelope')
             if name in operations:
                 if payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None:
@@ -613,9 +655,21 @@ class ResearchPolicy(ModelDecisionPolicy):
                 normalized.update({key: payload[key] for key in ('input_ids', 'review_after_seconds') if key in payload})
             if 'reason' in payload:
                 normalized['reason'] = payload['reason']
+            normalized.update({key: payload[key] for key in ('depends_on_decision_ids', 'source_decision_ids')
+                               if key in payload})
         if normalized is not None and normalized != payload:
             self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
             response = replace(response, text=json.dumps(normalized))
+        # This immutable input is explicitly published in run_control. The core
+        # serial harness clears operation_results after directive feedback; make
+        # the fixed initial reference resolvable for an explicit later train.
+        # This affects parsing only and never displaces the latest model receipt.
+        parsed = normalized if normalized is not None else payload
+        if (parsed.get('kind') == 'explore' and parsed.get('mode') == 'train'
+                and self.train_ref.artifact_id in parsed.get('input_ids', ())
+                and not any(self.train_ref in row.artifacts for row in context.operation_results)):
+            context = replace(context, operation_results=(OperationResult(
+                'Fixed initial training reference', (self.train_ref,), False), *context.operation_results))
         return super()._parse_decision(response, context)
 
     def decide(self, context):
@@ -623,10 +677,8 @@ class ResearchPolicy(ModelDecisionPolicy):
         for attempt in range(3):
             # Transport/model identity/external failures are deliberately outside retry.
             current = replace(context, objective=context.objective + hint,
-                run_control={**context.run_control, 'researcher_finish_ends_run': True},
-                operation_results=(*context.operation_results, OperationResult(
-                    'Frozen effective training partition; available for explicit input_ids',
-                    (self.train_ref,), False)))
+                run_control={**context.run_control, 'researcher_finish_ends_run': True,
+                    'initial_training_data': asdict(self.train_ref)})
             response = self._generate_decision(current)
             try:
                 decision = self._parse_decision(response, current)
@@ -706,12 +758,16 @@ def persist(assembly, root):
     write_json(root / 'candidates.json', {key: asdict(value) for key, value in assembly.candidates.items()})
     write_json(root / 'evaluations.json', {key: asdict(value) for key, value in assembly.evaluator._outputs.items()})
     write_json(root / 'systems.json', {'current': asdict(assembly.systems.current)})
+    backend = getattr(assembly.runner.decision_making.harness.policy, 'backend', None)
+    if getattr(backend, 'last_compaction', None) is not None:
+        write_json(root / 'dsh_context_budget.json', backend.last_compaction)
 
 
 def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory=None,
         process_backend=None, identity_factory=model_identity, research_started_callback=None,
         decision_model: ModelRef | None = None, decision_backend: ModelBackend | None = None,
-        native_model_kwargs: dict | None = None) -> dict:
+        native_model_kwargs: dict | None = None, decision_harness_factory=None,
+        dsh_runtime_factory=None) -> dict:
     """Run with an optional independent researcher backend and model identity.
 
     Without decision_backend, serving.generate owns researcher routing. With an
@@ -722,6 +778,11 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         raise TypeError('decision_model must be a ModelRef or None')
     if decision_backend is not None and not callable(getattr(decision_backend, 'generate', None)):
         raise TypeError('decision_backend must provide generate(request)')
+    if settings.decision_harness == 'dsh' and decision_backend is not None:
+        raise ValueError('DSH owns its session/provider; configure dsh_config instead of decision_backend')
+    dsh_config = DSHConfig.load(settings.dsh_config) if settings.decision_harness == 'dsh' else None
+    if dsh_config is not None and dsh_config.resume:
+        raise ValueError('Medical experiment never resumes; use a fresh DSH session')
     root = settings.run_dir.resolve()
     source = RunSource(root.name, settings.parent_run_id)
     root.mkdir(parents=True, exist_ok=True)
@@ -742,7 +803,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         revision, identity = identity_factory(settings.model_path)
         write_json(root / 'model_identity.json', identity)
         base = ModelRef('medical-local', identity['model_id'], revision)
-        researcher = base if decision_model is None else decision_model
+        researcher = ((ModelRef('dsh', dsh_config.model, 'provider-managed') if dsh_config else base)
+                      if decision_model is None else decision_model)
         write_json(root / 'decision_model.json', asdict(researcher))
         converter = (converter_factory or tokenize_factory)(str(settings.model_path.resolve()),
             max_length=settings.max_seq_length, padding=False, revision=revision if len(revision) == 40 else None)
@@ -776,7 +838,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         else:
             default_serving = LocalTransformerServing
         serving = (serving_factory or default_serving)(str(settings.model_path.resolve()), actor_model=base,
-            decision_model=researcher if decision_backend is None else base,
+            decision_model=researcher if decision_backend is None and dsh_config is None else base,
             artifacts=artifacts, native_model_class='image_text_to_text',
             device='cuda:0', dtype='bfloat16', max_context_tokens=32768,
             decision_thinking=settings.decision_thinking, **serving_options)
@@ -791,6 +853,12 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             if research_started is not None and time.monotonic()-research_started >= settings.seconds:
                 raise BudgetExhausted('deadline')
         backend.check_deadline = check_deadline
+        write_json(root / 'decision_harness.json', {'kind': settings.decision_harness,
+            'dsh': ({**asdict(dsh_config), 'home': str(dsh_config.home), 'workspace': str(dsh_config.workspace)}
+                    if dsh_config else None),
+            'model_call_count_mode': ('native_turns_and_compaction_reservations' if dsh_config
+                                      else 'backend_generate_attempts'),
+            'native_token_count_mode': 'sdk_reported_or_unknown' if dsh_config else None})
         def permitted(request):
             if request.kind != 'directive':
                 return True
@@ -814,9 +882,28 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         space = ModularDecisionActionSpace((*research_tools.definitions, *operations.definitions),
             directives=assembly.runner.decision_making.action_space.directives, permissions=permissions)
         assembly.runner.decision_making.action_space = space
-        policy = ResearchPolicy(backend, researcher, space.directives, space, monitor, learner, operations.train_ref)
-        decision.policy = policy
-        decision.context_compactor = BasicContextCompactor(recent_tail=4, stream_chars=8000, summary_chars=4096)
+        def policy_factory(native_backend, model):
+            if dsh_config is not None:
+                backend.serving = native_backend
+            return ResearchPolicy(backend, model, space.directives, space, monitor, learner, operations.train_ref)
+        dependencies = dict(tools=tools, experience=decision.experience, memory=decision.memory,
+            research_agenda=decision.research_agenda, directives=space.directives, model=researcher,
+            policy_factory=policy_factory, backend=backend, config=dsh_config,
+            runtime_factory=dsh_runtime_factory, on_notification=backend.native_notification if dsh_config else None)
+        if decision_harness_factory is not None:
+            replacement = decision_harness_factory(**dependencies)
+        elif dsh_config is not None:
+            replacement = DeepSeekDecisionHarness(dsh_config, tools, decision.experience,
+                directives=space.directives, model=researcher, policy_factory=policy_factory,
+                memory=decision.memory, research_agenda=decision.research_agenda,
+                runtime_factory=dsh_runtime_factory, on_notification=backend.native_notification)
+        else:
+            replacement = DefaultDecisionHarness(policy_factory(backend, researcher), tools, decision.experience,
+                memory=decision.memory, research_agenda=decision.research_agenda)
+        replacement.state.operation_results.extend(decision.state.operation_results)
+        assembly.runner.decision_making.harness = decision = replacement
+        policy = decision.policy
+        backend.decision_pending = lambda: getattr(policy, 'future', None) is not None
         commands = assembly.runner.exploration.harness.commands
         commands.handlers = MappingProxyType({**commands.handlers,
             'train': CheckedTraining(commands.handlers['train'], learner)})
@@ -899,6 +986,13 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         # No guessed PIDs, process-wide kill, unrelated jobs or automatic retries.
         cleanup_errors = []
         try:
+            if assembly is not None:
+                close = getattr(assembly.runner.decision_making.harness, 'close', None)
+                if callable(close):
+                    close()
+        except Exception as exc:
+            cleanup_errors.append(f'decision harness close: {type(exc).__name__}: {exc}')
+        try:
             if learner is not None:
                 result['cleanup'] = learner.cleanup()
                 if not result['cleanup']['confirmed']:
@@ -950,6 +1044,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--private-exclusions', type=Path, action='append', default=[])
     result.add_argument('--decision-thinking', action='store_true',
                         help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
+    result.add_argument('--decision-harness', choices=('default', 'dsh'), default='default')
+    result.add_argument('--dsh-config', type=Path, help='Explicit DSH JSON session/provider/compaction configuration')
     result.add_argument('--training-processes', type=int, default=1)
     result.add_argument('--training-device-type', choices=('cuda', 'npu'), default='cuda')
     result.add_argument('--serving-backend', choices=('transformers', 'sglang'), default='transformers')

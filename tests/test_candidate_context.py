@@ -81,7 +81,7 @@ class CandidateContextTests(unittest.TestCase):
         self.assertEqual(context.candidates, (first, second))
         self.assertEqual(context.last_feedback.candidates, ())
         self.assertEqual(len(context.experience), 1)
-        self.assertEqual(len(context.history), 1)
+        self.assertGreater(len(context.history), 1)  # Complete small history stays below the token trigger.
 
     def test_candidate_copies_isolate_feedback_and_policy_mutations(self):
         original = candidate()

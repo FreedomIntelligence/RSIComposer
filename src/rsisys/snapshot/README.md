@@ -62,3 +62,5 @@ command receipts/outbox、Mock 作业标识及取消状态。已有 memory、Exp
 或全组合 `RecoveryContract` 只用于明确声明的恢复路径；它们不自动赋予空闲可搬迁快照支持。
 恢复要求显式传回同一工厂/契约；DSH 原生 session 恢复另行核实。
 源码指纹、Python 主/次版本和原配置必须匹配；不承诺恢复任意本地/远端进程或权重。
+
+默认上下文管理器的 trigger/target/summary token 配置、滚动摘要、已折叠记录指纹随 snapshot 保存。原始 history 与工具回执继续独立完整存储；恢复不会把已归纳的旧 payload 再次全部灌回模型。自定义 token counter/compactor 仍需显式恢复集成。

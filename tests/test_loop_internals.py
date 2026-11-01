@@ -390,7 +390,7 @@ class LoopInternalsTests(unittest.TestCase):
         self.actor.harness.policy.act = Mock(wraps=act)
         self.runner.run('test', 1)
         self.assertEqual(len(self.decision.harness.policy.decide.call_args.args[0].experience), 1)
-        self.assertEqual(len(self.decision.harness.policy.decide.call_args.args[0].history), 1)
+        self.assertGreater(len(self.decision.harness.policy.decide.call_args.args[0].history), 1)
         self.assertEqual(self.actor.harness.policy.act.call_args.args[0].history, ())
         step = self.actor.harness.environment.step
         self.actor.harness.environment.step = lambda action: replace(step(action), terminated=False)

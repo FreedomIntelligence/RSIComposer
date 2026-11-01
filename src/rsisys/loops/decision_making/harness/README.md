@@ -4,36 +4,41 @@
 
 ## 默认实现
 
-[DefaultDecisionHarness](engine.py) 接收 `policy, tools, experience, learner=None`，可选关键字参数包括 `experience_limit=32, memory=None, memory_limit=32, review_tool_limit=4`。缺省 memory 使用 DecisionMemory；前两个 limit 为正整数，限制上下文条数而非 token。review_tool_limit 是单次复查最多执行的操作数，允许为 0。
+[DefaultDecisionHarness](engine.py) 接收 `policy, tools, experience, learner=None`，可选关键字参数包括 `experience_limit=32, memory=None, memory_limit=32, review_tool_limit=4`。缺省 memory 使用 DecisionMemory；这两个 limit 为正整数，分别限制检索的 experience 与工作记忆条数；历史按下述 token 预算管理。review_tool_limit 是单次复查最多执行的操作数，允许为 0。
 
 另有 `context_compactor=None, research_agenda=None`，缺省分别创建
 `BasicContextCompactor()` 与 `ResearchAgenda()`。它们是默认 Harness 的内部组件，
 不扩展 `DecisionHarness` 协议，也不要求外部实现采用固定科研流程。
 
-## 短上下文与完整档案
+## Token 预算与完整档案
 
-[BasicContextCompactor](context.py) 的 `compact(context, *, recent_limit=32)` 是纯投影：
-保留原始 memory/history、工具回执及研究笔记，不写回压缩结果，不修改候选或评测。
-默认 `recent_tail=8, stream_chars=16000, summary_chars=6000`。history、memories、
-experience、operation_results 各自最多保留 8 条近期完整记录，且每个序列的紧凑 JSON
-长度最多 16000 个字符；history/memories 还受 `memory_limit` 限制。memory 按 recall
-的新到旧顺序保留，其他序列按旧到新保留连续尾部。
+[BasicContextCompactor](context.py) 默认 `trigger_tokens=80000, target_tokens=24000,
+summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请求以 24k 为目标；
+低于阈值时保留全部已选择的记录，不按字符数或最近 N 条裁剪 history/tool results。
+`memory_limit` 仍限制工作记忆 recall 的条数，experience selector 的范围仍由装配决定。
 
-超过条数或字符预算时自动生成 `DecisionContext.context_summary`：包含覆盖条数、
-首尾来源标签、输入记录 SHA-256 及少量明确标记为不完整的摘录。history 来源覆盖
-完整历史，其他来源覆盖本次选中的上下文记录。单条记录过大时也进入摘要，不能把
-截断后的工具数据伪装成完整结果。来源标签过长时显式标记截短；完整 ID 仍在原档案。
-摘要只用于导航，不是科学事实、证据验证或自动形成的结论。读原始证据后再判断。
-每个来源带 `read_path`（操作名、collection 和 ID 取法）；operation_results 使用
-内容 SHA-256 作为稳定 ID，映射回完整工具结果和 history_refs，experience 使用
-原始 record_id。自定义 selector 生成的派生 experience 可能不在原始 store 中，
-这时 archive 返回 `found=false`，应继续读取摘录保留的 source_refs。
+`ModelDecisionPolicy` 在构造最终请求时计量，包含 system、任务、能力 schema、控制信息和历史。
+支持 `count_tokens(GenerationRequest)` 的后端使用其 tokenizer；vLLM 适配器调用根路径
+`/tokenize` 并应用同一 chat template。其他后端使用明确标记为
+`utf8_conservative_estimate` 的 UTF-8 字节保守估计，可通过自定义 backend/counter 替换；
+估计值不冒充实际 tokenizer 计数，原生计数错误会显式失败。
 
-普通决策和每次 review 模型调用都会应用投影。`IdentityContextCompactor()` 可显式
-关闭压缩；也可注入任意实现同一 `compact` 方法的对象。摘要是可重建的，没有持久化
-或额外 LLM 调用。默认实现会读取并扫描完整 history，因此限制的是模型看到的历史
-投影，不是档案存储或读取成本，也不是总 prompt/token 预算：目标、工具 schema、
-live execution、候选等结构不受这里截断。JSON 外层和提供商编码还会增加请求长度。
+最新完整工具结果、最近两条动作/回执历史和 `last_feedback` 不被压缩；目标、候选、权限、
+研究议程和运行控制仍保留。旧 payload 被折叠时轻量 artifact 引用继续可用于 `input_ids`。
+如果这些受保护内容本身超过 24k，抛出 `ContextBudgetError`，要求分页或显式调整预算，
+不会静默丢反馈，也不会强制模型实验或移除 `finish`。
+
+模型策略通过同一后端生成滚动摘要，摘要调用与失败尝试计入原模型调用/时间/usage预算。
+摘要保留操作结果、假设、限制、未决问题和证据 ID，标记为未验证；不能替代原始证据。
+脚本策略可注入 `measure`/`summarize`，默认提供带来源的确定性摘录。摘要失败或超出目标时，
+不提交折叠状态、不执行新动作。原始 memory/history、工具回执和研究笔记完整保留；
+`research_archive` 可按来源标签取回记录。滚动摘要和已折叠指纹通过
+`export_state()/restore_state()` 持久化，内置 snapshot 同时保存配置和状态。
+
+`compact(context, *, recent_limit=32, measure=None, summarize=None)` 是默认实现的可替换入口。
+模型策略在最终请求阶段调用；任意外部 compactor 仍只需公开 `compact(context, recent_limit=...)`。
+`last_measurement` 记录计数方式、压缩前后大小及是否触发；`IdentityContextCompactor()` 供
+DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再被原生会话二次压缩。
 
 ## 模型自管的议程、待办和阶段总结
 
@@ -189,6 +194,30 @@ bindings = {**bindings, **research_tools.bindings}
 原生压缩保留，但任意 DSH native tools 自动映射、DSH 自身权重训练/切换暂未实现。
 SDK native 事件可通过 `on_notification` 交给监控，回调不应直接操作 loop。
 用量未确认时不伪造 token 计数；RSISys 接收到的 turn 响应数量不等于压缩等内部模型请求总数。
+
+`DSHConfig` 显式支持 `provider='deepseek-official'` 与 `'openai-completions'`。
+固定 rc2 前者实际走 `/v1/messages`；仅改 base_url 无法接入只支持 Chat Completions
+的 Qwen 服务。后者通过 bundled `llm-pi-ai` 注册 `rsisys-local` 路由，走
+`/v1/chat/completions`；需要显式 base_url 和 api_key_env，插件加载失败直接报错。
+固定 SDK 的真实进程已验证该路由、持久化恢复、自动压缩及最新原始观察传递；测试
+使用可控 SSE fixture。另已通过同一路由在现有 Qwen3.8-27B 服务完成两轮合成只读调用，
+第二轮返回了最新原始回执标记；未启动医疗研究或训练，也未宣称验证真实模型的 native 80k
+压缩。协议可运行不代表模型医疗质量。
+
+默认 native 配置为 `trigger_tokens=80000, target_tokens=24000, summary_tokens=4096`，
+容量默认 100000，可通过 `context_window` 声明真实服务容量。原生 meter 负责触发；
+recent history 的 `retainTokens=19904` 加至多 4096 的摘要构成**历史保留目标**，不包括
+固定 system/tools/session prefix，也受完整消息分组影响，不能当成完整请求恰好 24k 的保证。
+若 SDK 在压缩后返回权威 aggregate `totalTokens` / `outputTokens`，适配器会检查两者
+之差，超过 target 则以 `ContextBudgetError` 扣留提案；这是生成后的检查，原生会话已推进。
+计量缺失时 `last_compaction.full_request_checked=false`，不能声称完成精确校验。
+默认 Harness 对最终完整请求的 preflight 预算校验与此不同。
+
+DSH 外层和 parser 强制使用 `IdentityContextCompactor`，只有原生会话拥有压缩权。
+历史、experience 与完整 tool receipts 增量发送，不每轮重放全部 snapshot；当前动作协议、
+能力 schema 和 run_control 每轮重申，避免它们被原生摘要折叠后丢失。医疗装配通过
+`policy_factory(native_backend, model)` 复用领域解析及校验，并真正替换整个 Harness。
+具体 CLI、JSON 配置和对照边界见[医疗示例](../../../../../examples/medical/README.md#replace-the-decision-harness-with-dsh)。
 
 持续运行恢复包含显式 `recovery_id`、`export_recovery_state` 和 `restore_recovery_state`。
 完整缓存提案可恢复；未确认推理保持阻塞，通过 `resume_interrupted_inference(evidence=...)`

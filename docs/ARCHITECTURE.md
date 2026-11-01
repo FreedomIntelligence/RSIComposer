@@ -37,9 +37,11 @@ src/rsisys/
 
 Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
 
-默认 Decision Harness 的 `context.py` 做可替换上下文投影，`research.py` 保存模型维护的长期议程与修订；操作绑定仍在 tools 中。完整记录属于 Harness，本地短摘要与共享 Experience 不混为同一存储。
+默认 Decision Harness 的 `context.py` 提供可替换的 `BasicContextCompactor(trigger_tokens=80000, target_tokens=24000, summary_tokens=4096)`。计量发生于完整 `GenerationRequest` 构造后的 request 阶段，覆盖固定规则、能力描述与上下文等全部输入；VLLM 使用 `/tokenize` 精确计数，无 tokenizer 的 backend 使用明确标记的 UTF-8 保守上界。达到 80k token 才触发 compact，24k 是压缩后总请求输入目标，4096 是摘要预算。
 
-可选 `harness/dsh.py` 接入持久 DSH 会话，复用默认回执生命周期，异步生成研究提案；`dsh.patch.yml` 保留原生压缩并关闭原生副作用工具，提案通过现有 Action Space 执行。整体替换其他 Harness 仍不要求继承默认实现。
+原始历史与工具回执继续持久保存在 raw archive；compact 只更新请求视图与带来源的滚动摘要，不改写或删除归档原文，可分页回查；最新工具结果及其最近 history 配对完整保留。若固定规则与最新完整反馈本身超过 24k 目标，返回明确预算错误，要求分页读取或调整预算，不截断或删除反馈。`research.py` 继续保存模型维护的长期议程与修订，操作绑定仍在 tools 中；TaskMemory、原始历史与摘要由 Harness 管理，共享 Experience 继续保存系统证据。
+
+可选 `harness/dsh.py` 替换默认 Harness，复用回执生命周期，异步生成研究提案，可与默认上下文实现做对照。持久 session 与 native compact 由原生 DSH 唯一负责，绕过默认 context compactor，避免双重压缩；`dsh.patch.yml` 保留原生压缩并关闭原生副作用工具。提案通过现有 Action Space 执行，RSISys 保留权限检查、预算与双 loop 协调。整体替换其他 Harness 仍不要求继承默认实现。
 
 `runtime/recovery.py` 保存运行中协同状态；空闲 `snapshot/` 负责独立可移交快照。前者在同一工作目录继续，后者恢复到新目录。运行恢复按意图 / 回执边界处理，中断且结果不明时要求核对，不假设所有外部副作用都可重放。默认仅串行内置组合，外部组件显式实现恢复契约。
 
@@ -117,7 +119,7 @@ Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration
 | Feedback | 单条 Directive 的终态回执，由 Runner 交付给决策端 |
 | ExplorationProgress / ExecutionView | 当前执行阶段、模型绑定与可选指标，不是另一套记忆系统 |
 | Experience | 跨轮共享的系统证据，记录执行、训练、评测与策略结果 |
-| memory | Harness 内部的任务上下文，默认包含本地 history 与工作记忆；替代 Harness 不必提供 |
+| memory / TaskMemory | Harness 内部的任务上下文、原始 history 与工作记忆；默认 compact 摘要带来源，归档不并入 Experience；替代 Harness 不必提供同一接口 |
 
 Experience 收集 runtime_feedback / training_run / evaluation / improvement / insight。scope 仅标记来源，不限制可见性，也不指定优化对象。默认 Decision Harness 使用可替换 `FeedbackSelector.select(experience, objective, limit=...)` 形成模型的反馈输入；默认 RecentFeedbackSelector 选取最近记录，自定义实现可筛选或派生带 source_refs 的视图，不改写原始库、不自动训练。默认 Decision policy 可检索全部来源并选择策略；Actor policy 默认只接收 Harness 提供的任务上下文。improvement / insight 是记录接口，不表示已实现自动系统自修改。
 
@@ -151,4 +153,4 @@ Runtime 提供运行策略、系统清单注册与应用、作业、产物和 Ru
 
 ![文件架构](diagrams/file-architecture.svg)
 
-运行 `python docs/diagrams/build_diagrams.py` 重生成两个 SVG；同一生成器重复运行应得到相同字节。PNG 仅在临时目录中用于视觉验收，不作为仓库文档副本保存。
+两张原生 SVG 直接维护；`docs/diagrams/build_diagrams.py` 尚未同步上述上下文标注，重生成会覆盖相应内容，须先同步并核对差异。PNG 仅在临时目录中用于视觉验收，不作为仓库文档副本保存。

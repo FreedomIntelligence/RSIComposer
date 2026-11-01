@@ -138,7 +138,7 @@ class DecisionReceiptTests(DecisionFixture):
         self.policy.decide.return_value = Decision('finish')
         self.harness.step('task', self.space)
         context = self.policy.decide.call_args.args[0]
-        self.assertEqual(context.history[0].kind, 'operation')
+        self.assertEqual(context.history[-1].kind, 'operation')
         receipt, = context.candidate_evaluations
         self.assertEqual((receipt.candidate_id, receipt.protocol_ref, receipt.quality_metrics),
                          ('A', 'first-protocol', {'score': 0.9}))

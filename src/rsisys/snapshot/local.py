@@ -115,18 +115,24 @@ def research_configuration(dm):
         return {'kind': 'identity'}
     if type(compactor) is not BasicContextCompactor:
         raise TypeError('Custom context compactors need explicit snapshot integration')
-    return {'kind': 'basic', 'recent_tail': compactor.recent_tail,
-            'stream_chars': compactor.stream_chars, 'summary_chars': compactor.summary_chars}
+    return {'kind': 'basic', 'trigger_tokens': compactor.trigger_tokens,
+            'target_tokens': compactor.target_tokens, 'summary_tokens': compactor.summary_tokens,
+            'state': compactor.export_state()}
 
 
 def restore_research(dm, agenda, compactor):
     from rsisys.loops.decision_making.harness.context import BasicContextCompactor, IdentityContextCompactor
     config = dict(compactor)
     kind = config.pop('kind')
+    state = config.pop('state', None)
     if kind not in ('identity', 'basic'):
         raise ValueError('Unsupported context compactor')
     dm.context_compactor = (IdentityContextCompactor(**config) if kind == 'identity'
                             else BasicContextCompactor(**config))
+    if state is not None:
+        if kind != 'basic':
+            raise ValueError('Only basic compactor has local rolling state')
+        dm.context_compactor.restore_state(state)
     dm.research_agenda.restore(agenda)
 
 

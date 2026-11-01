@@ -180,8 +180,8 @@ class ResearchToolTests(unittest.TestCase):
         result = OperationResult('Long tool response', (), True, data={'raw': 'y' * 6000})
         self.memory.append(HistoryEntry('receipt', 'operation', None, result.summary, True,
                                         details={'result': asdict(result)}))
-        raw = DecisionContext('Investigate', (record,), (), (result,))
-        projected = BasicContextCompactor(stream_chars=1024).compact(raw)
+        raw = DecisionContext('Investigate', (record,), (), (result, OperationResult('Latest', (), False)))
+        projected = BasicContextCompactor(trigger_tokens=10000, target_tokens=5000, summary_tokens=500).compact(raw)
         provider = ResearchTools(self.agenda, self.memory, experience=experience)
         for collection in ('operation_results', 'experience'):
             with self.subTest(collection=collection):

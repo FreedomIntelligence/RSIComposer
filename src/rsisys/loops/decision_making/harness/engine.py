@@ -321,7 +321,7 @@ class DefaultDecisionHarness:
             research_agenda=self.research_agenda.context(),
             decision_graph=self._decision_graph(), candidate_origins=deepcopy(self.state.candidate_origins),
         )
-        return self.context_compactor.compact(context, recent_limit=self.memory_limit)
+        return context
 
     def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
         return self._review(objective, progress)
@@ -475,10 +475,15 @@ class DefaultDecisionHarness:
     def _call_policy(self, method, context):
         # Reviews can append new tool results to a saved session. Re-project them
         # before every model call; full receipts remain in memory and session state.
-        context = self.context_compactor.compact(replace(context,
-            history=self.memory.history(), research_agenda=self.research_agenda.context(),
-            decision_graph=self._decision_graph(), candidate_origins=deepcopy(self.state.candidate_origins)),
-            recent_limit=self.memory_limit)
+        context = replace(context, history=self.memory.history(),
+            research_agenda=self.research_agenda.context(), decision_graph=self._decision_graph(),
+            candidate_origins=deepcopy(self.state.candidate_origins))
+        # Model policies budget their final request after adding protocol/schema
+        # overhead. Other policies receive the same protected context projection.
+        if isinstance(self.policy, ModelDecisionPolicy):
+            self.policy.context_compactor = self.context_compactor
+        else:
+            context = self.context_compactor.compact(context, recent_limit=self.memory_limit)
         received = 0
 
         def record(usage):

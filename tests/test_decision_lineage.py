@@ -275,7 +275,8 @@ class DecisionLineageTests(unittest.TestCase):
                 policy.decide(context)
         for branch in policy.decision_schema(context)['oneOf']:
             self.assertFalse(branch['additionalProperties'])
-            self.assertTrue(branch['properties']['depends_on_decision_ids']['uniqueItems'])
+            self.assertNotIn('uniqueItems', branch['properties']['depends_on_decision_ids'])
+            self.assertIn('Distinct', branch['properties']['depends_on_decision_ids']['description'])
             self.assertNotIn('adopted_candidate_ids', branch['properties'])
 
     def test_review_async_submission_stays_pending_until_correlated_resume(self):

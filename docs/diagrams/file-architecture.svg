@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2440" viewBox="0 0 2400 2440" role="img" aria-labelledby="title desc">
 <title id="title">RSISys 文件架构图</title>
-<desc id="desc">两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。SystemVersion、TrainingOrigin 与可选部署能力定义在 contracts，SystemRegistry 位于 runtime/systems.py。adapters 提供 Harness 外的具体执行接入；examples/medical 独立持有领域任务和验收规则。</desc>
+<desc id="desc">两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。SystemVersion、TrainingOrigin 与可选部署能力定义在 contracts，SystemRegistry 位于 runtime/systems.py。adapters 提供 Harness 外的具体执行接入；examples/medical 独立持有领域任务和验收规则。默认 context.py 在完整 GenerationRequest 构造后的 request 阶段计量全部输入，80k token 触发 compact，目标 24k，最新反馈受保护；DSH 替换默认 Harness，原生 DSH 唯一负责 session 与会话压缩。TaskMemory 与 raw archive 保留在 Harness 内，归档原文不变，Experience 保存共享系统证据。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -35,13 +35,15 @@
 </g>
 <text x="160" y="700" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">engine.py · dsh.py · decision.py · state.py</text>
 <g id="decision-dir-internals">
-<rect x="160" y="740" width="610" height="150" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
+<rect x="160" y="740" width="610" height="185" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="184" y="765" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
 <text x="184" y="804" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="650" fill="#2365CB" text-anchor="start">tools/ · learner/ · memory/</text>
 <text x="184" y="838" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">tools/__init__.py：step / review 共享操作执行</text>
-<text x="184" y="867" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">context.py · research.py：摘要 / 计划 / 修订</text>
+<text x="184" y="867" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">context.py · 完整 request 计数：80k → 24k</text>
+<text x="184" y="896" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#52637B" text-anchor="start">latest feedback protected · research.py：议程 / 修订</text>
 </g>
-<text x="160" y="945" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#2365CB" text-anchor="start">默认 / DSH 可换；动作经 Action Space 执行</text>
+<text x="160" y="955" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#2365CB" text-anchor="start">默认 / DSH 可换；原生 DSH 独占 session / 压缩</text>
+<text x="160" y="980" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#2365CB" text-anchor="start">RSISys：权限 / 预算 / 双 loop 协调</text>
 <g id="decision-dir-action-space">
 <rect x="130" y="1050" width="670" height="220" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="154" y="1075" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">整体可换</text>
@@ -113,7 +115,7 @@
 </g>
 <text x="1680" y="1105" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#7445C0" text-anchor="start">共享系统反馈</text>
 <text x="1680" y="1150" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">运行 / 训练 / 评测 / 改进证据</text>
-<text x="1680" y="1200" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">工作记忆保留在两个 Harness 内</text>
+<text x="1680" y="1200" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">TaskMemory / raw archive：Harness 内，原文不变</text>
 <g id="framework">
 <rect x="100" y="1380" width="2200" height="155" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="124" y="1420" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">框架骨架 / Loop protocol + Runner 协同</text>

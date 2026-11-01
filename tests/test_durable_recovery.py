@@ -263,7 +263,7 @@ os._exit(0)
             dm = app.runner.decision_making.harness
             dm.research_agenda.patch(expected_revision=0, upserts=[{'id': 'a', 'kind': 'agenda', 'text': 'Check evidence'}],
                                      remove_ids=[], reason='research plan', evidence_refs=[])
-            dm.context_compactor = BasicContextCompactor(recent_tail=3, stream_chars=900, summary_chars=5000)
+            dm.context_compactor = BasicContextCompactor(trigger_tokens=90000, target_tokens=30000)
             self.tick(app)
             archive = dm.research_agenda.export()
             manifest = LocalSnapshotCapture(app).capture('agenda')
@@ -273,7 +273,8 @@ os._exit(0)
             with constructor() as app:
                 dm = app.runner.decision_making.harness
                 self.assertEqual(dm.research_agenda.export(), archive)
-                self.assertEqual(dm.context_compactor.recent_tail, 3)
+                self.assertEqual(dm.context_compactor.trigger_tokens, 90000)
+                self.assertEqual(dm.context_compactor.target_tokens, 30000)
                 self.assertIs(dm.tools.research_tools.agenda, dm.research_agenda)
                 self.assertTrue((app.config.data_dir / 'decision_research.json').exists())
 
