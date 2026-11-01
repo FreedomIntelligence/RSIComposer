@@ -9,6 +9,11 @@ from uuid import uuid4
 
 from rsisys.runtime.files import atomic_write, json_bytes
 
+if __package__:
+    from .worker import metric_history, public_metrics
+else:
+    from worker import metric_history, public_metrics
+
 
 ACTIVE = {'proposed', 'submitted', 'accepted', 'running', 'waiting', 'cancel_requested'}
 MODE_NAMES = {'train': '训练', 'sft': '训练', 'evaluate': '评测',
@@ -17,6 +22,11 @@ MODE_NAMES = {'train': '训练', 'sft': '训练', 'evaluate': '评测',
 
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def feedback_metrics(feedback):
+    return {key: value for group in ('training_metrics', 'quality_metrics', 'execution_metrics')
+            for key, value in public_metrics(feedback.get(group)).items()}
 
 
 def decision_summary(details, *, ident, round_number, at=None, source='model'):
@@ -73,6 +83,11 @@ class Monitor:
     def event(self, event, **details):
         current = self.data['current']
         if event == 'job':
+            if 'metrics' in details:
+                details['metrics'] = public_metrics(details['metrics'])
+            if 'metric_history' in details:
+                details['metric_history'] = metric_history(
+                    self.jobs.get(details['job_id'], {}).get('metric_history'), details['metric_history'])
             row = {**self.jobs.get(details['job_id'], {}), **deepcopy(details)}
             if current.get('status') in ACTIVE and current.get('mode') == details.get('kind'):
                 row.update(directive_id=current['directive_id'], round=self.data['workflow']['round'])
@@ -93,7 +108,9 @@ class Monitor:
                      'training_review_rejected': '复查输出未通过校验', 'activation_verified': '候选推理验证通过，准备绑定',
                      'job': '后端任务状态更新', 'progress': '执行进度更新', 'phase': '运行阶段更新'}
         self.data['events'].append({'timestamp': timestamp(), 'kind': event,
-                                   'summary': summaries.get(event, event), 'details': details})
+                                   'summary': summaries.get(event, event),
+                                   # Store history once per job, not 300 copies in events.
+                                   'details': {k: v for k, v in details.items() if k != 'metric_history'}})
         self.data['events'] = self.data['events'][-300:]
         self.write()
 
@@ -139,11 +156,12 @@ class Monitor:
             if job_id:
                 current['job_id'] = job_id
             if feedback:
-                current['metrics'] = {**feedback.get('training_metrics', {}),
-                                      **feedback.get('quality_metrics', {}), **feedback.get('execution_metrics', {})}
+                current['metrics'] = feedback_metrics(feedback)
             for row in self.data['decisions']:
                 if row.get('directive_id') == result.directive_id and row['kind'] == 'directive':
                     row.update(status=current['status'], job_id=current.get('job_id'))
+                    if feedback:
+                        row['metrics'] = feedback_metrics(feedback)
             if event.get('review'):
                 review = event['review']
                 current.update(review_status=review['action'], next_review_seconds=review['next_review_seconds'])
@@ -204,6 +222,7 @@ def enrich_completed_run(root):
                 if row['kind'] == 'directive' and row.get('directive_id') == feedback['directive_id']:
                     row['status'] = feedback['status']
                     row['job_id'] = (feedback.get('jobs') or [{}])[-1].get('job_id')
+                    row['metrics'] = feedback_metrics(feedback)
                     break
     snapshot['decisions'] = rows
     snapshot['workflow'] = {'phase': result['phase'], 'round': result.get('rounds_completed'),

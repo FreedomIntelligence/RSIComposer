@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 MAX_BYTES = 4 * 1024 * 1024
 MAX_ROWS = 300
+MAX_METRIC_HISTORY = 1000
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -34,7 +35,7 @@ CURRENT_FIELDS = ("directive_id", "mode", "status", "phase", "strategy", "decisi
                   "step", "total_steps")
 DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
                    "strategy", "reason", "status", "decision_revision", "actor_revision", "job_id", "candidate_id",
-                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds")
+                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
 JOB_FIELDS = ("job_id", "kind", "status", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
@@ -85,6 +86,30 @@ def metrics_only(value, depth=0):
     return result
 
 
+def metric_history_only(value):
+    """Public curve protocol: sparse observations, never poll-generated points."""
+    if not isinstance(value, list):
+        return []
+    result, seen = [], set()
+    for row in value[-MAX_METRIC_HISTORY:]:
+        if not isinstance(row, dict):
+            continue
+        step, elapsed = row.get('step'), row.get('elapsed_seconds')
+        if (type(step) is not int or scalar(step) is None or step < 0 or type(elapsed) not in (int, float)
+                or scalar(elapsed) is None or elapsed < 0):
+            continue
+        metrics = {key: number for key, number in metrics_only(row.get('metrics')).items()
+                   if key.strip() and type(number) in (int, float)}
+        if not metrics:
+            continue
+        identity = (step, elapsed, tuple(sorted(metrics.items())))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append({'step': step, 'elapsed_seconds': elapsed, 'metrics': metrics})
+    return result
+
+
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
@@ -111,10 +136,12 @@ def project_snapshot(raw, run_id):
             if not isinstance(row, dict):
                 continue
             item = pick(row, fields)
-            if key in ("candidates", "round_results") or (key == "jobs" and "metrics" in row):
+            if key in ("candidates", "round_results") or (key in ("jobs", "decisions") and "metrics" in row):
                 item["metrics"] = metrics_only(row.get("metrics"))
             elif key == "events":
                 item["details"] = pick(row.get("details"), DETAIL_KEYS)
+            if key == "jobs" and "metric_history" in row:
+                item["metric_history"] = metric_history_only(row["metric_history"])
             result[key].append(item)
     return result
 

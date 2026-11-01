@@ -1,218 +1,64 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#faf9f5" />
-    <title>RSISys · Run observatory</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/style.css" />
-    <script src="/app.js" defer></script>
-  </head>
-  <body>
-    <a class="skip" href="#main">跳至监控内容</a>
-    <header class="masthead">
-      <a class="wordmark" href="/" aria-label="RSISys 首页"
-        >RSISys<span class="wordmark-dot">.</span></a
-      >
-      <nav aria-label="页面导航">
-        <a href="#execution">当前执行</a><a href="#decisions">模型决策</a>
-        <a href="#rounds">轮次结果</a><a href="#events">事件时间线</a>
-      </nav>
-      <span class="read-only"><span aria-hidden="true">◈</span> 只读监控</span>
-    </header>
-    <main id="main">
-      <div class="intro">
-        <div>
-          <p class="eyebrow">THE RUN OBSERVATORY</p>
-          <h1>Every iteration, in view.</h1>
-        </div>
-        <p class="intro-note">
-          决策、探索与演进。<br />在同一处，观察系统的每一步。
-        </p>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#faf9f5" />
+  <title>RSISys · 决策与反馈</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳至内容</a>
+  <header class="masthead">
+    <a class="wordmark" href="/" aria-label="RSISys 首页">RSISys<span>.</span></a>
+    <nav aria-label="页面导航"><a href="#decisions">决策与反馈</a><a href="#jobs">训练与评测</a></nav>
+    <span class="read-only">只读</span>
+  </header>
+  <main id="main">
+    <div class="toolbar">
+      <div class="run-control"><label for="run-select">运行</label><select id="run-select"><option value="">正在读取…</option></select></div>
+      <div class="refresh-controls">
+        <span id="connection" class="connection" role="status">连接中</span>
+        <label class="auto"><input id="auto-refresh" type="checkbox" checked />自动刷新</label>
+        <button id="refresh" aria-label="立即刷新" title="立即刷新">刷新</button>
+        <button id="export-report" disabled>导出报告</button>
+        <button id="demo" aria-pressed="false">查看示例</button>
       </div>
-      <div class="toolbar">
-        <div class="run-control">
-          <label for="run-select">当前运行</label
-          ><select id="run-select">
-            <option value="">正在读取运行…</option>
-          </select>
-        </div>
-        <div class="refresh-controls">
-          <span id="connection" class="connection" role="status">连接中</span
-          ><label class="auto"
-            ><input id="auto-refresh" type="checkbox" checked /> 自动刷新 ·
-            5s</label
-          ><button
-            id="refresh"
-            class="icon-button"
-            aria-label="立即刷新"
-            title="立即刷新"
-          >
-            ↻</button
-          ><button id="demo" class="demo-button" aria-pressed="false">
-            查看示例
-          </button>
-        </div>
-      </div>
-      <div id="notice" class="notice" role="status" hidden></div>
-      <section id="empty" class="empty-state" hidden>
-        <span class="empty-orbit" aria-hidden="true">◎</span>
-        <p class="eyebrow">READY WHEN YOU ARE</p>
-        <h2 id="empty-title">等待第一次运行</h2>
-        <p id="empty-description">
-          运行生成 monitor.json 后，状态会自动出现在这里。
-        </p>
-        <button id="empty-demo" class="primary-button">
-          浏览示例数据 <span aria-hidden="true">↗</span>
-        </button>
+    </div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="empty" class="empty-state" hidden>
+      <h1 id="empty-title">等待第一次运行</h1>
+      <p id="empty-description">尚无运行快照。</p>
+      <button id="empty-demo">浏览示例数据</button>
+    </section>
+    <div id="dashboard" hidden>
+      <section id="overview" aria-labelledby="objective">
+        <div class="run-heading"><h1 id="objective"></h1><div class="run-meta"><span id="run-status"></span><p id="updated"></p></div></div>
+        <section id="execution" aria-labelledby="execution-title"><div class="section-heading"><h2 id="execution-title">当前执行</h2><span id="workflow-summary"></span></div><div id="current-execution"></div></section>
       </section>
-      <div id="dashboard" hidden>
-        <section id="overview" aria-labelledby="objective">
-          <div class="run-heading">
-            <div>
-              <p id="run-id" class="mono run-id"></p>
-              <h2 id="objective"></h2>
-            </div>
-            <div class="run-meta">
-              <span id="run-status"></span>
-              <p id="updated"></p>
-            </div>
-          </div>
-          <div id="stats" class="stats"></div>
-          <section
-            id="execution"
-            class="execution-section"
-            aria-labelledby="execution-title"
-          >
-            <div class="section-heading">
-              <h2 id="execution-title">当前执行</h2>
-              <span class="section-index">进度来自最近快照</span>
-            </div>
-            <div id="workflow-summary" class="workflow-summary"></div>
-            <div id="current-execution"></div>
-          </section>
-          <div class="overview-grid">
-            <div class="loops-area">
-              <div class="section-heading">
-                <h2>双循环 <span>Dual loop</span></h2>
-                <span class="section-index">01 — 02</span>
-              </div>
-              <div id="loops" class="loops"></div>
-            </div>
-            <aside class="bindings-area" aria-labelledby="bindings-title">
-              <div class="section-heading">
-                <h2 id="bindings-title">当前绑定</h2>
-                <span class="section-index">MODELS</span>
-              </div>
-              <div id="bindings" class="bindings"></div>
-            </aside>
-          </div>
-        </section>
-        <section
-          id="decisions"
-          class="section"
-          aria-labelledby="decisions-title"
-        >
-          <div class="section-heading">
-            <h2 id="decisions-title">
-              模型决策 <span id="decision-count"></span>
-            </h2>
-            <div class="decision-tools">
-              <label class="search-label"
-                ><span aria-hidden="true">⌕</span
-                ><input
-                  id="decision-search"
-                  type="search"
-                  placeholder="搜索动作、理由、任务…"
-                  aria-label="搜索决策"
-              /></label>
-              <select id="decision-filter" aria-label="决策类型">
-                <option value="all">全部决策</option>
-                <option value="directive">执行指令</option>
-                <option value="review">运行复查</option>
-                <option value="finish">结束决策</option>
-              </select>
-            </div>
-          </div>
-          <div id="decision-list"></div>
-          <button id="more-decisions" class="more-button" hidden>
-            显示更多决策
-          </button>
-        </section>
-        <section id="jobs" class="section" aria-labelledby="jobs-title">
-          <div class="section-heading">
-            <h2 id="jobs-title">训练与任务 <span id="jobs-count"></span></h2>
-            <label class="select-label"
-              >状态<select id="job-filter">
-                <option value="all">全部状态</option>
-                <option value="active">进行中</option>
-                <option value="completed">已完成</option>
-                <option value="failed">失败</option>
-                <option value="other">其他</option>
-              </select></label
-            >
-          </div>
-          <div id="job-list"></div>
-        </section>
-        <section
-          id="candidates"
-          class="section"
-          aria-labelledby="candidates-title"
-        >
-          <div class="section-heading">
-            <h2 id="candidates-title">
-              候选评测 <span id="candidate-count"></span>
-            </h2>
-            <label class="select-label"
-              >状态<select id="candidate-filter">
-                <option value="all">全部状态</option>
-                <option value="accepted">已采纳</option>
-                <option value="pending">待评估</option>
-                <option value="rejected">未采纳</option>
-                <option value="other">其他</option>
-              </select></label
-            >
-          </div>
-          <div id="candidate-list"></div>
-        </section>
-        <section id="rounds" class="section" aria-labelledby="rounds-title">
-          <div class="section-heading">
-            <h2 id="rounds-title">轮次结果 <span id="round-count"></span></h2>
-          </div>
-          <div id="round-list" class="round-grid"></div>
-        </section>
-        <section id="events" class="section" aria-labelledby="events-title">
-          <div class="section-heading">
-            <h2 id="events-title">事件时间线 <span id="event-count"></span></h2>
-            <div class="event-tools">
-              <label class="search-label"
-                ><span aria-hidden="true">⌕</span
-                ><input
-                  id="event-search"
-                  type="search"
-                  placeholder="搜索事件…"
-                  aria-label="搜索事件" /></label
-              ><select id="event-filter" aria-label="事件类型">
-                <option value="all">全部类型</option>
-              </select>
-            </div>
-          </div>
-          <div id="event-list"></div>
-          <button id="more-events" class="more-button" hidden>
-            显示更多事件
-          </button>
-        </section>
-      </div>
-    </main>
-    <footer>
-      <span
-        >RSISys <span class="footer-divider">/</span> Research in
-        progress.</span
-      ><span id="footer-source">本地监控 · 只读</span>
-    </footer>
-    <noscript
-      ><p class="notice">请启用 JavaScript 以读取监控状态。</p></noscript
-    >
-  </body>
+      <section id="decisions" class="section" aria-labelledby="decisions-title">
+        <div class="section-heading"><h2 id="decisions-title">决策与反馈 <span id="decision-count"></span></h2>
+          <div class="decision-tools"><input id="decision-search" type="search" placeholder="搜索决策或反馈" aria-label="搜索决策或反馈" /><select id="decision-filter" aria-label="决策类型"><option value="all">全部决策</option><option value="directive">执行指令</option><option value="operation">研究操作</option><option value="review">运行复查</option><option value="finish">结束决策</option></select></div>
+        </div>
+        <div id="decision-list"></div><button id="more-decisions" class="more-button" hidden>显示更多决策</button>
+      </section>
+      <section id="jobs" class="section" aria-labelledby="jobs-title">
+        <div class="section-heading"><h2 id="jobs-title">训练与评测 <span id="jobs-count"></span></h2><select id="job-filter" aria-label="任务状态"><option value="all">全部状态</option><option value="active">进行中</option><option value="completed">已完成</option><option value="failed">失败或取消</option><option value="other">其他</option></select></div>
+        <div id="job-list"></div>
+      </section>
+      <details class="secondary-section" id="results-disclosure"><summary>候选与轮次结果</summary>
+        <section id="candidates" class="section" aria-labelledby="candidates-title"><div class="section-heading"><h2 id="candidates-title">候选评测 <span id="candidate-count"></span></h2><select id="candidate-filter" aria-label="候选状态"><option value="all">全部状态</option><option value="accepted">已采纳</option><option value="pending">待评估</option><option value="rejected">未采纳</option><option value="other">其他</option></select></div><div id="candidate-list"></div></section>
+        <section id="rounds" class="section" aria-labelledby="rounds-title"><div class="section-heading"><h2 id="rounds-title">轮次结果 <span id="round-count"></span></h2></div><div id="round-list" class="round-grid"></div></section>
+      </details>
+      <details class="secondary-section"><summary>运行详情与事件</summary>
+        <div id="run-info"></div>
+        <section id="events" class="section" aria-labelledby="events-title"><div class="section-heading"><h2 id="events-title">事件 <span id="event-count"></span></h2><div class="event-tools"><input id="event-search" type="search" placeholder="搜索事件" aria-label="搜索事件" /><select id="event-filter" aria-label="事件类型"><option value="all">全部类型</option></select></div></div><div id="event-list"></div><button id="more-events" class="more-button" hidden>显示更多事件</button></section>
+      </details>
+    </div>
+  </main>
+  <footer><span>RSISys</span><span id="footer-source">本地监控 · 只读</span></footer>
+  <noscript><p class="notice">请启用 JavaScript 以读取监控状态。</p></noscript>
+</body>
 </html>

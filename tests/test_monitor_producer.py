@@ -55,6 +55,33 @@ class MonitorProducerTests(unittest.TestCase):
         self.assertEqual(self.monitor.data['decisions'][0]['status'], 'completed')
         self.assertEqual(self.monitor.data['workflow']['completed_directives'], 1)
         self.assertEqual(self.monitor.data['current']['metrics'], {'train_loss': .01})
+        self.assertEqual(self.monitor.data['decisions'][0]['metrics'], {'train_loss': .01})
+
+    def test_feedback_metrics_merge_public_numeric_groups_and_project_with_operation(self):
+        from web.server import project_snapshot
+        self.monitor.decision(Decision('invoke', operation=OperationCall('query_experiments', {})), self.context, 0)
+        self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)
+        self.monitor.advance(RunnerStep('completed', {'feedback': {'status': 'completed',
+            'training_metrics': {'train_loss': .1, 'prompt_tokens': 123, 'nan': float('nan')},
+            'quality_metrics': {'accuracy': .9, 'eval_samples': 20},
+            'execution_metrics': {'duration': 3, 'secret': 321, 'config': {'loss': 1}},
+            'jobs': [{'job_id': 'j1'}]}}, directive_id='d1'))
+        public = project_snapshot(json.loads((self.root / 'monitor.json').read_text()), 'run')
+        self.assertEqual(public['decisions'][0]['operation'], 'query_experiments')
+        self.assertEqual(public['decisions'][1]['metrics'], {
+            'train_loss': .1, 'accuracy': .9, 'eval_samples': 20, 'duration': 3})
+        self.assertNotIn('prompt_tokens', json.dumps(public, allow_nan=False))
+
+    def test_job_history_windows_merge_without_poll_duplicates_or_cross_job_leaks(self):
+        points = [{'step': n, 'elapsed_seconds': n, 'metrics': {'loss': 1 / n}} for n in range(1, 1006)]
+        self.monitor.event('job', job_id='j1', kind='train', status='running', metric_history=points[:900])
+        self.monitor.event('job', job_id='j1', kind='train', status='running', metric_history=points[500:])
+        self.monitor.event('job', job_id='j1', kind='train', status='running', metric_history=points[500:])
+        self.monitor.event('job', job_id='j1', kind='train', status='cancel_requested')
+        self.monitor.event('job', job_id='j2', kind='train', status='running', metric_history=points[:1])
+        self.assertEqual(self.monitor.jobs['j1']['metric_history'], points[-1000:])
+        self.assertEqual(self.monitor.jobs['j2']['metric_history'], points[:1])
+        self.assertNotIn('metric_history', self.monitor.data['current'])
 
     def test_review_is_a_proposal_until_runner_applies_it(self):
         self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)
@@ -108,13 +135,15 @@ class MonitorProducerTests(unittest.TestCase):
                    'decision_model': asdict(self.model), 'execution_model': asdict(self.model)}
         history = [dict(record_id='record1', kind='decision', details=details),
                    dict(record_id='record2', kind='feedback', details={'feedback': {
-                       'directive_id': 'd1', 'status': 'completed', 'jobs': [{'job_id': 'j1'}]}})]
+                       'directive_id': 'd1', 'status': 'completed', 'jobs': [{'job_id': 'j1'}],
+                       'training_metrics': {'train_loss': 0.25, 'api_key': 123}}})]
         (self.root / 'decision_memory.json').write_text(json.dumps({'history': history}))
         (self.root / 'result.json').write_text(json.dumps({'status': 'completed', 'phase': 'finished',
             'rounds_completed': 1, 'rounds_requested': 1, 'completed_directives': 1, 'duration_seconds': 3}))
         snapshot = enrich_completed_run(self.root)
         self.assertEqual(snapshot['decisions'][0]['source'], 'history')
         self.assertEqual(snapshot['decisions'][0]['job_id'], 'j1')
+        self.assertEqual(snapshot['decisions'][0]['metrics'], {'train_loss': 0.25})
         self.assertEqual(snapshot['current']['status'], 'completed')
         self.assertEqual(snapshot['updated_at'], before)
         self.assertIsNone(snapshot['decisions'][0]['timestamp'])

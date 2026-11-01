@@ -94,3 +94,17 @@ worker 为每个候选保存独立 LoRA adapter；从父候选训练时复制父
 ## 真实自主验证记录
 
 2026-11-01 使用 Qwen3.5-9B 与 CUDA SFT/评测验证。模型自行选择 train → evaluate → finish，未应用候选，也未调用 Actor execute；父版本 heldout NLL 约 0.044638，候选约 0.000014759。一次缺失 method/recipe_ref 的响应在获得具体校验反馈后由模型自行修正。结束表示研究者停止，不表示部署后的 Actor 已更新或通用能力提升。此前失败尝试保留，分别暴露了参数反馈不明确与上下文超限问题；未用脚本补齐模型步骤。
+
+## 可选 SwanLab 导出
+
+本地监控不依赖 SwanLab。需要实验跟踪时，在使用者的环境安装可选 `swanlab`，从项目根目录运行：
+
+```sh
+PYTHONPATH=src:. python -m examples.qwen_toy.export_swanlab runs/<run-id>/monitor.json --project RSISys
+```
+
+默认 `offline`，只在本地写入 `swanlog`；显式 `--mode online` 才向已配置的 SwanLab 服务上传。每个有指标的 job 导出为一个实验；重复执行会创建新实验，不做自动恢复或去重。只导出公开指标投影，不发送模型输入和训练样本。导出已有快照，不是实时 SwanLab 同步；快照缺少历史时仅导出最新值，不补造曲线。SDK 的 step 是记录序号，实际训练步保存为 `optimizer_step`。
+
+接口参考：[SwanLab init](https://docs.swanlab.cn/api/py-init.html)。
+
+训练过程由 Trainer 实际日志采样（当前每 2 步），记录 loss、学习率、梯度范数、epoch 等有限数值；不为没有上报的步骤插值。worker 在 `<job_id>.metrics.jsonl` 追加完整采样，HTTP 和 `monitor.json` 的 `jobs[].metric_history` 保留最近 1000 点。历史从任务接口传到监控，不依赖前端刷新频率。旧运行缺少历史时只显示最终指标。

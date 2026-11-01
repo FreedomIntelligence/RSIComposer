@@ -36,8 +36,58 @@
       "elapsed_seconds": 138,
       "metrics": {
         "loss": 0.0784,
-        "learning_rate": 2e-5
-      }
+        "learning_rate": 0.00002
+      },
+      "metric_history": [
+        {
+          "step": 2,
+          "elapsed_seconds": 7,
+          "metrics": {
+            "loss": 0.43,
+            "learning_rate": 0.000005
+          }
+        },
+        {
+          "step": 8,
+          "elapsed_seconds": 29,
+          "metrics": {
+            "loss": 0.28,
+            "learning_rate": 0.000012
+          }
+        },
+        {
+          "step": 16,
+          "elapsed_seconds": 58,
+          "metrics": {
+            "loss": 0.19,
+            "learning_rate": 0.00002
+          }
+        },
+        {
+          "step": 24,
+          "elapsed_seconds": 87,
+          "metrics": {
+            "loss": 0.126,
+            "learning_rate": 0.00002
+          }
+        },
+        {
+          "step": 32,
+          "elapsed_seconds": 116,
+          "metrics": {
+            "loss": 0.092,
+            "learning_rate": 0.00002
+          }
+        },
+        {
+          "step": 38,
+          "elapsed_seconds": 138,
+          "metrics": {
+            "loss": 0.0784,
+            "learning_rate": 0.00002
+          }
+        }
+      ]
     },
     {
       "job_id": "eval-candidate-007",
@@ -173,10 +223,34 @@
     "metrics": {
       "loss": 0.0784,
       "heldout_nll_delta": 7.21e-7,
-      "learning_rate": 2e-5
+      "learning_rate": 0.00002
     }
   },
   "decisions": [
+    {
+      "decision_id": "example-finish-0",
+      "timestamp": "2026-10-31T14:36:00+08:00",
+      "kind": "finish",
+      "round": 3,
+      "status": "completed",
+      "reason": "本轮研究记录完毕，后续轮次由调度继续。"
+    },
+    {
+      "decision_id": "example-finish-1",
+      "timestamp": "2026-10-31T14:35:00+08:00",
+      "kind": "finish",
+      "round": 3,
+      "status": "completed",
+      "reason": "本轮研究记录完毕，后续轮次由调度继续。"
+    },
+    {
+      "decision_id": "example-finish-2",
+      "timestamp": "2026-10-31T14:34:00+08:00",
+      "kind": "finish",
+      "round": 3,
+      "status": "completed",
+      "reason": "本轮研究记录完毕，后续轮次由调度继续。"
+    },
     {
       "decision_id": "decision-012",
       "timestamp": "2026-10-31T14:32:18+08:00",
@@ -214,7 +288,11 @@
       "protocol_ref": "heldout-v1",
       "recipe_ref": "actor-sft-v2",
       "method": "sft",
-      "review_after_seconds": 60
+      "review_after_seconds": 60,
+      "metrics": {
+        "loss": 0.0784,
+        "learning_rate": 0.00002
+      }
     },
     {
       "decision_id": "decision-010",

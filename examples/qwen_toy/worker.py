@@ -12,10 +12,63 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
 import traceback
+
+
+MAX_METRIC_HISTORY = 1000
+PRIVATE_METRIC = re.compile(
+    r'secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|response|payload|sample|dataset|training_data', re.I)
+
+
+def finite_number(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def public_metrics(raw):
+    """Flat, finite numeric observations, with private attachment names removed."""
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for key, value in raw.items():
+        if (not isinstance(key, str) or not key.strip() or len(key) > 100
+                or (PRIVATE_METRIC.search(key) and key not in {'eval_samples', 'num_samples', 'sample_count'})
+                or not finite_number(value)):
+            continue
+        result[key] = value
+        if len(result) == 100:
+            break
+    return result
+
+
+def metric_history(*histories):
+    """Merge bounded observation windows without adding samples on each poll."""
+    result, seen = [], set()
+    for history in histories:
+        if not isinstance(history, list):
+            continue
+        for row in history[-MAX_METRIC_HISTORY:]:
+            if not isinstance(row, dict):
+                continue
+            step, elapsed = row.get('step'), row.get('elapsed_seconds')
+            metrics = public_metrics(row.get('metrics'))
+            if (type(step) is not int or not finite_number(step) or step < 0
+                    or not finite_number(elapsed) or elapsed < 0 or not metrics):
+                continue
+            identity = (step, elapsed, tuple(sorted(metrics.items())))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            result.append({'step': step, 'elapsed_seconds': elapsed, 'metrics': metrics})
+    return result[-MAX_METRIC_HISTORY:]
 
 
 def main(argv=None):
@@ -135,14 +188,25 @@ def main(argv=None):
                 progress['step'] = step
             if type(total) is int and total > 0:
                 progress['total_steps'] = total
-            metrics = {key: value for key, value in (logs or {}).items()
-                       if key in ('loss', 'learning_rate')
-                       and type(value) in (int, float) and math.isfinite(value)}
+            logged = public_metrics(logs)
+            metrics = {key: value for key, value in logged.items() if key in ('loss', 'learning_rate')}
+            # Only fresh Trainer logs are curve samples. Step/end callbacks must
+            # not re-stamp stale loss values at a new optimizer step.
+            points = metric_history([{**progress, 'metrics': logged}])
             # Never call check_cancel/event.is_set or acquire the model lock here.
             # Replace metrics rather than mutating a dictionary returned to readers.
             with job_lock:
                 job = jobs[self.ident]
                 if job['status'] == 'running':
+                    if points:
+                        point = points[0]
+                        history = job.get('metric_history', [])
+                        if not history or history[-1] != point:
+                            # Append every observation locally before trimming the
+                            # HTTP window. Closing flushes each line, also on failure.
+                            with run_path(f'{self.ident}.metrics.jsonl').open('a', encoding='utf-8') as stream:
+                                stream.write(json.dumps(point, allow_nan=False) + '\n')
+                            job['metric_history'] = (history + [point])[-MAX_METRIC_HISTORY:]
                     if metrics:
                         progress['metrics'] = {**job.get('metrics', {}), **metrics}
                     job.update(progress)
@@ -269,7 +333,7 @@ def main(argv=None):
                         tokenizer.save_pretrained(adapter_path)
                         result = {'adapter_path': str(adapter_path), 'revision': selected,
                                   'base_revision': parent, 'round': round_number,
-                                  'metrics': {k:float(v) for k,v in output.metrics.items() if isinstance(v,(int,float))}}
+                                  'metrics': public_metrics(output.metrics)}
                     elif kind == 'evaluate':
                         if not trained:
                             raise ValueError('Candidate is not trained')

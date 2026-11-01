@@ -15,6 +15,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+if __package__:
+    from .worker import metric_history
+else:
+    from worker import metric_history
+
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobOutcome, JobRef, JobStatus, JobProgress
@@ -243,8 +248,11 @@ class WorkerJobs:
                            and type(value) in (int, float) and math.isfinite(value)}
                 if metrics:
                     progress['metrics'] = metrics
-        # Keep the existing monitor event unchanged; the same observed fields
-        # now also travel through the job contract into exploration/review.
+        # History stays on the existing HTTP/monitor path; the framework's
+        # JobProgress remains the latest observation used by review policies.
+        history = {}
+        if self.kind == 'train' and status != JobStatus.QUEUED and 'metric_history' in raw:
+            history['metric_history'] = metric_history(raw['metric_history'])
         job_progress = dict(progress)
         observed_at = raw.get('observed_at')
         if (self.kind == 'train' and status != JobStatus.QUEUED
@@ -255,7 +263,7 @@ class WorkerJobs:
                              progress=JobProgress(**job_progress) if job_progress else None)
         if outcome.terminal:
             self.outcomes[job] = deepcopy(outcome)
-        self.notify('job', job_id=job.job_id, kind=self.kind, status=status.value, **progress)
+        self.notify('job', job_id=job.job_id, kind=self.kind, status=status.value, **progress, **history)
         return outcome
 
     def cancel(self, job):

@@ -109,6 +109,19 @@ class MonitorProjectionTests(unittest.TestCase):
         self.assertIsNone(bad['decisions'][0]['strategy'])
         self.assertNotIn('TOP_SECRET', json.dumps(bad))
 
+    def test_job_history_is_bounded_and_decision_operation_metrics_are_projected(self):
+        points = [{'step': n, 'elapsed_seconds': n / 2, 'metrics': {'loss': n / 1000}}
+                  for n in range(1005)]
+        data = self.project(jobs=[{'job_id': 'j', 'metric_history': points}],
+            decisions=[{'kind': 'operation', 'operation': 'query_experiments',
+                        'payload': 'TOP_SECRET', 'metrics': {'loss': 0.25, 'api_key': 123}}])
+        self.assertEqual(data['jobs'][0]['metric_history'], points[-1000:])
+        self.assertEqual(data['decisions'], [{'kind': 'operation', 'operation': 'query_experiments',
+                                            'metrics': {'loss': 0.25}}])
+        for value in (None, {}, False, 'broken'):
+            self.assertEqual(self.project(jobs=[{'metric_history': value}])['jobs'], [{'metric_history': []}])
+        self.assertNotIn('TOP_SECRET', json.dumps(data))
+
     def test_explanations_and_recent_collections_are_bounded(self):
         explanation = '公开说明' * 400
         rows = [{'decision_id': str(i), 'reason': explanation} for i in range(monitor.MAX_ROWS + 5)]

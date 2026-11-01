@@ -1,6 +1,7 @@
 """Trainer callback and HTTP job payload checks without models, sockets or GPUs."""
 from copy import deepcopy
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -11,7 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from examples.qwen_toy import worker
 from examples.qwen_toy.adapters import WorkerJobs
+from examples.qwen_toy.monitor import Monitor
 from rsisys.loops.contracts.jobs import JobRef
+from rsisys.loops.contracts.model_service import ModelRef
+from web.server import project_snapshot
 
 
 def worker_fixture():
@@ -81,7 +85,9 @@ class TrainingProgressTests(unittest.TestCase):
                 self.assertEqual(event, 'job')
                 self.assertEqual(details, {'job_id': ident, 'kind': 'train', 'status': 'running',
                     'step': 1, 'total_steps': 3, 'elapsed_seconds': 1.5,
-                    'metrics': {'loss': 0.75, 'learning_rate': 0.0002}})
+                    'metrics': {'loss': 0.75, 'learning_rate': 0.0002},
+                    'metric_history': [{'step': 1, 'elapsed_seconds': 1.5,
+                        'metrics': {'loss': 0.75, 'learning_rate': 0.0002, 'epoch': 0.3}}]})
 
                 state.global_step, clock[0] = 2, 103.0
                 callback.on_step_end(None, state, control)
@@ -148,6 +154,11 @@ class TrainingProgressTests(unittest.TestCase):
                     self.assertEqual(terminal['status'], status)
                     self.assertEqual((terminal['step'], terminal['total_steps'], terminal['elapsed_seconds']), (2, 24, 3.0))
                     self.assertEqual(terminal['metrics']['loss'], 1.5)
+                    expected = [{'step': 2, 'elapsed_seconds': 3.0,
+                                 'metrics': {'loss': 1.5, 'learning_rate': 0.0002}}]
+                    self.assertEqual(terminal['metric_history'], expected)
+                    self.assertEqual([json.loads(line) for line in
+                        (fixture.root / f'{ident}.metrics.jsonl').read_text().splitlines()], expected)
                     self.assertNotIn('result', terminal)
                     adapter, job, events = polling_adapter(lambda: fixture.job(ident), ident)
                     adapter.poll(job)
@@ -224,6 +235,109 @@ class TrainingProgressTests(unittest.TestCase):
 
         with patch.object(worker.threading, 'Lock', CheckedLock):
             fixture.run(scenario)
+
+
+class MetricHistoryTests(unittest.TestCase):
+    def test_slow_polling_keeps_sparse_logs_and_complete_jsonl_with_bounded_public_window(self):
+        fixture = worker_fixture()
+        fixture.trainer.state.global_step = 1005
+        clock = [100.0]
+
+        def scenario():
+            _, receipt = fixture.post('/train', {'idempotency_key': 'history'})
+            ident = receipt['job_id']
+            monitor = Monitor(fixture.root, ModelRef('toy', 'model', 'v1'), 'Public goal')
+            adapter, job, _ = polling_adapter(lambda: fixture.job(ident), ident)
+            adapter.notify = monitor.event
+
+            def train():
+                callback = fixture.transformers.Trainer.call_args.kwargs['callbacks'][1]
+                state, control = SimpleNamespace(global_step=0, max_steps=1005), SimpleNamespace()
+                callback.on_train_begin(None, state, control)
+                for step in range(1, 1006):
+                    state.global_step, clock[0] = step, 100.0 + step
+                    callback.on_step_end(None, state, control)
+                    if step == 1:
+                        self.assertNotIn('metric_history', fixture.job(ident))
+                    logs = {'loss': 1 / step, 'grad_norm': 0.2, 'epoch': step / 1005,
+                            'learning_rate': 0.0001, 'prompt_tokens': 99, 'api_key': 123,
+                            'bad': float('nan'), 'nested': {'secret': 1}}
+                    callback.on_log(None, state, control, logs=logs)
+                    callback.on_log(None, state, control, logs=logs)  # Duplicate callback.
+                    logs['loss'] = 999
+                    if step == 250:
+                        adapter.poll(job)
+                        self.assertEqual(len(monitor.jobs[ident]['metric_history']), 250)
+                # Same optimizer step can carry another real log, even with an
+                # identical elapsed time. It is a distinct sparse observation.
+                callback.on_log(None, state, control, logs={'train_loss': 0.25})
+                clock[0] += 0.5
+                callback.on_train_end(None, state, control)
+                adapter.poll(job)
+                before = deepcopy(monitor.jobs[ident]['metric_history'])
+                adapter.poll(job)
+                self.assertEqual(monitor.jobs[ident]['metric_history'], before)
+                return SimpleNamespace(metrics={'train_loss': 0.25})
+
+            fixture.trainer.train.side_effect = train
+            fixture.drain()
+            adapter.poll(job)  # Terminal status must keep the last observed window.
+            public = project_snapshot(json.loads((fixture.root / 'monitor.json').read_text()), 'run')
+            history = public['jobs'][0]['metric_history']
+            self.assertEqual(len(history), 1000)
+            self.assertEqual(history[0]['step'], 7)
+            self.assertEqual(history[-1], {'step': 1005, 'elapsed_seconds': 1005.0,
+                                         'metrics': {'train_loss': 0.25}})
+            self.assertEqual(history[-2]['metrics']['loss'], 1 / 1005)
+            lines = [json.loads(line) for line in
+                     (fixture.root / f'{ident}.metrics.jsonl').read_text().splitlines()]
+            self.assertEqual(len(lines), 1006)
+            self.assertEqual(lines[0]['step'], 1)
+            self.assertEqual(lines[-1000:], history)
+            self.assertTrue(all('metric_history' not in event['details'] for event in monitor.data['events']))
+            snapshot = fixture.job(ident)
+            snapshot['metric_history'][-1]['metrics']['train_loss'] = 999
+            self.assertEqual(fixture.job(ident)['metric_history'][-1]['metrics']['train_loss'], 0.25)
+            encoded = json.dumps(public, allow_nan=False)
+            for private in ('prompt_tokens', 'api_key', 'nested'):
+                self.assertNotIn(private, encoded)
+
+        with patch.object(worker.time, 'monotonic', side_effect=lambda: clock[0]):
+            fixture.run(scenario, '--steps', '1005')
+
+    def test_adapter_and_projection_drop_invalid_points_and_private_values(self):
+        metrics = {'loss': 0.5, 'grad_norm': 0.1, 'eval_samples': 2,
+                   'token_count': 3, 'prompt_tokens': 42, 'secret': 123, 'config': 2,
+                   'api_key': 123, 'response': 5, 'dataset_size': 7, 'training_data': 9,
+                   'bad': float('nan'), 'inf': float('inf'), 'huge': 10 ** 1000,
+                   'flag': True, 'nested': {'loss': 3}, 'text': 'PRIVATE', '': 5}
+        point = {'step': 0, 'elapsed_seconds': 0, 'metrics': metrics, 'payload': 'PRIVATE'}
+        invalid = [None, [], {}, {'step': True, 'elapsed_seconds': 0, 'metrics': {'loss': 1}},
+                   {'step': -1, 'elapsed_seconds': 0, 'metrics': {'loss': 1}},
+                   {'step': 10 ** 1000, 'elapsed_seconds': 0, 'metrics': {'loss': 1}},
+                   {'step': 1, 'elapsed_seconds': float('inf'), 'metrics': {'loss': 1}},
+                   {'step': 1, 'elapsed_seconds': False, 'metrics': {'loss': 1}},
+                   {'step': 1, 'elapsed_seconds': -1, 'metrics': {'loss': 1}},
+                   {'step': 1, 'elapsed_seconds': 0, 'metrics': {'secret': 1}}]
+        expected = [{'step': 0, 'elapsed_seconds': 0, 'metrics': {
+            'loss': 0.5, 'grad_norm': 0.1, 'eval_samples': 2, 'token_count': 3}}]
+        raw = {'job_id': 'job', 'status': 'running', 'metric_history': [point, point, *invalid]}
+        original = deepcopy(raw)
+        adapter, job, events = polling_adapter(lambda: raw, 'job')
+        adapter.poll(job)
+        self.assertEqual(events[-1][1]['metric_history'], expected)
+        public = project_snapshot({'schema_version': 1, 'jobs': [raw]}, 'run')
+        self.assertEqual(public['jobs'][0]['metric_history'], expected)
+        self.assertEqual(raw, original)
+        self.assertNotIn('PRIVATE', json.dumps(public, allow_nan=False))
+        for value in (None, {}, 'broken'):
+            raw['metric_history'] = value
+            adapter.poll(job)
+            self.assertEqual(events[-1][1]['metric_history'], [])
+        # No history is invented for an older worker.
+        del raw['metric_history']
+        adapter.poll(job)
+        self.assertNotIn('metric_history', events[-1][1])
 
 
 class AdapterProgressTests(unittest.TestCase):
