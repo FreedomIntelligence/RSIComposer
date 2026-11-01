@@ -1,5 +1,6 @@
 """Decision loop lifecycle, composed from an independent harness and action space."""
 from .action_space import DecisionActionSpace
+from .action_space.access import authorized_space
 from .harness import DecisionHarness
 from .harness.decision import DecisionRunResult
 from rsisys.loops.contracts.coordination import ReviewDecision
@@ -29,6 +30,10 @@ class DecisionMakingLoop:
             return with_tools(objective, progress, self.action_space)
         review = getattr(self.harness, 'review', None)
         return review(objective, progress) if review is not None else ReviewDecision()
+
+    def authorize_review(self, result):
+        """Recheck current access immediately before Runner applies a model control."""
+        authorized_space(self.action_space, 'review').validate_review(result)
 
     def run(self, objective: str, *, max_steps: int = 16) -> DecisionRunResult:
         if type(max_steps) is not int or max_steps < 1:

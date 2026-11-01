@@ -11,6 +11,7 @@ from rsisys.assembly import (
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
+from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.artifacts import InMemoryArtifactStore
 from rsisys.runtime.model import MockModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -42,7 +43,10 @@ class DemoConfig:
 
 def build_demo(config: DemoConfig, *, with_learning: bool = False,
                decision_factory: DecisionFactory | None = None,
-               exploration_factory: ExplorationFactory | None = None) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
+               exploration_factory: ExplorationFactory | None = None,
+               action_permissions: ActionPermissions | None = None) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
+    if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
+        raise TypeError('Expected ActionPermissions')
     if any(binding.kind != "mock" for binding in config.backends.values()):
         raise NotImplementedError("Only mock backends are assembled by the demo.")
     backends = {key: MockModelBackend() for key in config.backends}
@@ -53,6 +57,7 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False,
     context = AssemblyContext(
         experience=experience, artifacts=artifacts, backends=backends, sandbox=sandbox,
         roles=dict(config.roles), with_learning=with_learning,
+        action_permissions=action_permissions if action_permissions is not None else ActionPermissions(),
     )
     for backend in backends.values():
         if callable(getattr(backend, 'close', None)):

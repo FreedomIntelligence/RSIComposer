@@ -9,6 +9,7 @@ from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
 from rsisys.loops.contracts.queries import QueryProvider
 from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace, LocalDecisionActionSpace
+from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
 from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
@@ -48,6 +49,7 @@ class AssemblyContext:
     memory_limit: int = 32
     # Explicit executable modes/parsers supplied by an exploration factory.
     exploration_directives: DirectiveDefinitions | None = None
+    action_permissions: ActionPermissions = field(default_factory=ActionPermissions)
     _cleanup: ExitStack = field(default_factory=ExitStack, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -139,10 +141,12 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     bindings = query_tools.bindings if query_tools is not None else {}
     if context.data_dir is None:
         tools = DemoDecisionTools(context.sandbox, context.artifacts, extra_bindings=bindings)
-        space = DemoDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions)
+        space = DemoDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions,
+                                        permissions=context.action_permissions)
     else:
         tools = LocalDecisionTools(context.artifacts, extra_bindings=bindings)
-        space = LocalDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions)
+        space = LocalDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions,
+                                         permissions=context.action_permissions)
     tools.query_tools = query_tools
     model = context.roles["decision_maker"]
     memory_path = context.data_dir / "decision_memory.json" if context.data_dir is not None else None

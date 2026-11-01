@@ -8,6 +8,7 @@ from typing import Protocol
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.coordination import OperationResult
 from .directives import DirectiveDefinitions, DEFAULT_DIRECTIVE_MODES
+from .access import ActionPermissions
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,11 @@ class DecisionActionDefinition(Protocol):
 class ModularDecisionActionSpace:
     def __init__(self, definitions: Iterable[DecisionActionDefinition], *,
                  directive_modes: tuple[str, ...] | None = None,
-                 directives: DirectiveDefinitions | None = None):
+                 directives: DirectiveDefinitions | None = None,
+                 permissions: ActionPermissions | None = None):
+        self.permissions = permissions if permissions is not None else ActionPermissions()
+        if not isinstance(self.permissions, ActionPermissions):
+            raise TypeError('Expected ActionPermissions')
         self._definitions: dict[str, DecisionActionDefinition] = {}
         for definition in definitions:
             if not isinstance(definition.spec, OperationSpec):
@@ -120,16 +125,18 @@ class _StringArgumentDefinition:
 class DemoDecisionActionSpace(ModularDecisionActionSpace):
     def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
                  directives: DirectiveDefinitions | None = None,
-                 extra_definitions: Iterable[DecisionActionDefinition] = ()):
+                 extra_definitions: Iterable[DecisionActionDefinition] = (),
+                 permissions: ActionPermissions | None = None):
         super().__init__((_StringArgumentDefinition(
             "prepare_data", "Prepare a demonstration input artifact", "text",
-        ), *extra_definitions), directive_modes=directive_modes, directives=directives)
+        ), *extra_definitions), directive_modes=directive_modes, directives=directives, permissions=permissions)
 
 
 class LocalDecisionActionSpace(ModularDecisionActionSpace):
     def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
                  directives: DirectiveDefinitions | None = None,
-                 extra_definitions: Iterable[DecisionActionDefinition] = ()):
+                 extra_definitions: Iterable[DecisionActionDefinition] = (),
+                 permissions: ActionPermissions | None = None):
         super().__init__((
             _StringArgumentDefinition("prepare_data", "Store text as a reusable input artifact", "text"),
             _StringArgumentDefinition("search_literature", "Search explicitly imported text literature",
@@ -137,4 +144,4 @@ class LocalDecisionActionSpace(ModularDecisionActionSpace):
             _StringArgumentDefinition("store_strategy", "Save an explicit strategy as an artifact",
                                       "strategy", nonempty=True),
             *extra_definitions,
-        ), directive_modes=directive_modes, directives=directives)
+        ), directive_modes=directive_modes, directives=directives, permissions=permissions)

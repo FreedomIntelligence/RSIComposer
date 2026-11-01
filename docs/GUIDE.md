@@ -47,7 +47,7 @@ PYTHONPATH=src pixi run python -m rsisys run \
 
 ## Researcher 查询实验
 
-默认装配会将 Exploration 的可用查询注册到 Decision Action Space，名称为 `query_exploration_<name>`。researcher 可在普通决策或运行中 review 中调用；review 只开放 read_only 操作，默认最多查询 4 次，再作 continue / cancel 判断。训练继续由后端执行，控制器的同步查询应由对应后端设置超时。
+默认装配会将 Exploration 的可用查询注册到 Decision Action Space，名称为 `query_exploration_<name>`。researcher 可在普通决策或运行中 review 中调用；review 默认权限仅开放 read_only 操作，可通过外部权限配置开放其他操作，默认最多调用 4 次，再作 continue / cancel 判断。训练继续由后端执行，控制器的同步查询应由对应后端设置超时。
 
 ```json
 {"kind":"invoke","operation":"query_exploration_metrics","arguments":{"filters":{"directive_id":"实际指令ID"}}}
@@ -58,6 +58,22 @@ PYTHONPATH=src pixi run python -m rsisys run \
 外部 Harness 可实现 [QueryProvider](../src/rsisys/loops/contracts/queries.py) 的 `describe_queries()` 和 `query(request)` 来暴露其他实验信息；未实现时不广告这些能力。自定义装配可使用 [QueryTools](../src/rsisys/loops/decision_making/harness/tools/queries.py) 的 definitions 和 bindings 分别注入 Action Space 与 tools。协议只统一查询封装，不转换训练数据格式，也不要求把执行历史搬进 Experience。
 
 Qwen toy 已绑定同样的查询入口。`tests/test_researcher_integration.py` 使用 CPU HTTP fixture 验证「后端训练进度 → researcher 查询 → 模型判断 → 实验继续完成」；该测试不加载真实 Qwen 权重。
+
+## 配置能力与权限
+
+能力可以显式定义，也可以通过自定义 provider 发现后注入；[Capabilities](../src/rsisys/loops/decision_making/action_space/capabilities.py) 将操作定义与执行绑定配对，装配时拒绝重复名称和缺失 handler。它不包含网络发现客户端，也不自动开放发现的能力。
+
+```python
+from rsisys.application import Application
+from rsisys.loops.decision_making.action_space.access import ActionPermissions
+
+with Application(config, action_permissions=ActionPermissions.unrestricted()) as app:
+    app.run()
+```
+
+完全开放仅针对已接入能力，仍保留参数校验和单个在途实验等协同规则。默认使用 ActionPermissions()：普通决策允许全部已接入能力，运行中仅允许只读操作。也可指定 operations / directives / review_operations 名称集合，或 check 回调检查实际请求的参数和资源。运行时替换 `app.runner.decision_making.action_space.permissions` 即可更新默认 Harness 的权限；已提交任务不会被自动撤回。静态权限配置会随内置快照恢复；外部权限回调需自定义快照适配。
+
+显式/provider 能力装配和参数级检查见 [Action Space](../src/rsisys/loops/decision_making/action_space/README.md)。整体替换 Harness 时，应在操作执行前复用 authorized_space 或提供等效权限检查。
 
 ## 使用 Python 接入组件
 

@@ -14,6 +14,7 @@ from rsisys.assembly import (
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
+from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
@@ -81,7 +82,10 @@ class ApplicationConfig:
 
 class Application:
     def __init__(self, config: ApplicationConfig, *, decision_factory: DecisionFactory | None = None,
-                 exploration_factory: ExplorationFactory | None = None, _restore: bool = False):
+                 exploration_factory: ExplorationFactory | None = None,
+                 action_permissions: ActionPermissions | None = None, _restore: bool = False):
+        if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
+            raise TypeError('Expected ActionPermissions')
         self.config = config
         self.custom_assembly = decision_factory is not None or exploration_factory is not None
         self.assembly: AssemblyContext | None = None
@@ -127,6 +131,7 @@ class Application:
                 sandbox=self.sandbox, roles=dict(config.roles), data_dir=root, execution=config.execution,
                 with_learning=config.learning == 'mock', experience_limit=config.experience_limit,
                 memory_limit=config.memory_limit,
+                action_permissions=action_permissions if action_permissions is not None else ActionPermissions(),
             )
             self._resources.callback(self.assembly.close)
             exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(self.assembly)

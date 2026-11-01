@@ -1,6 +1,6 @@
 # Decision Action Space
 
-操作的 `OperationSpec.read_only` 默认 false。运行中 researcher review 只允许显式标记为只读的操作；这是接入者的行为声明，具体执行仍由 Harness tools 负责。[QueryActionDefinition](queries.py) 将 Exploration 广告的查询转换为只读操作，默认装配自动注入。两个默认 Action Space 可通过 `extra_definitions=()` 添加这些定义，自定义操作仍使用同一验证接口。
+操作的 `OperationSpec.read_only` 默认 false。read_only 是能力属性，默认权限配置用它筛选运行中操作；外部配置可开放写操作或所有已接入操作，具体执行仍由 Harness tools 负责。[QueryActionDefinition](queries.py) 将 Exploration 广告的查询转换为只读操作，默认装配自动注入。两个默认 Action Space 可通过 `extra_definitions=()` 添加这些定义，自定义操作仍使用同一验证接口。
 
 独立于 [Decision Harness](../harness/README.md) 的动作定义与校验边界。覆盖本地 research 操作和发往 Exploration Harness 的系统指令；实际操作由 Harness 的 [tools](../harness/tools/README.md) 执行。
 
@@ -35,6 +35,29 @@
 
 OperationCall 包含 name、arguments；OperationResult 描述工具执行后的 summary、artifacts、simulated、status 和可选 error。结果必须为 COMPLETED / FAILED / CANCELLED，FAILED 必须有 error，COMPLETED 不能有 error。异步结果回填、重试与记录由 Harness 管理。
 
+## 显式能力装配
+
+[capabilities.py](capabilities.py) 提供独立的 `Capability(definition, handler)` 与 `Capabilities(capabilities=())`。已有 definition 必须提供 `OperationSpec` 和 `validate(arguments) → OperationCall`；只有 spec 时使用 `Capability.from_spec(spec, validator, handler)`。handler 接收校验后的参数字典，返回 `OperationResult | JobRef`。重复名、空名、缺失或不可调用的 validator / handler、无绑定的 provider 输出都会在装配时失败。
+
+`CapabilityProvider.describe()` 返回有限的 `Iterable[Capability]`；仅提供 `discover()` 的自定义 provider 也可通过显式选择方法适配。`Capabilities.from_provider(provider, method="describe", explicit=())` 调用所选方法一次并合并显式能力；使用 `method="discover"` 选择发现入口，失败直接向调用方传播。不会自动发现 provider、调用 connect 或实现 MCP / OpenAPI 网络客户端。外部描述需由用户适配器转换成含校验器和 handler 的 Capability。
+
+```python
+from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
+from rsisys.loops.decision_making.action_space.capabilities import Capability, Capabilities
+from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+
+# provider、note_definition、save_note 由调用方提供。
+capabilities = Capabilities.from_provider(
+    provider, explicit=(Capability(note_definition, save_note),),
+)
+# 全部显式提供时：Capabilities((Capability(note_definition, save_note),))
+action_space = ModularDecisionActionSpace(capabilities.definitions)
+tools = BoundDecisionTools(capabilities.bindings)
+# 将 action_space 和 tools 注入现有 loop / Harness。
+```
+
+集合可迭代，因此多个来源可以用 `Capabilities((*first, *second, explicit))` 再次装配并检查重名。`definitions` 是 tuple，`bindings` 每次返回新字典；底层 definition 与 handler 仍由调用方持有，装配后不应改变定义。每个集合独立，无全局插件中心；空集合不提供任何能力。通用 shell / Python 可由用户显式提供 handler，本模块不默认开放 host shell，也不负责权限决策。schema 只作描述，参数验证仍由 validator 执行，执行权限由 Harness 的权限机制决定。
+
 ## 扩展系统指令
 
 [directives.py](directives.py) 提供 `DirectiveSpec(mode, description, input_schema)`、`DirectiveDefinition(spec, parser)` 和 `DirectiveDefinitions(definitions=None)`。每个装配实例独立持有定义；无全局注册表。省略 definitions 使用内置模式，显式传入则替换整个目录；追加模式使用 `(*builtin_directives(), custom_definition)`。
@@ -60,3 +83,27 @@ space = LocalDecisionActionSpace(directives=catalog, directive_modes=("execute",
 ```
 
 `directive_modes` 是允许发出的子集，必须存在于 catalog；不提供时默认使用 catalog 全部模式。探索侧必须提供同名 [CommandHandler](../../exploration/harness/README.md#扩展系统指令)。新模式或覆盖内置模式均需显式快照集成。
+
+## 外部权限配置
+
+[ActionPermissions](access.py) 与能力目录分开。`operations` 和 `directives` 分别限制普通操作与实验指令，None 表示全部已接入能力；空集合表示全部关闭。`review_operations` 可以是默认 `"read_only"`、`"all"` 或操作名称集合，并与 operations 取交集。`allow_cancel=False` 关闭模型的取消权限，continue 始终作为不发起新修改的选择保留。
+
+```python
+from rsisys.loops.decision_making.action_space.access import ActionPermissions
+
+permissions = ActionPermissions(
+    operations={"search_literature", "prepare_data", "query_exploration_metrics"},
+    directives={"train", "evaluate"},
+    review_operations={"search_literature", "prepare_data", "query_exploration_metrics"},
+    allow_cancel=False,
+)
+# 完全开放所有已接入能力：ActionPermissions.unrestricted()
+```
+
+给 ModularDecisionActionSpace / LocalDecisionActionSpace / DemoDecisionActionSpace 传入 `permissions=...`，或给 Application / build_demo 传入 `action_permissions=...`。运行期间可以替换 `loop.action_space.permissions`，下一次展示与执行检查立即使用新配置；不追溯取消已经授权并提交的任务。
+
+能力目录的 describe/validate 负责接口定义与参数校验；[authorized_space(space, phase)](access.py) 提供当前授权视图并在执行前检查归一化后的请求。默认 Harness 对普通决策和复查都使用该视图。发现时的过滤不能代替执行检查。替代 Harness 需复用该视图或实现等效检查，外部 Python 代码和宿主权限不由这个接口隔离。
+
+可选 `check(AccessRequest) -> bool` 支持参数/资源级规则：发现阶段 action=None，执行阶段 action 为归一化后的 OperationCall、Directive 或 ReviewDecision。回调可以读取外部动态配置；未知参数在发现阶段可先允许展示，实际执行时再校验。回调必须返回 bool。静态配置可用 to_dict/from_dict 保存，内置 Snapshot 保留它；自定义回调需显式快照适配。
+
+开放全部能力不安装新工具、不自动开放 shell，也不取消单个在途实验指令等生命周期约束。需要自由代码执行时，由使用者显式接入对应能力和执行后端。

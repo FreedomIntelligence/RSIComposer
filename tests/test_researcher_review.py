@@ -87,7 +87,7 @@ class ResearcherReviewTests(unittest.TestCase):
                 self.setUp()
                 self.harness.review_tool_limit = limit
                 self.policy.review = Mock(return_value=Decision('invoke', operation=OperationCall(name, {})))
-                with self.assertRaisesRegex(ValueError, 'read-only'):
+                with self.assertRaisesRegex(ValueError, 'available'):
                     self.loop.review('task', self.progress)
         self.write.assert_not_called()
         self.query.assert_not_called()

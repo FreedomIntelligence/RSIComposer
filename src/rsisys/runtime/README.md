@@ -10,7 +10,7 @@
 
 Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 到期时调用可选的 Decision `review`，由其返回 `ReviewDecision('continue' | 'cancel', next_review_seconds=...)`；None 停止后续自动复查。模型调用次数与后端轮询次数独立；每 tick 最多一次普通决策或一次复查流程，复查内部可执行有限次只读工具查询和模型调用。Runner 的 decision_steps 按流程计数，模型 token usage 由 Harness 逐次累计。Runner 不 sleep、不自行创建后台线程，实际复查发生在截止时间之后的下一次 tick。调用方负责轮询间隔，重建 Runner 后从恢复时刻重新计算首次复查时间。
 
-取消响应不确定时保留复查结果，重试取消不重新问模型。当前仍只有一个在途指令，不支持原地替换、通用 pause/resume 或并发修改模型。决策者按时间/token 自训练的触发器仍未实现。
+取消响应不确定时保留复查结果，通常重试取消不重新问模型。若 Decision 端点提供 authorize_review，Runner 在实际取消及每次重试前重新授权；权限撤销后丢弃旧模型意图，下一次复查读取新权限。已被后端接收的请求不会被撤回。外部调用 Runner.cancel 属于操作者控制，不受模型的取消权限配置限制。当前仍只有一个在途指令，不支持原地替换、通用 pause/resume 或并发修改模型。决策者按时间/token 自训练的触发器仍未实现。
 
 [jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。记账仅在进程内，不保证重启恢复；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
 

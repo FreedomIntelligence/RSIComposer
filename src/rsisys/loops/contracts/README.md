@@ -1,6 +1,6 @@
 # 共享协议
 
-两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。协同顺序与交付规则见[系统架构](../../../../docs/ARCHITECTURE.md)。
+两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。可选 ReviewAuthorizingEndpoint 让 Runner 在执行模型取消建议及重试前重新检查当前权限。协同顺序与交付规则见[系统架构](../../../../docs/ARCHITECTURE.md)。
 
 ## 实验查询
 

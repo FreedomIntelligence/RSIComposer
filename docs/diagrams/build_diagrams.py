@@ -58,9 +58,9 @@ class SVG:
         self.rect(x, y, w, 34, fill=fill, stroke='none', rx=17, sw=0)
         self.text(x+w/2, y+24, label, size, color, 600, 'middle', max_width=w-18)
 
-    def node(self, ident, x, y, w, h, title, lines=(), color=INK, fill='#FFFFFF', stroke='#D5DEEA', title_size=26, tag=None):
+    def node(self, ident, x, y, w, h, title, lines=(), color=INK, fill='#FFFFFF', stroke='#D5DEEA', title_size=26, tag=None, dash=None):
         self.parts.append(f'<g id="{ident}">')
-        self.rect(x,y,w,h,fill,stroke,rx=16,sw=1.8)
+        self.rect(x,y,w,h,fill,stroke,rx=16,sw=1.8,dash=dash)
         if tag:
             self.text(x+24,y+29,tag,15,color,700,max_width=w-48)
             title_y=y+64
@@ -80,193 +80,230 @@ class SVG:
         print(f'{name}: {self.width}x{self.height}, {self.text_count} editable text elements')
 
 
-def system_flow():
-    s = SVG(2400, 1750, 'RSISys 系统流程图',
-            '默认 Decision Harness 包含 DecisionPolicy，默认 Exploration Harness 包含 Exploration Policy（ActorPolicy）。'
-            'DecisionPolicy 选择系统指令，由 Exploration Harness 分派；ActorPolicy 仅选择环境动作。'
-            '两者共享 Experience，Action Space 分别约束决策与环境动作。')
-    s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
-    s.text(100, 126, '两个 Loop · 默认 Harness 内的 Policy 与执行流程', 26, MUTED)
+def legend(s):
+    s.rect(100, 158, 42, 26, '#EAF0F6', LINE, rx=6)
+    s.text(156, 179, '框架骨架', 20, MUTED)
+    s.rect(350, 158, 42, 26, '#F4F8FF', BLUE, rx=6, dash='8 5')
+    s.text(406, 179, '整体可换 / 实现可换（遵守接口）', 20, MUTED)
+    s.rect(980, 158, 42, 26, '#FFF8E8', AMBER, rx=6, dash='8 5')
+    s.text(1036, 179, '可换 · 需适配', 20, MUTED)
+    s.text(2300, 179, '蓝 / 绿：两个 Loop    紫：共享 Experience', 20, MUTED, anchor='end')
 
-    for x, w, title, color, fill, stroke in [
-        (100, 930, 'Decision-making Loop', BLUE, '#EFF5FF', '#BCD1F2'),
-        (1320, 980, 'Exploration Loop', GREEN, '#EFF8F3', '#B9DDCF'),
-    ]:
-        s.rect(x, 170, w, 1030, fill, stroke, rx=24)
-        s.text(x+35, 220, title, 32, color, 700)
+
+def replaceable(s, ident, x, y, w, h, title, lines=(), color=BLUE,
+                fill='#FFFFFF', title_size=27, whole=False, adapt=False):
+    s.node(ident, x, y, w, h, title, lines, color, fill, color,
+           title_size=title_size,
+           tag='可换 · 需适配' if adapt else '整体可换' if whole else '实现可换',
+           dash='8 5')
+
+
+def system_flow():
+    s = SVG(2400, 1920, 'RSISys 系统流程图',
+            '两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。'
+            'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
+            'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
+            'Loop protocol 与 Runner 协同是框架骨架，保留单 inflight 约束。')
+    s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
+    s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
+    legend(s)
+
+    for x, w, title in [(100, 930, 'Decision-making Loop'), (1320, 980, 'Exploration Loop')]:
+        s.rect(x, 230, w, 1150, '#EAF0F6', LINE, rx=24)
+        s.text(x+35, 280, title, 32, INK, 700)
+        s.text(x+w-35, 280, 'Loop protocol · 骨架', 19, MUTED, anchor='end')
 
     s.parts.append('<g id="decision-harness">')
-    s.rect(130, 270, 870, 700, '#FFFFFF', '#9FBEEB')
-    s.text(170, 315, 'Decision Harness', 29, BLUE, 650)
-    s.node('decision-policy', 170, 365, 790, 130, 'Decision Policy', (
-        'DecisionPolicy.decide(context) → Decision',
-        '选择准备操作、系统指令、等待或结束',
-    ), BLUE, '#F4F8FF', '#9FBEEB', title_size=30)
-    s.node('decision-execution', 170, 620, 790, 150, '决策执行', (
-        '本地准备 → tools',
-        '系统指令 → Exploration Harness',
+    s.rect(130, 330, 870, 780, '#EFF5FF', BLUE, dash='8 5')
+    s.text(170, 379, 'Decision Harness', 29, BLUE, 650)
+    s.chip(815, 352, 145, '整体可换', '#DCE9FC', BLUE)
+    replaceable(s, 'decision-policy', 170, 425, 790, 155, 'Decision Policy', (
+        'decide(context) → Decision · review(context)',
+        '模型自主选择操作、指令、复查、等待或结束',
+    ), title_size=30)
+    s.node('decision-execution', 170, 680, 790, 140, '默认决策执行', (
+        '操作 → tools 绑定执行；系统指令 → Exploration',
+        '运行中可按需查询 Exploration 状态；执行前检查外部权限',
     ), BLUE, stroke='#9FBEEB', title_size=28)
-    s.path('M 565 495 V 620', BLUE, arrow='blue')
-    s.label(565, 562, 'Decision', BLUE, 22)
-    s.path('M 170 695 H 150 V 430 H 170', BLUE, arrow='blue', dash='7 6')
-    s.text(170, 875, '自身学习：Decision Learner（显式调用）', 23, MUTED)
+    s.path('M 565 580 V 680', BLUE, arrow='blue')
+    s.label(565, 637, 'Decision', BLUE, 22)
+    s.path('M 170 750 H 150 V 505 H 170', BLUE, arrow='blue', dash='7 6')
+    for ident, x, w, title, line in [
+        ('decision-tools', 170, 250, 'tools', '现有操作绑定'),
+        ('decision-memory', 440, 250, 'memory', '本地工作记忆'),
+        ('decision-learner', 710, 250, 'learner', '显式自身学习'),
+    ]:
+        replaceable(s, ident, x, 910, w, 130, title, (line,), title_size=26)
+    s.path('M 295 820 V 910', BLUE, arrow='blue')
     s.parts.append('</g>')
 
-    s.node('decision-action-space', 130, 1030, 870, 120, 'Decision Action Space', (
-        '定义与校验：准备操作 + 系统指令',
-    ), BLUE, stroke='#9FBEEB', title_size=28)
-    s.path('M 900 1030 V 770', BLUE, arrow='blue')
-    s.label(900, 1000, '描述 / 校验', BLUE, 20)
+    replaceable(s, 'decision-action-space', 130, 1180, 870, 170, 'Decision ActionSpace', (
+        '能力：显式定义 / 外部 provider 发现；外部权限过滤与校验',
+        'review 默认只读；可开放全部操作或 allowlist',
+    ), whole=True, title_size=28)
+    s.path('M 945 1180 V 1110', BLUE, arrow='blue')
+    s.label(775, 1152, '描述 / 校验 / 执行检查', BLUE, 20)
 
     s.parts.append('<g id="exploration-harness">')
-    s.rect(1350, 270, 920, 700, '#FFFFFF', '#9ACBB6')
-    s.text(1390, 315, 'Exploration Harness', 29, GREEN, 650)
-    s.node('directive-dispatch', 1390, 350, 840, 100, '指令分派', (
-        '接收 Directive，选择执行流程',
+    s.rect(1350, 330, 920, 780, '#EFF8F3', GREEN, dash='8 5')
+    s.text(1390, 379, 'Exploration Harness', 29, GREEN, 650)
+    s.chip(2085, 352, 145, '整体可换', '#D7EEE2', GREEN)
+    s.node('directive-dispatch', 1390, 410, 840, 105, '默认指令分派', (
+        'Directive → 执行 / 训练 / 配置 / 评测',
     ), GREEN, stroke='#9ACBB6', title_size=28)
-    s.node('exploration-policy', 1390, 535, 390, 130, 'Exploration Policy', (
-        'ActorPolicy.act(context)',
-        '选择环境动作',
-    ), GREEN, '#F3FAF6', '#9ACBB6', title_size=27)
-    s.node('system-execution', 1840, 535, 390, 130, '训练 / 配置 / 评测', (
-        'learner · prompt · evaluator',
-        '由 Harness 直接调用',
-    ), GREEN, stroke='#9ACBB6', title_size=25)
-    s.path('M 1585 450 V 535', GREEN, arrow='green')
-    s.label(1585, 496, 'execute / RL rollout', GREEN, 20)
-    s.path('M 2035 450 V 535', GREEN, arrow='green')
-    s.label(2035, 496, 'SFT / prompt / evaluate', GREEN, 20)
-    s.node('environment', 1390, 750, 390, 110, 'Environment', (
-        '执行动作，返回观察',
-    ), GREEN, stroke='#9ACBB6', title_size=27)
-    s.node('command-results', 1840, 750, 390, 110, '结果与候选', (
+    replaceable(s, 'exploration-policy', 1390, 600, 390, 150, 'Actor Policy', (
+        'ActorPolicy.act(context)', '选择环境动作',
+    ), GREEN)
+    replaceable(s, 'system-execution', 1840, 600, 390, 150, 'learner / evaluator', (
+        '训练与评测后端', 'Harness 调用；prompt 配置',
+    ), GREEN, title_size=25)
+    s.path('M 1585 515 V 600', GREEN, arrow='green')
+    s.label(1585, 563, 'execute / RL rollout', GREEN, 20)
+    s.path('M 2035 515 V 600', GREEN, arrow='green')
+    s.label(2035, 563, 'SFT / prompt / evaluate', GREEN, 20)
+    replaceable(s, 'environment', 1390, 830, 390, 125, 'Environment', (
+        '环境后端：动作 → 观察',
+    ), GREEN)
+    s.node('command-results', 1840, 830, 390, 125, '结果与候选', (
         '训练结果 / 评测指标 / 配置',
     ), GREEN, stroke='#9ACBB6', title_size=27)
-    s.path('M 1585 665 V 750', GREEN, arrow='green')
-    s.label(1585, 712, '动作', GREEN, 20)
-    s.path('M 1390 805 H 1370 V 600 H 1390', GREEN, arrow='green', dash='7 6')
-    s.path('M 2035 665 V 750', GREEN, arrow='green')
-    s.path('M 1780 810 H 1815 V 630 H 1840', GREEN, arrow='green', dash='7 6')
-    s.label(1815, 715, 'RL 轨迹', GREEN, 19)
-    # Applied model/prompt changes affect subsequent policy calls, not environment actions.
-    s.path('M 2035 860 V 920 H 1795 V 680 H 1745 V 665', GREEN, arrow='green', dash='7 6')
-    s.label(2010, 924, '训练 / prompt 按配置应用', GREEN, 19)
+    s.path('M 1585 750 V 830', GREEN, arrow='green')
+    s.label(1585, 796, '动作', GREEN, 20)
+    s.path('M 1390 895 H 1370 V 680 H 1390', GREEN, arrow='green', dash='7 6')
+    s.path('M 2035 750 V 830', GREEN, arrow='green')
+    s.path('M 1780 890 H 1815 V 705 H 1840', GREEN, arrow='green', dash='7 6')
+    s.label(1855, 797, 'RL 轨迹', GREEN, 18)
+    replaceable(s, 'exploration-memory', 1390, 985, 390, 100, 'memory', (), GREEN, title_size=26)
+    s.path('M 2230 915 H 2245 V 970 H 1795 V 765 H 1745 V 750', GREEN, arrow='green', dash='7 6')
+    s.text(2035, 1038, '训练 / prompt 按配置应用', 20, GREEN, anchor='middle')
     s.parts.append('</g>')
 
-    s.node('exploration-action-space', 1350, 1030, 920, 120, 'Actor Action Space', (
-        '定义与校验：环境动作（execute episode / RL rollout）',
-    ), GREEN, stroke='#9ACBB6', title_size=28)
-    s.path('M 1450 1030 V 860', GREEN, arrow='green')
-    s.label(1450, 1000, '描述 / 校验', GREEN, 20)
+    replaceable(s, 'exploration-action-space', 1350, 1180, 920, 170, 'Actor ActionSpace', (
+        '环境动作的定义与校验', '供 execute episode / RL rollout 使用',
+    ), GREEN, whole=True, title_size=28)
+    s.path('M 1450 1180 V 1110', GREEN, arrow='green')
+    s.label(1620, 1152, '描述 / 校验', GREEN, 20)
 
-    s.node('external-system', 1060, 170, 230, 100, '外部控制器', (
+    s.node('external-system', 1060, 230, 230, 100, '外部控制器', (
         '可直接提交指令',
-    ), AMBER, '#FFF5DD', '#E4C47F', title_size=25)
-    s.node('directive', 1060, 350, 230, 180, 'Directive', (
-        'execute · sft',
-        'rl · evaluate',
-        'prompt 配置',
-    ), AMBER, '#FFF5DD', '#E4C47F', title_size=26)
-    s.path('M 1175 270 V 350', AMBER, arrow='amber')
-    s.path('M 960 650 H 1045 V 405 H 1060', BLUE, arrow='blue')
-    s.path('M 1290 405 H 1390', BLUE, arrow='blue')
-    s.node('feedback', 1060, 850, 230, 120, 'Feedback', (
-        '状态 / 指标',
-        '候选 / 证据引用',
-    ), AMBER, '#FFF5DD', '#E4C47F', title_size=26)
-    s.path('M 1350 890 H 1290', AMBER, arrow='amber')
-    s.path('M 1060 910 H 1020 V 430 H 960', AMBER, arrow='amber')
-    s.text(1175, 1090, 'Runner 协调交付', 20, AMBER, 650, anchor='middle')
+    ), INK, '#EAF0F6', LINE, title_size=25)
+    s.node('directive', 1060, 410, 230, 180, 'Directive', (
+        'execute · sft', 'rl · evaluate', 'prompt 配置',
+    ), INK, '#EAF0F6', LINE, title_size=26)
+    s.path('M 1175 330 V 410')
+    s.path('M 960 710 H 1045 V 465 H 1060', BLUE, arrow='blue')
+    s.path('M 1290 465 H 1390', BLUE, arrow='blue')
+    s.node('runner', 1060, 680, 230, 180, 'Runner', (
+        '框架协同 / 交付', '单 inflight', '推进·复查·取消',
+    ), INK, '#EAF0F6', LINE, title_size=26)
+    s.node('feedback', 1060, 960, 230, 120, 'Feedback', (
+        '状态 / 指标', '候选 / 证据引用',
+    ), INK, '#EAF0F6', LINE, title_size=26)
+    s.path('M 1350 1020 H 1290')
+    s.path('M 1060 1020 H 1020 V 505 H 960')
 
     for x in (600, 1810):
-        s.path(f'M {x} 1200 V 1270', PURPLE, arrow='purple')
-        s.label(x, 1244, '系统反馈', PURPLE, 20)
-    s.rect(100, 1270, 2200, 200, '#F2EBFB', '#B89CDC', rx=24)
-    s.text(140, 1318, 'Experience / 共享系统反馈与改进证据', 30, PURPLE, 700)
-    for ident, x, title, line in [
-        ('runtime-feedback', 140, '运行反馈', '耗时 / token / errors'),
-        ('learning-feedback', 860, '训练与评测', '效果 / 效率 / 模型版本'),
-        ('improvement-evidence', 1580, '改进结论', '策略结果 / 总结 / 证据引用'),
-    ]:
-        s.node(ident, x, 1345, 680, 95, title, (line,), PURPLE,
-               stroke='#D7C5EC', title_size=25)
-    s.path('M 100 1370 H 55 V 430 H 170', PURPLE, arrow='purple', dash='9 7')
-    s.label(55, 1230, '检索', PURPLE, 18)
+        s.path(f'M {x} 1380 V 1450', PURPLE, arrow='purple')
+        s.label(x, 1424, '系统反馈', PURPLE, 20)
+    replaceable(s, 'experience', 100, 1450, 2200, 150, 'Experience / 共享系统反馈与改进证据', (
+        '运行反馈 · 训练与评测 · 改进结论与证据引用',
+        'Experience 实现 / 检索 / 存储后端可换；两个 Loop 各自保留工作记忆',
+    ), PURPLE, '#F2EBFB', title_size=30)
+    s.path('M 100 1525 H 55 V 505 H 170', PURPLE, arrow='purple', dash='9 7')
+    s.label(55, 1410, '检索', PURPLE, 18)
 
-    s.node('runtime', 100, 1520, 1050, 145, 'Runtime / 共享服务与协调', (
-        'Model · Sandbox · Artifacts · Jobs · Runner',
-    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
-    s.node('snapshot', 1190, 1520, 1110, 145, 'Snapshot / 保存与恢复', (
-        '内置实现支持空闲边界快照；自定义组件需显式集成',
-    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
-    s.text(100, 1712, '默认训练与评测后端为 Mock。', 21, MUTED)
+    replaceable(s, 'runtime-backends', 100, 1660, 1050, 165, 'Runtime / 共享后端', (
+        'Model · Sandbox · Artifact 后端',
+        '通过公开端口接入；Runner 协同见框架骨架',
+    ), BLUE, '#EFF5FF', title_size=28)
+    replaceable(s, 'snapshot', 1190, 1660, 1110, 165, 'Snapshot / 保存与恢复', (
+        '内置实现在空闲边界捕获与恢复',
+        '自定义模块需显式适配保存 / 恢复 / 引用一致性',
+    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
+    s.text(100, 1875, '虚线框内部展示默认组合；整体替换 Harness 不要求保留相同内部结构。默认训练 / 评测后端为 Mock。', 22, MUTED)
     s.save('system-flow.svg')
 
 
 def file_architecture():
-    s = SVG(2400, 1470, 'RSISys 文件架构图',
-            'DecisionPolicy 位于 decision_making/harness/policy/；Exploration Policy 的代码接口 ActorPolicy 位于 exploration/harness/policy/。'
-            '每个 Loop 的 Harness 与 Action Space 平级，共享 Experience、跨 Loop 协议、Runtime 和 Snapshot。')
+    s = SVG(2400, 1840, 'RSISys 文件架构图',
+            '两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。'
+            'Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。'
+            '跨 Loop 协议与 Runner 是框架骨架。Experience 与服务后端可换，Snapshot 自定义模块需显式适配。')
     s.text(100, 80, 'RSISys / 文件架构', 42, weight=750)
-    s.text(100, 126, 'src/rsisys/ · Policy 位于默认 Harness 内部', 26, MUTED)
+    s.text(100, 126, 'src/rsisys/ · 默认组合与替换边界', 26, MUTED)
+    legend(s)
 
-    for ident, x, title, policy, interface, color, fill, stroke in [
-        ('decision-dir', 100, 'loops/decision_making/', 'DecisionPolicy',
-         'decide(context) → Decision', BLUE, '#EFF5FF', '#BCD1F2'),
-        ('exploration-dir', 870, 'loops/exploration/', 'ActorPolicy',
-         'Exploration Policy · act(context)', GREEN, '#EFF8F3', '#B9DDCF'),
+    for ident, x, title, policy, interface, color, fill in [
+        ('decision-dir', 100, 'loops/decision_making/', 'Decision Policy',
+         'DecisionPolicy · decide / review', BLUE, '#EFF5FF'),
+        ('exploration-dir', 870, 'loops/exploration/', 'Actor Policy',
+         'ActorPolicy · act(context)', GREEN, '#EFF8F3'),
     ]:
         s.parts.append(f'<g id="{ident}">')
-        s.rect(x, 170, 730, 860, fill, stroke, rx=24)
-        s.text(x+35, 220, title, 29, color, 700, mono=True, max_width=660)
-        s.text(x+35, 267, 'loop.py  ·  Harness 与 Action Space 的组合端点', 22, MUTED)
-        s.rect(x+30, 310, 670, 490, '#FFFFFF', stroke)
-        s.text(x+60, 355, 'harness/', 29, color, 650, mono=True)
-        s.text(x+60, 395, '__init__.py：Harness 协议', 22, MUTED)
-        s.node(ident+'-policy', x+60, 430, 610, 120, 'policy/  ·  '+policy,
-               (interface,), color, fill, stroke, title_size=28)
+        s.rect(x, 230, 730, 1100, '#EAF0F6', LINE, rx=24)
+        s.text(x+35, 280, title, 29, INK, 700, mono=True, max_width=660)
+        s.text(x+35, 327, 'loop.py · 协议端点 / 框架骨架', 23, MUTED)
+        s.rect(x+30, 390, 670, 600, fill, color, dash='8 5')
+        s.text(x+60, 438, 'harness/', 29, color, 650, mono=True)
+        s.chip(x+510, 411, 150, '整体可换', '#FFFFFF', color)
+        s.text(x+60, 480, '__init__.py：Harness 协议', 22, MUTED)
+        replaceable(s, ident+'-policy', x+60, 515, 610, 130, 'policy/ · '+policy,
+                    (interface,), color, title_size=28)
         if ident == 'decision-dir':
-            lines = (
-                'engine.py：决策执行编排',
-                'tools/ · learner/ · memory/',
-                'decision.py · state.py',
-            )
-            space = 'DecisionActionSpace · 准备操作与系统指令'
+            s.text(x+60, 700, 'engine.py · decision.py · state.py', 23, MUTED)
+            replaceable(s, ident+'-internals', x+60, 740, 610, 150, 'tools/ · learner/ · memory/', (
+                '现有操作绑定 · 自身学习 · 工作记忆',
+            ), color, title_size=26)
+            s.text(x+60, 945, '模型自主选择科研步骤与复查操作', 22, color)
+            lines = ('access.py：外部权限过滤 / 执行检查',
+                     'capabilities.py：显式定义 / 外部 provider 发现',
+                     'directives.py · queries.py：指令与查询定义',
+                     'review：默认只读 / 全部操作 / allowlist')
         else:
-            lines = (
-                'engine.py · commands.py：执行与指令分派',
-                'environment/ · learner/ · evaluation/ · memory/',
-                'rl.py · state.py',
-            )
-            space = 'ActionSpace · Actor 环境动作'
-        for i, line in enumerate(lines):
-            s.text(x+60, 610+i*51, line, 22, MUTED, max_width=610)
-        s.node(ident+'-action-space', x+30, 850, 670, 120, 'action_space/',
-               (space,), color, stroke=stroke, title_size=28)
+            s.text(x+60, 700, 'engine.py · commands.py · rl.py · state.py', 23, MUTED)
+            replaceable(s, ident+'-internals', x+60, 740, 610, 150, 'learner/ · evaluation/ · memory/', (
+                '训练 / 评测后端 · 工作记忆',
+            ), color, title_size=26)
+            s.rect(x+60, 915, 610, 50, '#FFFFFF', color, rx=10, dash='8 5')
+            s.text(x+80, 947, 'environment/ · 环境后端', 23, color)
+            s.text(x+650, 947, '实现可换', 18, color, anchor='end')
+            lines = ('__init__.py：ActionSpace 协议 / 动作定义',
+                     'local.py：本地命令动作',
+                     '只定义与校验；环境负责执行')
+        replaceable(s, ident+'-action-space', x+30, 1050, 670, 220, 'action_space/',
+                    lines, color, whole=True, title_size=28)
         s.parts.append('</g>')
 
-    s.rect(1640, 170, 660, 860, '#F2EBFB', '#B89CDC', rx=24)
-    s.text(1680, 220, 'experience/', 31, PURPLE, 700, mono=True)
-    s.text(1680, 267, '跨轮系统反馈与改进证据', 23, MUTED)
-    for ident, y, title, line in [
-        ('experience-records', 310, 'records.py · provenance.py', '记录类型与来源关联'),
-        ('experience-retrieval', 530, 'retrieval.py', '写入与检索接口'),
-        ('experience-storage', 750, 'storage.py · sqlite.py', '内存 / SQLite 存储'),
-    ]:
-        s.node(ident, 1680, y, 580, 160, title, (line,), PURPLE,
-               stroke='#D7C5EC', title_size=26)
+    s.rect(1640, 230, 660, 1100, '#F2EBFB', PURPLE, rx=24, dash='8 5')
+    s.text(1680, 280, 'experience/', 31, PURPLE, 700, mono=True)
+    s.chip(2110, 253, 150, '实现可换', '#FFFFFF', PURPLE)
+    s.text(1680, 327, '共享反馈与证据 · ExperienceSystem', 23, MUTED)
+    s.node('experience-records', 1680, 390, 580, 160, 'records.py · provenance.py', (
+        '记录类型与来源关联',
+    ), PURPLE, stroke='#D7C5EC', title_size=26)
+    replaceable(s, 'experience-retrieval', 1680, 610, 580, 160, 'retrieval.py', (
+        'Experience 写入与检索实现',
+    ), PURPLE, title_size=27)
+    replaceable(s, 'experience-storage', 1680, 830, 580, 160, 'storage.py · sqlite.py', (
+        '存储后端；内置内存 / SQLite',
+    ), PURPLE, title_size=27)
+    s.text(1680, 1105, '共享系统反馈', 25, PURPLE, 650)
+    s.text(1680, 1150, '运行 / 训练 / 评测 / 改进证据', 22, MUTED)
+    s.text(1680, 1200, '工作记忆保留在两个 Harness 内', 22, MUTED)
 
-    s.node('contracts-dir', 100, 1080, 2200, 120, 'loops/contracts/  ·  跨 Loop 消息与公开端口', (
-        'Directive · Feedback · coordination · requests · jobs · model_service · artifacts · candidate · training',
-    ), AMBER, '#FFF8E8', '#E4C47F', title_size=28)
-    s.node('runtime-dir', 100, 1250, 1050, 170, 'runtime/  ·  共享服务与协调', (
-        'model.py · sandbox.py · local_process.py',
-        'artifacts.py · files.py · jobs.py · runner.py',
-    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
-    s.node('snapshot-dir', 1190, 1250, 1110, 170, 'snapshot/ + 系统装配', (
-        'snapshot/：捕获 / 编解码 / 保存 / 恢复',
-        'application.py · config.py · assembly.py：装配',
-    ), INK, '#EAF0F6', '#CBD6E3', title_size=28)
+    s.node('framework', 100, 1380, 2200, 140, '框架骨架 / Loop protocol + Runner 协同', (
+        'loops/contracts/：Directive · Feedback · coordination · queries · requests · jobs · model_service · artifacts · candidate · training',
+        'runtime/runner.py：交付 / 推进 / 复查 / 取消；单 inflight；科研决策由 Harness 内的 Policy 负责',
+    ), INK, '#EAF0F6', LINE, title_size=28)
+    replaceable(s, 'runtime-dir', 100, 1570, 1050, 170, 'runtime/ · 共享后端', (
+        'model.py · sandbox.py · local_process.py · artifacts.py',
+        'Model / Sandbox / Artifact 实现可换；files.py · jobs.py 配套',
+    ), BLUE, '#EFF5FF', title_size=28)
+    replaceable(s, 'snapshot-dir', 1190, 1570, 1110, 170, 'snapshot/ · 保存与恢复', (
+        'capture.py · restore.py · storage.py / local.py · codec.py · manifest.py',
+        '内置实现限空闲边界；自定义模块需显式适配保存 / 恢复 / 引用一致性',
+    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
+    s.text(100, 1798, '装配入口：application.py · config.py · assembly.py    |    默认内部结构可随 Harness 整体替换；默认训练 / 评测为 Mock。', 22, MUTED)
     s.save('file-architecture.svg')
 
 

@@ -21,6 +21,7 @@ from rsisys.runtime.jobs import JobBook
 from rsisys.loops.contracts.coordination import LoopStepResult, ExecutionView, ExplorationProgress, ReviewDecision
 from rsisys.loops.contracts.requests import EvaluationSpec
 from ..action_space import DecisionActionSpace, OperationCall, OperationResult
+from ..action_space.access import authorized_space
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy, ModelDecisionPolicy
 from .decision import Decision
@@ -119,6 +120,10 @@ class DefaultDecisionHarness:
 
     def _review(self, objective: str, progress: ExplorationProgress,
                 action_space: DecisionActionSpace | None = None) -> ReviewDecision:
+        if action_space is None:
+            from ..action_space import ModularDecisionActionSpace
+            action_space = ModularDecisionActionSpace((), directive_modes=())
+        action_space = authorized_space(action_space, 'review')
         if not isinstance(progress, ExplorationProgress):
             raise TypeError('Expected an ExplorationProgress')
         if (progress.directive_id != self.state.pending_directive_id
@@ -128,15 +133,16 @@ class DefaultDecisionHarness:
         if pending is not None:
             if pending.objective != objective or pending.directive_id != progress.directive_id:
                 raise ValueError('Review differs from the pending review recording')
-            return self._flush_review_record()
+            result = self._flush_review_record()
+            action_space.validate_review(result)
+            return result
         if progress.terminal:
             raise ValueError('Cannot review a terminal execution')
         self.update_execution(replace(self.state.execution, progress=progress))
         session = self.state.review_session
         if session is None:
             context = self._context(objective, action_space)
-            context = replace(context, directive_modes=(), operations=tuple(
-                spec for spec in context.operations if spec.read_only))
+            context = replace(context, directive_modes=(), review_actions=action_space.review_actions())
             session = _ReviewSession(objective, progress.directive_id, context, self.review_tool_limit)
             self.state.review_session = session
         elif session.objective != objective or session.directive_id != progress.directive_id:
@@ -145,29 +151,38 @@ class DefaultDecisionHarness:
         self._flush_review_query()
         review = getattr(self.policy, 'review', None)
         while True:
-            if session.queries_used >= session.tool_limit:
-                session.context = replace(session.context, operations=())
+            session.context = replace(session.context,
+                operations=action_space.describe() if session.queries_used < session.tool_limit else (),
+                review_actions=action_space.review_actions())
             context = session.context
             result = self._call_policy(review, context) if callable(review) else ReviewDecision()
             if not isinstance(result, (ReviewDecision, Decision)):
-                raise TypeError('Policy review must return ReviewDecision or a read-only invocation')
+                raise TypeError('Policy review must return ReviewDecision or an operation invocation')
             if isinstance(result, ReviewDecision):
+                result.__post_init__()
+                action_space.validate_review(result)
                 result = replace(result, simulated=result.simulated or session.simulated)
                 break
             if (result.kind != 'invoke' or result.operation.name not in
                     {spec.name for spec in context.operations}):
-                raise ValueError('Review may only invoke available read-only operations within its budget')
+                raise ValueError('Review may only invoke available operations within its budget')
             call = result.operation
+            operation_spec = next(spec for spec in context.operations if spec.name == call.name)
             started = perf_counter()
             try:
                 call = action_space.validate(call)
                 observed = self.tools.execute(call)
+                if isinstance(observed, JobRef):
+                    # This is a submission receipt, not completion of the backend job.
+                    # Its tool/provider owns polling; do not replace the in-flight experiment.
+                    observed = OperationResult('Operation submitted; backend job is not yet complete', (),
+                        result.simulated, data={'job': asdict(observed), 'status': 'submitted'})
                 if not isinstance(observed, OperationResult):
-                    raise TypeError('Review queries must return an immediate OperationResult')
+                    raise TypeError('Review operations must return OperationResult or JobRef')
                 observed.__post_init__()
                 observed = replace(observed, simulated=observed.simulated or result.simulated)
             except Exception as exc:
-                observed = OperationResult('Research query failed', (), result.simulated,
+                observed = OperationResult('Research operation failed', (), result.simulated,
                     ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
             session.simulated = session.simulated or observed.simulated
             session.queries_used += 1
@@ -176,7 +191,8 @@ class DefaultDecisionHarness:
             session.pending_entry = HistoryEntry(record_id, 'operation', progress.directive_id,
                 observed.summary, observed.simulated,
                 source_refs=tuple(ref.artifact_id for ref in observed.artifacts),
-                details={'event': 'review_query', 'operation': asdict(call), 'result': asdict(observed),
+                details={'event': 'review_query' if operation_spec.read_only else 'review_operation',
+                         'operation': asdict(call), 'result': asdict(observed),
                          'elapsed_seconds': perf_counter() - started})
             self._flush_review_query()
         if not isinstance(result, ReviewDecision):
@@ -191,7 +207,9 @@ class DefaultDecisionHarness:
                             if progress.directive_id in self.state.directive_provenance else None)},
         )
         self.state.review_session = None
-        return self._flush_review_record()
+        result = self._flush_review_record()
+        action_space.validate_review(result)
+        return result
 
     def _flush_review_query(self):
         session = self.state.review_session
@@ -238,6 +256,7 @@ class DefaultDecisionHarness:
         return deepcopy(result)
 
     def step(self, objective: str, action_space: DecisionActionSpace) -> LoopStepResult:
+        action_space = authorized_space(action_space, 'decision')
         if self.state.pending_review_record is not None or self.state.review_session is not None:
             raise RuntimeError('Record the pending review before another decision')
         if self.state.pending_operation_record is not None:

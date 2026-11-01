@@ -54,6 +54,7 @@ class DecisionContext:
     decision_model: ModelRef | None = None
     directive_provenance: tuple[DirectiveProvenance, ...] = ()
     candidate_evaluations: tuple[CandidateEvaluation, ...] = ()
+    review_actions: tuple[str, ...] = ('continue', 'cancel')
 
 
 @dataclass(frozen=True)

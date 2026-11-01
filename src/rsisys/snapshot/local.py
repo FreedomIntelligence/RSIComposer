@@ -156,6 +156,10 @@ class LocalSnapshotCapture:
         if dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):
             raise TypeError('Custom decision action bindings need explicit snapshot integration')
         expected_modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if app.config.learning == 'mock' else ())
+        from rsisys.loops.decision_making.action_space.access import ActionPermissions
+        if type(decision_loop.action_space.permissions) is not ActionPermissions:
+            raise TypeError('Custom action permissions need explicit snapshot integration')
+        action_permissions = decision_loop.action_space.permissions.to_dict()
         query_tools = getattr(dm.tools, 'query_tools', None)
         expected_queries = QueryTools(exploration_loop, artifacts=app.artifacts)
         if (type(query_tools) is not QueryTools or query_tools.provider is not exploration_loop
@@ -201,6 +205,7 @@ class LocalSnapshotCapture:
                 'python': list(sys.version_info[:2]),
                 'decision_experience_limit': dm.experience_limit,
                 'review_tool_limit': dm.review_tool_limit,
+                'action_permissions': action_permissions,
                 'memory_limits': {'decision_maker': dm.memory_limit, 'actor': actor.memory_limit},
             }))
             app.store.backup(staging / 'experience.sqlite3')
@@ -263,6 +268,8 @@ def restore_snapshot(directory, target):
         raise ValueError('Invalid restored experience limit')
     if type(runtime['review_tool_limit']) is not int or runtime['review_tool_limit'] < 0:
         raise ValueError('Invalid restored review tool limit')
+    from rsisys.loops.decision_making.action_space.access import ActionPermissions
+    permissions = ActionPermissions.from_dict(runtime['action_permissions'])
     # Validate both owners and payloads before creating the restore target.
     DecisionMemory(directory / 'decision_memory.json')
     ExplorationMemory(directory / 'exploration_memory.json')
@@ -285,7 +292,7 @@ def restore_snapshot(directory, target):
     finally:
         if staging.exists():
             shutil.rmtree(staging)
-    app = Application(config, _restore=True)
+    app = Application(config, _restore=True, action_permissions=permissions)
     app.runner.decision_making.harness.state = decision
     app.runner.exploration.harness.state = actor
     app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']

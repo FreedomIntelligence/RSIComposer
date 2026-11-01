@@ -106,6 +106,17 @@ class Runner:
             called = 1
         result = self._review_result
         if result.action == 'cancel':
+            authorize = getattr(self.decision_making, 'authorize_review', None)
+            if callable(authorize):
+                try:
+                    authorize(deepcopy(result))
+                except PermissionError:
+                    # Stop retrying the old model intent after permission revocation.
+                    # A request already received by the backend may still take effect.
+                    self._review_result = None
+                    self._pending_cancel = False
+                    self._review_at = self._clock()
+                    raise
             # Keep the review result on an uncertain cancellation response.
             progress = self._request_cancel(progress)
         event['review'] = asdict(result)
