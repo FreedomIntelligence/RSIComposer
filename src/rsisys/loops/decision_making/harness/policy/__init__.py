@@ -195,6 +195,8 @@ class ModelDecisionPolicy:
                     "you may still research or control existing experiments using context.operations. "
                     "Use {\"kind\":\"wait\"} to yield a scheduling turn while outstanding experiments run. "
                     "Put mode-specific parameters in arguments, following its listed input_schema. "
+                    "Emit object fields in the property order shown in that schema; include intended optional "
+                    "parameters before moving to later fields. "
                     "System instruction execution is owned by the exploration harness. "
                     "Optional input_ids selects only artifacts from current operation results or last_feedback; "
                     "when a directive declares accepts_input_refs=false, omit input_ids or use []; "

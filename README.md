@@ -31,6 +31,8 @@ pixi run test
 
 默认模型、训练与评测使用 Mock。版本引用变化不代表真实梯度训练或能力提升，Mock 评测不执行真实推理打分。HTTP 模型、本地进程、持久化和空闲边界恢复的范围见组件说明。
 
+真实服务的参数生成回归需显式开启，默认测试不会联网：安装可选 `test` 依赖后，设置 `RSISYS_LIVE_BASE_URL`（含 `/v1`）和 `RSISYS_LIVE_MODEL`（modelmate 还需 `RSISYS_LIVE_SCHEMA_MODE=portable`），运行 `PYTHONPATH=src:tests python -m unittest test_live_generation -v`。它逐值核对实际生成的引用、文本、数字和完整训练指令，并走解析与请求准备，不提交训练或执行模型动作。证据路径及同版本 grammar 离线预检见[测试说明](tests/test_live_generation.py)。
+
 训练请求保持后端中立，允许自定义 method 和外部数据；Decision 请求也支持 data_refs 与 method。默认 `rl` 保留本地采样循环；显式注册 `training_directive()` + `TrainingCommandHandler` 后，`train` 可把整个任务交给后端。[共享协议](src/rsisys/loops/contracts/README.md) 单独定义可选的训练来源、能力声明与部署生命周期；具体进程训练和推理服务接入位于 Harness 外的 [adapters/](src/rsisys/adapters/)，接入见[使用指南](docs/GUIDE.md#接入整项训练任务)。
 
 [SystemVersion / Candidate](src/rsisys/loops/contracts/candidate.py) 描述组件组合及其变更，[SystemRegistry](src/rsisys/runtime/systems.py) 管理父版本、候选注册与当前版本的显式应用。实验父系统 ID、初始训练权重、服务部署和角色绑定分别表达；`TrainingOrigin` 明确 restart / weights_only / full_state，不能根据父版本暗中决定训练起点。

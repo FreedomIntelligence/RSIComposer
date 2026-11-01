@@ -84,7 +84,7 @@ class ExperimentControlContractTests(unittest.TestCase):
         fields = capability.definition.spec.input_schema['properties']
         self.assertEqual(fields['expected_version'], {'type': 'integer', 'minimum': 0})
         self.assertEqual(fields['idempotency_key'], {'type': 'string', 'minLength': 1})
-        self.assertEqual(fields['changes'], {'type': 'object', 'minProperties': 1})
+        self.assertEqual(fields['changes'], {'type': 'object', 'minProperties': 1, 'additionalProperties': True})
         invalid = [{'expected_version': value} for value in (-1, True, 0.5, '0')]
         invalid += [{'idempotency_key': value} for value in ('', None, 1)]
         invalid += [{'changes': value} for value in ({}, [], None, {1: 'invalid'}, {'x': float('nan')})]

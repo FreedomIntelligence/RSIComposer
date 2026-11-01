@@ -1,6 +1,7 @@
 """vLLM OpenAI transport and opt-in, isolated LoRA deployments."""
 
 from dataclasses import asdict, replace
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -26,8 +27,11 @@ class VLLMBackend(RemoteModelBackend):
 
     supports_response_schema = True  # Transport support; server may reject a schema.
 
-    def __init__(self, binding, models=None, *, generation_options=None):
+    def __init__(self, binding, models=None, *, generation_options=None, native_schema_mode='exact'):
         super().__init__(replace(binding, kind='chat_completions'))
+        if native_schema_mode not in ('exact', 'portable'):
+            raise ValueError('native_schema_mode must be exact or portable')
+        self.native_schema_mode = native_schema_mode
         self.models = {}
         self._aliases = {}  # Historical pins survive release/removal of active bindings.
         self._bindings_lock = threading.RLock()
@@ -60,6 +64,43 @@ class VLLMBackend(RemoteModelBackend):
             self.bind(model, alias)
             return alias
 
+    def native_response_schema(self, schema):
+        """Explicit provider dialect; canonical schemas/validators stay unchanged.
+
+        Portable decoding omits string regex/length, item uniqueness and
+        conditional refinements on objects with their own properties. The
+        caller must still validate the canonical schema/Action Space before
+        effects. No failed request is retried with a weaker grammar.
+        """
+        def convert(node):
+            if not isinstance(node, dict):
+                return deepcopy(node)
+            result = deepcopy(node)
+            if self.native_schema_mode == 'exact':
+                return result
+            for key in ('pattern', 'minLength', 'maxLength', 'uniqueItems'):
+                result.pop(key, None)
+            if isinstance(result.get('properties'), dict):
+                # This compiler treats partial object branches as closed objects,
+                # losing sibling fields. Keep the base object shape and defer
+                # cross-field refinements to canonical validation. Discriminated
+                # envelope unions (no sibling properties) are preserved.
+                for key in ('allOf', 'anyOf', 'oneOf'):
+                    result.pop(key, None)
+            # Walk schema positions only, never literal const/enum/examples data.
+            for key in ('properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'):
+                if isinstance(result.get(key), dict):
+                    result[key] = {name: convert(value) for name, value in result[key].items()}
+            for key in ('allOf', 'anyOf', 'oneOf', 'prefixItems'):
+                if isinstance(result.get(key), list):
+                    result[key] = [convert(value) for value in result[key]]
+            for key in ('items', 'additionalProperties', 'contains', 'not', 'if', 'then', 'else',
+                        'unevaluatedItems', 'unevaluatedProperties', 'propertyNames'):
+                if isinstance(result.get(key), dict):
+                    result[key] = convert(result[key])
+            return result
+        return convert(schema)
+
     def generate(self, request):
         if request.model.backend_id != self.binding.backend_id:
             raise ValueError('Generation request does not match this backend')
@@ -76,7 +117,8 @@ class VLLMBackend(RemoteModelBackend):
             if conflicts:
                 raise ValueError('Request schema conflicts with native generation options: ' + ', '.join(sorted(conflicts)))
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
-                'name': 'rsisys_decision', 'strict': True, 'schema': request.response_schema}}
+                'name': 'rsisys_decision', 'strict': True,
+                'schema': self.native_response_schema(request.response_schema)}}
         payload['max_tokens'] = min(request.max_output_tokens,
                                    self.generation_options.get('max_tokens', request.max_output_tokens))
         payload.update(model=alias, messages=messages, stream=False)

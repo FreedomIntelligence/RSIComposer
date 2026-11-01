@@ -203,7 +203,12 @@ class DecisionBackend:
         request = replace(request, max_output_tokens=min(cap, request.max_output_tokens))
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
             # Retain schema property order so request logs can reproduce decoding.
-            stream.write(json.dumps({'call': self.calls, 'request': asdict(request)},
+            record = {'call': self.calls, 'request': asdict(request)}
+            encoder = getattr(self.serving, 'native_response_schema', None)
+            if request.response_schema is not None and callable(encoder):
+                record.update(native_schema_mode=self.serving.native_schema_mode,
+                              native_response_schema=encoder(request.response_schema))
+            stream.write(json.dumps(record,
                 ensure_ascii=False, allow_nan=False).encode() + b'\n')
         response = self.serving.generate(request)
         with (self.root / 'model_responses.jsonl').open('ab') as stream:

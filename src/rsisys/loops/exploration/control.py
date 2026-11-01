@@ -59,7 +59,7 @@ class ExperimentControls:
         if kind == 'update':
             fields.update(expected_version={'type': 'integer', 'minimum': 0},
                           idempotency_key={'type': 'string', 'minLength': 1},
-                          changes={'type': 'object', 'minProperties': 1})
+                          changes={'type': 'object', 'minProperties': 1, 'additionalProperties': True})
             if self.backend_capabilities is not None:
                 fields['changes'].update(
                     properties={field: {} for field in self.backend_capabilities.update_fields},

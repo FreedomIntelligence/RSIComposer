@@ -173,6 +173,35 @@ transport. `GenerationRequest.response_schema` becomes `response_format` with
 is preserved in the HTTP body, native generation options and medical request
 logs: constrained generation grammars may enforce that order. Canonical sorting
 for training/artifact hashes must not be reused for inference serialization.
+Successful schema compilation does not prove value fidelity. The tested
+modelmate service truncated references under an unanchored `\S` and altered
+legal newlines, quotes and backslashes under native string patterns/length bounds.
+`VLLMBackend(..., native_schema_mode="portable")` is an explicit provider profile:
+it removes `pattern`, `minLength`, `maxLength` and `uniqueItems` from schema
+positions on the wire. On objects with their own properties it also omits
+`allOf`/`anyOf`/`oneOf` conditional refinements: the tested compiler otherwise
+closes partial branches and loses sibling fields. Base types, enum/const, numeric
+bounds, array size, base required fields, field order, closed envelopes and the
+outer discriminated decision union are preserved. Canonical schemas are unchanged.
+The default `"exact"` profile transmits them unchanged. Neither profile retries a
+failed request with weaker constraints or silently corrects returned parameters.
+
+Portable grammar is a decoding aid, not semantic validation. Callers must validate
+against the canonical schema and their Action Space before effects; the bundled
+parsers retain nonblank, NUL, single-line, duplicate-ID, reference, length and cross-field checks.
+The medical request log records both canonical and wire schemas and the profile.
+Native object properties are emitted in schema order; policy instructions and
+canary target presentation follow that order without changing target values.
+
+For open dictionaries, `additionalProperties: true` is explicit: the tested strict
+compiler otherwise closes an undeclared map and rejects `minProperties: 1`.
+The opt-in live suite checks exact generated values and production parsers,
+including a complete medical train envelope prepared without submitting a job.
+Set `RSISYS_LIVE_SCHEMA_MODE=portable` for modelmate. It can first compile with the
+installed provider's xgrammar via `RSISYS_LIVE_NATIVE_PREFLIGHT=1`; this protects
+the endpoint from compiler errors but does not replace generation/value checks.
+Default tests do not contact any endpoint. `RSISYS_LIVE_EVIDENCE` keeps requests,
+wire schemas, raw responses and the prepared-but-unsubmitted training request.
 This is distinct from
 `json_object`, which only requests JSON. A server rejection is surfaced without
 retrying unconstrained. Conflicting native format/tool options, truncated replies

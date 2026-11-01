@@ -32,6 +32,36 @@ class StructuredTransportTests(unittest.TestCase):
         self.assertFalse(response.revision_verified)
         self.assertNotIn('tools', payload)
 
+    def test_portable_schema_is_explicit_preserves_structure_and_literal_data(self):
+        schema = {'type': 'object', 'properties': {
+            'text': {'type': ['string', 'null'], 'pattern': r'\S', 'minLength': 1, 'maxLength': 256},
+            'ids': {'type': 'array', 'minItems': 1, 'uniqueItems': True,
+                    'items': {'type': 'string', 'minLength': 1}},
+            'steps': {'type': 'integer', 'minimum': 1, 'maximum': 64},
+            'literal': {'const': {'pattern': r'\S', 'minLength': 1}},
+        }, 'required': ['text', 'ids', 'steps'], 'additionalProperties': False,
+           'anyOf': [{'required': ['literal']}, {'properties': {'steps': {'minimum': 2}}}]}
+        request = replace(self.request, response_schema=schema)
+        portable = VLLMBackend(self.binding, native_schema_mode='portable')
+        with patch.object(portable, '_request', return_value=self.reply()) as call:
+            portable.generate(request)
+        wire = call.call_args.args[1]['response_format']['json_schema']['schema']
+        self.assertEqual(wire['properties']['text'], {'type': ['string', 'null']})
+        self.assertEqual(wire['properties']['ids'], {'type': 'array', 'minItems': 1, 'items': {'type': 'string'}})
+        self.assertEqual(wire['properties']['steps'], schema['properties']['steps'])
+        self.assertEqual(wire['properties']['literal'], schema['properties']['literal'])
+        self.assertEqual(wire['required'], schema['required'])
+        self.assertFalse(wire['additionalProperties'])
+        self.assertNotIn('anyOf', wire)
+        self.assertEqual(list(wire['properties']), list(schema['properties']))
+        self.assertEqual(request.response_schema, schema)
+        self.assertEqual(self.backend.native_response_schema(schema), schema)
+        envelope = {'oneOf': [schema, SCHEMA]}
+        self.assertEqual(len(portable.native_response_schema(envelope)['oneOf']), 2)
+        for value in ('fallback', None, True):
+            with self.assertRaises(ValueError):
+                VLLMBackend(self.binding, native_schema_mode=value)
+
     def test_real_http_preserves_schema_order_in_requests_and_native_options(self):
         received = []
         reply = self.reply()
