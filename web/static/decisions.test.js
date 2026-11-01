@@ -206,7 +206,8 @@ test("render returns responsive 420px SVG, readable labels, selection halo and f
     assert.equal(tag(node, "text")[0].attributes["font-size"], "16");
     assert.equal(tag(node, "text")[0].attributes["text-anchor"], "middle");
     assert.equal(tag(node, "text")[0].attributes.x, "0");
-    assert.ok(tag(node, "text")[0].textContent.endsWith("…"));
+    assert.equal(tag(tag(node, "text")[0], "tspan").length, 2);
+    assert.equal(tag(node, "text")[0].attributes.textLength, undefined);
     assert.equal(tag(node, "title")[0].textContent, node.attributes["aria-label"]);
     assert.equal(tag(node, "circle")[0].attributes.r, "18");
     assert.equal(tag(node, "circle")[0].attributes.fill, "transparent");
@@ -259,7 +260,10 @@ test("labels remain text even when markup is supplied, including empty and Unico
     const node = renderedNodes(api.render({ rows: [row("a")], label: () => label }))[0];
     assert.equal(tag(node, "title")[0].textContent, label);
     assert.equal(node.attributes["aria-label"], label);
-    assert.ok(Array.from(tag(node, "text")[0].textContent).length <= 14);
+    const text = tag(node, "text")[0];
+    assert.ok(text.children.length <= 2);
+    assert.equal(text.attributes.textLength, undefined);
+    assert.equal(text.attributes.lengthAdjust, undefined);
     assert.equal(node.innerHTML, undefined);
   }
 });

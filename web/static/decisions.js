@@ -376,19 +376,34 @@
         fill: "var(--orange, #b45b35)", opacity: 0.18, "pointer-events": "none" }));
       group.append(element("circle", { class: "decision-dot", r: active ? 8 : 6,
         fill: active ? "var(--orange, #b45b35)" : "var(--muted, #8a7568)" }));
-      const characters = Array.from(fullLabel.replace(/\s+/g, " "));
-      const brief = characters.length > 14 ? characters.slice(0, 13).join("") + "…" : characters.join("");
-      const text = element("text", { x: 0, y: 32, "text-anchor": "middle", "font-size": 16, "font-family": "sans-serif",
-        fill: "var(--muted, #8a7568)" }, brief);
-      const estimated = Array.from(brief).reduce((sum, char) => sum + (char.codePointAt(0) > 255 ? 16 : 10), 0);
-      if (estimated > 0) {
-        text.setAttribute("textLength", String(Math.min(estimated, LABEL_WIDTH)));
-        text.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      // Preserve natural glyph proportions; wrap words instead of squeezing text.
+      const measure = value => Array.from(value).reduce((sum, char) => sum +
+        (char.codePointAt(0) > 255 ? 16 : /[MW@#]/.test(char) ? 14 : /[il.,:;!| ]/.test(char) ? 5 : 9), 0);
+      const remaining = Array.from(fullLabel.replace(/\s+/g, " ").trim()), labelLines = [];
+      while(remaining.length && labelLines.length < 2){
+        let count=0;
+        while(count<remaining.length && measure(remaining.slice(0,count+1).join(""))<=LABEL_WIDTH-8)count++;
+        count=Math.max(1,count);
+        if(count<remaining.length && labelLines.length===0){
+          const boundary=remaining.slice(0,count+1).lastIndexOf(" ");
+          if(boundary>Math.floor(count/2))count=boundary;
+        }
+        let line=remaining.splice(0,count).join("").trim();
+        while(remaining[0]===" ")remaining.shift();
+        if(labelLines.length===1 && remaining.length){
+          while(measure(line+"…")>LABEL_WIDTH-8)line=Array.from(line).slice(0,-1).join("");
+          line+="…";
+        }
+        labelLines.push(line);
       }
-      // Keep straight edges readable without drawing them through node labels.
-      const labelWidth = Math.min(estimated, LABEL_WIDTH);
-      group.append(element("rect", { class: "decision-label-backplate", x: -labelWidth / 2 - 6,
-        y: 15, width: labelWidth + 12, height: 24, rx: 3,
+      if(!labelLines.length)labelLines.push("");
+      const text = element("text", { class: "decision-label", x: 0, y: 30,
+        "text-anchor": "middle", "font-size": 16, "font-family": "var(--sans, sans-serif)" });
+      if(labelLines.length===1)text.textContent=labelLines[0];
+      else labelLines.forEach((line,index)=>text.append(element("tspan",{x:0,y:30+index*22},line)));
+      const labelWidth=Math.max(...labelLines.map(measure));
+      group.append(element("rect", { class: "decision-label-backplate", x: -labelWidth / 2 - 7,
+        y: 13, width: labelWidth + 14, height: labelLines.length*22+4, rx: 3,
         fill: "#f8f7f2", "pointer-events": "none" }));
       group.append(text); plane.append(group); groups.set(node.key, group);
     }
@@ -421,7 +436,7 @@
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
       for (const n of model.nodes) {
         left = Math.min(left, n.x - LABEL_WIDTH / 2 - 16); right = Math.max(right, n.x + LABEL_WIDTH / 2 + 16);
-        top = Math.min(top, n.y - 24); bottom = Math.max(bottom, n.y + 44);
+        top = Math.min(top, n.y - 24); bottom = Math.max(bottom, n.y + 64);
       }
       const scale = Math.max(initial ? 0.85 : 0.005, Math.min(1, (width - 64) / (right - left), (HEIGHT - 64) / (bottom - top)));
       view.camera.scale = scale;
