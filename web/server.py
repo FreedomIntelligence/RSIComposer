@@ -113,6 +113,22 @@ def metric_history_only(value):
     return result
 
 
+def run_project(raw, run_id):
+    """One startup is one project; legacy project IDs never define membership."""
+    project = raw.get("project")
+    project = project if isinstance(project, dict) else {}
+    result = pick(project, ("description", "system_id"))
+    name = next((value.strip() for value in (raw.get("display_name"), raw.get("name"),
+                raw.get("project_name"), project.get("name"))
+                if isinstance(value, str) and value.strip()), run_id)
+    suffix = f" · {run_id}"
+    if name != run_id:
+        prefix = name[:-len(suffix)] if name.endswith(suffix) else name
+        name = prefix[:1000 - len(suffix)] + suffix
+    result.update(project_id=run_id, name=name)
+    return result
+
+
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
@@ -122,9 +138,7 @@ def project_snapshot(raw, run_id):
         result["parent_run_id"] = raw["parent_run_id"][:128]
     if isinstance(raw.get("source_run_ids"), list):
         result["source_run_ids"] = [v[:128] for v in raw["source_run_ids"][:100] if isinstance(v, str)]
-    project = raw.get("project")
-    if isinstance(project, dict) and isinstance(project.get("project_id"), str) and RUN_ID.fullmatch(project["project_id"]):
-        result["project"] = pick(project, ("project_id", "name", "description", "system_id"))
+    result["project"] = run_project(raw, run_id)
     result["loops"] = {key: pick(raw.get("loops", {}).get(key), ("status", "summary"))
                        for key in ("decision_making", "exploration")} if isinstance(raw.get("loops"), dict) else {}
     result["models"] = {key: pick(raw.get("models", {}).get(key), ("model_id", "revision"))
@@ -169,39 +183,13 @@ def project_snapshot(raw, run_id):
 
 
 class RunStore:
-    def __init__(self, root, projects_file=None):
+    def __init__(self, root):
         # Resolve the explicitly configured root once; every child uses dir_fd +
         # O_NOFOLLOW, so replacing directories/files with links cannot escape it.
         self.root = Path(root).expanduser().resolve()
-        self.project_definitions, self.memberships = {}, {}
-        if projects_file is not None:
-            config = json.loads(Path(projects_file).read_text())
-            if not isinstance(config, dict) or not isinstance(config.get("projects"), list):
-                raise ValueError("Project registry requires projects list")
-            for entry in config["projects"]:
-                if not isinstance(entry, dict):
-                    raise ValueError("Invalid project entry")
-                ident = entry.get("project_id")
-                if not isinstance(ident, str) or not RUN_ID.fullmatch(ident) or ident == "unassigned" or ident in self.project_definitions:
-                    raise ValueError("Invalid or duplicate project id")
-                project = pick(entry, ("project_id", "name", "description", "system_id"))
-                project.setdefault("name", ident)
-                self.project_definitions[ident] = project
-                runs = entry.get("runs", [])
-                if not isinstance(runs, list):
-                    raise ValueError("Project runs must be a list")
-                for run_id in runs:
-                    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id) or run_id in self.memberships:
-                        raise ValueError("Invalid or duplicate run membership")
-                    self.memberships[run_id] = ident
 
     def projects(self):
-        groups = {k: {**v, "runs": []} for k, v in self.project_definitions.items()}
-        for run in self.list():
-            project = run.get("project") or {"project_id": "unassigned", "name": "未归属"}
-            group = groups.setdefault(project["project_id"], {**project, "runs": []})
-            group["runs"].append(run)
-        return list(groups.values())
+        return [{**run["project"], "runs": [run]} for run in self.list()]
 
     def open_root(self):
         try:
@@ -235,13 +223,7 @@ class RunStore:
                 raw = json.loads(data, parse_constant=lambda _: None)
             except (ValueError, UnicodeError, RecursionError):
                 raise SnapshotError(503, "Monitor snapshot is being written or is invalid; retry shortly.") from None
-            result = project_snapshot(raw, run_id)
-            ident = self.memberships.get(run_id)
-            if ident:
-                result["project"] = dict(self.project_definitions[ident])
-            elif "project" not in result:
-                result["project"] = {"project_id": "unassigned", "name": "未归属"}
-            return result
+            return project_snapshot(raw, run_id)
         except FileNotFoundError:
             raise SnapshotError(404, "Monitor snapshot not found.") from None
         except OSError:
@@ -283,10 +265,8 @@ class RunStore:
                 except SnapshotError as error:
                     if error.status == 404:
                         continue  # Ignore unrelated directories and runs without a snapshot.
-                    row = {"run_id": name, "status": "unavailable", "error": error.message}
-                    ident = self.memberships.get(name)
-                    if ident:
-                        row["project"] = dict(self.project_definitions[ident])
+                    row = {"run_id": name, "status": "unavailable", "error": error.message,
+                           "project": run_project({}, name)}
                 rows.append(row)
             return rows
         finally:
@@ -296,8 +276,8 @@ class RunStore:
 class MonitorServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, runs_dir, projects_file=None):
-        self.store = RunStore(runs_dir, projects_file)
+    def __init__(self, address, runs_dir):
+        self.store = RunStore(runs_dir)
         super().__init__(address, MonitorHandler)
 
 
@@ -365,9 +345,8 @@ def main():
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"), help="Run directories containing monitor.json (default: ./runs)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--projects-file", type=Path, help="Explicit project/system to run registry")
     args = parser.parse_args()
-    server = MonitorServer((args.host, args.port), args.runs_dir, args.projects_file)
+    server = MonitorServer((args.host, args.port), args.runs_dir)
     print(f"RSISys monitor: http://{args.host}:{server.server_port} (read-only)", flush=True)
     try:
         server.serve_forever()

@@ -383,9 +383,9 @@
     }
   ],
   "project": {
-    "project_id": "example-rsi-system",
-    "name": "推理能力研究 · 示例",
-    "description": "围绕同一 RSI 系统进行多次运行，检查决策、实验反馈与策略调整。",
+    "project_id": "example-dual-loop-001",
+    "name": "推理策略实验 · 示例",
+    "description": "一次 RSI 启动中的决策、实验反馈与策略调整。",
     "system_id": "example-reasoning-system"
   },
   "demo_runs": [
@@ -393,9 +393,9 @@
       "schema_version": 1,
       "run_id": "example-baseline-001",
       "project": {
-        "project_id": "example-rsi-system",
-        "name": "推理能力研究 · 示例",
-        "description": "围绕同一 RSI 系统进行多次运行，检查决策、实验反馈与策略调整。",
+        "project_id": "example-baseline-001",
+        "name": "推理基线实验 · 示例",
+        "description": "独立的基线实验；可作为其他项目的来源引用。",
         "system_id": "example-reasoning-system"
       },
       "objective": "建立固定评测协议下的推理基线。",

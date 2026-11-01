@@ -152,3 +152,12 @@ Boundaries checked against primary docs:
 [PEFT checkpoint format](https://huggingface.co/docs/peft/main/en/developer_guides/checkpoint),
 [LLaMA-Factory native CLI](https://github.com/hiyouga/LLaMA-Factory#quickstart),
 [vLLM LoRA load/unload and lineage](https://docs.vllm.ai/en/latest/features/lora/).
+
+Native Transformers/PEFT recipes may explicitly set `device_type: "npu"`
+(default: `"cuda"`). Select allocated Ascend devices with
+`ASCEND_RT_VISIBLE_DEVICES` before launch and use a Python with matching
+`torch_npu`/CANN. The worker validates visible device count, maps each local rank
+to one logical NPU, and uses HCCL for distributed jobs. Single-NPU execution
+needs no distributed launcher. This does not install dependencies or allocate
+cluster resources. CANN and device visibility are preserved by the process
+adapter; optional frameworks remain imported only inside the worker.

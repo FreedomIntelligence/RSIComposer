@@ -457,3 +457,20 @@ Omitting the flag leaves parent unknown; historical runs are not backfilled.
 Monitored IDs equal directory names: the parent is `runs/run5` with run_id run5,
 and the child is `runs/run6` with run_id run6. The monitor reads `run.json` by
 default and rejects conflicting sources or an ID/directory mismatch.
+
+## Existing researcher and Ascend target
+
+The experiment accepts `decision_model` and `decision_backend` independently of
+its target model. For example, a read-only vLLM Qwen3.8-27B endpoint can research
+changes to Qwen3.5-9B. These are example assembly choices, outside both Harnesses.
+`ExperimentSettings(training_device_type='npu')` selects the optional native
+Transformers/PEFT Ascend worker; its dependencies must already be installed.
+
+`AscendMedicalServing` in `ascend_runtime.py` uses an existing read-only target
+endpoint for the base and prompt variants, and loads trained LoRA candidates on
+an explicitly allocated NPU. It releases local inference before SFT and never
+loads adapters into, stops, or reconfigures the external endpoint. Pin the actor
+alias and endpoint to the declared base. HTTP aliases do not attest weight bytes;
+local candidate manifests retain content hashes. Cross-runtime baseline/candidate
+comparisons also include numerical/runtime differences and cannot isolate SFT
+quality. Use a matched serving backend for controlled quality conclusions.

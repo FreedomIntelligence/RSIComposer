@@ -24,6 +24,11 @@ from rsisys.loops.contracts.training import ResumeMode, TrainingResult
 _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
     'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
     'NVIDIA_VISIBLE_DEVICES', 'ASCEND_RT_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES',
+    'ASCEND_HOME_PATH', 'ASCEND_TOOLKIT_HOME', 'ASCEND_OPP_PATH', 'ASCEND_AICPU_PATH',
+    'ASCEND_CUSTOM_OPP_PATH', 'TOOLCHAIN_HOME', 'TBE_IMPL_PATH', 'VIRTUAL_ENV',
+    'PYTORCH_NPU_ALLOC_CONF', 'ASCEND_LAUNCH_BLOCKING', 'TASK_QUEUE_ENABLE',
+    'HCCL_CONNECT_TIMEOUT', 'HCCL_EXEC_TIMEOUT', 'HCCL_SOCKET_IFNAME', 'HCCL_IF_IP',
+    'HCCL_WHITELIST_DISABLE', 'HCCL_INTRA_ROCE_ENABLE', 'HCCL_INTRA_PCIE_ENABLE',
     'ROCR_VISIBLE_DEVICES', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
     'RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'LOCAL_WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT',
     'NCCL_DEBUG', 'NCCL_DEBUG_SUBSYS', 'NCCL_SOCKET_IFNAME', 'NCCL_SOCKET_FAMILY',
@@ -32,7 +37,8 @@ _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HO
     'NCCL_ALGO', 'NCCL_PROTO', 'NCCL_CUMEM_ENABLE',
     'NCCL_SHM_DISABLE', 'NCCL_NET_GDR_LEVEL', 'NCCL_CROSS_NIC',
     'TORCH_NCCL_ASYNC_ERROR_HANDLING', 'TORCH_NCCL_BLOCKING_WAIT',
-    'HF_HOME', 'HF_HUB_CACHE', 'TRANSFORMERS_CACHE', 'TOKENIZERS_PARALLELISM')
+    'HF_HOME', 'HF_HUB_CACHE', 'TRANSFORMERS_CACHE', 'TOKENIZERS_PARALLELISM',
+    'HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE', 'XDG_CACHE_HOME')
 
 
 def _json(value):
@@ -100,7 +106,12 @@ def _num_processes(value):
 
 
 def transformers_peft_command(config_ref, *, cwd, python=sys.executable, num_processes=1):
-    """Native single-node Trainer launch; one complete model replica per GPU in DDP."""
+    """Native single-node Trainer launch; one complete replica per accelerator in DDP.
+
+    Ascend recipes explicitly set device_type='npu'. Select allocated physical NPUs
+    with ASCEND_RT_VISIBLE_DEVICES before launch (e.g. '13' for one worker); each
+    worker uses its logical local rank. The supplied Python must have torch_npu.
+    """
     count = _num_processes(num_processes)
     launcher = (python,) if count == 1 else (python, '-m', 'torch.distributed.run',
         '--standalone', '--nnodes=1', f'--nproc-per-node={count}')
@@ -133,6 +144,8 @@ def _native_inputs(request, config_ref):
     raw_config = config_path.read_bytes()
     config = json.loads(raw_config)
     _num_processes(config.get('num_processes', 1))
+    if config.get('device_type', 'cuda') not in ('cuda', 'npu'):
+        raise ValueError('device_type must be cuda or npu')
     if config.get('model_auto_class', 'causal_lm') not in ('causal_lm', 'image_text_to_text'):
         raise ValueError('model_auto_class must be causal_lm or image_text_to_text')
     if 'use_cache' in config and type(config['use_cache']) is not bool:
@@ -164,6 +177,7 @@ def _native_inputs(request, config_ref):
         'model_config': config.get('model_config'), 'model_name_or_path': config.get('model_name_or_path'),
         'model_kwargs': config.get('model_kwargs', {}),
         'model_auto_class': config.get('model_auto_class', 'causal_lm'),
+        'device_type': config.get('device_type', 'cuda'),
         'use_cache': config.get('use_cache'),
         'weight_identity_verified': False}
     return config, rows, evidence
@@ -370,7 +384,7 @@ def _supervise(directory):
 
 
 def _worker_ranks(config):
-    """Accept only a single torchrun node, never infer ranks from GPU visibility."""
+    """Accept only a single torchrun node, never infer ranks from device visibility."""
     world = int(os.environ.get('WORLD_SIZE', '1'))
     rank = int(os.environ.get('RANK', '0'))
     local = int(os.environ.get('LOCAL_RANK', '0'))
@@ -386,16 +400,33 @@ def _worker_ranks(config):
 
 
 @contextmanager
-def _worker_group(local_rank, world_size):
-    if world_size == 1:
+def _worker_group(local_rank, world_size, device_type='cuda'):
+    if device_type not in ('cuda', 'npu'):
+        raise ValueError('device_type must be cuda or npu')
+    if world_size == 1 and device_type != 'npu':
         yield None
         return
     import torch
-    if not torch.cuda.is_available() or local_rank >= torch.cuda.device_count():
-        raise ValueError('Multi-process SFT requires one visible CUDA GPU per local rank')
-    torch.cuda.set_device(local_rank)  # Before NCCL, weight loading, or Trainer setup.
+    if device_type == 'npu':
+        # Register the optional backend only on explicit opt-in, before importing
+        # Transformers/Accelerate or seeding, loading weights, and creating HCCL.
+        try:
+            import torch_npu  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError('device_type=npu requires torch_npu in the worker Python') from exc
+        if not torch.npu.is_available() or torch.npu.device_count() != world_size:
+            raise ValueError('NPU SFT requires exactly WORLD_SIZE visible NPUs; '
+                             'select allocated devices with ASCEND_RT_VISIBLE_DEVICES')
+        torch.npu.set_device(local_rank)
+    else:
+        if not torch.cuda.is_available() or local_rank >= torch.cuda.device_count():
+            raise ValueError('Multi-process SFT requires one visible CUDA GPU per local rank')
+        torch.cuda.set_device(local_rank)  # Before NCCL, weight loading, or Trainer setup.
+    if world_size == 1:
+        yield None
+        return
     distributed = torch.distributed
-    distributed.init_process_group(backend='nccl')
+    distributed.init_process_group(backend='hccl' if device_type == 'npu' else 'nccl')
     try:
         yield distributed
     finally:
@@ -427,18 +458,24 @@ def _transformers_peft(config_ref):
     if arguments.get('resume_from_checkpoint'):
         raise ValueError('Resume must be declared through TrainingOrigin')
     rank, local_rank, world_size = _worker_ranks(config)
-    if world_size > 1:
+    device_type = config.get('device_type', 'cuda')
+    if world_size > 1 or device_type == 'npu':
         if (any(arguments.get(key) for key in
                 ('deepspeed', 'fsdp', 'parallelism_config', 'use_cpu', 'no_cuda')) or
                 config.get('model_kwargs', {}).get('tp_plan') is not None):
-            raise ValueError('Multi-process worker supports native CUDA Trainer DDP only')
+            raise ValueError(f'Worker supports native {"NPU" if device_type == "npu" else "CUDA"} Trainer DDP only')
+    if device_type == 'npu':
+        # Transformers 5 defaults to a CUDA-oriented fused AdamW optimizer.
+        arguments.setdefault('optim', 'adamw_torch')
+        arguments.setdefault('dataloader_pin_memory', False)
+    if world_size > 1:
         arguments['local_rank'] = local_rank
-        arguments['ddp_backend'] = 'nccl'
+        arguments['ddp_backend'] = 'hccl' if device_type == 'npu' else 'nccl'
         arguments['save_on_each_node'] = False
         if arguments.get('gradient_checkpointing') and arguments.get('ddp_find_unused_parameters') is None:
             # PEFT wrappers do not inherit Trainer's PreTrainedModel checkpointing default.
             arguments['ddp_find_unused_parameters'] = False
-    with _worker_group(local_rank, world_size) as distributed:
+    with _worker_group(local_rank, world_size, device_type) as distributed:
         if rank == 0:
             output.mkdir(parents=True, exist_ok=False)  # Never overwrite existing weights.
         if distributed is not None:
@@ -469,7 +506,11 @@ def _train_transformers_peft(directory, payload, config, rows, evidence, argumen
         model = ModelAutoClass.from_config(AutoConfig.for_model(native.pop('model_type'), **native))
     else:
         model_kwargs = dict(config.get('model_kwargs', {}))
-        if distributed is not None:
+        if config.get('device_type') == 'npu':
+            # Logical rank zero maps to physical 13 when visibility is '13'.
+            # Even a single worker must not infer placement across other devices.
+            model_kwargs['device_map'] = {'': f'npu:{local_rank}'}
+        elif distributed is not None:
             # Inference auto-sharding must never span GPUs during DDP training.
             model_kwargs['device_map'] = {'': local_rank}
         model = ModelAutoClass.from_pretrained(config['model_name_or_path'], **model_kwargs)

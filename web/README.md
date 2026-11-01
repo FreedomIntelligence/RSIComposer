@@ -17,27 +17,11 @@ python3 web/server.py --runs-dir runs
 python3 web/server.py --runs-dir /path/to/runs --port 8765
 ```
 
-为现有 toy runs 启用显式项目注册：
+**一次 RSI 启动就是一个项目、一个实验，对应一个 `run_id`。** 项目 ID 始终等于运行目录名，每个项目恰好包含一个运行。Qwen、医疗、旧快照的 `project_id` / `group` / `system_id` 都不会把多个运行合并；没有“未归属”分组。历史运行文件保持原样。
 
-```sh
-python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.json --port 8769
-```
+已移除项目注册表、`configs/monitor-projects.json` 和 `--projects-file` 参数；旧启动命令去掉该参数即可。项目从可读取的 `monitor.json` 自动发现，不创建空注册项目。
 
-`--projects-file` 相对当前工作目录解析，格式如下（`runs` 是运行目录 ID 的数组）：
-
-```json
-{
-  "projects": [{
-    "project_id": "qwen-parity-rsi",
-    "name": "Qwen 自主研究",
-    "description": "以奇偶判断任务验证 RSI 决策、训练、评测与模型应用链路。",
-    "system_id": "qwen-parity-system",
-    "runs": ["qwen-default-30m-20261101T042500Z", "qwen-autonomous-20261101T024815Z", "qwen-two-round-20261101T003827Z", "qwen-cpu-003", "qwen-toy-003"]
-  }]
-}
-```
-
-注册文件在启动时读取，修改后须重启服务。重复项目 ID、同一运行重复归属（包括同一项目内重复）、无效 ID 会在启动时报错。`unassigned` 是保留 ID。注册文件优先于 `monitor.json` 内的 `project: {project_id, name, description, system_id}`；无注册记录时使用快照的显式归属，两者都没有则统一为 `project_id=unassigned`、`name=未归属`。不按运行名称、目标或模型名推断项目。注册但尚无快照的项目显示空运行入口。
+名称按快照中的显式 `display_name`、`name`、`project_name`、`project.name` 顺序取首个非空字符串，否则使用 `run_id`。显式名称附加 ` · run_id` 以区分同名实验；名称已经等于 `run_id` 或带有该后缀时不重复添加。旧 `project.name` 只作为名称前缀，不能定义归属。名称最多 1000 字符并保留运行 ID 后缀。服务仅读取 `monitor.json`；生产端若在 `run.json` 保存 `project_name`，须同时将名称写入监控快照（建议 `project: {project_id: run_id, name: "医疗 RSI · run_id"}`）。
 
 首页默认读取真实接口。无快照时显示空态，点击「查看示例」才加载明确标记「示例数据」的静态 fixture；「返回真实运行」恢复接口。示例不会写入 runs，也不会出现在真实运行列表中。
 
@@ -45,29 +29,20 @@ python3 web/server.py --runs-dir runs --projects-file configs/monitor-projects.j
 
 右上角「中 / EN」切换完整界面语言，默认中文。选择保存在浏览器 localStorage 的 `rsisys-language`（`zh` / `en`），重载后恢复；存储不可用时保留当前页面内的选择。按钮、状态、空态、指标名、图表提示、流程和详情标题均跟随语言；日期使用相应 locale。
 
-切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，不重置所选运行、执行步骤、分页、图谱缩放、平移或节点位置。拖拽与 RAF 松弛期间，图谱沿用原有延后重绘机制。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
+切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，保留所选项目、执行步骤、分页、展开记录及流程横向滚动。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
 
-无外部依赖或翻译 API。`/i18n.js` 与 `/lineage.js` 必须先于 `/app.js` 以 `defer` 加载，并加入静态服务白名单。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态节点。
+无外部依赖或翻译 API。页面以 `defer` 依次加载 `/i18n.js` 和 `/app.js`。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态内容。
 
-Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected run, execution step, graph view. Reported model text and logs stay verbatim.
-
-验证语言覆盖、持久化、原文保留、无额外请求、错误与空态、图工具、导航和 RAF 期间切换：
-
-```sh
-node --test web/static/i18n.test.js web/static/project.test.js
-```
+Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected project, execution step, pagination and expanded records. Reported model text and logs stay verbatim.
 
 ## 数据与交互
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- 左侧项目栏切换项目，主图节点选择研究轮次；取消顶部导航、项目 / 运行下拉框及状态工具栏。主图只显示项目与研究轮次（底层仍为 run）。一个研究轮次包含多次决策，不把 run_id 重命名为 decision_id。项目作为最左侧固定的 `0 · 项目名` 节点；点击节点后，轮次标题和决策内容合为一个区域（不重复显示目标名称），直接显示决策理由、反馈、指标和结果；不再重复显示“决策与反馈”区块标题。只有一个决策时隐藏步骤选择条，多决策时保留导航。decision、job、candidate 不进入主图。旧 `?run=<id>` 与 `?project=<id>&run=<id>` 深链接仍有效。
-- **树的层级代表明确的续接关系。** 新运行的 `parent_run_id` 指向沿用的父运行：如 run6、run7 都从 run5 继续，它们就是 run5 的两个子分支。首个独立运行的迭代深度为 0，后续每条有效父链加 1；它不等于训练次数或已验证提升次数。生产端需要写入真实来源，前端不会根据分数、名称、时间或模型 revision 自动认定采纳。
-- `source_run_ids` 只表示资料引用，以细虚线展示，不增加树深度；`parent_run_id` 使用带箭头直线。没有父运行的分支连接项目根；有效子运行只连父运行，不重复连根。缺失、歧义、自引用和环不会建立虚假父关系，异常链保留在根下，页面只提示来源不完整，原始诊断仍在数据中。来源关系使用当前项目内的唯一 run ID。
-- `lineage.js` 是无依赖纯数据模块：`RSILineage.build(nodes, edges)` 生成有效树、深度与分支位置。应用将 API 中的项目归属和完整快照作为权威输入。`networkLayout` 再进行有限步松弛：同深度目标 x 相同，相邻深度相距 180；分支按树行错开。根坐标固定 `(70,245)`。运行编号与同层顺序使用 `updated_at` / ID 稳定排序，不表示采纳。
-- 运行节点可拖动，其他运行节点通过 RAF 自适应，根始终固定。每帧 2 步，移动补充 40 帧热度，松手后 18 帧停止；无常驻动画。拖动或缓动时延后合并刷新。切换项目、示例或隐藏页面会取消动画。支持空白自由平移（可向任意方向移回画面外节点）、适应、缩放、恢复 100%、重排和键盘选择。自动适应最低缩放为 85%，较大的树允许滚动，避免文字被缩成小点；正文 16px，节点标签 15px，节点点击区域 32px。v5 位置缓存按真实 / 示例及项目隔离；忽略旧布局缓存。
-- 首屏只读取 `/api/projects`，选择运行后才读取 `/api/runs/<id>`。缓存隔离每个项目和运行，切换时取消旧请求并拒绝迟到响应。固定每 5 秒刷新当前选中研究轮次，不提供手动刷新、暂停、连接状态或导出控件；隐藏页面暂停轮询，回到前台立即更新。已有快照时静默刷新，不展示“正在刷新”。失败保留旧数据并提供重试。
-- 刷新保持详情容器挂在原位置，不把页面高度短暂折叠；普通轮询不重新适应图谱，并保留页面纵向滚动、画布平移和缩放。刷新无数据变化时复用运行详情 DOM；有新反馈时，按稳定决策身份保留所选步骤、展开记录及流程横向滚动。中英切换同样保留状态。保留候选结果折叠区的展开状态。
+- 左侧每个项目对应一次真实启动；选择项目直接查看该运行的决策、任务、指标和反馈。一个实验可以包含多轮决策和训练，决策轮次不产生额外项目。`?run=<id>` 与 `?project=<id>&run=<id>` 的项目身份统一为该 `run_id`。
+- `parent_run_id` 和 `source_run_ids` 在「来源记录」折叠区呈现为项目链接，可指向其他项目；续接启动仍是独立项目，不因父链或资料引用而合并。未发现对应项目时仍保留来源 ID 和链接，不补造来源。
+- 首屏读取 `/api/projects` 后，自动选择深链接指定的项目或首个项目，再读取其 `/api/runs/<id>`；切换项目直接加载对应实验。缓存隔离每个项目和运行，切换时取消旧请求并拒绝迟到响应。每次刷新完成后间隔 5 秒刷新项目清单及当前实验，不提供手动刷新、暂停、连接状态或导出控件；隐藏页面暂停轮询，回到前台立即更新。已有快照时静默刷新，不展示“正在刷新”。失败保留旧数据并提供重试。
+- 刷新保持详情容器挂在原位置，不把页面高度短暂折叠，并保留页面滚动位置。刷新无数据变化时复用运行详情 DOM；有新反馈时，按稳定决策身份保留所选步骤、展开记录及流程横向滚动。中英切换同样保留状态。保留候选结果和来源记录折叠区的展开状态。
 - 执行流程按已报告时间从早到晚排列；未知时间保留快照顺序列于末尾，不补造因果。首批显示 30 个步骤，可继续加载。每次展示一个步骤的**决策理由、提交内容、实际反馈、进度及结果**。只有“执行已完成”等通用状态时不显示反馈块；缺失的理由不补造。`evaluate` 显示为“验证改动效果”，明确评测与采用改动是两个步骤。训练步骤带损失 / 学习率曲线与历史点，评测带基线 / 候选对比。重复 finish 聚合并保留全部原始记录；“结束本轮研究”不代表整个运行已停止。
 - 已知动作使用中英友好名称，例如 `configure_prompt` → 调整提示词、`define_recipe` → 定义训练方案；自定义动作直接显示原名，只有没有动作字段时才显示“未命名决策”。模型理由、策略及反馈原文不改写。与动作名称完全重复的 strategy 不再重复展示；页面不展示技术 ID、版本哈希或协议字段列表。
 - 只按明确唯一的 `job_id`、`candidate_id` 或指令引用关联反馈；找不到指定 job 或存在歧义时不回退猜测。复查时指标与关联任务当前结果分开展示。原始事件留在快照和日志中，不进入阅读界面。
@@ -115,17 +90,17 @@ node --test web/static/i18n.test.js web/static/project.test.js
 
 ## HTTP 接口
 
-`GET /api/projects`：返回项目与运行元信息，不包含所有运行快照。
+`GET /api/projects`：保留 `projects` 数组协议，每项恰好包含一个运行，不包含完整快照。项目和内部运行的 `project_id` 都等于该运行的 `run_id`。
 
 ```json
 {
   "schema_version": 1,
   "projects": [{
-    "project_id": "qwen-parity-rsi",
-    "name": "Qwen 自主研究",
+    "project_id": "run-001",
+    "name": "医疗 RSI · run-001",
     "description": "…",
-    "system_id": "qwen-parity-system",
-    "runs": [{"run_id": "run-001", "objective": "…", "status": "running", "updated_at": "…", "project": {"project_id": "qwen-parity-rsi", "name": "Qwen 自主研究"}}]
+    "system_id": "medical-system",
+    "runs": [{"run_id": "run-001", "objective": "…", "status": "running", "updated_at": "…", "project": {"project_id": "run-001", "name": "医疗 RSI · run-001", "description": "…", "system_id": "medical-system"}}]
   }]
 }
 ```
@@ -143,6 +118,7 @@ node --test web/static/i18n.test.js web/static/project.test.js
       "objective": "…",
       "status": "running",
       "updated_at": "2026-11-01T00:00:00Z",
+      "project": {"project_id": "run-001", "name": "医疗 RSI · run-001"},
       "counts": {"jobs": 1, "candidates": 2, "events": 5}
     }
   ]
@@ -151,9 +127,9 @@ node --test web/static/i18n.test.js web/static/project.test.js
 
 只列出存在可读取监控文件的运行，忽略无 `monitor.json` 的目录（包括 `runs/monitor-preview/`）。缺失 runs 目录返回空列表且不创建目录；损坏 JSON / 不支持的版本保留为带 `error` 的 unavailable 清单项。
 
-运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；其中 parent_run_id 定义续接父节点，source_run_ids 仅定义资料引用，不增加迭代深度。
+运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；其中 `parent_run_id` 定义续接来源，`source_run_ids` 定义资料引用；两者均不改变项目身份。
 
-`GET /api/runs/<id>`：返回协议字段的只读投影，包含 `project: {project_id, name, description, system_id}`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
+`GET /api/runs/<id>`：返回协议字段的只读投影，始终包含 `project: {project_id, name, description, system_id}`，其中 `project_id=run_id`（可选描述和系统 ID 缺失时不补造）。决策可包含 `parent_decision_id` 及 `source_decision_ids` 字符串数组。目录名是路由和返回 `run_id` 的权威来源；不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
 建议生产端在同一目录写临时文件，再原子替换 `monitor.json`。服务不会监听或读数据库、训练样本、配置、日志、模型文件。
 
@@ -169,14 +145,14 @@ node --test web/static/i18n.test.js web/static/project.test.js
 ## 验证
 
 ```sh
-python3 -m unittest discover -s tests -p test_monitor.py -v
+PYTHONPATH=src python3.12 -m unittest discover -s tests -p 'test_monitor*.py' -v
 node --check web/static/app.js
 node --test web/static/*.test.js
 ```
 
-服务测试覆盖快照投影、读取边界、错误恢复与只读接口。前端测试覆盖命名 / 双语、显式父链与引用、分叉 / 环 / 歧义 / 长链、根固定、拖拽 RAF 与计算预算、按需读取与并发取消、刷新保留原生展开状态和稳定步骤身份、训练历史和反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
+服务测试覆盖一启动一项目、旧标签不合并、名称后缀去重、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
 
-视觉参考：[Zotero Style 关系图谱演示](https://zotero-chinese.com/user-guide/plugins/style#关系图谱)，仅参考小圆点、极细连线和下方标签的视觉形式，未引入其代码。保留暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
+界面采用项目侧栏与实验详情布局，使用暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 
 浏览器 QA 截图放在临时目录 `/tmp/rsisys-*`，不写入 runs、不作为源码入库。
 

@@ -13,7 +13,7 @@ from rsisys.adapters.training import ProcessTrainingBackend
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobOutcome, JobProgress, JobRef, JobStatus
-from rsisys.loops.contracts.model_service import GenerationResponse
+from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
 from rsisys.loops.contracts.training import TrainingResult
 
 
@@ -88,6 +88,7 @@ class FixtureProcess(ProcessTrainingBackend):
 class FixtureServing:
     def __init__(self, path, *, actor_model, decision_model, artifacts, process, script, **kwargs):
         self.base, self.process, self.script = actor_model, process, iter(script)
+        self.decision_model = decision_model
         self.contexts, self.prepared, self.activated, self.events = [], [], [], []
         self.weight_metadata = {actor_model: {'fixture': True}}
         self.release_count = 0
@@ -129,6 +130,28 @@ class FixtureServing:
     __call__ = generate
 
 
+class FixtureResearcher:
+    """Independent remote-style backend; owns no actor or training resources."""
+    def __init__(self, model, process, script):
+        self.model, self.process, self.script = model, process, iter(script)
+        self.requests, self.contexts = [], []
+        self.response_model = model
+
+    def generate(self, request):
+        if self.process.active_job:
+            raise AssertionError('Researcher inference while training is active')
+        if request.role != 'decision_maker' or request.model != self.model:
+            raise AssertionError('Researcher received an actor request or the wrong identity')
+        self.requests.append(request)
+        context = json.loads(request.prompt)
+        self.contexts.append(context)
+        value = next(self.script)
+        if callable(value):
+            value = value(context)
+        return GenerationResponse(value if isinstance(value, str) else json.dumps(value),
+            self.response_model, simulated=False, provider_model='researcher-service-alias')
+
+
 def train(context, recipe=None):
     objective = context['objective']
     return {'kind': 'explore', 'mode': 'train', 'strategy': 'Synthetic composition check',
@@ -164,13 +187,16 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.process = FixtureProcess(self.root/'native-process')
         self.serving = None
 
-    def execute(self, script, *, research_started_callback=None, **overrides):
+    def execute(self, script, *, research_started_callback=None, decision_model=None,
+                decision_backend=None, native_model_kwargs=None, **overrides):
         def serving_factory(path, **kwargs):
             self.serving = FixtureServing(path, process=self.process, script=script, **kwargs)
             return self.serving
         settings = ExperimentSettings(self.task, self.root/'run', self.root/'fixture-model', **overrides)
         return run(settings, serving_factory=serving_factory, converter_factory=lambda *a, **kw: Converter(),
             process_backend=self.process, research_started_callback=research_started_callback,
+            decision_model=decision_model, decision_backend=decision_backend,
+            native_model_kwargs=native_model_kwargs,
             identity_factory=lambda p: ('fixture-content-pin',
                 {'model_id': 'fixture-symbol-model', 'actual_weight_sha256': 'fixture-only'}))
 
@@ -191,7 +217,9 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertNotIn('evaluate', context['directive_modes'])
         self.assertNotIn('apply_candidate', context['directive_modes'])
         self.assertIn('ALREADY been measured', context['objective'])
-        self.assertEqual(self.read('monitor.json')['project']['system_id'], 'medical-fixture-model')
+        self.assertEqual(self.read('monitor.json')['project'], {
+            'project_id': 'run', 'name': '医疗 RSI · run', 'system_id': 'medical-fixture-model'})
+        self.assertIsNone(self.read('run.json')['parent_run_id'])
         self.assertEqual(self.read('monitor.json')['status'], 'completed')
         self.assertTrue(self.read('decision_memory.json')['history'])
         for name in ('experience.json', 'candidates.json', 'evaluations.json', 'exploration_memory.json',
@@ -212,6 +240,63 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         args = parser().parse_args(['--task', str(self.task), '--run-dir', 'run6',
                                    '--model-path', 'model', '--parent-run-id', 'run5'])
         self.assertEqual(args.parent_run_id, 'run5')
+
+    def test_independent_researcher_preserves_identity_through_training_and_application(self):
+        researcher = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'researcher-revision')
+        remote = FixtureResearcher(researcher, self.process, [train, evaluate, apply, FINISH])
+        result = self.execute([], decision_model=researcher, decision_backend=remote)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 4)
+        self.assertEqual(self.serving.model_calls, 0)
+        # Local actor serving need not accept a different researcher base model.
+        self.assertEqual(self.serving.decision_model, self.serving.base)
+        self.assertNotEqual(self.serving.activated[0].model, self.serving.base)
+        request, _ = next(iter(self.process.requests.values()))
+        self.assertEqual(request.base, self.serving.base)
+        self.assertTrue(all(r.model == researcher and r.max_output_tokens == 1024 for r in remote.requests))
+        self.assertTrue(all(c['decision_model'] == asdict(researcher) for c in remote.contexts))
+        self.assertEqual(self.read('decision_model.json'), asdict(researcher))
+        self.assertEqual(self.read('model_calls.json')['requested_model'], asdict(researcher))
+        responses = [json.loads(line) for line in (self.root/'run/model_responses.jsonl').read_text().splitlines()]
+        self.assertEqual(len(responses), 4)
+        for response in responses:
+            self.assertEqual(response['requested_model'], asdict(researcher))
+            self.assertEqual(response['response']['model'], asdict(researcher))
+            self.assertEqual(response['response']['provider_model'], 'researcher-service-alias')
+            self.assertFalse(response['response']['revision_verified'])
+        events = [json.loads(line) for line in (self.root/'run/events.jsonl').read_text().splitlines()]
+        requested = [event for event in events if event['kind'] == 'model_decision_requested']
+        self.assertEqual(len(requested), 4)
+        self.assertTrue(all(e['details']['requested_model'] == asdict(researcher) for e in requested))
+
+    def test_composite_serving_receives_the_independent_researcher_identity(self):
+        researcher = ModelRef('composite-researcher', 'Qwen3.8-27B', 'remote-revision')
+        result = self.execute([FINISH], decision_model=researcher)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(self.serving.decision_model, researcher)
+        self.assertEqual(self.serving.contexts[0]['decision_model'], asdict(researcher))
+        self.assertEqual(self.read('model_calls.json')['requested_model'], asdict(researcher))
+
+    def test_injected_researcher_retains_budget_and_thinking_configuration(self):
+        researcher = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'remote-revision')
+        remote = FixtureResearcher(researcher, self.process, ['invalid JSON', FINISH])
+        result = self.execute([], decision_model=researcher, decision_backend=remote,
+                              max_model_calls=1, decision_thinking=True)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'))
+        self.assertEqual(len(remote.requests), 1)
+        self.assertEqual(remote.requests[0].max_output_tokens, 8192)
+        self.assertEqual(result['model_calls'], 1)
+
+    def test_injected_researcher_identity_failure_is_logged_without_retry(self):
+        researcher = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'remote-revision')
+        remote = FixtureResearcher(researcher, self.process, [FINISH])
+        remote.response_model = replace(researcher, revision='unexpected-revision')
+        result = self.execute([], decision_model=researcher, decision_backend=remote)
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertEqual(len(remote.requests), 1)
+        response = json.loads((self.root/'run/model_responses.jsonl').read_text())
+        self.assertEqual(response['requested_model'], asdict(researcher))
+        self.assertEqual(response['response']['model'], asdict(remote.response_model))
 
     def test_real_build_sft_prepare_evaluate_apply_and_monitor_progress(self):
         result = self.execute([train, evaluate, apply, FINISH])
@@ -254,8 +339,29 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         result = self.execute([train, FINISH], training_processes=8)
         self.assertEqual(result['status'], 'completed', result)
         request, _ = next(iter(self.process.requests.values()))
-        self.assertEqual(json.loads(Path(request.recipe_ref).read_text())['num_processes'], 8)
+        recipe = json.loads(Path(request.recipe_ref).read_text())
+        self.assertEqual(recipe['num_processes'], 8)
+        self.assertEqual(recipe['device_type'], 'cuda')
+        self.assertEqual(recipe['model_kwargs']['attn_implementation'], 'sdpa')
         self.assertEqual(self.read('parallelism.json')['training_processes'], 8)
+
+    def test_npu_device_and_native_model_kwargs_reach_every_recipe(self):
+        define = {'kind': 'invoke', 'operation': 'define_recipe', 'arguments': {'steps': 2, 'lr': 2e-4}}
+        kwargs = {'attn_implementation': 'eager', 'device_map': 'npu:0'}
+        result = self.execute([define, train, FINISH], training_device_type='npu', native_model_kwargs=kwargs)
+        self.assertEqual(result['status'], 'completed', result)
+        request, _ = next(iter(self.process.requests.values()))
+        recipes = [entry['template'] for entry in self.read('training/recipes.json').values()]
+        self.assertEqual(len(recipes), 2)
+        recipes.append(json.loads(Path(request.recipe_ref).read_text()))
+        for recipe in recipes:
+            self.assertEqual(recipe['device_type'], 'npu')
+            self.assertEqual(recipe['model_kwargs'], {'local_files_only': True, 'dtype': 'bfloat16', **kwargs})
+        self.assertEqual(self.read('parallelism.json')['training_device_type'], 'npu')
+        self.assertEqual(kwargs, {'attn_implementation': 'eager', 'device_map': 'npu:0'})
+        args = parser().parse_args(['--task', str(self.task), '--run-dir', 'npu-run',
+                                   '--model-path', 'model', '--training-device-type', 'npu'])
+        self.assertEqual(args.training_device_type, 'npu')
 
     def test_research_clock_is_armed_after_baseline_before_first_decision(self):
         observed = []
@@ -323,6 +429,58 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed', result)
         self.assertFalse(self.process.requests)
         self.assertIn('Conflicting action names', self.serving.contexts[-1]['objective'])
+
+    def test_duplicate_kind_is_rejected_without_repair_for_three_attempts(self):
+        duplicate = '{"kind":"research_read","view":"items","kind":"agenda","limit":32}'
+        result = self.execute([duplicate, duplicate, duplicate, FINISH])
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertIn('three bounded schema/validation attempts', result['error'])
+        self.assertEqual(result['model_calls'], 3)
+        self.assertEqual(result['trainings_reserved'], 0)
+        self.assertFalse(self.process.requests)
+        events = [json.loads(line) for line in (self.root/'run/events.jsonl').read_text().splitlines()]
+        rejected = [event['details'] for event in events if event['kind'] == 'model_decision_rejected']
+        self.assertEqual([event['attempt'] for event in rejected], [1, 2, 3])
+        self.assertTrue(all("Duplicate JSON key 'kind'" in event['error'] for event in rejected))
+        self.assertFalse(any(event['kind'] == 'decision_envelope_normalized' for event in events))
+
+    def test_duplicate_keys_in_nested_arguments_and_array_objects_are_rejected(self):
+        nested = ('{"kind":"invoke","operation":"research_read",'
+                  '"arguments":{"view":"items","kind":"agenda","kind":"agenda"}}')
+        array = ('{"kind":"invoke","operation":"research_patch",'
+                 '"arguments":{"upserts":[{"id":"note","text":"first","text":"second"}]}}')
+        result = self.execute([nested, array, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 3)
+        self.assertIn("Duplicate JSON key 'kind'", self.serving.contexts[1]['objective'])
+        self.assertIn("Duplicate JSON key 'text'", self.serving.contexts[2]['objective'])
+        self.assertFalse(self.process.requests)
+        self.assertEqual(self.serving.contexts[-1]['research_agenda']['total'], 0)
+
+    def test_corrective_hint_explains_generic_envelopes_and_accepts_nested_research_read(self):
+        duplicate = '{"kind":"research_read","view":"items","kind":"agenda","limit":32}'
+        read = {'kind': 'invoke', 'operation': 'research_read',
+                'arguments': {'view': 'items', 'kind': 'agenda', 'limit': 32}}
+        result = self.execute([duplicate, read, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 3)
+        correction = json.loads(self.serving.contexts[1]['objective'].split(
+            '\nCorrect this invalid proposal before execution (error data): ', 1)[1])
+        self.assertEqual(correction['previous_output'], duplicate)
+        self.assertIn("Duplicate JSON key 'kind'", correction['validation_error'])
+        guidance = correction['envelope_guidance']
+        for fragment in ('"kind":"invoke"', '"operation":"<name from context.operations>"',
+                         '"kind":"explore"', '"mode":"<mode from context.directive_modes>"',
+                         'inside arguments', 'top-level kind', 'train requires nonempty top-level input_ids',
+                         'resume_mode="restart"', 'omit checkpoint or set it to null',
+                         'Choose your own available action and research steps'):
+            self.assertIn(fragment, guidance)
+        self.assertIn(guidance, self.serving.contexts[0]['objective'])
+        receipts = self.serving.contexts[-1]['operation_results']
+        self.assertTrue(any(receipt['summary'] == 'Model-owned research notes'
+                            and receipt['status'] == 'completed' and receipt['data']['view'] == 'items'
+                            for receipt in receipts))
+        self.assertFalse(self.process.requests)
 
     def test_operation_normalization_rejects_nonempty_directive_inputs(self):
         denied = {'kind': 'explore', 'mode': 'define_recipe', 'strategy': 'Invalid input scope',
@@ -399,8 +557,9 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual((args.seconds, args.max_trainings, args.max_model_calls, args.max_seq_length,
                           args.max_train_steps), (5400, 3, 96, 2048, 64))
         self.assertEqual(args.private_exclusions, [Path('a'), Path('b')])
+        self.assertEqual(args.training_device_type, 'cuda')
         for overrides in ({'max_trainings': 4}, {'max_train_steps': 65}, {'seconds': float('nan')},
-                          {'max_trainings': True}):
+                          {'max_trainings': True}, {'training_device_type': 'unknown'}):
             with self.assertRaises(ValueError):
                 ExperimentSettings(self.task, self.root/'run', self.root/'model', **overrides)
 

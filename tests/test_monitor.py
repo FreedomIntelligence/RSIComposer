@@ -221,9 +221,33 @@ class MonitorTests(unittest.TestCase):
 
     def test_empty_and_missing_root(self):
         self.assertEqual(json.loads(self.get("/api/runs")[2])["runs"], [])
+        self.assertEqual(json.loads(self.get("/api/projects")[2])["projects"], [])
         self.root.rmdir()
         self.assertEqual(json.loads(self.get("/api/runs")[2])["runs"], [])
+        self.assertEqual(json.loads(self.get("/api/projects")[2])["projects"], [])
         self.assertFalse(self.root.exists())
+
+    def test_projects_api_keeps_one_run_per_project_and_provenance(self):
+        legacy = {'project_id': 'shared', 'name': 'Research', 'group': 'qwen'}
+        self.write('parent', project=legacy)
+        self.write('child', project=legacy, parent_run_id='parent', source_run_ids=['parent'])
+        status, _, body = self.get('/api/projects')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['schema_version'], 1)
+        self.assertEqual([p['project_id'] for p in data['projects']], ['child', 'parent'])
+        rows = json.loads(self.get('/api/runs')[2])['runs']
+        for project, row in zip(data['projects'], rows):
+            self.assertEqual(project['runs'], [row])
+            self.assertEqual(project['project_id'], row['run_id'])
+            detail = json.loads(self.get('/api/runs/' + row['run_id'])[2])
+            self.assertEqual(detail['project'], row['project'])
+        self.assertEqual(rows[0]['parent_run_id'], 'parent')
+        self.assertEqual(rows[0]['source_run_ids'], ['parent'])
+        (self.root / 'child' / 'monitor.json').write_text('{')
+        projects = json.loads(self.get('/api/projects')[2])['projects']
+        self.assertEqual(projects[0]['project_id'], 'child')
+        self.assertEqual(projects[0]['runs'][0]['status'], 'unavailable')
 
     def test_unrelated_preview_directory_is_not_a_run(self):
         (self.root / "monitor-preview").mkdir()

@@ -111,7 +111,7 @@ def system_flow():
             'runtime 中的 RunPolicy 可替换；SystemRegistry 管理组件清单的父版本与 current。'
             'TrainingOrigin 区分实验父系统与初始权重。具体训练和 serving 适配器、独立 medical 示例位于 Harness 外。')
     s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
-    s.text(100, 126, '模型自主科研流程 · 框架协议协同 · 可替换的执行实现', 26, MUTED)
+    s.text(100, 126, '一个项目 = 一次 RSI 启动 · 项目内自主多轮研究 · 执行实现可替换', 26, MUTED)
     legend(s)
 
     for x, w, title in [(100, 930, 'Decision-making Loop'), (1320, 980, 'Exploration Loop')]:
@@ -252,7 +252,7 @@ def system_flow():
     s.path('M 1745 2070 V 2035 H 2330 V 1725 H 2300', AMBER, arrow='amber', dash='7 6')
     replaceable(s, 'medical-example', 100, 2290, 2200, 155, 'examples/medical/ · 独立领域装配，位于 Harness 外', (
         'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
-        'native.py：数据转换 / 训练证据；transformers_runtime.py 或 sglang_runtime.py：候选部署与推理，训练前释放资源',
+        'native.py：数据转换 / 训练证据；Transformers / SGLang / Ascend 推理适配，训练前释放本地资源',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
     s.text(100, 2490, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
     s.save('system-flow.svg')
@@ -369,7 +369,7 @@ def file_architecture():
     replaceable(s, 'medical-example-files', 100, 2120, 2200, 185, 'examples/medical/ · 独立装配与可替换领域规则', (
         'task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run',
         'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
-        'experiment.py：自主科研装配；transformers_runtime.py / sglang_runtime.py：可替换推理，后者支持张量并行',
+        'experiment.py：独立 researcher 与 actor 装配；Transformers / SGLang / Ascend：可替换推理',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
     s.text(100, 2370, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
     s.save('file-architecture.svg')

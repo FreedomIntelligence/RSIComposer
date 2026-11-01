@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 import json
@@ -25,7 +26,7 @@ from rsisys.loops.contracts.coordination import OperationResult, ReviewDecision
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.model_service import ModelBackend, ModelRef
 from rsisys.loops.contracts.training import ResumeMode
 from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace, OperationCall, OperationSpec
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
@@ -80,6 +81,7 @@ class ExperimentSettings:
     training_processes: int = 1
     serving_backend: str = 'transformers'
     tensor_parallel_size: int = 1
+    training_device_type: str = 'cuda'
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -104,6 +106,8 @@ class ExperimentSettings:
             raise ValueError('serving_backend must be transformers or sglang')
         if self.serving_backend == 'transformers' and self.tensor_parallel_size != 1:
             raise ValueError('Tensor parallel inference requires the sglang serving backend')
+        if self.training_device_type not in ('cuda', 'npu'):
+            raise ValueError('training_device_type must be cuda or npu')
         RunSource(self.run_dir.resolve().name, self.parent_run_id)
 
 
@@ -116,8 +120,10 @@ class JournalMonitor(Monitor):
 
 
 class DecisionBackend:
-    def __init__(self, serving, root: Path, monitor: Monitor, limit: int):
+    def __init__(self, serving, root: Path, monitor: Monitor, limit: int, *, decision_thinking=None):
         self.serving, self.root, self.monitor, self.limit = serving, root, monitor, limit
+        self.decision_thinking = (getattr(serving, 'decision_thinking', False)
+                                  if decision_thinking is None else decision_thinking)
         self.calls = 0
         self.check_deadline: Callable[[], None] = lambda: None
         self.training_active: Callable[[], bool] = lambda: False
@@ -129,12 +135,15 @@ class DecisionBackend:
         if self.calls >= self.limit:
             raise BudgetExhausted('model_call_budget_exhausted')
         self.calls += 1
-        write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit})
-        self.monitor.event('model_decision_requested', call=self.calls)
+        model = asdict(request.model)
+        write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
+                                                  'requested_model': model})
+        self.monitor.event('model_decision_requested', call=self.calls, requested_model=model)
         response = self.serving.generate(replace(request,
-            max_output_tokens=8192 if getattr(self.serving, 'decision_thinking', False) else 1024))
+            max_output_tokens=8192 if self.decision_thinking else 1024))
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
-            stream.write(encoded({'call': self.calls, 'response': asdict(response)}) + b'\n')
+            stream.write(encoded({'call': self.calls, 'requested_model': model,
+                                  'response': asdict(response)}) + b'\n')
         self.check_deadline()
         return response
 
@@ -161,13 +170,18 @@ class RecipeLearner:
     budget and are never automatically replayed by the controller.
     """
     def __init__(self, root, artifacts, converter, base, model_path, monitor, release_memory,
-                 *, max_trainings=3, max_steps=64, process_backend=None, training_processes=1):
+                 *, max_trainings=3, max_steps=64, process_backend=None, training_processes=1,
+                 native_model_kwargs=None, training_device_type='cuda'):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.artifacts, self.converter, self.base = artifacts, converter, base
         self.model_path, self.monitor, self.release_memory = str(model_path), monitor, release_memory
         self.max_trainings, self.max_steps = max_trainings, max_steps
         self.training_processes = training_processes
+        if training_device_type not in ('cuda', 'npu'):
+            raise ValueError('training_device_type must be cuda or npu')
+        self.training_device_type = training_device_type
+        self.native_model_kwargs = deepcopy(native_model_kwargs) if native_model_kwargs is not None else {}
         self.process = process_backend or ProcessTrainingBackend(self.root / 'process')
         self.backends: dict[str, MedicalTrainingBackend] = {}
         self.recipes: dict[str, dict] = {}
@@ -198,9 +212,10 @@ class RecipeLearner:
                 raise ResearchInputError(f'{name} must be finite in {lo}..{hi}')
             values[name] = float(value)
         template = {'model_name_or_path': self.model_path, 'initial_model': asdict(self.base),
-            'num_processes': self.training_processes,
+            'num_processes': self.training_processes, 'device_type': self.training_device_type,
             'model_auto_class': 'image_text_to_text', 'use_cache': False,
-            'model_kwargs': {'local_files_only': True, 'dtype': 'bfloat16', 'attn_implementation': 'sdpa'},
+            'model_kwargs': {'local_files_only': True, 'dtype': 'bfloat16', 'attn_implementation': 'sdpa',
+                             **deepcopy(self.native_model_kwargs)},
             'seed': values['seed'],
             'lora_config': {'r': 8, 'lora_alpha': 16, 'lora_dropout': 0.0, 'bias': 'none',
                             'task_type': 'CAUSAL_LM', 'target_modules': ['q_proj', 'v_proj']},
@@ -489,6 +504,21 @@ class ExperimentOperations:
 
 
 class ResearchPolicy(ModelDecisionPolicy):
+    ENVELOPE_GUIDANCE = (
+        'Return one JSON object with unique keys in every object, including nested objects. '
+        'Canonical outer envelopes are '
+        '{"kind":"invoke","operation":"<name from context.operations>","arguments":{}} or '
+        '{"kind":"explore","mode":"<mode from context.directive_modes>",'
+        '"strategy":"<your strategy>","input_ids":[],"arguments":{}}. '
+        'Fill arguments according to the chosen operation or directive input_schema. '
+        'Put operation parameters (including view, kind, limit) inside arguments, '
+        'never in the top-level kind; top-level kind selects the decision envelope. '
+        'train requires nonempty top-level input_ids selecting available training_data artifacts. '
+        'Only restart from the fixed initializer is supported; if arguments.origin is supplied, '
+        'use resume_mode="restart" and omit checkpoint or set it to null. '
+        'Choose your own available action and research steps, or finish with a nonempty reason; '
+        'these envelopes are syntax templates, not a required workflow.')
+
     def __init__(self, backend, model, catalog, space, monitor, learner, train_ref):
         super().__init__(backend, model, directives=catalog, max_validation_attempts=1)
         self.space, self.monitor, self.learner = space, monitor, learner
@@ -515,7 +545,15 @@ class ResearchPolicy(ModelDecisionPolicy):
         This is a provider-facing parser adaptation, not another executor. The
         unchanged action-space validation/permission checks still run afterward.
         """
-        payload = json.loads(response.text)
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f'Duplicate JSON key {key!r}; keys must be unique in every object')
+                result[key] = value
+            return result
+
+        payload = json.loads(response.text, object_pairs_hook=unique_object)
         operations = {spec.name for spec in context.operations}
         directives = set(context.directive_modes)
         kind = payload.get('kind') if isinstance(payload, dict) else None
@@ -547,7 +585,7 @@ class ResearchPolicy(ModelDecisionPolicy):
         return super()._parse_decision(response, context)
 
     def decide(self, context):
-        hint = ''
+        hint = '\n' + self.ENVELOPE_GUIDANCE
         for attempt in range(3):
             # Transport/model identity/external failures are deliberately outside retry.
             current = replace(context, objective=context.objective + hint,
@@ -576,6 +614,7 @@ class ResearchPolicy(ModelDecisionPolicy):
                 self.monitor.event('model_decision_rejected', attempt=attempt+1, error=str(exc)[:1000])
                 hint = '\nCorrect this invalid proposal before execution (error data): ' + json.dumps({
                     'previous_output': response.text[:2048], 'validation_error': str(exc)[:1000],
+                    'envelope_guidance': self.ENVELOPE_GUIDANCE,
                     'available_candidate_ids': [candidate.candidate_id for candidate in current.candidates]})
                 continue
             if decision.kind == 'finish':
@@ -636,7 +675,19 @@ def persist(assembly, root):
 
 
 def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory=None,
-        process_backend=None, identity_factory=model_identity, research_started_callback=None) -> dict:
+        process_backend=None, identity_factory=model_identity, research_started_callback=None,
+        decision_model: ModelRef | None = None, decision_backend: ModelBackend | None = None,
+        native_model_kwargs: dict | None = None) -> dict:
+    """Run with an optional independent researcher backend and model identity.
+
+    Without decision_backend, serving.generate owns researcher routing. With an
+    injected backend, local serving only needs the actor's base model. Native
+    model kwargs override recipe loading defaults for every researcher recipe.
+    """
+    if decision_model is not None and not isinstance(decision_model, ModelRef):
+        raise TypeError('decision_model must be a ModelRef or None')
+    if decision_backend is not None and not callable(getattr(decision_backend, 'generate', None)):
+        raise TypeError('decision_backend must provide generate(request)')
     root = settings.run_dir.resolve()
     source = RunSource(root.name, settings.parent_run_id)
     root.mkdir(parents=True, exist_ok=True)
@@ -657,6 +708,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         revision, identity = identity_factory(settings.model_path)
         write_json(root / 'model_identity.json', identity)
         base = ModelRef('medical-local', identity['model_id'], revision)
+        researcher = base if decision_model is None else decision_model
+        write_json(root / 'decision_model.json', asdict(researcher))
         converter = (converter_factory or tokenize_factory)(str(settings.model_path.resolve()),
             max_length=settings.max_seq_length, padding=False, revision=revision if len(revision) == 40 else None)
         kept, excluded = converter.filter_samples(original.train.read())
@@ -674,10 +727,11 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         model_dir = settings.model_path.resolve()
         model_label = (model_dir.parent.parent.name.removeprefix('models--').replace('--', '-')
                        if model_dir.parent.name == 'snapshots' else model_dir.name)
-        monitor.data['project'] = {'project_id': 'medical-rsi', 'name': '医疗自主研究',
+        monitor.data['project'] = {'project_id': root.name, 'name': '医疗 RSI · ' + root.name,
                                   'system_id': 'medical-' + model_label.lower()}
         write_json(root / 'parallelism.json', {'serving_backend': settings.serving_backend,
-            'tensor_parallel_size': settings.tensor_parallel_size, 'training_processes': settings.training_processes})
+            'tensor_parallel_size': settings.tensor_parallel_size, 'training_processes': settings.training_processes,
+            'training_device_type': settings.training_device_type})
         monitor.write()
         serving_options = {}
         if settings.serving_backend == 'sglang':
@@ -687,13 +741,16 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         else:
             default_serving = LocalTransformerServing
         serving = (serving_factory or default_serving)(str(settings.model_path.resolve()), actor_model=base,
-            decision_model=base, artifacts=artifacts, native_model_class='image_text_to_text',
+            decision_model=researcher if decision_backend is None else base,
+            artifacts=artifacts, native_model_class='image_text_to_text',
             device='cuda:0', dtype='bfloat16', max_context_tokens=32768,
             decision_thinking=settings.decision_thinking, **serving_options)
         learner = RecipeLearner(root / 'training', artifacts, converter, base, settings.model_path.resolve(), monitor,
             serving.release_memory, max_trainings=settings.max_trainings, max_steps=settings.max_train_steps,
-            process_backend=process_backend, training_processes=settings.training_processes)
-        backend = DecisionBackend(serving, root, monitor, settings.max_model_calls)
+            process_backend=process_backend, training_processes=settings.training_processes,
+            native_model_kwargs=native_model_kwargs, training_device_type=settings.training_device_type)
+        backend = DecisionBackend(serving if decision_backend is None else decision_backend,
+            root, monitor, settings.max_model_calls, decision_thinking=settings.decision_thinking)
         backend.training_active = learner.active
         def check_deadline():
             if research_started is not None and time.monotonic()-research_started >= settings.seconds:
@@ -708,7 +765,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 return assembly is not None and bool(assembly.candidates)
             return True
         permissions = ActionPermissions(check=permitted)
-        assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=base, initial_model=base,
+        assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=researcher, initial_model=base,
             inference=serving, system_activator=serving, prepare_inference=serving.prepare_inference,
             learner=learner, bind_training_inputs=learner.bind_inputs, trusted_exclusions=private,
             run_policy=ExperimentRunPolicy(settings.seconds, backend), action_permissions=permissions,
@@ -722,7 +779,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         space = ModularDecisionActionSpace((*research_tools.definitions, *operations.definitions),
             directives=assembly.runner.decision_making.action_space.directives, permissions=permissions)
         assembly.runner.decision_making.action_space = space
-        policy = ResearchPolicy(backend, base, space.directives, space, monitor, learner, operations.train_ref)
+        policy = ResearchPolicy(backend, researcher, space.directives, space, monitor, learner, operations.train_ref)
         decision.policy = policy
         decision.context_compactor = BasicContextCompactor(recent_tail=4, stream_chars=8000, summary_chars=4096)
         commands = assembly.runner.exploration.harness.commands
@@ -849,6 +906,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--decision-thinking', action='store_true',
                         help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
     result.add_argument('--training-processes', type=int, default=1)
+    result.add_argument('--training-device-type', choices=('cuda', 'npu'), default='cuda')
     result.add_argument('--serving-backend', choices=('transformers', 'sglang'), default='transformers')
     result.add_argument('--tensor-parallel-size', type=int, default=1)
     return result

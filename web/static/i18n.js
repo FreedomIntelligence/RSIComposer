@@ -37,13 +37,13 @@
   "检验待验证版本的效果；评测通过与实际采用是两个独立步骤。": "Test the proposed version. Passing evaluation and applying it are separate steps.",
   "评测方案未记录。": "Evaluation protocol not recorded.",
 
-  "研究轮次 {p0}": "Research cycle {p0}",
-  "研究轮次": "Research cycle",
-  "{p0} 轮研究": "{p0} research cycles",
-  "本轮研究的决策": "Decisions in this research cycle",
+  "本次运行的决策": "Decisions in this run",
+  "决策与反馈": "Decisions and feedback",
+  "来源记录": "Provenance",
+  "来源引用不表示项目归属或自动继承。": "Source references do not establish project membership or automatic inheritance.",
+  "RSISys · 实验项目": "RSISys · Experiments",
 
   "续接次数": "Continuation count",
-  "续接关系不完整，暂不认定完整迭代次数。": "Incomplete ancestry; the full iteration count cannot be confirmed.",
   "调整提示词": "Adjust prompt",
   "定义训练方案": "Define training recipe",
   "准备训练数据": "Prepare training data",
@@ -63,7 +63,6 @@
   "运行事件 · {p0} 条": "Run events \u00b7 {p0}",
   "未分类事件": "Unclassified event",
   "未关联任务": "Unlinked task",
-  "根节点固定在左侧。每向右一层表示一次明确的运行续接；同一父运行可以派生多个分支。资料引用不计入迭代深度。": "The root stays fixed on the left. Each level to the right represents a declared continuation; one run may produce multiple branches. Source references do not increase iteration depth.",
 
   "运行详情": "Run details",
   "运行中": "Running",
@@ -391,7 +390,7 @@
   "尚无项目或运行快照；有数据后将自动显示。": "No projects or run snapshots yet; they will appear when available.",
   "连接中断": "Disconnected",
   "无法连接监控服务。": "Unable to connect to the monitoring service.",
-  "保留已读取的项目图与快照。{p0}": "Retaining the loaded project graph and snapshots. {p0}",
+  "保留已读取的项目与快照。{p0}": "Retaining the loaded projects and snapshots. {p0}",
   "暂时无法读取项目": "Projects temporarily unavailable",
   "请检查本地监控服务；恢复后将自动重新读取。": "Check the local monitoring service; loading will resume automatically.",
   "返回真实运行": "Back to real runs",
@@ -470,7 +469,7 @@
     for (const attr of ["aria-label", "title", "placeholder"]) {
       for (const node of doc.querySelectorAll(`[data-i18n-${attr}]`)) node.setAttribute(attr, t(node.getAttribute(`data-i18n-${attr}`)));
     }
-    doc.title = t("RSISys · 研究脉络");
+    doc.title = t("RSISys · 实验项目");
   }
   root.RSII18n = Object.freeze({ t, getLanguage: () => language, setLanguage, applyStatic,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

@@ -15,7 +15,7 @@ const findClass = (root, name) => nodes(root).filter(n => hasClass(n, name));
 const text = root => nodes(root).map(n => n.textContent || "").join(" ");
 function api(storage) {
   const ctx = vm.createContext({ localStorage: storage }); vm.runInContext(i18nSource, ctx);
-  vm.runInContext(fs.readFileSync(`${__dirname}/lineage.js`, "utf8"), ctx); return ctx.RSII18n;
+  return ctx.RSII18n;
 }
 function monitor(options = {}) {
   const calls = [];
@@ -66,32 +66,33 @@ test("static translation touches only explicit UI markers and preserves adjacent
   a.setLanguage("zh");a.applyStatic(doc);assert.equal(title.textContent,"指标");assert.equal(input.attrs["aria-label"],"搜索事件");
 });
 
-test("switching language rerenders cached graph/run, preserves selection/step/zoom/cache/filter and model prose", () => {
+test("switching language rerenders direct decisions and preserves project, selected step, cache and model prose", () => {
   const h=monitor();fixture(h);
-  findClass(h.get("project-graph"),"flow-choice")[1].listeners.click();
-  h.run('state.activeScope.flowLimits.set("a",60); $("project-graph").graphView.autoFit=false; $("project-graph").graphView.scale=.75; $("project-graph").graphView.viewport.scrollLeft=123; $("project-graph").graphView.viewport.scrollTop=45;');
-  const before=h.json('[state.activeScope.selected,[...state.activeScope.flowSelected],[...state.activeScope.positions],state.activeScope.cache.size]');
+  findClass(h.get("project-content"),"flow-choice")[1].listeners.click();
+  h.run('state.activeScope.flowLimits.set("a",60)');
+  findClass(h.get("project-content"),"flow-map")[0].scrollLeft=123;
+  const before=h.json('[state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]');
   const snapshot=h.run("state.snapshot"),cache=h.run("state.activeScope.cache");
   h.get("lang-en").listeners.click();
   assert.equal(h.get("lang-en").attributes["aria-pressed"],"true");assert.equal(h.get("lang-zh").attributes["aria-pressed"],"false");
-  assert.deepEqual(h.json('[state.activeScope.selected,[...state.activeScope.flowSelected],[...state.activeScope.positions],state.activeScope.cache.size]'),before);
+  assert.deepEqual(h.json('[state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]'),before);
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
-  assert.equal(h.get("project-graph").graphView.scale,.75);assert.equal(h.get("project-graph").graphView.viewport.scrollLeft,123);assert.equal(h.get("project-graph").graphView.viewport.scrollTop,45);
-  assert.match(text(h.get("project-graph")),/Metrics at review/);assert.match(text(h.get("project-graph")),/继续训练 原文 strategy/);
-  assert.doesNotMatch(text(h.get("project-graph")),/保留目标 objective/);assert.equal(h.run("state.snapshot.objective"),"保留目标 objective");assert.doesNotMatch(text(h.get("project-graph")),/错误 原文 log/);
-  assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
-  assert.match(text(h.get("graph-tools")),/Fit/);assert.equal(findClass(h.get("graph-tools"),"graph-control-group").length,2);assert.equal(findClass(h.get("graph-tools"),"zoom-reset")[0].textContent,"75%");
-  assert.equal(findClass(h.get("project-graph"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
+  assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,123);
+  assert.match(text(h.get("project-content")),/Metrics at review/);assert.match(text(h.get("project-content")),/继续训练 原文 strategy/);
+  assert.doesNotMatch(text(h.get("project-content")),/保留目标 objective/);assert.equal(h.run("state.snapshot.objective"),"保留目标 objective");assert.doesNotMatch(text(h.get("project-content")),/错误 原文 log/);
+  assert.doesNotMatch(text(h.get("project-content")),/custom.event/);
+  assert.match(text(h.get("project-content")),/Decisions and feedback/);
+  assert.equal(findClass(h.get("project-content"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
-  h.get("lang-zh").listeners.click();assert.match(text(h.get("project-graph")),/复查时指标/);assert.deepEqual(h.calls,[]);
+  h.get("lang-zh").listeners.click();assert.match(text(h.get("project-content")),/复查时指标/);assert.deepEqual(h.calls,[]);
 });
 
 test("unknown events and application errors/empty states switch without refetching", () => {
   const h=monitor();h.run('notice(()=>t("请求超时。"),true); showEmpty(()=>t("暂时无法读取项目"),()=>t("请检查本地监控服务；恢复后将自动重新读取。")); RSII18n.setLanguage("en")');
   assert.equal(h.get("connection").textContent,undefined);assert.equal(h.get("notice").textContent,"Request timed out.");assert.equal(h.get("empty-title").textContent,"Projects temporarily unavailable");assert.deepEqual(h.calls,[]);
   fixture(h);h.run('state.activeScope.cache.get("a").status="error"; state.activeScope.cache.get("a").errorInfo=uiError("运行快照协议或 ID 不匹配。"); renderProject(); RSII18n.setLanguage("zh"); RSII18n.setLanguage("en")');
-  assert.match(text(h.get("project-graph")),/Run snapshot schema or ID mismatch/);assert.match(text(h.get("project-graph")),/Retaining the previous snapshot/);
-  assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
+  assert.match(text(h.get("project-content")),/Run snapshot schema or ID mismatch/);assert.match(text(h.get("project-content")),/Retaining the previous snapshot/);
+  assert.doesNotMatch(text(h.get("project-content")),/custom.event/);
 });
 
 test("sidebar replaces navigation and run selectors; manual refresh and export are absent",()=>{
@@ -100,11 +101,10 @@ test("sidebar replaces navigation and run selectors; manual refresh and export a
   assert.ok(html.includes('id="project-list"'));
 });
 
-test("changing language during graph RAF defers its redraw, retains motion and performs no request", () => {
-  const h=monitor({raf:true});fixture(h);const host=h.get("project-graph"),view=host.graphView;
-  const button=findClass(host,"graph-node")[1];button.setPointerCapture=()=>{};
-  button.listeners.pointerdown({button:0,clientX:100,clientY:100,pointerId:1,stopPropagation(){}});
-  button.listeners.pointermove({clientX:145,clientY:125,pointerId:1});assert.equal(h.frames.size,1);
-  const node=button;h.get("lang-en").listeners.click();assert.equal(host.graphView,view);assert.equal(view.pendingRender,true);assert.equal(h.frames.size,1);assert.equal(findClass(host,"graph-node")[1],node);
-  h.frames.step();button.listeners.pointerup();h.frames.drain();assert.equal(view.simulating,false);assert.equal(view.pendingRender,false);assert.match(text(host),/Research cycle 1/);assert.deepEqual(h.calls,[]);
+test("direct project page has no graph script, controls, viewport or multi-run counter", () => {
+  for(const name of ["/lineage.js",'id="graph-tools"','id="project-run-count"','id="project-graph"'])assert.ok(!html.includes(name),name);
+  assert.ok(html.includes('id="project-content"'));
+  assert.doesNotMatch(appSource,/RSILineage|project-root|projectModel|renderGraph|networkLayout|研究轮次|unassigned/);
+  const css=fs.readFileSync(`${__dirname}/style.css`, "utf8");
+  assert.doesNotMatch(css,/graph-node|graph-viewport|graph-controls|graph-header|graph-tools/);
 });

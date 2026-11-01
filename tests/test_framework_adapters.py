@@ -228,6 +228,32 @@ class ProcessAdapterTests(unittest.TestCase):
             ProcessTrainingBackend(self.root / 'false-capabilities', capabilities=BackendCapabilities(
                 methods=('sft',), update_fields=('learning_rate',)))
 
+    def test_ascend_environment_survives_supervisor_without_wildcard_credentials(self):
+        selected = {'ASCEND_RT_VISIBLE_DEVICES': '13',
+            'ASCEND_HOME_PATH': '/usr/local/Ascend/cann-9.1.0',
+            'ASCEND_TOOLKIT_HOME': '/usr/local/Ascend/cann-9.1.0',
+            'ASCEND_OPP_PATH': '/usr/local/Ascend/cann-9.1.0/opp',
+            'ASCEND_AICPU_PATH': '/usr/local/Ascend/cann-9.1.0',
+            'ASCEND_CUSTOM_OPP_PATH': '/allocated/custom-opp',
+            'TOOLCHAIN_HOME': '/usr/local/Ascend/cann-9.1.0/toolkit',
+            'TBE_IMPL_PATH': '/usr/local/Ascend/cann-9.1.0/opp/built-in/op_impl/ai_core/tbe',
+            'PYTORCH_NPU_ALLOC_CONF': 'expandable_segments:True',
+            'ASCEND_LAUNCH_BLOCKING': '1', 'TASK_QUEUE_ENABLE': '1',
+            'HCCL_CONNECT_TIMEOUT': '600', 'HCCL_EXEC_TIMEOUT': '1800',
+            'HCCL_SOCKET_IFNAME': 'eth0', 'HCCL_IF_IP': '127.0.0.1',
+            'HCCL_WHITELIST_DISABLE': '1', 'HCCL_INTRA_ROCE_ENABLE': '0',
+            'HCCL_INTRA_PCIE_ENABLE': '1', 'VIRTUAL_ENV': '/allocated/ascend',
+            'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1', 'XDG_CACHE_HOME': '/allocated/cache'}
+        with patch.dict(os.environ, dict(selected, ASCEND_PRIVATE_TOKEN='secret',
+                HCCL_PRIVATE_TOKEN='secret')):
+            backend = self.backend()
+            job = backend.submit(self.request, idempotency_key='ascend-env')
+            self.assertEqual(self.finish(backend, job).status, JobStatus.SUCCEEDED)
+        env = json.loads((self.started(job) / 'environment.json').read_text())
+        self.assertEqual({key: env.get(key) for key in selected}, selected)
+        self.assertNotIn('ASCEND_PRIVATE_TOKEN', env)
+        self.assertNotIn('HCCL_PRIVATE_TOKEN', env)
+
     def test_invalid_terminal_result_is_stable_and_result_does_not_poll(self):
         backend = self.backend(FIXTURE_MALFORMED='1')
         job = backend.submit(self.request, idempotency_key='invalid')
@@ -393,13 +419,18 @@ class NativeDistributedWorkerTests(unittest.TestCase):
         torch = ModuleType('torch')
         torch.cuda = SimpleNamespace(is_available=lambda: True, device_count=lambda: world_size,
             set_device=lambda device: events.append(('device', device)))
+        torch.npu = SimpleNamespace(is_available=lambda: True, device_count=lambda: world_size,
+            set_device=lambda device: events.append(('npu_device', device)))
         torch.distributed = distributed
         torch.manual_seed = lambda seed: events.append(('seed', seed))
         class AutoModel:
             @staticmethod
             def from_pretrained(path, **kwargs):
                 events.append(('load', path, kwargs))
-                if world_size > 1:
+                if outer.config.get('device_type') == 'npu':
+                    outer.assertEqual(kwargs['device_map'], {'': f'npu:{rank}'})
+                    outer.assertLess(events.index(('npu_device', rank)), len(events) - 1)
+                elif world_size > 1:
                     outer.assertEqual(kwargs['device_map'], {'': rank})
                     outer.assertLess(events.index(('device', rank)), len(events) - 1)
                     outer.assertIn('barrier', events)
@@ -448,7 +479,8 @@ class NativeDistributedWorkerTests(unittest.TestCase):
         peft.get_peft_model = lambda model, config: model
         peft.PeftModel = SimpleNamespace(from_pretrained=lambda model, uri, **kwargs:
             (events.append(('resume', uri, kwargs)) or model))
-        return {'torch': torch, 'transformers': transformers, 'peft': peft}, events, counts
+        return {'torch': torch, 'torch_npu': ModuleType('torch_npu'),
+                'transformers': transformers, 'peft': peft}, events, counts
 
     def run_worker(self, rank, world_size, *, fail_train=False):
         modules, events, counts = self.fake_frameworks(rank, world_size, fail_train=fail_train)
@@ -458,7 +490,13 @@ class NativeDistributedWorkerTests(unittest.TestCase):
             environment.update(WORLD_SIZE=str(world_size), LOCAL_WORLD_SIZE=str(world_size),
                                RANK=str(rank), LOCAL_RANK=str(rank))
         self.write_recipe()
-        with patch.dict(sys.modules, modules), patch.dict(os.environ, environment, clear=True):
+        native_import = __import__
+        def recorded_import(name, *args, **kwargs):
+            if name in ('torch_npu', 'transformers'):
+                events.append(('import', name))
+            return native_import(name, *args, **kwargs)
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, environment, clear=True), \
+                patch('builtins.__import__', side_effect=recorded_import):
             _transformers_peft(self.recipe)
         return events, counts
 
@@ -512,6 +550,8 @@ class NativeDistributedWorkerTests(unittest.TestCase):
         self.assertNotIn('gather', events)
         self.assertNotIn('destroy', events)
         self.assertIn(('load', 'official', self.config['model_kwargs']), events)
+        self.assertNotIn(('import', 'torch_npu'), events)
+        self.assertFalse(any(isinstance(event, tuple) and event[0] == 'npu_device' for event in events))
         evidence = json.loads((self.root / 'training-evidence.json').read_text())
         self.assertEqual((evidence['presented_rows'], evidence['presented_input_tokens']), (4, 8))
         self.assertEqual(evidence['exposure_scope'], 'this_worker_rank')
@@ -580,10 +620,98 @@ class NativeDistributedWorkerTests(unittest.TestCase):
 
     def test_import_remains_framework_free(self):
         code = ('import sys; import rsisys.adapters.training; '
-                'assert not any(m in sys.modules for m in ("torch", "transformers", "peft"))')
+                'assert not any(m in sys.modules for m in ("torch", "torch_npu", "transformers", "peft"))')
         completed = subprocess.run([sys.executable, '-c', code], capture_output=True,
             env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)), timeout=5)
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_single_npu_selects_logical_zero_before_loading_and_preserves_training_options(self):
+        self.config.update(device_type='npu', num_processes=1)
+        self.config['training_args'].update(bf16=True, gradient_checkpointing=True)
+        events, _ = self.run_worker(0, 1)
+        self.assertEqual(events[:2], [('import', 'torch_npu'), ('npu_device', 0)])
+        self.assertLess(events.index(('npu_device', 0)), events.index(('import', 'transformers')))
+        for unwanted in ('barrier', 'gather', 'destroy'):
+            self.assertNotIn(unwanted, events)
+        self.assertFalse(any(isinstance(event, tuple) and event[0] in ('device', 'init') for event in events))
+        args = next(event[1] for event in events if isinstance(event, tuple) and event[0] == 'trainer_args')
+        self.assertEqual(args['optim'], 'adamw_torch')
+        self.assertFalse(args['dataloader_pin_memory'])
+        self.assertTrue(args['bf16'])
+        self.assertTrue(args['gradient_checkpointing'])
+        self.assertNotIn('ddp_backend', args)
+        evidence = json.loads((self.root / 'training-evidence.json').read_text())
+        self.assertEqual(evidence['device_type'], 'npu')
+        self.assertEqual(evidence['world_size'], 1)
+        self.assertEqual(evidence['presented_input_tokens'], 8)
+        self.assertEqual(evidence['model_kwargs']['device_map'], 'auto')
+        self.assertTrue((self.root / 'adapter' / 'adapter_config.json').is_file())
+        self.assertFalse(json.loads((self.root / 'result.json').read_text())['simulated'])
+
+    def test_npu_explicit_optimizer_and_pin_memory_are_retained(self):
+        self.config['device_type'] = 'npu'
+        self.config['training_args'].update(optim='adamw_torch_npu_fused', dataloader_pin_memory=True)
+        events, _ = self.run_worker(0, 1)
+        args = next(event[1] for event in events if isinstance(event, tuple) and event[0] == 'trainer_args')
+        self.assertEqual(args['optim'], 'adamw_torch_npu_fused')
+        self.assertTrue(args['dataloader_pin_memory'])
+
+    def test_npu_hccl_group_and_trainer_backend_agree_and_cleanup_after_save(self):
+        self.config.update(device_type='npu', num_processes=2)
+        events, _ = self.run_worker(0, 2)
+        self.assertEqual(events[:4], [('import', 'torch_npu'), ('npu_device', 0),
+                                     ('init', {'backend': 'hccl'}), 'barrier'])
+        self.assertEqual(events[-6:], ['train', 'barrier', 'save', 'barrier', 'gather', 'destroy'])
+        args = next(event[1] for event in events if isinstance(event, tuple) and event[0] == 'trainer_args')
+        self.assertEqual(args['ddp_backend'], 'hccl')
+
+    def test_npu_requires_installed_backend_and_exact_visible_device_allocation(self):
+        modules, events, _ = self.fake_frameworks(0, 1)
+        with patch.dict(sys.modules, dict(modules, torch_npu=None)):
+            with self.assertRaisesRegex(RuntimeError, 'requires torch_npu'):
+                with _worker_group(0, 1, 'npu'):
+                    self.fail('Missing torch_npu must fail')
+        for available, count in ((False, 1), (True, 0), (True, 2)):
+            modules['torch'].npu.is_available = lambda: available
+            modules['torch'].npu.device_count = lambda: count
+            with self.subTest(available=available, count=count), patch.dict(sys.modules, modules):
+                with self.assertRaisesRegex(ValueError, 'ASCEND_RT_VISIBLE_DEVICES'):
+                    with _worker_group(0, 1, 'npu'):
+                        self.fail('No unallocated NPU may be selected')
+        self.assertEqual(events, [])
+
+    def test_npu_training_failure_destroys_hccl_and_does_not_publish_result(self):
+        self.config.update(device_type='npu', num_processes=2)
+        modules, events, _ = self.fake_frameworks(0, 2, fail_train=True)
+        with patch.object(self, 'fake_frameworks', return_value=(modules, events, [])):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic training failure'):
+                self.run_worker(0, 2, fail_train=True)
+        self.assertIn(('init', {'backend': 'hccl'}), events)
+        self.assertEqual(events[-1], 'destroy')
+        self.assertFalse((self.root / 'result.json').exists())
+
+    def test_npu_rejects_conflicting_cpu_or_parallel_options_before_backend_import(self):
+        self.config['device_type'] = 'npu'
+        environment = {'RSISYS_JOB_DIR': str(self.root), 'RSISYS_REQUEST_FILE': str(self.request_file)}
+        for key, value in (('use_cpu', True), ('no_cuda', True), ('fsdp', 'full_shard'),
+                           ('deepspeed', 'zero.json'), ('parallelism_config', {'tp_size': 2})):
+            self.config['training_args'] = {key: value}
+            self.write_recipe()
+            with self.subTest(key=key), patch.dict(os.environ, environment, clear=True), \
+                    patch('rsisys.adapters.training._worker_group') as group:
+                with self.assertRaisesRegex(ValueError, 'native NPU Trainer DDP only'):
+                    _transformers_peft(self.recipe)
+                group.assert_not_called()
+
+    def test_invalid_device_type_fails_submission_before_launch(self):
+        for value in (None, 'NPU', 'npu:13', 'cpu', True):
+            self.config['device_type'] = value
+            self.write_recipe()
+            with self.subTest(value=value), patch('rsisys.adapters.training.subprocess.Popen') as popen:
+                with self.assertRaisesRegex(ValueError, 'device_type must be cuda or npu'):
+                    ProcessTrainingBackend(self.root / 'invalid-device').submit(self.request,
+                        idempotency_key=f'invalid-{value}')
+                popen.assert_not_called()
 
 
 class HTTPFixture:
