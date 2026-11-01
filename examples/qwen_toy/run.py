@@ -11,16 +11,17 @@ ModelDecisionPolicy output. There is no scripted fallback on invalid JSON.
 """
 import argparse
 from dataclasses import replace
-from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
 import time
 
 if __package__:
+    from .monitor import Monitor
     from .adapters import (Deadline, HTTPClient, PROTOCOL, RECIPE, RevisionBackend,
                            WorkerActivator, WorkerEvaluator, WorkerTrainer)
 else:
+    from monitor import Monitor
     from adapters import (Deadline, HTTPClient, PROTOCOL, RECIPE, RevisionBackend,
                           WorkerActivator, WorkerEvaluator, WorkerTrainer)
 
@@ -55,39 +56,6 @@ EXECUTION_PROMPT = 'Return only JSON with key "parity" and value "even" or "odd"
 def eligible(metrics):
     value = metrics.get('delta_nll')
     return type(value) in (int, float) and math.isfinite(value) and value > 0
-
-
-class Monitor:
-    def __init__(self, root, base):
-        self.root, self.jobs, self.candidates = root, {}, {}
-        self.phase = 'starting'
-        self.data = {'schema_version': 1, 'run_id': root.name, 'objective': OBJECTIVE,
-                     'status': 'running', 'loops': {},
-                     'models': {role: {'model_id': base.model_id, 'revision': base.revision}
-                                for role in ('decision_maker', 'actor')}, 'events': []}
-        self.write()
-
-    def write(self):
-        self.data.update(updated_at=datetime.now(timezone.utc).isoformat(),
-                         jobs=list(self.jobs.values()), candidates=list(self.candidates.values()))
-        atomic_write(self.root / 'monitor.json', json_bytes(self.data))
-
-    def event(self, event, **details):
-        if event == 'job':
-            self.jobs[details['job_id']] = dict(details)
-        self.data['events'].append({'timestamp': datetime.now(timezone.utc).isoformat(),
-                                   'kind': event, 'summary': f'{self.phase}: {event}', 'details': details})
-        self.data['events'] = self.data['events'][-300:]
-        self.write()
-
-    def stage(self, phase, *, status='running'):
-        self.phase = phase
-        self.data['status'] = status
-        self.data['loops'] = {
-            'decision_making': {'status': status, 'summary': f'phase={phase}; model proposes, guard validates'},
-            'exploration': {'status': status, 'summary': f'phase={phase}; real worker and inference'},
-        }
-        self.event('phase', status=status)
 
 
 class GuardedDecisionPolicy(ModelDecisionPolicy):
@@ -163,6 +131,7 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
                     decision = replace(decision, directive=replace(directive, max_steps=1,
                         review_after_seconds=self.review_after_seconds if mode == 'train' else None))
                     self.monitor.stage(mode)
+                self.monitor.decision(decision, context, self.round)
                 self.monitor.event('model_decision_validated', kind=decision.kind)
                 return decision
             except (ValueError, KeyError, TypeError) as exc:
@@ -202,6 +171,7 @@ class GuardedDecisionPolicy(ModelDecisionPolicy):
                          'decision_revision': self.model.revision,
                          'actor_revision': context.execution.model.revision if context.execution.model else None}
                 self.reviews.append(entry)
+                self.monitor.review(reviewed, context, self.round)
                 self.monitor.event('training_review_completed', **entry)
                 return reviewed
             except (ValueError, KeyError, TypeError):
@@ -281,7 +251,7 @@ def run(args):
         baseline = HTTPClient(args.baseline_url, deadline, timeout=args.request_timeout)
         worker = HTTPClient(args.worker_url, deadline, timeout=args.request_timeout)
         base = ModelRef('qwen-toy', args.model_name, args.base_revision)
-        monitor = Monitor(root, base)
+        monitor = Monitor(root, base, OBJECTIVE, rounds=args.rounds)
         models = RevisionBackend(baseline, worker, base, notify=monitor.event)
         trainer = WorkerTrainer(worker, models, notify=monitor.event)
         evaluator = WorkerEvaluator(worker, models, notify=monitor.event)
@@ -322,6 +292,7 @@ def run(args):
             for _ in range(args.max_steps):
                 deadline.remaining()
                 result = runner.step(OBJECTIVE)
+                monitor.advance(result)
                 monitor.data['models']['actor']['revision'] = actor_policy.model.revision
                 if result.kind == 'finished':
                     if policy.phase != 'finish':
@@ -358,7 +329,7 @@ def run(args):
                         monitor.data['round_results'] = list(round_results)
                         if policy.phase == 'next_round':
                             policy.next_round()
-                    monitor.data.update(round=policy.round, rounds=args.rounds)
+                    monitor.data['workflow'].update(round=policy.round, rounds=args.rounds)
                     monitor.stage(policy.phase)
                 else:
                     monitor.event('progress', status=result.kind)

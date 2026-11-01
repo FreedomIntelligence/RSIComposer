@@ -1079,9 +1079,414 @@ footer {
 }
 
 @media (max-width: 380px) {
-  .masthead { gap: 10px; }
-  nav { gap: 10px; font-size: 10px; }
-  .refresh-controls { flex-wrap: wrap; }
-  .refresh-controls .connection { width: 100%; }
-  .metric-table th, .metric-table td { padding-left: 8px; padding-right: 8px; }
+  .masthead {
+    gap: 10px;
+  }
+  nav {
+    gap: 10px;
+    font-size: 10px;
+  }
+  .refresh-controls {
+    flex-wrap: wrap;
+  }
+  .refresh-controls .connection {
+    width: 100%;
+  }
+  .metric-table th,
+  .metric-table td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+/* Execution and decision records share the monitor's paper-and-ink palette. */
+.execution-section {
+  margin-bottom: 30px;
+}
+.workflow-summary {
+  margin-bottom: 14px;
+}
+.workflow-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  gap: 4px 24px;
+}
+.workflow-fields dt {
+  font-size: 11px;
+  color: var(--muted);
+  grid-row: 1;
+}
+.workflow-fields dd {
+  font-size: 13px;
+  grid-row: 2;
+  font-variant-numeric: tabular-nums;
+}
+.execution-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.execution-main,
+.execution-progress {
+  padding: 23px 25px;
+  min-width: 0;
+}
+.execution-progress {
+  border-left: 1px solid var(--line);
+  background: #fdfcf8;
+}
+.execution-head,
+.decision-heading,
+.round-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+}
+.execution-head h3 {
+  font: 25px/1.4 var(--serif);
+  overflow-wrap: anywhere;
+}
+.execution-strategy {
+  font-size: 13px;
+  margin: 10px 0 20px;
+  color: #686053;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.detail-grid,
+.execution-timing {
+  display: grid;
+  grid-template-columns: 95px minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+.detail-grid dt,
+.execution-timing dt {
+  color: var(--muted);
+}
+.detail-grid dd,
+.execution-timing dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.execution-phase {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.step-progress {
+  margin-bottom: 17px;
+}
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.progress-label > span:last-child {
+  color: var(--orange);
+}
+.step-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #e8e3d9;
+  accent-color: var(--orange);
+}
+.step-bar::-webkit-progress-bar {
+  background: #e8e3d9;
+  border-radius: 3px;
+}
+.step-bar::-webkit-progress-value {
+  background: var(--orange);
+  border-radius: 3px;
+}
+.step-bar::-moz-progress-bar {
+  background: var(--orange);
+  border-radius: 3px;
+}
+.progress-unknown,
+.quiet-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+.progress-unknown {
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  margin: 17px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+.metric-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+.metric-chip dt {
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.metric-chip dd {
+  font-size: 12px;
+  color: var(--ink);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.decision-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.decision-tools select {
+  min-height: 32px;
+  font-size: 12px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.decision-tools input {
+  width: 170px;
+}
+.decision-card {
+  padding: 19px 22px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin-bottom: 12px;
+  background: #fdfcf8;
+}
+.decision-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.record-kind {
+  color: var(--orange);
+  font-size: 11px;
+}
+.source-tag {
+  background: var(--panel);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.decision-meta time {
+  margin-left: auto;
+  font-family: var(--mono);
+}
+.decision-heading h3 {
+  font: 22px/1.4 var(--serif);
+  overflow-wrap: anywhere;
+}
+.decision-reason {
+  font-size: 13px;
+  line-height: 1.85;
+  margin-top: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.decision-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: 15px;
+  font-size: 11px;
+}
+.decision-context > span {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.decision-context code {
+  font-size: 11px;
+  min-width: 0;
+}
+.context-label {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.record-details {
+  margin-top: 12px;
+}
+.record-details > .detail-grid,
+.record-details > .job-detail-content {
+  margin-top: 10px;
+  padding: 13px 16px;
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.job-record {
+  border-bottom: 1px solid var(--line);
+}
+.job-record .job-row {
+  border-bottom: 0;
+}
+.job-telemetry {
+  padding-bottom: 15px;
+}
+.job-telemetry .compact {
+  max-width: 420px;
+  margin: 0;
+}
+.job-telemetry .record-details {
+  margin-top: 7px;
+}
+.round-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.round-grid > .subtle-empty {
+  grid-column: 1 / -1;
+}
+.round-card {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fdfcf8;
+  padding: 20px 22px;
+  min-width: 0;
+}
+.round-heading h3 {
+  font: 23px/1.4 var(--serif);
+}
+.round-unapplied {
+  font-size: 11px;
+  color: var(--muted);
+}
+.round-card > .revision-line {
+  margin: 12px 0 16px;
+}
+.round-card > .quiet-note {
+  margin-top: 16px;
+}
+.metric-note {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .execution-main,
+  .execution-progress {
+    padding: 20px;
+  }
+  .workflow-fields {
+    gap: 4px 15px;
+  }
+}
+@media (max-width: 720px) {
+  .masthead {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .masthead nav {
+    flex-basis: 100%;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .workflow-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 4px 15px;
+  }
+  .workflow-fields dt,
+  .workflow-fields dd {
+    grid-row: auto;
+  }
+  .workflow-fields dt:nth-of-type(1),
+  .workflow-fields dt:nth-of-type(2) {
+    grid-row: 1;
+  }
+  .workflow-fields dd:nth-of-type(1),
+  .workflow-fields dd:nth-of-type(2) {
+    grid-row: 2;
+    margin-bottom: 10px;
+  }
+  .workflow-fields dt:nth-of-type(3),
+  .workflow-fields dt:nth-of-type(4) {
+    grid-row: 3;
+  }
+  .workflow-fields dd:nth-of-type(3),
+  .workflow-fields dd:nth-of-type(4) {
+    grid-row: 4;
+  }
+  .execution-card,
+  .round-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .execution-progress {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .execution-main,
+  .execution-progress {
+    padding: 18px;
+  }
+  .execution-head h3 {
+    font-size: 23px;
+  }
+  .execution-section .section-index {
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+  #decisions > .section-heading {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .decision-tools {
+    width: 100%;
+    gap: 8px;
+  }
+  .decision-tools .search-label {
+    flex: 1;
+    min-width: 0;
+  }
+  .decision-tools input {
+    width: 100%;
+  }
+  .decision-tools select {
+    max-width: 120px;
+  }
+  .decision-card,
+  .round-card {
+    padding: 16px;
+  }
+  .decision-meta {
+    gap: 5px 8px;
+  }
+  .decision-context {
+    gap: 6px 12px;
+  }
+  .decision-context > span:last-child {
+    flex-basis: 100%;
+  }
+  .detail-grid,
+  .execution-timing {
+    grid-template-columns: 85px minmax(0, 1fr);
+    gap: 6px 10px;
+    font-size: 11px;
+  }
+  .decision-reason {
+    font-size: 12px;
+  }
+  .record-details > .detail-grid,
+  .record-details > .job-detail-content {
+    padding: 12px;
+  }
 }

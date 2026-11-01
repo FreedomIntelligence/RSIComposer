@@ -10,7 +10,8 @@
 | `serve.py` / `serve.sh` | 临时基线模型服务，供 Decision Policy 使用 |
 | `worker.py` / `train_worker.sh` | 单卡训练、评测及训练后候选推理服务 |
 | `adapters.py` | 本例 HTTP 作业、模型路由、readiness 接口 |
-| `run.py` | 装配双 loop，运行有界闭环并写监控摘要 |
+| `run.py` | 装配双 loop，运行有界闭环 |
+| `monitor.py` | 公开决策/执行摘要，以及已完成运行的历史导出 |
 
 模型与数据格式参考 [Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3.5-9B) 和 [Transformers Qwen3.5 文档](https://huggingface.co/docs/transformers/en/model_doc/qwen3_5)。训练采用 PEFT LoRA：r=8、alpha=16、q_proj/v_proj、每轮默认 24 steps、batch=2、梯度累积=2。两轮时总计最多 48 个优化步。
 
@@ -117,3 +118,5 @@ baseline 和 worker 必须先启动并 ready；controller 会检查 worker 的 `
 这个小任务验证链路可运行，不能作为通用能力提升的证据；它不是 RL / verl 适配，也不是吞吐优化服务。训练数据使用本例私有的 prompt/answer JSONL，跨框架对齐由使用者自己的 adapter 负责。
 
 每个 worker 允许 `--rounds` 指定的一到两次训练尝试，默认一次；第三次会被拒绝。每轮有独立幂等 key 与 `training-attempt.json`，同 key 重试返回同一 job。训练取消在优化步边界检查；提交与轮询支持进程内幂等，服务重启不恢复 job。任一训练失败或取消后禁止继续训练；已成功的父 revision 仍可推理。重新实验需新 run-dir 和新 worker，不覆盖已有产物。每次新 Trainer 重置优化器状态，但 LoRA 权重沿父版本延续。自定义装配未接入系统 Snapshot；模型服务的生命周期由集群管理，完成临时实验后可删除本次创建的 job。
+
+监控包含模型显式给出的 strategy / reason、决策时两侧版本、指令与任务关联、运行中复查、当前阶段和各轮结果。训练进度来自 Trainer callback 的实际步数与日志；没有数值时不估算百分比。可用 `PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/COMPLETED_RUN` 为已有结束运行补导出真实决策历史；不会重新运行模型。具体字段与可视化见[监控说明](../../web/README.md)。

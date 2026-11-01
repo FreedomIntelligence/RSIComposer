@@ -11,6 +11,10 @@ const state = {
   auto: true,
   eventLimit: 30,
   openEvents: new Set(),
+  openDecisions: new Set(),
+  openJobs: new Set(),
+  decisionLimit: 30,
+  queryApplied: false,
 };
 const ACTIVE = new Set([
   "running",
@@ -32,7 +36,13 @@ const DONE = new Set([
   "finished",
 ]);
 const FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled"]);
-const ACCEPTED = new Set(["accepted", "applied", "adopted", "promoted", "bound"]);
+const ACCEPTED = new Set([
+  "accepted",
+  "applied",
+  "adopted",
+  "promoted",
+  "bound",
+]);
 const REJECTED = new Set(["rejected", "discarded", "failed"]);
 const PENDING = new Set([
   "pending",
@@ -82,6 +92,10 @@ const labels = {
   awaiting_evaluation: "待评测",
   awaiting_review: "待审阅",
   unavailable: "快照不可用",
+  reviewed: "已复查",
+  cancel_requested: "已请求取消",
+  continue: "继续执行",
+  cancel: "请求取消",
 };
 const asText = (v, fallback = "—") =>
   ["string", "number", "boolean"].includes(typeof v) ? String(v) : fallback;
@@ -219,6 +233,394 @@ function renderLoops(s) {
     }),
   );
 }
+const actionLabels = {
+  train: "训练",
+  training: "训练",
+  sft: "监督微调",
+  rl: "强化学习",
+  evaluate: "评测",
+  evaluation: "评测",
+  select: "选择候选",
+  apply_candidate: "应用候选",
+  execute: "执行任务",
+  finish: "结束运行",
+  finished: "已结束",
+  continue: "继续执行",
+  continue_training: "继续训练",
+  cancel: "请求取消执行",
+  cancel_training: "请求取消训练",
+  stop: "停止训练",
+  wait: "等待",
+  review: "复查",
+  prepare: "准备",
+  queued: "排队",
+};
+const actionText = (value) =>
+  actionLabels[asText(value, "")] || labels[asText(value, "")] || asText(value, "动作未报告");
+const present = (value) =>
+  value !== undefined && value !== null && value !== "";
+function secondsText(value) {
+  if (!number(value) || value < 0) return "未报告";
+  if (value > 0 && value < 1) return "不足 1 秒";
+  const seconds = Math.floor(value),
+    hours = Math.floor(seconds / 3600),
+    minutes = Math.floor((seconds % 3600) / 60);
+  return [
+    hours ? `${hours} 小时` : "",
+    minutes ? `${minutes} 分` : "",
+    `${seconds % 60} 秒`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+function fieldList(entries, className = "detail-grid") {
+  const dl = el("dl", className);
+  for (const [label, value] of entries)
+    dl.append(el("dt", "", label), el("dd", "", asText(value, "未报告")));
+  return dl;
+}
+function progressView(step, total, compact = false, ended = false) {
+  const wrap = el("div", compact ? "step-progress compact" : "step-progress");
+  const validStep = Number.isInteger(step) && step >= 0;
+  const validTotal = Number.isInteger(total) && total > 0;
+  if (validStep && validTotal && step <= total) {
+    const label = el("div", "progress-label");
+    const ratio = (step / total) * 100;
+    label.append(
+      el("span", "", `${step} / ${total} 步`),
+      el("span", "mono", `${Number(ratio.toFixed(1))}%`),
+    );
+    const bar = el("progress", "step-bar");
+    bar.max = total;
+    bar.value = step;
+    bar.setAttribute("aria-label", "已报告步骤进度");
+    bar.setAttribute("aria-valuetext", `${step} / ${total} 步`);
+    wrap.append(label, bar);
+  } else {
+    let label = validStep
+      ? `已报告 ${step} 步 · 总步数未报告`
+      : "步骤进度尚未报告";
+    if (!validStep && validTotal) label = `当前步数未报告 · 共 ${total} 步`;
+    if (validStep && validTotal && step > total)
+      label = `已报告 ${step} / ${total} 步 · 计数待核对`;
+    if (ended && !validStep) label = "指令已结束，未记录步骤进度。";
+    wrap.append(el("p", "progress-unknown", label));
+  }
+  return wrap;
+}
+function metricStrip(metrics) {
+  const strip = el("dl", "metric-strip");
+  for (const [key, value] of Object.entries(flattenMetrics(metrics))) {
+    const item = el("div", "metric-chip"),
+      dd = el("dd", "mono", fmt(value));
+    dd.title = String(value);
+    item.append(el("dt", "", key.replaceAll("_", " ")), dd);
+    strip.append(item);
+  }
+  return strip;
+}
+function retainedDetails(key, store, title, content) {
+  const details = el("details", "record-details");
+  details.open = store.has(key);
+  details.append(el("summary", "", title), content);
+  details.addEventListener("toggle", () => {
+    if (!details.isConnected) return;
+    if (details.open) store.add(key);
+    else store.delete(key);
+  });
+  return details;
+}
+function renderExecution(snapshot) {
+  const workflow = object(snapshot.workflow),
+    current = object(snapshot.current);
+  const ended = DONE.has(statusKey(current.status)) || FAILED.has(statusKey(current.status)) || current.status === "stopped";
+  $("execution-title").textContent = ended ? "最近结束的指令" : "当前执行";
+  if (Object.keys(workflow).length) {
+    const round = present(workflow.round)
+      ? `第 ${asText(workflow.round)} 轮${present(workflow.rounds) ? ` / 共 ${asText(workflow.rounds)} 轮` : ""}`
+      : "轮次未报告";
+    $("workflow-summary").replaceChildren(
+      fieldList(
+        [
+          [
+            "流程阶段",
+            present(workflow.phase) ? actionText(workflow.phase) : "未报告",
+          ],
+          ["轮次", round],
+          ["已完成指令", workflow.completed_directives],
+          ["运行耗时", secondsText(workflow.elapsed_seconds)],
+        ],
+        "workflow-fields",
+      ),
+    );
+  } else
+    $("workflow-summary").replaceChildren(
+      el("p", "quiet-note", "此快照尚未报告流程进度。"),
+    );
+  if (!Object.keys(current).length) {
+    $("current-execution").replaceChildren(
+      empty("此快照尚未报告当前执行详情。"),
+    );
+    return;
+  }
+  const job =
+    list(snapshot.jobs).find(
+      (j) => present(current.job_id) && j.job_id === current.job_id,
+    ) || {};
+  const card = el("div", "execution-card"),
+    main = el("div", "execution-main"),
+    head = el("div", "execution-head");
+  head.append(el("h3", "", actionText(current.mode)), badge(current.status));
+  if (ended) {
+    const noPendingJobs = Array.isArray(snapshot.jobs) && list(snapshot.jobs).every(j => DONE.has(statusKey(j.status)) || FAILED.has(statusKey(j.status)) || j.status === "stopped");
+    main.append(el("p", "execution-phase", noPendingJobs ? "当前无在途任务 · 以下为最后一次报告" : "该指令已结束 · 以下为最后一次报告"));
+  }
+  main.append(
+    head,
+    el("p", "execution-strategy", asText(current.strategy, "策略尚未报告。")),
+    fieldList([
+      ["指令", current.directive_id],
+      ["任务", current.job_id],
+      ["决策版本", current.decision_revision],
+      ["执行版本", current.actor_revision],
+    ]),
+  );
+  const detail = el("div", "execution-progress");
+  detail.append(
+    el(
+      "p",
+      "execution-phase",
+      `当前阶段 · ${present(current.phase) ? actionText(current.phase) : "未报告"}`,
+    ),
+    progressView(
+      current.step ?? job.step,
+      current.total_steps ?? job.total_steps,
+      false,
+      ended,
+    ),
+  );
+  let nextReview = "未报告";
+  if (current.next_review_seconds === null) nextReview = "不再自动复查";
+  else if (
+    number(current.next_review_seconds) &&
+    current.next_review_seconds >= 0
+  )
+    nextReview = `${secondsText(current.next_review_seconds)}后（快照）`;
+  detail.append(
+    fieldList(
+      [
+        [
+          "本次耗时",
+          secondsText(current.elapsed_seconds ?? job.elapsed_seconds),
+        ],
+        ["复查间隔", present(current.review_after_seconds) ? secondsText(current.review_after_seconds) : undefined],
+        ["下次复查", current.next_review_seconds !== undefined ? nextReview : undefined],
+        [
+          "复查决定",
+          current.review_status === "cancel"
+            ? "已请求取消"
+            : labels[current.review_status] ||
+              (present(current.review_status) ? asText(current.review_status) : undefined),
+        ],
+      ].filter(([, value]) => present(value)),
+      "execution-timing",
+    ),
+  );
+  const metrics = metricStrip({
+    ...object(job.metrics),
+    ...object(current.metrics),
+  });
+  if (metrics.childElementCount) detail.append(metrics);
+  card.append(main, detail);
+  $("current-execution").replaceChildren(card);
+}
+function decisionAction(row) {
+  // A review's action (continue/cancel) is distinct from its directive mode (train).
+  if (row.kind === "review") return present(row.action) ? row.action : row.mode;
+  return present(row.mode)
+    ? row.mode
+    : present(row.action)
+      ? row.action
+      : row.kind === "finish"
+        ? "finish"
+        : undefined;
+}
+function decisionKey(row) {
+  return present(row.decision_id)
+    ? `id:${asText(row.decision_id)}`
+    : JSON.stringify([
+        row.timestamp,
+        row.kind,
+        row.source,
+        row.round,
+        row.directive_id,
+        decisionAction(row),
+        row.job_id,
+      ]);
+}
+function renderDecisions() {
+  if (!state.snapshot) return;
+  const rows = list(state.snapshot.decisions),
+    filter = $("decision-filter").value,
+    query = $("decision-search").value.trim().toLowerCase();
+  const shown = rows
+    .filter(
+      (row) =>
+        (filter === "all" || row.kind === filter) &&
+        [
+          row.decision_id,
+          row.kind,
+          row.mode,
+          row.action,
+          row.strategy,
+          row.reason,
+          row.directive_id,
+          row.job_id,
+          row.candidate_id,
+        ]
+          .map((v) => asText(v, ""))
+          .join(" ")
+          .toLowerCase()
+          .includes(query),
+    )
+    .sort(
+      (a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0),
+    );
+  $("decision-count").textContent = `${shown.length} / ${rows.length}`;
+  $("more-decisions").hidden = shown.length <= state.decisionLimit;
+  if (!shown.length) {
+    $("decision-list").replaceChildren(
+      empty(
+        rows.length ? "没有符合筛选条件的决策。" : "此快照尚未报告决策记录。",
+      ),
+    );
+    return;
+  }
+  $("decision-list").replaceChildren(
+    ...shown.slice(0, state.decisionLimit).map((row) => {
+      const card = el("article", "decision-card"),
+        meta = el("div", "decision-meta"),
+        heading = el("div", "decision-heading");
+      meta.append(
+        el(
+          "span",
+          "record-kind",
+          { directive: "执行指令", review: "运行复查", finish: "结束决策" }[
+            row.kind
+          ] || asText(row.kind, "类型未报告"),
+        ),
+        el(
+          "span",
+          "source-tag",
+          { model: "模型决策", history: "历史记录" }[row.source] ||
+            "来源未报告",
+        ),
+        el("time", "", dateText(row.timestamp)),
+      );
+      heading.append(
+        el("h3", "", actionText(decisionAction(row))),
+        badge(row.status),
+      );
+      const reason = el(
+        "p",
+        "decision-reason",
+        asText(row.reason || row.strategy, "决策理由尚未报告。"),
+      );
+      card.append(meta, heading, reason);
+      const context = el("div", "decision-context");
+      for (const [label, value] of [
+        ["轮次", row.round],
+        ["决策版本", row.decision_revision],
+        ["执行版本", row.actor_revision],
+        ["任务", row.job_id],
+      ]) {
+        const item = el("span");
+        item.append(
+          el("span", "context-label", label),
+          el("code", "", asText(value, "未报告")),
+        );
+        context.append(item);
+      }
+      card.append(context);
+      const optionalFields = [
+        ["决策 ID", row.decision_id], ["指令 ID", row.directive_id],
+        ["指令模式", row.mode], ["策略", row.strategy], ["任务 ID", row.job_id],
+        ["候选 ID", row.candidate_id], ["方法", row.method],
+        ["协议引用", row.protocol_ref], ["训练配方引用", row.recipe_ref],
+        ["复查间隔", number(row.review_after_seconds) && row.review_after_seconds >= 0 ? secondsText(row.review_after_seconds) : undefined],
+        ["下次复查", row.next_review_seconds === null ? "不再自动复查" : number(row.next_review_seconds) && row.next_review_seconds >= 0 ? `${secondsText(row.next_review_seconds)}后（记录时）` : undefined],
+      ].filter(([, value]) => present(value) && ["string", "number", "boolean"].includes(typeof value));
+      if (optionalFields.length) card.append(retainedDetails(decisionKey(row), state.openDecisions, "指令与关联详情", fieldList(optionalFields)));
+
+      return card;
+    }),
+  );
+}
+function renderRounds(snapshot) {
+  const rows = list(snapshot.round_results)
+    .slice()
+    .sort(
+      (a, b) =>
+        (number(b.round) ? b.round : -1) - (number(a.round) ? a.round : -1),
+    );
+  $("round-count").textContent = `${rows.length} 轮`;
+  if (!rows.length) {
+    $("round-list").replaceChildren(empty("此快照尚未报告轮次结果。"));
+    return;
+  }
+  $("round-list").replaceChildren(
+    ...rows.map((row) => {
+      const card = el("article", "round-card"),
+        head = el("div", "round-heading");
+      head.append(
+        el(
+          "h3",
+          "",
+          present(row.round) ? `第 ${asText(row.round)} 轮` : "轮次未报告",
+        ),
+        row.applied === true
+          ? badge("applied")
+          : el(
+              "span",
+              "round-unapplied",
+              row.applied === false ? "未应用" : "应用状态未报告",
+            ),
+      );
+      const revisions = el("div", "revision-line");
+      revisions.append(
+        el("span", "", "基线"),
+        el("code", "", asText(row.base_revision, "未报告")),
+        el("span", "arrow", "→"),
+        el("span", "", "候选"),
+        el("code", "new-rev", asText(row.candidate_revision, "未报告")),
+      );
+      card.append(
+        head,
+        revisions,
+        fieldList([
+          ["选择结果", row.selection],
+          ["当前执行版本", row.actor_revision],
+          [
+            "答案验证",
+            row.answer_correct === true
+              ? "正确"
+              : row.answer_correct === false
+                ? "不正确"
+                : "未报告",
+          ],
+          ["运行复查次数", row.training_review_count],
+        ]),
+      );
+      const metrics = metricStrip(row.metrics);
+      card.append(
+        metrics.childElementCount
+          ? metrics
+          : el("p", "quiet-note", "本轮指标尚未报告。"),
+      );
+      return card;
+    }),
+  );
+}
 function jobGroup(job) {
   const key = statusKey(job.status);
   return ACTIVE.has(key)
@@ -244,13 +646,47 @@ function renderJobs() {
   const container = el("div", "job-list");
   container.append(
     ...shown.map((j) => {
-      const row = el("div", "job-row");
+      const record = el("article", "job-record"),
+        row = el("div", "job-row");
       row.append(
         el("code", "job-id", asText(j.job_id, "未命名任务")),
         el("span", "job-kind", asText(j.kind, "类型未报告")),
         badge(j.status),
       );
-      return row;
+      record.append(row);
+      if (
+        [
+          j.step,
+          j.total_steps,
+          j.elapsed_seconds,
+          j.directive_id,
+          j.round,
+        ].some(present) ||
+        Object.keys(object(j.metrics)).length
+      ) {
+        const telemetry = el("div", "job-telemetry");
+        if (present(j.step) || present(j.total_steps))
+          telemetry.append(progressView(j.step, j.total_steps, true));
+        const fields = el("div", "job-detail-content");
+        fields.append(
+          fieldList([
+            ["指令", j.directive_id],
+            ["轮次", j.round],
+            ["耗时", secondsText(j.elapsed_seconds)],
+          ]),
+          metricStrip(j.metrics),
+        );
+        telemetry.append(
+          retainedDetails(
+            asText(j.job_id, JSON.stringify([j.directive_id, j.round, j.kind])),
+            state.openJobs,
+            "任务进度详情",
+            fields,
+          ),
+        );
+        record.append(telemetry);
+      }
+      return record;
     }),
   );
   $("job-list").replaceChildren(container);
@@ -341,9 +777,12 @@ function metricRows(source) {
   };
 }
 function fmt(value) {
-  return number(value)
-    ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 5 }).format(value)
-    : "—";
+  if (!number(value)) return "—";
+  if (value !== 0 && (Math.abs(value) < 0.0001 || Math.abs(value) >= 1e9))
+    return value.toExponential(4);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(
+    value,
+  );
 }
 function candidateGroup(c) {
   const key = statusKey(c.status);
@@ -441,8 +880,8 @@ function renderCandidates() {
     }),
   );
 }
-function eventKey(e, index) {
-  return `${asText(e.timestamp, "")}:${asText(e.kind, "")}:${asText(e.summary, "")}:${index}`;
+function eventKey(e) {
+  return JSON.stringify([e.timestamp, e.kind, e.summary, object(e.details)]);
 }
 function updateEventTypes() {
   const select = $("event-filter"),
@@ -536,18 +975,45 @@ function renderSnapshot(s) {
     `${state.demo ? "示例时间" : "快照更新"} · ${dateText(s.updated_at)}`;
   renderStats(s);
   renderLoops(s);
+  renderExecution(s);
+  renderDecisions();
+  renderRounds(s);
   renderJobs();
   renderCandidates();
   updateEventTypes();
   renderEvents();
 }
-function chooseRuns(runs) {
+function chooseRuns(inputRuns) {
+  const valid = (run) => !run.error && run.status !== "unavailable";
+  const updated = (run) =>
+    Number.isFinite(Date.parse(run.updated_at))
+      ? Date.parse(run.updated_at)
+      : -Infinity;
+  const runs = list(inputRuns)
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(valid(b)) - Number(valid(a)) ||
+        updated(b) - updated(a) ||
+        0 ||
+        asText(a.run_id, "").localeCompare(asText(b.run_id, "")),
+    );
+  if (!state.demo && !state.queryApplied) {
+    const requested = new URLSearchParams(
+      typeof location !== "undefined" ? location.search : "",
+    ).get("run");
+    if (runs.some((run) => run.run_id === requested)) state.runId = requested;
+    state.queryApplied = true;
+  }
   const select = $("run-select"),
     available = runs.some((r) => r.run_id === state.runId);
   if (!available) {
     state.runId = asText(runs[0]?.run_id, "");
     state.snapshot = null;
     state.openEvents.clear();
+    state.openDecisions.clear();
+    state.openJobs.clear();
+    state.decisionLimit = 30;
     state.eventLimit = 30;
   }
   const options = runs.map((r) => {
@@ -642,8 +1108,12 @@ async function refresh() {
     );
   } catch (error) {
     if (epoch !== state.epoch) return;
-    const networkFailure = error instanceof TypeError || controller.signal.aborted;
-    connection(listConnected && !networkFailure ? "快照不可用" : "连接中断", "offline");
+    const networkFailure =
+      error instanceof TypeError || controller.signal.aborted;
+    connection(
+      listConnected && !networkFailure ? "快照不可用" : "连接中断",
+      "offline",
+    );
     const reason = controller.signal.aborted
       ? "请求超时。"
       : error instanceof TypeError
@@ -673,6 +1143,9 @@ function switchDemo() {
   state.runId = state.demo ? "" : state.realRunId;
   state.snapshot = null;
   state.openEvents.clear();
+  state.openDecisions.clear();
+  state.openJobs.clear();
+  state.decisionLimit = 30;
   state.eventLimit = 30;
   $("demo").textContent = state.demo ? "返回真实运行" : "查看示例";
   $("demo").setAttribute("aria-pressed", String(state.demo));
@@ -682,6 +1155,8 @@ function switchDemo() {
   $("candidate-filter").value = "all";
   $("event-filter").value = "all";
   $("event-search").value = "";
+  $("decision-filter").value = "all";
+  $("decision-search").value = "";
   $("dashboard").hidden = true;
   $("empty").hidden = false;
   refresh();
@@ -700,11 +1175,23 @@ $("run-select").addEventListener("change", () => {
   state.runId = $("run-select").value;
   state.snapshot = null;
   state.openEvents.clear();
+  state.openDecisions.clear();
+  state.openJobs.clear();
+  state.decisionLimit = 30;
   state.eventLimit = 30;
   refresh();
 });
 $("job-filter").addEventListener("change", renderJobs);
 $("candidate-filter").addEventListener("change", renderCandidates);
+for (const id of ["decision-search", "decision-filter"])
+  $(id).addEventListener(id === "decision-search" ? "input" : "change", () => {
+    state.decisionLimit = 30;
+    renderDecisions();
+  });
+$("more-decisions").addEventListener("click", () => {
+  state.decisionLimit += 30;
+  renderDecisions();
+});
 for (const id of ["event-search", "event-filter"])
   $(id).addEventListener(id === "event-search" ? "input" : "change", () => {
     state.eventLimit = 30;

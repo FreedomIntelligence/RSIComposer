@@ -5,6 +5,7 @@ No framework-wide dataset conversion is introduced.
 """
 import argparse
 from contextlib import contextmanager
+from copy import deepcopy
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -13,6 +14,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
+import time
 import traceback
 
 
@@ -118,6 +120,46 @@ def main(argv=None):
         on_step_begin = on_step_end
         on_substep_end = on_step_end
 
+    class TrainingProgress(TrainerCallback):
+        """Publish observed Trainer state; cancellation uses a separate callback."""
+
+        def __init__(self, ident):
+            self.ident, self.started = ident, None
+
+        def publish(self, state, control, logs=None):
+            if self.started is None:
+                return control
+            progress = {'elapsed_seconds': time.monotonic() - self.started}
+            step, total = getattr(state, 'global_step', None), getattr(state, 'max_steps', None)
+            if type(step) is int and step >= 0:
+                progress['step'] = step
+            if type(total) is int and total > 0:
+                progress['total_steps'] = total
+            metrics = {key: value for key, value in (logs or {}).items()
+                       if key in ('loss', 'learning_rate')
+                       and type(value) in (int, float) and math.isfinite(value)}
+            # Never call check_cancel/event.is_set or acquire the model lock here.
+            # Replace metrics rather than mutating a dictionary returned to readers.
+            with job_lock:
+                job = jobs[self.ident]
+                if job['status'] == 'running':
+                    if metrics:
+                        progress['metrics'] = {**job.get('metrics', {}), **metrics}
+                    job.update(progress)
+            return control
+
+        def on_train_begin(self, args, state, control, **kwargs):
+            self.started = time.monotonic()
+            return self.publish(state, control)
+
+        def on_step_end(self, args, state, control, **kwargs):
+            return self.publish(state, control)
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            return self.publish(state, control, logs)
+
+        on_train_end = on_step_end
+
     def read_data(name):
         if name not in ('train.jsonl', 'eval.jsonl'):
             raise ValueError('Unknown example dataset')
@@ -212,7 +254,7 @@ def main(argv=None):
                             gradient_checkpointing_kwargs={'use_reentrant': False},
                             dataloader_num_workers=0, remove_unused_columns=False, seed=73)
                         trainer = Trainer(model=model, args=options, train_dataset=dataset, data_collator=collate,
-                                          callbacks=[CancelTraining(cancellations[ident])])
+                                          callbacks=[CancelTraining(cancellations[ident]), TrainingProgress(ident)])
                         check_cancel(ident)
                         output = trainer.train()
                         check_cancel(ident)
@@ -281,7 +323,7 @@ def main(argv=None):
                 return self.reply(200, value)
             if self.path.startswith('/jobs/'):
                 with job_lock:
-                    job = dict(jobs.get(self.path.removeprefix('/jobs/'), {}))
+                    job = deepcopy(jobs.get(self.path.removeprefix('/jobs/'), {}))
                 return self.reply(200 if job else 404, job or {'error':'unknown job'})
             self.reply(404, {'error':'not found'})
         def do_POST(self):
@@ -303,7 +345,7 @@ def main(argv=None):
                         if jobs[ident]['status'] in ('queued', 'running'):
                             cancellations[ident].set()
                             jobs[ident]['cancel_requested'] = True
-                        value = dict(jobs[ident])
+                        value = deepcopy(jobs[ident])
                     return self.reply(200, value)
                 if self.path in ('/train', '/evaluate'):
                     kind = self.path[1:]

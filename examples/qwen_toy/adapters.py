@@ -230,7 +230,24 @@ class WorkerJobs:
                              error='Worker job failed; inspect worker logs' if status == JobStatus.FAILED else None)
         if outcome.terminal:
             self.outcomes[job] = deepcopy(outcome)
-        self.notify('job', job_id=job.job_id, kind=self.kind, status=status.value)
+        # Progress belongs to this training job, not a later evaluation/application.
+        # Missing fields remain missing, including on successful or queued jobs.
+        progress = {}
+        if self.kind == 'train' and status != JobStatus.QUEUED:
+            for field, minimum in (('step', 0), ('total_steps', 1)):
+                value = raw.get(field)
+                if type(value) is int and value >= minimum:
+                    progress[field] = value
+            elapsed = raw.get('elapsed_seconds')
+            if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0:
+                progress['elapsed_seconds'] = elapsed
+            if isinstance(raw.get('metrics'), dict):
+                metrics = {key: value for key, value in raw['metrics'].items()
+                           if key in ('loss', 'learning_rate')
+                           and type(value) in (int, float) and math.isfinite(value)}
+                if metrics:
+                    progress['metrics'] = metrics
+        self.notify('job', job_id=job.job_id, kind=self.kind, status=status.value, **progress)
         return outcome
 
     def cancel(self, job):

@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlsplit
 
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 MAX_BYTES = 4 * 1024 * 1024
+MAX_ROWS = 300
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -21,8 +22,23 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/demo.json": ("demo.json", "application/json; charset=utf-8")}
 DETAIL_KEYS = {"job_id", "candidate_id", "model_id", "revision", "base_revision",
                "role", "status", "kind", "step", "iteration", "duration_seconds",
-               "metric", "value", "baseline", "candidate", "score"}
-PRIVATE_KEY = re.compile(r"secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|sample|dataset|training_data", re.I)
+               "metric", "value", "baseline", "candidate", "score",
+               "decision_id", "directive_id", "decision_revision", "actor_revision", "candidate_revision",
+               "source", "action", "mode", "reason", "strategy", "round", "rounds", "phase",
+               "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds",
+               "review_status", "total_steps", "elapsed_seconds", "completed_directives",
+               "selection", "applied", "answer_correct", "training_review_count"}
+WORKFLOW_FIELDS = ("phase", "round", "rounds", "completed_directives", "elapsed_seconds")
+CURRENT_FIELDS = ("directive_id", "mode", "status", "phase", "strategy", "decision_revision", "actor_revision",
+                  "job_id", "elapsed_seconds", "review_after_seconds", "next_review_seconds", "review_status",
+                  "step", "total_steps")
+DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
+                   "strategy", "reason", "status", "decision_revision", "actor_revision", "job_id", "candidate_id",
+                   "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds")
+ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
+                "answer_correct", "training_review_count")
+JOB_FIELDS = ("job_id", "kind", "status", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
+PRIVATE_KEY = re.compile(r"secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|response|payload|sample|dataset|training_data", re.I)
 
 
 class SnapshotError(Exception):
@@ -63,7 +79,9 @@ def metrics_only(value, depth=0):
         if isinstance(item, dict):
             result[key] = metrics_only(item, depth + 1)
         elif isinstance(item, (int, float)) and not isinstance(item, bool):
-            result[key] = scalar(item)
+            number = scalar(item)
+            if number is not None:
+                result[key] = number
     return result
 
 
@@ -76,18 +94,24 @@ def project_snapshot(raw, run_id):
                        for key in ("decision_making", "exploration")} if isinstance(raw.get("loops"), dict) else {}
     result["models"] = {key: pick(raw.get("models", {}).get(key), ("model_id", "revision"))
                         for key in ("decision_maker", "actor")} if isinstance(raw.get("models"), dict) else {}
-    for key, fields in (("jobs", ("job_id", "kind", "status")),
+    result["workflow"] = pick(raw.get("workflow"), WORKFLOW_FIELDS)
+    result["current"] = pick(raw.get("current"), CURRENT_FIELDS)
+    if isinstance(raw.get("current"), dict) and "metrics" in raw["current"]:
+        result["current"]["metrics"] = metrics_only(raw["current"]["metrics"])
+    for key, fields in (("jobs", JOB_FIELDS),
                         ("candidates", ("candidate_id", "status", "base_revision", "revision")),
-                        ("events", ("timestamp", "kind", "summary"))):
+                        ("events", ("timestamp", "kind", "summary")),
+                        ("decisions", DECISION_FIELDS), ("round_results", ROUND_FIELDS)):
         result[key] = []
         rows = raw.get(key)
         if not isinstance(rows, list):
             continue
-        for row in rows:
+        # Retain recent rows; the file byte limit also bounds parsing work.
+        for row in rows[-MAX_ROWS:]:
             if not isinstance(row, dict):
                 continue
             item = pick(row, fields)
-            if key == "candidates":
+            if key in ("candidates", "round_results") or (key == "jobs" and "metrics" in row):
                 item["metrics"] = metrics_only(row.get("metrics"))
             elif key == "events":
                 item["details"] = pick(row.get("details"), DETAIL_KEYS)

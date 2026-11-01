@@ -16,8 +16,8 @@
         >RSISys<span class="wordmark-dot">.</span></a
       >
       <nav aria-label="页面导航">
-        <a href="#overview">运行概览</a><a href="#candidates">候选评测</a
-        ><a href="#events">事件时间线</a>
+        <a href="#execution">当前执行</a><a href="#decisions">模型决策</a>
+        <a href="#rounds">轮次结果</a><a href="#events">事件时间线</a>
       </nav>
       <span class="read-only"><span aria-hidden="true">◈</span> 只读监控</span>
     </header>
@@ -80,6 +80,18 @@
             </div>
           </div>
           <div id="stats" class="stats"></div>
+          <section
+            id="execution"
+            class="execution-section"
+            aria-labelledby="execution-title"
+          >
+            <div class="section-heading">
+              <h2 id="execution-title">当前执行</h2>
+              <span class="section-index">进度来自最近快照</span>
+            </div>
+            <div id="workflow-summary" class="workflow-summary"></div>
+            <div id="current-execution"></div>
+          </section>
           <div class="overview-grid">
             <div class="loops-area">
               <div class="section-heading">
@@ -96,6 +108,37 @@
               <div id="bindings" class="bindings"></div>
             </aside>
           </div>
+        </section>
+        <section
+          id="decisions"
+          class="section"
+          aria-labelledby="decisions-title"
+        >
+          <div class="section-heading">
+            <h2 id="decisions-title">
+              模型决策 <span id="decision-count"></span>
+            </h2>
+            <div class="decision-tools">
+              <label class="search-label"
+                ><span aria-hidden="true">⌕</span
+                ><input
+                  id="decision-search"
+                  type="search"
+                  placeholder="搜索动作、理由、任务…"
+                  aria-label="搜索决策"
+              /></label>
+              <select id="decision-filter" aria-label="决策类型">
+                <option value="all">全部决策</option>
+                <option value="directive">执行指令</option>
+                <option value="review">运行复查</option>
+                <option value="finish">结束决策</option>
+              </select>
+            </div>
+          </div>
+          <div id="decision-list"></div>
+          <button id="more-decisions" class="more-button" hidden>
+            显示更多决策
+          </button>
         </section>
         <section id="jobs" class="section" aria-labelledby="jobs-title">
           <div class="section-heading">
@@ -132,6 +175,12 @@
             >
           </div>
           <div id="candidate-list"></div>
+        </section>
+        <section id="rounds" class="section" aria-labelledby="rounds-title">
+          <div class="section-heading">
+            <h2 id="rounds-title">轮次结果 <span id="round-count"></span></h2>
+          </div>
+          <div id="round-list" class="round-grid"></div>
         </section>
         <section id="events" class="section" aria-labelledby="events-title">
           <div class="section-heading">

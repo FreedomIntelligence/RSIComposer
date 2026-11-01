@@ -28,17 +28,38 @@
     {
       "job_id": "train-actor-008",
       "kind": "actor_training",
-      "status": "running"
+      "status": "running",
+      "directive_id": "directive-008",
+      "round": 3,
+      "step": 38,
+      "total_steps": 120,
+      "elapsed_seconds": 138,
+      "metrics": {
+        "loss": 0.0784,
+        "learning_rate": 2e-5
+      }
     },
     {
       "job_id": "eval-candidate-007",
       "kind": "candidate_evaluation",
-      "status": "completed"
+      "status": "completed",
+      "directive_id": "directive-006",
+      "round": 2,
+      "step": 128,
+      "total_steps": 128,
+      "elapsed_seconds": 96,
+      "metrics": {
+        "base_nll": 1.942,
+        "candidate_nll": 1.781,
+        "eval_samples": 128
+      }
     },
     {
       "job_id": "train-decision-004",
       "kind": "decision_maker_training",
-      "status": "queued"
+      "status": "queued",
+      "directive_id": "directive-009",
+      "round": 3
     }
   ],
   "candidates": [
@@ -125,6 +146,156 @@
       "kind": "run.started",
       "summary": "运行开始，决策循环与探索循环已就绪。",
       "details": {}
+    }
+  ],
+  "workflow": {
+    "phase": "train",
+    "round": 3,
+    "rounds": 3,
+    "completed_directives": 7,
+    "elapsed_seconds": 1938
+  },
+  "current": {
+    "directive_id": "directive-008",
+    "mode": "train",
+    "status": "running",
+    "phase": "train",
+    "strategy": "在上一轮已采纳版本上继续微调，保持评测集不变。",
+    "decision_revision": "dm-r003",
+    "actor_revision": "actor-r007",
+    "job_id": "train-actor-008",
+    "elapsed_seconds": 138,
+    "review_after_seconds": 60,
+    "next_review_seconds": 42,
+    "review_status": "continue",
+    "step": 38,
+    "total_steps": 120,
+    "metrics": {
+      "loss": 0.0784,
+      "heldout_nll_delta": 7.21e-7,
+      "learning_rate": 2e-5
+    }
+  },
+  "decisions": [
+    {
+      "decision_id": "decision-012",
+      "timestamp": "2026-10-31T14:32:18+08:00",
+      "kind": "review",
+      "source": "model",
+      "round": 3,
+      "directive_id": "directive-008",
+      "mode": "train",
+      "action": "continue",
+      "strategy": "延续当前训练配方",
+      "reason": "已报告损失持续下降，尚未达到计划步数；继续执行，并在下一复查窗口重新检查。",
+      "status": "reviewed",
+      "decision_revision": "dm-r003",
+      "actor_revision": "actor-r007",
+      "job_id": "train-actor-008",
+      "candidate_id": "candidate-008",
+      "review_after_seconds": 60,
+      "next_review_seconds": 42
+    },
+    {
+      "decision_id": "decision-011",
+      "timestamp": "2026-10-31T14:30:00+08:00",
+      "kind": "directive",
+      "source": "model",
+      "round": 3,
+      "directive_id": "directive-008",
+      "mode": "train",
+      "strategy": "保持评测协议，继续监督微调",
+      "reason": "以已采纳的 actor-r007 为基线，验证下一轮训练是否带来稳定收益。",
+      "status": "running",
+      "decision_revision": "dm-r003",
+      "actor_revision": "actor-r007",
+      "job_id": "train-actor-008",
+      "candidate_id": "candidate-008",
+      "protocol_ref": "heldout-v1",
+      "recipe_ref": "actor-sft-v2",
+      "method": "sft",
+      "review_after_seconds": 60
+    },
+    {
+      "decision_id": "decision-010",
+      "timestamp": "2026-10-31T14:29:42+08:00",
+      "kind": "directive",
+      "source": "history",
+      "round": 2,
+      "directive_id": "directive-007",
+      "mode": "apply_candidate",
+      "reason": "独立评测已完成；将本轮选择的 candidate-007 应用为新的执行版本。",
+      "status": "completed",
+      "decision_revision": "dm-r003",
+      "actor_revision": "actor-r007",
+      "candidate_id": "candidate-007"
+    },
+    {
+      "decision_id": "decision-009",
+      "timestamp": "2026-10-31T14:26:30+08:00",
+      "kind": "directive",
+      "source": "history",
+      "round": 2,
+      "directive_id": "directive-006",
+      "mode": "evaluate",
+      "reason": "使用同一评测协议比较基线与候选，采纳前先确认结果。",
+      "status": "completed",
+      "decision_revision": "dm-r003",
+      "actor_revision": "actor-r006",
+      "job_id": "eval-candidate-007",
+      "candidate_id": "candidate-007",
+      "protocol_ref": "heldout-v1"
+    },
+    {
+      "decision_id": "decision-008",
+      "timestamp": "2026-10-31T14:18:00+08:00",
+      "kind": "review",
+      "source": "history",
+      "round": 1,
+      "directive_id": "directive-005",
+      "mode": "train",
+      "action": "cancel",
+      "reason": "当前训练出现不稳定指标，已请求取消该任务；等待任务确认后再进行下一步。",
+      "status": "cancel_requested",
+      "decision_revision": "dm-r003",
+      "actor_revision": "actor-r006",
+      "job_id": "train-actor-006",
+      "candidate_id": "candidate-006",
+      "next_review_seconds": null
+    }
+  ],
+  "round_results": [
+    {
+      "round": 1,
+      "base_revision": "actor-r006",
+      "candidate_revision": "actor-r006-alt",
+      "selection": "保留基线",
+      "actor_revision": "actor-r006",
+      "applied": false,
+      "answer_correct": false,
+      "training_review_count": 2,
+      "metrics": {
+        "base_nll": 1.942,
+        "candidate_nll": 2.013,
+        "delta_nll": 0.071,
+        "eval_samples": 128
+      }
+    },
+    {
+      "round": 2,
+      "base_revision": "actor-r006",
+      "candidate_revision": "actor-r007",
+      "selection": "candidate-007",
+      "actor_revision": "actor-r007",
+      "applied": true,
+      "answer_correct": true,
+      "training_review_count": 3,
+      "metrics": {
+        "base_nll": 1.942,
+        "candidate_nll": 1.781,
+        "delta_nll": -0.161,
+        "eval_samples": 128
+      }
     }
   ]
 }
