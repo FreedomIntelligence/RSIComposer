@@ -23,8 +23,11 @@ class SFTSpec:
     apply_result: bool = False
 
     def __post_init__(self):
-        if not self.recipe_ref or type(self.apply_result) is not bool:
+        if (not isinstance(self.recipe_ref, str) or not self.recipe_ref.strip()
+                or type(self.apply_result) is not bool):
             raise ValueError('SFT requires a recipe and a boolean apply_result')
+        if self.base is not None and not isinstance(self.base, ModelRef):
+            raise TypeError('SFT base must be a ModelRef')
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,8 @@ class RLSpec:
     updates: int = 1
 
     def __post_init__(self):
-        if not self.recipe_ref or type(self.updates) is not int or self.updates < 1:
+        if (not isinstance(self.recipe_ref, str) or not self.recipe_ref.strip()
+                or type(self.updates) is not int or self.updates < 1):
             raise ValueError('RL requires a recipe and positive updates')
 
 
@@ -43,7 +47,8 @@ class EvaluationSpec:
     protocol_ref: str
 
     def __post_init__(self):
-        if not isinstance(self.candidate, Candidate) or not self.protocol_ref:
+        if (not isinstance(self.candidate, Candidate) or not isinstance(self.protocol_ref, str)
+                or not self.protocol_ref.strip()):
             raise ValueError('Evaluation requires a candidate and protocol')
 
 

@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from rsisys.loops.contracts.queries import QuerySpec, QueryRequest, MAX_QUERY_OFFSET
+from rsisys.loops.contracts.queries import QuerySpec, QueryRequest, MAX_QUERY_OFFSET, QUERY_CURSOR_PATTERN
 from . import OperationSpec, OperationCall
 
 
@@ -16,9 +16,9 @@ class QueryActionDefinition:
             'type': 'object', 'properties': {
                 'filters': {'type': 'object', 'properties': {
                     key: {'type': 'string', 'minLength': 1, 'maxLength': 256} for key in query_spec.filters},
-                    'additionalProperties': False},
+                    'additionalProperties': False, 'maxProperties': 8},
                 'limit': {'type': 'integer', 'minimum': 1, 'maximum': query_spec.max_limit},
-                'cursor': {'type': ['string', 'null'], 'description':
+                'cursor': {'type': ['string', 'null'], 'pattern': QUERY_CURSOR_PATTERN, 'description':
                            f'Offset cursor returned by the previous page; maximum {MAX_QUERY_OFFSET}'},
             }, 'additionalProperties': False,
         }, read_only=True)

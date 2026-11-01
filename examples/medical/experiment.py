@@ -262,20 +262,32 @@ class RecipeLearner:
     def capabilities(self):
         return BackendCapabilities(methods=('sft',), resume_modes=(ResumeMode.RESTART,), supports_reattach=True)
 
-    def define_recipe(self, fields: dict) -> str:
-        allowed = {'steps', 'lr', 'seed', 'weight_decay', 'warmup_ratio'}
-        if not isinstance(fields, dict) or set(fields) - allowed:
+    def recipe_properties(self):
+        """One parameter contract for model proposals and native recipe creation."""
+        return {name: {'type': kind, 'minimum': lo, 'maximum': hi, 'default': default}
+            for name, kind, lo, hi, default in (
+                ('steps', 'integer', 1, self.max_steps, min(32, self.max_steps)),
+                ('lr', 'number', 1e-6, 1e-3, 1e-4),
+                ('seed', 'integer', 0, 2**31 - 1, 0),
+                ('weight_decay', 'number', 0, .1, 0.0),
+                ('warmup_ratio', 'number', 0, .2, 0.0))}
+
+    def validate_recipe(self, fields):
+        properties = self.recipe_properties()
+        if not isinstance(fields, dict) or set(fields) - properties.keys():
             raise ResearchInputError('define_recipe accepts steps, lr, seed, weight_decay, warmup_ratio only')
-        values = {'steps': min(32, self.max_steps), 'lr': 1e-4, 'seed': 0,
-                  'weight_decay': 0.0, 'warmup_ratio': 0.0, **fields}
-        for name, lo, hi in (('steps', 1, self.max_steps), ('seed', 0, 2**31 - 1)):
-            if type(values[name]) is not int or not lo <= values[name] <= hi:
-                raise ResearchInputError(f'{name} must be an integer in {lo}..{hi}')
-        for name, lo, hi in (('lr', 1e-6, 1e-3), ('weight_decay', 0, .1), ('warmup_ratio', 0, .2)):
-            value = values[name]
-            if type(value) not in (float, int) or not math.isfinite(value) or not lo <= value <= hi:
-                raise ResearchInputError(f'{name} must be finite in {lo}..{hi}')
-            values[name] = float(value)
+        values = {}
+        for name, field in properties.items():
+            value = fields.get(name, field['default'])
+            types = (int,) if field['type'] == 'integer' else (int, float)
+            if (type(value) not in types or not field['minimum'] <= value <= field['maximum']
+                    or not math.isfinite(value)):
+                raise ResearchInputError(f"{name} must be a finite {field['type']} in {field['minimum']}..{field['maximum']}")
+            values[name] = value if field['type'] == 'integer' else float(value)
+        return values
+
+    def define_recipe(self, fields: dict) -> str:
+        values = self.validate_recipe(fields)
         template = {'model_name_or_path': self.model_path, 'initial_model': asdict(self.base),
             'num_processes': self.training_processes, 'device_type': self.training_device_type,
             'model_auto_class': 'image_text_to_text', 'use_cache': False,
@@ -430,21 +442,33 @@ class CheckedTraining(CommandHandler):
 
 
 class OperationDefinition:
-    def __init__(self, name, description, properties, required, validate, *, read_only=False):
-        self.spec = OperationSpec(name, description, {'type': 'object', 'properties': properties,
-            'required': required, 'additionalProperties': False}, read_only=read_only)
+    def __init__(self, name, description, properties, required, validate, *, read_only=False, alternatives=()):
+        schema = {'type': 'object', 'properties': properties,
+            'required': required, 'additionalProperties': False}
+        self.alternatives = tuple(frozenset(fields) for fields in alternatives)
+        if alternatives:
+            schema['oneOf'] = [{'type': 'object', 'properties': {name: properties[name] for name in fields},
+                'required': list(fields), 'additionalProperties': False} for fields in alternatives]
+        self.spec = OperationSpec(name, description, schema, read_only=read_only)
         self.check = validate
 
     def validate(self, arguments):
         if not isinstance(arguments, dict) or set(arguments) - set(self.spec.input_schema['properties']) or any(
                 name not in arguments for name in self.spec.input_schema['required']):
             raise ResearchInputError(f'Invalid fields for {self.spec.name}')
+        if self.alternatives and frozenset(arguments) not in self.alternatives:
+            raise ResearchInputError(f'Choose exactly one field set for {self.spec.name}: {self.alternatives}')
         self.check(arguments)
         return OperationCall(self.spec.name, arguments)
 
 
 class ExperimentOperations:
     """Domain operations and bindings are outside both default harnesses."""
+    PREVIEW_LIMIT = 8
+    SELECTION_LIMIT = 256
+    MAX_IDS = 4096
+    MAX_TEXT = 65536
+
     def __init__(self, assembly, learner, converter, excluded):
         self.assembly, self.learner, self.converter = assembly, learner, converter
         self.excluded = (*assembly.task.check(), *excluded)
@@ -455,18 +479,20 @@ class ExperimentOperations:
         integer = lambda lo, hi: {'type': 'integer', 'minimum': lo, 'maximum': hi}
         self.definitions = (
             OperationDefinition('define_recipe', 'Define controlled SFT recipe; returns recipe_ref. Seed alone is not a mechanism.',
-                {'steps': integer(1, learner.max_steps), 'lr': {'type': 'number', 'minimum': 1e-6, 'maximum': 1e-3},
-                 'seed': integer(0, 2**31-1), 'weight_decay': {'type': 'number', 'minimum': 0, 'maximum': .1},
-                 'warmup_ratio': {'type': 'number', 'minimum': 0, 'maximum': .2}}, [], self._recipe_fields),
+                learner.recipe_properties(), [], learner.validate_recipe),
             OperationDefinition('preview_training_data', 'Preview at most eight training rows; development is never selectable.',
-                {'offset': integer(0, len(self.rows)), 'limit': integer(1, 8)}, [], self._page_fields, read_only=True),
+                {'offset': {**integer(0, len(self.rows)), 'default': 0},
+                 'limit': {**integer(1, self.PREVIEW_LIMIT), 'default': self.PREVIEW_LIMIT}},
+                [], self._page_fields, read_only=True),
             OperationDefinition('choose_training_data', 'Create training artifact from explicit IDs or bounded offset/limit page.',
-                {'ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 4096},
-                 'offset': integer(0, len(self.rows)), 'limit': integer(1, 256)}, [], self._selection_fields),
+                {'ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1,
+                         'maxItems': self.MAX_IDS, 'description': 'Use distinct IDs; duplicates are rejected.'},
+                 'offset': integer(0, len(self.rows)), 'limit': integer(1, self.SELECTION_LIMIT)},
+                [], self._selection_fields, alternatives=(('ids',), ('offset', 'limit'))),
             OperationDefinition('prepare_data', 'Store explicit domain JSONL after protected-overlap and token-length validation.',
-                {'text': {'type': 'string', 'maxLength': 65536}}, ['text'], self._text_fields),
+                {'text': {'type': 'string', 'minLength': 1, 'maxLength': self.MAX_TEXT}}, ['text'], self._text_fields),
             OperationDefinition('read_artifact', 'Read visible evidence; training data returns summary/reference. Use paginated preview.',
-                {'artifact_id': {'type': 'string'}}, ['artifact_id'], self._artifact_fields, read_only=True))
+                {'artifact_id': {'type': 'string', 'minLength': 1}}, ['artifact_id'], self._artifact_fields, read_only=True))
         self.bindings = {definition.spec.name: self._guard(getattr(self, definition.spec.name))
                          for definition in self.definitions}
 
@@ -479,31 +505,24 @@ class ExperimentOperations:
                 return OperationResult('Domain operation rejected', (), False, ExecutionStatus.FAILED, str(exc))
         return execute
 
-    @staticmethod
-    def _recipe_fields(args):
-        # RecipeLearner owns pure semantic validation at execution, returning FAILED.
-        for name, value in args.items():
-            if type(value) not in (int, float) or not math.isfinite(value):
-                raise ResearchInputError(f'{name} requires a finite number')
+    def _page_fields(self, args):
+        offset, limit = args.get('offset', 0), args.get('limit', self.PREVIEW_LIMIT)
+        if (type(offset) is not int or not 0 <= offset <= len(self.rows)
+                or type(limit) is not int or not 1 <= limit <= self.PREVIEW_LIMIT):
+            raise ResearchInputError(f'Preview requires offset in 0..{len(self.rows)} and limit in 1..{self.PREVIEW_LIMIT}')
 
-    @staticmethod
-    def _page_fields(args):
-        if type(args.get('offset', 0)) is not int or args.get('offset', 0) < 0 or type(args.get('limit', 8)) is not int or not 1 <= args.get('limit', 8) <= 8:
-            raise ResearchInputError('Preview requires offset>=0 and limit in 1..8')
-
-    @staticmethod
-    def _selection_fields(args):
+    def _selection_fields(self, args):
         if 'ids' in args:
             ids = args['ids']
-            if set(args) != {'ids'} or not isinstance(ids, list) or not 1 <= len(ids) <= 4096 or any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
-                raise ResearchInputError('Provide unique string ids only, 1..4096')
-        elif set(args) != {'offset', 'limit'} or type(args['offset']) is not int or args['offset'] < 0 or type(args['limit']) is not int or not 1 <= args['limit'] <= 256:
-            raise ResearchInputError('Choose ids OR offset>=0 and limit in 1..256')
+            if not isinstance(ids, list) or not 1 <= len(ids) <= self.MAX_IDS or any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
+                raise ResearchInputError(f'Provide unique string ids only, 1..{self.MAX_IDS}')
+        elif (type(args['offset']) is not int or not 0 <= args['offset'] <= len(self.rows)
+                or type(args['limit']) is not int or not 1 <= args['limit'] <= self.SELECTION_LIMIT):
+            raise ResearchInputError(f'Choose offset in 0..{len(self.rows)} and limit in 1..{self.SELECTION_LIMIT}')
 
-    @staticmethod
-    def _text_fields(args):
-        if not isinstance(args['text'], str) or not 1 <= len(args['text']) <= 65536:
-            raise ResearchInputError('text must contain 1..65536 characters')
+    def _text_fields(self, args):
+        if not isinstance(args['text'], str) or not 1 <= len(args['text']) <= self.MAX_TEXT:
+            raise ResearchInputError(f'text must contain 1..{self.MAX_TEXT} characters')
 
     @staticmethod
     def _artifact_fields(args):
@@ -516,7 +535,7 @@ class ExperimentOperations:
             data={'recipe_ref': ref, **self.learner.recipes[ref], 'seed_is_mechanism_change': False})
 
     def preview_training_data(self, args):
-        offset, limit = args.get('offset', 0), args.get('limit', 8)
+        offset, limit = args.get('offset', 0), args.get('limit', self.PREVIEW_LIMIT)
         rows = self.rows[offset:offset+limit]
         return OperationResult('Training page', (self.train_ref,), False,
             data={'offset': offset, 'total': len(self.rows), 'rows': [row_json(row) for row in rows],
@@ -558,6 +577,9 @@ class ExperimentOperations:
         ref = visible.get(args['artifact_id'])
         if ref is None:
             raise ResearchInputError('Unknown or nonvisible artifact')
+        if not ref.uri.startswith(('artifact://', 'memory://')):
+            return OperationResult('External component reference; an explicit resolver is required', (ref,), False,
+                data={'reference': asdict(ref), 'requires_external_resolver': True, 'content': None})
         if ref.kind == 'training_data':
             rows = samples(self.assembly.artifacts.get(ref))
             return OperationResult('Training artifact summary; use preview_training_data for source rows', (ref,), False,
@@ -579,11 +601,9 @@ class ResearchPolicy(ModelDecisionPolicy):
         'Put operation parameters (including view, kind, limit) inside arguments, '
         'never in the top-level kind; top-level kind selects the decision envelope. '
         'train requires nonempty top-level input_ids selecting available training_data artifacts. '
-        'Training data belongs only in input_ids, never in origin.checkpoint. '
-        'Normally omit arguments.origin: the executor binds the current experimental parent '
-        'and fixed initial model automatically; origin is not required to create a training candidate. '
-        'Only restart from the fixed initializer is supported; if arguments.origin is supplied, '
-        'use resume_mode="restart" and omit checkpoint or set it to null. '
+        'Omit arguments.origin: initialization is host-owned and origin is not an accepted model argument. '
+        'The executor binds the current experimental parent and fixed initial model automatically, '
+        'using restart without a checkpoint. Training data belongs only in input_ids. '
         'Choose your own available action and research steps, or finish with a nonempty reason; '
         'these envelopes are syntax templates, not a required workflow.')
 

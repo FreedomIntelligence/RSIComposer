@@ -17,6 +17,7 @@ where = ["src"]
 
 [project.optional-dependencies]
 dsh = ["deepseek-harness-sdk==0.2.1rc2"]
+test = ["jsonschema>=4,<5"]
 
 [tool.setuptools.package-data]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]

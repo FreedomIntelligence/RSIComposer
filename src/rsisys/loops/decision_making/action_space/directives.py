@@ -117,13 +117,16 @@ def builtin_directives() -> tuple[DirectiveDefinition, ...]:
     return (
         definition('execute', 'Run a bounded Actor episode', {}, (), _execute),
         definition('sft', 'Train using input artifacts; optionally apply the result', {
-            'recipe_ref': {'type': 'string'}, 'apply_result': {'type': 'boolean', 'default': False},
+            'recipe_ref': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+            'apply_result': {'type': 'boolean', 'default': False},
         }, ('recipe_ref',), _sft),
         definition('rl', 'Alternate environment rollout and model training', {
-            'recipe_ref': {'type': 'string'}, 'updates': {'type': 'integer', 'minimum': 1, 'default': 1},
+            'recipe_ref': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+            'updates': {'type': 'integer', 'minimum': 1, 'default': 1},
         }, ('recipe_ref',), _rl),
         definition('evaluate', 'Evaluate an available candidate from decision context on selected inputs', {
-            'candidate_id': {'type': 'string'}, 'protocol_ref': {'type': 'string'},
+            'candidate_id': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+            'protocol_ref': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
         }, ('candidate_id', 'protocol_ref'), _evaluate),
         definition('configure_prompt', 'Replace Actor instructions; an empty string clears them', {
             'instructions': {'type': 'string'},
@@ -166,7 +169,7 @@ def training_directive(capabilities=None) -> DirectiveDefinition:
         return TrainSpec(arguments['recipe_ref'], arguments['method'],
                          apply_result=arguments.get('apply_result', False), origin=origin)
 
-    method_schema = {'type': 'string'}
+    method_schema = {'type': 'string', 'minLength': 1, 'pattern': r'\S'}
     modes = [mode.value for mode in ResumeMode]
     if capabilities is not None:
         method_schema['enum'] = list(capabilities.methods)
@@ -179,9 +182,11 @@ def training_directive(capabilities=None) -> DirectiveDefinition:
     for mode in modes:
         checkpoint_schema = {
             'type': 'object', 'properties': {
-                key: {'type': 'string'} for key in ('artifact_id', 'kind', 'uri', 'version', 'digest')
+                key: {'type': ['string', 'null'] if key in ('version', 'digest') else 'string',
+                      'pattern': r'\S'}
+                for key in ('artifact_id', 'kind', 'uri', 'version', 'digest')
             }, 'required': ['artifact_id', 'kind', 'uri'], 'additionalProperties': False,
-            'description': 'Model weights or training state to resume; never a training_data artifact.',
+            'description': 'Weights/training state reference, not training data.',
         }
         required = ['parent_system', 'initial_model']
         resume_schema = {'type': 'string', 'enum': [mode]}
@@ -207,7 +212,7 @@ def training_directive(capabilities=None) -> DirectiveDefinition:
     origin_schema = origin_branches[0] if len(origin_branches) == 1 else {'oneOf': origin_branches}
     schema = {
         'type': 'object', 'properties': {
-            'recipe_ref': {'type': 'string'}, 'method': method_schema,
+            'recipe_ref': {'type': 'string', 'minLength': 1, 'pattern': r'\S'}, 'method': method_schema,
             'apply_result': {'type': 'boolean', 'default': False},
             'origin': origin_schema,
         }, 'required': ['recipe_ref', 'method'], 'additionalProperties': False,
@@ -218,9 +223,8 @@ def training_directive(capabilities=None) -> DirectiveDefinition:
         # A backend with no initialization modes cannot accept any training.
         schema['properties']['origin'] = {'not': {}}
     return DirectiveDefinition(DirectiveSpec('train',
-        'Delegate training to the backend. Select training data with top-level input_ids; '
-        'origin describes initial model weights, not data. Omit origin to use the configured '
-        'initializer when restart is supported.', schema), parse)
+        'Delegate training; top-level input_ids selects data. origin initializes weights; '
+        'omit it for the configured restart initializer.', schema), parse)
 
 
 def apply_candidate_directive() -> DirectiveDefinition:

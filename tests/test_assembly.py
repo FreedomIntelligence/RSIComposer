@@ -230,6 +230,25 @@ class AssemblyTests(unittest.TestCase):
                     self.assertEqual(runner.decision_making.action_space.directive_modes(),
                                      ("execute", "configure_prompt") + (("sft",) if has_model else ()))
 
+    def test_declared_backend_methods_and_resume_modes_filter_builtin_training(self):
+        from rsisys.loops.contracts.backend import BackendCapabilities
+        from rsisys.loops.contracts.training import ResumeMode
+        for methods, modes, expected in (
+                (('sft',), (ResumeMode.RESTART,), ('sft',)),
+                (('rl',), (ResumeMode.RESTART,), ('rl',)),
+                (('sft', 'rl'), (ResumeMode.FULL_STATE,), ()),
+                ((), (ResumeMode.RESTART,), ())):
+            def factory(context):
+                loop = self.make_exploration(context, training=True)
+                loop.harness.training.backend.capabilities = lambda: BackendCapabilities(
+                    methods=methods, resume_modes=modes)
+                return loop
+            with self.subTest(methods=methods, modes=modes):
+                runner, _ = build_demo(self.demo, exploration_factory=factory)
+                with runner:
+                    self.assertEqual(runner.decision_making.action_space.directive_modes(),
+                                     ('execute', 'configure_prompt', *expected))
+
     def test_unknown_harness_requires_declaration_or_decision_factory_and_cleans_up(self):
         for kind in ("application", "demo"):
             closed = []

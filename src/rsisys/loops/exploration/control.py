@@ -6,15 +6,33 @@ No controls are auto-installed and no permission checks are bypassed.
 from copy import deepcopy
 from dataclasses import asdict
 
+from rsisys.loops.contracts.backend import BackendCapabilities, validate_update_capabilities
 from rsisys.loops.contracts.coordination import DirectiveUpdate, OperationResult
 from rsisys.loops.decision_making.action_space import OperationCall, OperationSpec
 from rsisys.loops.decision_making.action_space.capabilities import Capability, Capabilities
 
 
 class ExperimentControls:
-    def __init__(self, exploration, decision=None):
+    """Explicit controls, optionally bounded by one configured backend's declaration.
+
+    Omit backend_capabilities for heterogeneous endpoints or legacy backends;
+    execution still owns per-target support and value checks. A declaration
+    limits update field names, not their values, and grants no checkpoint or
+    reattach operation.
+    """
+
+    def __init__(self, exploration, decision=None, *, backend_capabilities: BackendCapabilities | None = None):
+        if backend_capabilities is not None:
+            if not isinstance(backend_capabilities, BackendCapabilities):
+                raise TypeError('Expected BackendCapabilities')
+            backend_capabilities.__post_init__()
         self.exploration, self.decision = exploration, decision
-        names = ['inspect', 'cancel', 'update'] + (['compare'] if decision is not None else [])
+        self.backend_capabilities = backend_capabilities
+        names = ['inspect', 'cancel']
+        if backend_capabilities is None or backend_capabilities.update_fields:
+            names.append('update')
+        if decision is not None:
+            names.append('compare')
         self.capabilities = Capabilities(self._capability(name) for name in names)
 
     def describe(self):
@@ -35,14 +53,20 @@ class ExperimentControls:
             'update': 'Update only backend-supported live controls. Use inspected expected_version and a stable '
                       'idempotency_key; retry uncertain responses with identical arguments. Unsupported fields '
                       'or backends are rejected. This does not replace the original directive.',
-            'compare': 'Rank completed candidate evaluations using a metric, requiring known equal full training '
-                       'bases, evaluation protocol, inputs and simulation mode.'}[kind]
+            'compare': 'Rank completed candidate evaluations using a metric, requiring the same explicit parent '
+                       'system or known equal full training bases, plus equal evaluation protocol, inputs and '
+                       'simulation mode.'}[kind]
         if kind == 'update':
             fields.update(expected_version={'type': 'integer', 'minimum': 0},
                           idempotency_key={'type': 'string', 'minLength': 1},
                           changes={'type': 'object', 'minProperties': 1})
+            if self.backend_capabilities is not None:
+                fields['changes'].update(
+                    properties={field: {} for field in self.backend_capabilities.update_fields},
+                    additionalProperties=False)
         if kind == 'compare':
-            fields = {'candidate_ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 2},
+            fields = {'candidate_ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+                                        'minItems': 2, 'uniqueItems': True},
                       'metric': {'type': 'string', 'minLength': 1}, 'higher_is_better': {'type': 'boolean'}}
         name = f'experiment_{kind}'
         spec = OperationSpec(name, description, {'type': 'object', 'properties': fields,
@@ -62,8 +86,13 @@ class ExperimentControls:
                 if not isinstance(arguments['directive_id'], str) or not arguments['directive_id']:
                     raise ValueError('A directive ID is required')
                 if kind == 'update':
-                    DirectiveUpdate(**arguments)
-            return OperationCall(name, deepcopy(arguments))
+                    request = DirectiveUpdate(**arguments)
+                    if self.backend_capabilities is not None:
+                        validate_update_capabilities(self.backend_capabilities, tuple(request.changes))
+            normalized = deepcopy(arguments)
+            if kind == 'compare':
+                normalized['candidate_ids'] = list(normalized['candidate_ids'])
+            return OperationCall(name, normalized)
 
         def execute(arguments):
             arguments = validate(arguments).arguments

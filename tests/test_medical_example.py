@@ -13,6 +13,7 @@ import tempfile
 import sys
 import time
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +22,9 @@ from examples.medical.task import (Benchmark, DataRef, MedicalTask, Sample, enco
 from examples.medical.evaluation import MedicalEvaluator, backend_inference
 from examples.medical.run import RunSettings, build, main
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
+from rsisys.loops.contracts.backend import BackendCapabilities
+from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.requests import TrainSpec
 from rsisys.loops.contracts.jobs import JobOutcome, JobRef, JobStatus
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef, GenerationResponse
 from rsisys.loops.contracts.training import TrainingResult, TrainingOrigin, ResumeMode, ModelActivationPending
@@ -253,6 +257,91 @@ class MedicalExampleTests(unittest.TestCase):
             self.assertEqual(result.status, 'needs_input')
             self.assertNotIn('Never disclose sentinel', json.dumps(calls))
             self.assertNotIn('operator-private', json.dumps(calls))
+
+    def test_training_schema_parser_and_executor_share_host_initialization(self):
+        initializer = replace(MODEL, revision='operator-initializer')
+        learner = FixtureLearner(self.artifacts)
+        learner.recipe_ref = 'fixed-native-recipe'
+        learner.capabilities = lambda: BackendCapabilities(methods=('sft',), resume_modes=tuple(ResumeMode))
+        backend = SimpleNamespace(generate=lambda request: self.fail('Contract checks must not infer'))
+        assembly = self.assembly(backend, learner=learner, bind_training_inputs=lambda r, a: r,
+                                 training_initializer=initializer)
+        policy = assembly.runner.decision_making.harness.policy
+        catalog = policy.directives
+        schema = next(s.input_schema for s in catalog.describe() if s.mode == 'train')
+        self.assertNotIn('origin', schema['properties'])
+        self.assertFalse(schema['additionalProperties'])
+        self.assertEqual(schema['properties']['apply_result']['enum'], [False])
+        self.assertEqual(schema['properties']['method']['enum'], ['sft'])
+        self.assertEqual(schema['properties']['recipe_ref']['enum'], [learner.recipe_ref])
+        generated = policy.decision_schema(SimpleNamespace(operations=(), directive_modes=('train',)))
+        self.assertEqual(generated['oneOf'][0]['properties']['arguments'], schema)
+        arguments = {'recipe_ref': learner.recipe_ref, 'method': 'sft'}
+        spec = catalog.parse('train', arguments)
+        self.assertEqual(spec.origin, TrainingOrigin('initial', initializer))
+        for fields in ({'origin': None}, {'origin': asdict(spec.origin)},
+                       {'origin': {'checkpoint': 'training-data'}}, {'apply_result': True},
+                       {'apply_result': 0}, {'apply_result': None}, {'method': 'rl'},
+                       {'recipe_ref': 'unconfigured-recipe'}, {'checkpoint': None}):
+            with self.subTest(fields=fields), self.assertRaises((ValueError, TypeError)):
+                catalog.parse('train', {**arguments, **fields})
+
+        # Parent tracks the incumbent, while the operator's initializer stays fixed.
+        candidate = Candidate('prompt-parent', MODEL.revision, {}, ('actor',), 'initial')
+        assembly.systems.register(candidate)
+        assembly.systems.activate(candidate.candidate_id, idempotency_key='parent')
+        spec = catalog.parse('train', arguments)
+        self.assertEqual(spec.origin, TrainingOrigin('prompt-parent', initializer))
+
+        # Programmatic directives cannot bypass the model parser's restriction.
+        train_ref = assembly.systems.get('initial').components['data']
+        for index, origin in enumerate((TrainingOrigin('initial', initializer),
+                       TrainingOrigin('prompt-parent', MODEL),
+                       TrainingOrigin('prompt-parent', initializer, ResumeMode.WEIGHTS_ONLY))):
+            directive = Directive('invalid-origin-'+str(index), 'fixture', 'verify contract', mode='train',
+                input_refs=(train_ref,), payload=TrainSpec(**arguments, origin=origin))
+            with self.subTest(origin=origin), self.assertRaisesRegex(ValueError, 'host-owned'):
+                assembly.runner.exploration.accept(directive)
+            assembly.runner.exploration.acknowledge(directive.directive_id)
+        self.assertFalse(learner.requests)
+
+    def test_medical_training_requires_restart_capability(self):
+        learner = FixtureLearner(self.artifacts)
+        learner.capabilities = lambda: BackendCapabilities(methods=('sft',), resume_modes=(ResumeMode.FULL_STATE,))
+        with self.assertRaisesRegex(ValueError, 'restart support'):
+            self.assembly(SimpleNamespace(generate=lambda request: self.fail('Must not infer')),
+                          learner=learner, bind_training_inputs=lambda r, a: r)
+        self.assertFalse(learner.requests)
+
+    def test_medical_evaluation_and_application_contract(self):
+        assembly = self.assembly(SimpleNamespace(generate=lambda request: self.fail('Must not infer')))
+        space = assembly.runner.decision_making.action_space
+        catalog = space.directives
+        candidate = Candidate('sole', MODEL.revision, {}, ('actor',), 'initial')
+        second = replace(candidate, candidate_id='second')
+        for mode in ('evaluate', 'apply_candidate'):
+            schema = next(s.input_schema for s in catalog.describe() if s.mode == mode)
+            self.assertEqual(schema['required'], [])
+            self.assertFalse(schema['additionalProperties'])
+            if mode == 'evaluate':
+                self.assertEqual(schema['properties']['protocol_ref']['enum'], [self.task.protocol_ref])
+                self.assertEqual(schema['properties']['protocol_ref']['default'], self.task.protocol_ref)
+            payload = catalog.parse(mode, {}, candidates=(candidate,))
+            if mode == 'evaluate':
+                self.assertEqual(payload.candidate, candidate)
+                self.assertEqual(payload.protocol_ref, self.task.protocol_ref)
+            else:
+                self.assertEqual(payload.candidate_id, candidate.candidate_id)
+            for available, arguments in (((), {}), ((candidate, second), {}),
+                    ((candidate,), {'candidate_id': 'unknown'}), ((candidate,), {'candidate_id': None}),
+                    ((candidate,), {'extra': 1}), ((candidate,), {'protocol_ref': 'changed'})):
+                with self.subTest(mode=mode, arguments=arguments, available=available), self.assertRaises((ValueError, TypeError)):
+                    catalog.parse(mode, arguments, candidates=available)
+            catalog.parse(mode, {'candidate_id': second.candidate_id}, candidates=(candidate, second))
+            directive = Directive('no-data-'+mode, 'fixture', 'verify input contract', mode=mode,
+                payload=payload, input_refs=(assembly.systems.get('initial').components['data'],))
+            with self.assertRaisesRegex(ValueError, 'does not accept input'):
+                space.validate_directive(directive)
 
     def test_evaluation_failure_is_terminal_with_partial_raw_outputs(self):
         dev = write_rows(self.root/'multi.jsonl', [row('d1', 'First symbol'), row('d2', 'Second symbol')])

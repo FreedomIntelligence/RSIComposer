@@ -202,10 +202,10 @@ def system_adoption_capability(registry: SystemRegistry,
     spec = OperationSpec('system_adopt', 'Adopt compatible candidates as one system manifest', {
         'type': 'object',
         'properties': {
-            'candidate_ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+            'candidate_ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
                               'minItems': 1, 'uniqueItems': True},
-            'version': {'type': 'string', 'minLength': 1},
-            'idempotency_key': {'type': 'string', 'minLength': 1},
+            'version': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+            'idempotency_key': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
         },
         'required': ['candidate_ids', 'version', 'idempotency_key'],
         'additionalProperties': False,

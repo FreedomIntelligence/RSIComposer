@@ -7,6 +7,7 @@ import json
 from rsisys.runtime.files import atomic_write, json_bytes
 
 KINDS = ('agenda', 'todo', 'stage_summary')
+MAX_PATCH_CHANGES = 32
 
 
 def _text(value, name, maximum=16000):
@@ -67,7 +68,7 @@ class ResearchAgenda:
         _refs(arguments['evidence_refs'])
         upserts, removals = arguments['upserts'], arguments['remove_ids']
         if (not isinstance(upserts, list) or not isinstance(removals, list)
-                or not 1 <= len(upserts) + len(removals) <= 32):
+                or not 1 <= len(upserts) + len(removals) <= MAX_PATCH_CHANGES):
             raise ValueError('Patch requires between 1 and 32 explicit changes')
         ids = []
         for item in upserts:

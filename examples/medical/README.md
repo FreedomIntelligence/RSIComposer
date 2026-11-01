@@ -165,6 +165,18 @@ any time. These are upper bounds: the run need not last
 while other permitted research actions can continue. Recipe steps are bounded by
 `--max-train-steps`; the default recipe uses 32 steps, learning rate 1e-4,
 microbatch 1 and gradient accumulation 2.
+`define_recipe` shares its parameter types, bounds and defaults with native recipe
+validation: steps 1..`--max-train-steps` (default min(32, cap)), learning rate
+1e-6..1e-3 (default 1e-4), integer seed 0..2^31-1 (default 0), weight decay
+0..0.1 and warmup ratio 0..0.2 (both default 0). Invalid parameters are rejected
+before a recipe is created. `preview_training_data` defaults to offset 0 and
+limit 8; `choose_training_data` requires either 1..4096 unique string IDs or
+both offset and limit (1..256). The two selection forms cannot be mixed.
+Offsets range from 0 through the effective training row count; selecting an
+empty page returns a failed operation receipt. `prepare_data` accepts 1..65536
+characters and then checks JSONL content, protected overlap and token length.
+`read_artifact` requires a nonempty visible artifact ID; training artifacts return
+summaries and references, while source row previews remain paginated.
 
 The research objective is to improve both MedXpertQA and MedQA performance.
 The researcher chooses data, SFT recipes, inference prompts or combinations;
@@ -275,11 +287,13 @@ It also resolves an omitted `candidate_id` only when exactly one candidate exist
 multiple candidates require an explicit model choice. Raw model output and the
 resolved directive are recorded separately. Validation retries include the failed
 proposal, error and available candidate IDs, without silently selecting an experiment.
-Training inputs belong in top-level `input_ids`, never `origin.checkpoint`.
-Normally omit `arguments.origin`: the medical executor binds the current experimental
-parent and fixed initializer automatically. The restart-only backend advertises a
-checkpoint that is absent or null, not a checkpoint object; runtime validation still
-rejects incompatible initialization requests before submitting any training.
+Training inputs belong in top-level `input_ids`. Medical initialization is
+host-owned: `origin` is absent from the model's schema, and the parser rejects
+any supplied `arguments.origin`, including null. The executor binds the current
+experimental parent and fixed initializer using restart without a checkpoint.
+`apply_result` may be omitted or false; candidates require separate evaluation
+and application. The parser enforces the advertised backend methods and any
+fixed native recipe reference before execution.
 The example policy resolves named actions (`action`, a named `kind`, or the
 `invoke`/`explore` envelopes) only when the name uniquely identifies a currently
 allowed operation or directive. Conflicting names are rejected.
@@ -474,10 +488,10 @@ application intent/receipt retained.
 
 Training requests always carry `TrainingOrigin`. Default restart initialization is
 `training_initializer` (default the explicit baseline model), independent of the
-current experimental parent. Explicit origins must name the current parent and an
-allowed baseline/current initializer; restart still requires the fixed initializer.
-Checkpoint refs must be accessible through the trusted artifact store. Native
-capabilities reject unsupported resume modes. The adapter must return the same
+current experimental parent. The medical executor accepts only this host-bound
+origin: current parent, fixed initializer, restart and no checkpoint. This also
+applies to programmatic directives. A declared backend must support restart;
+other resume modes remain outside this medical assembly. The adapter must return the same
 parent in its candidate; the example never adds a parent after training.
 
 `bind_native_inputs(request, artifacts) -> ActorTrainingRequest` is **required when

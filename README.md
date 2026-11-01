@@ -10,6 +10,8 @@
 
 Python 装配支持分别注入两个 loop 的工厂；系统指令通过决策侧定义与探索侧 handler 映射扩展，无需修改核心分派。接入方式见[使用指南](docs/GUIDE.md#使用-python-接入组件)。
 
+后端声明能力，Action Space 据此暴露参数与约束，执行端再次验证。默认装配会过滤后端未声明支持的训练方式；场景固定的初始化信息由装配绑定，不要求模型重复填写。可选 `test` extra 提供标准 JSON Schema 契约测试（不增加运行依赖）；状态相关的候选、版本、数据与资源条件仍由执行端核验。
+
 长任务可通过 `review_after_seconds` 开启决策复查，选择继续、取消或调整下次复查时间；后端轮询不必调用模型。默认端点支持 Runner 重建后的未确认反馈交付恢复，默认串行，可选隔离的并行实验；使用 `Application(..., durable=True)` 可把串行运行的回执、在途 Mock 作业和 RunPolicy 状态持久化，并通过 `Application.resume()` 重启；中断时结果不明的操作须先核对，见 [Runtime](src/rsisys/runtime/README.md)。
 
 默认 Decision Harness 使用可替换的 `BasicContextCompactor(trigger_tokens=80000, target_tokens=24000, summary_tokens=4096)`，在完整 `GenerationRequest` 构造后的 request 阶段计量输入 token，达到 80k 才压缩，24k 是压缩后总请求输入目标。VLLM 通过 `/tokenize` 精确计数；无 tokenizer 的 backend 使用明确标记的 UTF-8 保守上界。原始历史与工具回执持久保存在 raw archive，compact 不改写或删除归档原文，滚动摘要保留来源；最新工具结果及其最近 history 配对完整保留。若固定规则与最新完整反馈本身超过目标，返回明确预算错误，需分页或调整预算。模型仍自主维护计划 / todos / 阶段总结，并可分页查询原始记录；摘要只是导航，不替代原始证据或规定研究步骤。

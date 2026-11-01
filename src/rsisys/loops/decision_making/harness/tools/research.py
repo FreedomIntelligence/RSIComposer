@@ -3,11 +3,12 @@
 from copy import deepcopy
 from dataclasses import asdict
 from hashlib import sha256
+from functools import partial
 
 from ...action_space import OperationCall, OperationResult, OperationSpec
 from ...action_space.capabilities import Capabilities, Capability
 from ..context import encoded, result_id
-from ..research import KINDS, ResearchAgenda, page_limit, page_offset
+from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, page_limit, page_offset
 
 
 class _Definition:
@@ -31,14 +32,16 @@ def _read_arguments(arguments):
     return deepcopy(args)
 
 
-def _archive_arguments(arguments):
+def _archive_arguments(arguments, *, experience=True):
     if not isinstance(arguments, dict) or set(arguments) - {'collection', 'record_id', 'limit', 'cursor'}:
         raise ValueError('Archive accepts only collection, record_id, limit and cursor')
     args = {'collection': 'history', 'record_id': None, 'limit': 8, 'cursor': None}
     args.update(arguments)
     page_limit(args['limit'])
-    if args['collection'] not in ('history', 'memories', 'operation_results', 'experience',
-                                  'research_items', 'research_revisions'):
+    if args['collection'] == 'experience' and not experience:
+        raise ValueError('Experience archive provider is not bound')
+    if args['collection'] not in ('history', 'memories', 'operation_results',
+                                  *(['experience'] if experience else []), 'research_items', 'research_revisions'):
         raise ValueError('Invalid archive collection')
     if args['record_id'] is not None and (not isinstance(args['record_id'], str) or not args['record_id']):
         raise ValueError('record_id must be nonempty text or null')
@@ -57,28 +60,37 @@ class ResearchTools:
     def __init__(self, agenda: ResearchAgenda, memory, *, experience=None):
         self.agenda, self.memory = agenda, memory
         self.experience = experience
-        text = {'type': 'string'}
-        refs = {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512}, 'maxItems': 64}
+        text = {'type': 'string', 'minLength': 1, 'maxLength': 128, 'pattern': r'\S'}
+        refs = {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512,
+                                         'pattern': r'\S'}, 'maxItems': 64}
         schema = lambda props, required=(): {'type': 'object', 'properties': props,
                                            'required': list(required), 'additionalProperties': False}
+        read_schema = schema({'view': {'enum': ['items', 'revisions']}, 'kind': {'enum': [*KINDS, None]},
+            'limit': {'type': 'integer', 'minimum': 1, 'maximum': 32}, 'cursor': {'type': ['string', 'null']}})
+        read_schema['oneOf'] = [
+            {'properties': {'view': {'enum': ['items']}}},
+            {'properties': {'view': {'enum': ['revisions']}, 'kind': {'type': 'null'}}, 'required': ['view']},
+        ]
         read = _Definition(OperationSpec('research_read',
             'Read model-owned agenda, todos, stage summaries or revision evidence. Notes are not scientific truth. '
             'Follow next_cursor; restart pagination after a revision changes.',
-            schema({'view': {'enum': ['items', 'revisions']}, 'kind': {'enum': [*KINDS, None]},
-                    'limit': {'type': 'integer', 'minimum': 1, 'maximum': 32},
-                    'cursor': {'type': ['string', 'null']}}), read_only=True), _read_arguments)
+            read_schema, read_only=True), _read_arguments)
         patch_props = {'expected_revision': {'type': 'integer', 'minimum': 0},
-            'upserts': {'type': 'array', 'maxItems': 32, 'items': schema({
-                'id': {'type': 'string', 'minLength': 1, 'maxLength': 128}, 'kind': {'enum': list(KINDS)},
-                'text': {'type': 'string', 'minLength': 1, 'maxLength': 16000},
-                'status': {'type': 'string', 'minLength': 1, 'maxLength': 128}, 'evidence_refs': refs}, ('id',))},
-            'remove_ids': {'type': 'array', 'items': text, 'maxItems': 32},
-            'reason': {'type': 'string', 'minLength': 1, 'maxLength': 4000}, 'evidence_refs': refs}
+            'upserts': {'type': 'array', 'maxItems': MAX_PATCH_CHANGES, 'items': schema({
+                'id': text, 'kind': {'enum': list(KINDS)},
+                'text': {'type': 'string', 'minLength': 1, 'maxLength': 16000, 'pattern': r'\S'},
+                'status': text, 'evidence_refs': refs}, ('id',))},
+            'remove_ids': {'type': 'array', 'items': text, 'maxItems': MAX_PATCH_CHANGES},
+            'reason': {'type': 'string', 'minLength': 1, 'maxLength': 4000, 'pattern': r'\S'}, 'evidence_refs': refs}
+        patch_schema = schema(patch_props, patch_props)
+        patch_schema['anyOf'] = [{'properties': {name: {'minItems': 1}}}
+                                for name in ('upserts', 'remove_ids')]
         patch = _Definition(OperationSpec('research_patch',
             'Atomically patch stable IDs at expected_revision. Omitted IDs and fields survive. New IDs require kind/text. '
             'Choose your own statuses and research process. Supply reason and evidence_refs (empty means no evidence). '
+            f'Upserts plus removals must total 1..{MAX_PATCH_CHANGES}; IDs must be distinct across both lists. '
             'Read revision before retrying conflicts; summaries are model notes, not validated findings.',
-            schema(patch_props, patch_props)), agenda.validate_patch)
+            patch_schema), agenda.validate_patch)
         archive = _Definition(OperationSpec('research_archive',
             'Read raw history, memories, operation_results, research_items or research_revisions '
             + ('and experience ' if experience is not None else '') + 'as paginated 1000-character JSON chunks. '
@@ -88,8 +100,9 @@ class ResearchTools:
             schema({'collection': {'enum': ['history', 'memories', 'operation_results',
                                             'research_items', 'research_revisions',
                                             *(['experience'] if experience is not None else [])]},
-                    'record_id': {'type': ['string', 'null']}, 'cursor': {'type': ['string', 'null']},
-                    'limit': {'type': 'integer', 'minimum': 1, 'maximum': 32}}), read_only=True), _archive_arguments)
+                    'record_id': {'type': ['string', 'null'], 'minLength': 1}, 'cursor': {'type': ['string', 'null']},
+                    'limit': {'type': 'integer', 'minimum': 1, 'maximum': 32}}), read_only=True),
+            partial(_archive_arguments, experience=experience is not None))
         self.capabilities = Capabilities((Capability(read, self._read), Capability(patch, self._patch),
                                           Capability(archive, self._archive)))
         self.definitions, self.bindings = self.capabilities.definitions, self.capabilities.bindings
@@ -105,7 +118,7 @@ class ResearchTools:
         return OperationResult('Research patch recorded', (), False, data=self.agenda.patch(**arguments))
 
     def _archive(self, arguments):
-        args = _archive_arguments(arguments)
+        args = _archive_arguments(arguments, experience=self.experience is not None)
         collection = args['collection']
         if collection == 'experience':
             if self.experience is None:

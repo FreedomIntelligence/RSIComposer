@@ -8,6 +8,8 @@ from pathlib import Path
 from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
 from rsisys.loops.contracts.queries import QueryProvider
+from rsisys.loops.contracts.backend import BackendCapabilityProvider
+from rsisys.loops.contracts.training import ResumeMode
 from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace, LocalDecisionActionSpace
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
@@ -120,6 +122,13 @@ def _decision_directives(context: AssemblyContext, exploration: ExplorationLoop)
         "rl": trainable and executable and isinstance(harness.policy, ModelUpdatable),
         "evaluate": harness.evaluation.backend is not None,
     }
+    if isinstance(harness.training.backend, BackendCapabilityProvider):
+        capabilities = harness.training.backend.capabilities()
+        # Built-in SFT/local RL start fresh; an unrelated backend method or
+        # resume-only backend does not make either built-in command executable.
+        for mode in ('sft', 'rl'):
+            available[mode] = (available[mode] and mode in capabilities.methods
+                               and ResumeMode.RESTART in capabilities.resume_modes)
     handlers = harness.commands.handlers
     if declared is not None:
         for mode in declared.modes():

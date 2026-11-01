@@ -6,8 +6,11 @@ from . import Action, ActionProposal, ActionSpec, EchoActionSpace
 class CommandActionSpace(EchoActionSpace):
     def describe(self):
         return super().describe() + (ActionSpec('execute', 'Execute argv in a local workspace', {
-            'type': 'object', 'properties': {'argv': {'type': 'array', 'items': {'type': 'string'}},
-                                           'output_paths': {'type': 'array', 'items': {'type': 'string'}}},
+            'type': 'object', 'properties': {'argv': {'type': 'array', 'minItems': 1,
+                                                   'items': {'type': 'string', 'pattern': r'^[^\u0000]*$'}},
+                                           'output_paths': {'type': 'array', 'items': {
+                                               'type': 'string', 'minLength': 1,
+                                               'description': 'Relative workspace path; absolute paths and .. components are rejected.'}}},
             'required': ['argv'], 'additionalProperties': False,
         }),)
 

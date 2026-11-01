@@ -111,7 +111,8 @@ class _StringArgumentDefinition:
     def __init__(self, name: str, description: str, argument: str, *, nonempty: bool = False):
         self.argument, self.nonempty = argument, nonempty
         self.spec = OperationSpec(name, description, {
-            "type": "object", "properties": {argument: {"type": "string"}},
+            "type": "object", "properties": {argument: {
+                "type": "string", **({"minLength": 1, "pattern": r'\S'} if nonempty else {})}},
             "required": [argument], "additionalProperties": False,
         })
 

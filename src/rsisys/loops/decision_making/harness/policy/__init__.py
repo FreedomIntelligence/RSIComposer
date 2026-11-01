@@ -184,7 +184,7 @@ class ModelDecisionPolicy:
         inputs = asdict(context)
         inputs["directives"] = [asdict(spec) for spec in self.directives.describe(context.directive_modes)]
         return GenerationRequest(
-            "decision_maker", self.model, json.dumps(inputs),
+            "decision_maker", self.model, json.dumps(inputs, separators=(',', ':')),
             system=("Return one JSON object, no markdown. There are two separate action namespaces. "
                     "Use {\"kind\":\"invoke\",\"operation\":name,\"arguments\":{...}} ONLY for context.operations. "
                     "If operations is empty, invoke is unavailable. "

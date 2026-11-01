@@ -112,15 +112,11 @@ class _MedicalTraining(TrainingCommandHandler):
         if not state.directive.input_refs:
             raise ValueError('Training requires explicit example-format JSONL artifacts')
         parent = self.systems.current
-        origin = state.directive.payload.origin or TrainingOrigin(parent.version, self.initializer)
-        if origin.parent_system != parent.version:
-            raise ValueError('Training origin must name the current experimental parent')
-        if origin.initial_model not in (self.initializer, parent.model):
-            raise ValueError('Training origin uses an unapproved model initializer')
-        if origin.resume_mode == ResumeMode.RESTART and origin.initial_model != self.initializer:
-            raise ValueError('Restart must use the fixed training initializer')
-        if origin.checkpoint is not None:
-            self.artifacts.get(origin.checkpoint)  # Require a trusted managed checkpoint.
+        origin = TrainingOrigin(parent.version, self.initializer)
+        if state.directive.payload.origin not in (None, origin):
+            raise ValueError('Medical training origin is host-owned: current parent, fixed initializer, restart only')
+        if state.directive.payload.base not in (None, self.initializer):
+            raise ValueError('Medical training must use the fixed training initializer')
         original = state.directive
         state.directive = replace(state.directive, payload=replace(state.directive.payload,
             base=origin.initial_model, origin=origin))
@@ -339,6 +335,7 @@ def build(task, *, artifacts, decision_backend, decision_model, initial_model,
         schema['required'] = []
         schema['properties']['candidate_id']['description'] = (
             'May be omitted only when exactly one candidate exists; otherwise choose its exact ID.')
+        schema['properties']['candidate_id']['minLength'] = 1
         if mode == 'evaluate':
             schema['properties']['protocol_ref'] = {'type': 'string',
                 'enum': [task.protocol_ref], 'default': task.protocol_ref}
@@ -364,17 +361,34 @@ def build(task, *, artifacts, decision_backend, decision_model, initial_model,
         initializer = training_initializer or initial_model
         handlers['train'] = _MedicalTraining(task, artifacts, systems, candidates, tuple(trusted_exclusions),
             training_initializer or initial_model, bind_training_inputs)
-        native_training = training_directive(learner.capabilities() if callable(getattr(learner, 'capabilities', None)) else None)
+        capabilities = learner.capabilities() if callable(getattr(learner, 'capabilities', None)) else None
+        if capabilities is not None and ResumeMode.RESTART not in capabilities.resume_modes:
+            raise ValueError('Medical training requires backend restart support')
+        native_training = training_directive(capabilities)
+        schema = deepcopy(native_training.spec.input_schema)
+        # Initialization is an operator choice, not a model-authored object.
+        schema['properties'].pop('origin')
+        schema['required'] = [name for name in schema['required'] if name != 'origin']
+        schema['properties']['apply_result'] = {'type': 'boolean', 'enum': [False], 'default': False}
         recipe_ref = getattr(learner, 'recipe_ref', None)
         if isinstance(recipe_ref, str) and recipe_ref:
-            schema = deepcopy(native_training.spec.input_schema)
             schema['properties']['recipe_ref'] = {'type': 'string', 'enum': [recipe_ref]}
-            native_training = DirectiveDefinition(replace(native_training.spec, input_schema=schema),
-                                                   native_training.parser)
         def parse_training(arguments, available):
+            if 'origin' in arguments:
+                raise ValueError('arguments.origin is host-owned; omit it to use the current parent and fixed initializer')
+            if arguments.get('apply_result', False) is not False:
+                raise ValueError('Medical training requires apply_result=false; evaluate before application')
+            allowed_recipes = schema['properties']['recipe_ref'].get('enum')
+            if allowed_recipes is not None and arguments.get('recipe_ref') not in allowed_recipes:
+                raise ValueError('recipe_ref must name the configured native recipe')
+            methods = schema['properties']['method'].get('enum')
+            if methods is not None and arguments.get('method') not in methods:
+                raise ValueError(f'method must be one of {methods}')
             spec = native_training.parser(arguments, available)
-            return replace(spec, origin=spec.origin or TrainingOrigin(systems.current.version, initializer))
-        definitions.append(DirectiveDefinition(native_training.spec, parse_training))
+            return replace(spec, origin=TrainingOrigin(systems.current.version, initializer))
+        definitions.append(DirectiveDefinition(replace(native_training.spec, input_schema=schema,
+            description='Create a training candidate from explicit input_ids. The host binds the current parent '
+                'and fixed restart initializer; origin is not a model argument. Evaluate before applying.'), parse_training))
     directives = DirectiveDefinitions(definitions)
     exploration = ExplorationLoop(DefaultExplorationHarness(_ModelBinding(initial_model), object(), experience,
         learner=learner, evaluator=evaluator, command_handlers=handlers), EchoActionSpace())

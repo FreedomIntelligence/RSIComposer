@@ -74,7 +74,7 @@
 <rect x="130" y="1180" width="870" height="170" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="154" y="1205" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">整体可换</text>
 <text x="154" y="1244" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">Decision ActionSpace</text>
-<text x="154" y="1278" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">能力：显式定义 / 外部 provider 发现；外部权限过滤与校验</text>
+<text x="154" y="1278" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">能力声明 → Action schema → 执行复验；外部权限约束</text>
 <text x="154" y="1307" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">review 默认只读；可开放全部操作或 allowlist</text>
 </g>
 <path d="M 945 1180 V 1110" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>

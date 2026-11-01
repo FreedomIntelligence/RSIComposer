@@ -9,6 +9,8 @@ from .artifacts import ArtifactRef
 
 MAX_QUERY_LIMIT = 100
 MAX_QUERY_OFFSET = 10000
+# Cursors cover 0..10^4, without leading zeroes. Both schema and parser use it.
+QUERY_CURSOR_PATTERN = rf'^(0|[1-9][0-9]{{0,{len(str(MAX_QUERY_OFFSET)) - 2}}}|{MAX_QUERY_OFFSET})$'
 MAX_QUERY_BYTES = 128 * 1024
 _NAME = re.compile(r'[a-z][a-z0-9_]{0,63}\Z')
 
@@ -49,7 +51,7 @@ class QueryRequest:
         if type(self.limit) is not int or not 1 <= self.limit <= MAX_QUERY_LIMIT:
             raise ValueError('Query limit must be between 1 and 100')
         if self.cursor is not None and (not isinstance(self.cursor, str)
-                or not re.fullmatch(r'0|[1-9][0-9]{0,4}', self.cursor)
+                or not re.fullmatch(QUERY_CURSOR_PATTERN, self.cursor)
                 or int(self.cursor) > MAX_QUERY_OFFSET):
             raise ValueError('Invalid or excessive query cursor')
 

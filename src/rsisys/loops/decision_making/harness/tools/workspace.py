@@ -71,7 +71,7 @@ class WorkspaceTools:
     def _capability(self, kind):
         properties = {
             'root': {'type': 'string', 'enum': list(self._roots)},
-            'path': {'type': 'string', 'maxLength': 256, 'default': '.',
+            'path': {'type': 'string', 'minLength': 1, 'maxLength': 256, 'default': '.',
                      'description': 'Relative to the named root; absolute paths and .. are rejected.'},
             'offset': {'type': 'integer', 'minimum': 0, 'maximum': 10 ** 9, 'default': 0},
         }
@@ -81,7 +81,7 @@ class WorkspaceTools:
             properties['max_bytes'] = {'type': 'integer', 'minimum': 1, 'maximum': self.max_bytes}
         if kind == 'search':
             properties.update(
-                query={'type': 'string', 'minLength': 1, 'maxLength': 256},
+                query={'type': 'string', 'minLength': 1, 'maxLength': 256, 'pattern': r'^[^\r\n]+$'},
                 scan_budget_bytes={'type': 'integer', 'minimum': 1, 'maximum': self.scan_budget_bytes},
                 max_entries={'type': 'integer', 'minimum': 1, 'maximum': self.max_entries},
                 max_depth={'type': 'integer', 'minimum': 0, 'maximum': self.max_depth},

@@ -163,6 +163,7 @@ bindings = {**bindings, **research_tools.bindings}
 供 researcher 调用 `experiment_inspect/cancel/update/compare`。取消和更新是写操作，
 按已有 operations / review_operations 权限检查，默认 review 只开放只读工具。
 这些能力不自动安装，也不替代 backend 的版本/字段验证。
+单后端装配可传 `backend_capabilities=backend.capabilities()`：空 `update_fields` 隐藏 update，非空字段同时约束 schema 与 validator；异构端点未提供统一声明时继续按目标后端核验，不将某一后端的限制施加给其他后端。
 
 `feedback_selector=None` 默认使用 `RecentFeedbackSelector`。
 `_context` 调用 `select(experience, objective, limit=...)` 并复制输出，避免自定义 selector

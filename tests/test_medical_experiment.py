@@ -5,16 +5,25 @@ import json
 from pathlib import Path
 import re
 import tempfile
+from types import SimpleNamespace
 import unittest
 
-from examples.medical.experiment import ExperimentSettings, parser, run
-from examples.medical.task import encoded
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:
+    Draft202012Validator = None
+
+from examples.medical.experiment import ExperimentOperations, ExperimentSettings, RecipeLearner, parser, run
+from examples.medical.run import build
+from examples.medical.task import encoded, prepare
 from rsisys.adapters.training import ProcessTrainingBackend
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobOutcome, JobProgress, JobRef, JobStatus
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
 from rsisys.loops.contracts.training import TrainingResult
+from rsisys.runtime.artifacts import FileArtifactStore
+from rsisys.runtime.systems import ReferenceSystemActivator
 
 
 def row(ident, gold='A'):
@@ -172,6 +181,148 @@ def apply(context):
 
 
 FINISH = {'kind': 'finish', 'reason': 'Synthetic researcher chose to stop; no scientific conclusion'}
+
+
+class MedicalOperationContractTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root/'train.jsonl').write_bytes(encoded(row('one'))+b'\n'+encoded(row('two'))+b'\n')
+        (root/'dev.jsonl').write_bytes(encoded(row('dev'))+b'\n')
+        task = prepare({'train': 'train.jsonl', 'development': [
+            {'benchmark_id': 'medqa', 'role': 'primary', 'path': 'dev.jsonl'}]}, base_directory=root)
+        artifacts = FileArtifactStore(root/'artifacts')
+        base = ModelRef('fixture', 'symbols', 'initial')
+        self.process = FixtureProcess(root/'process')
+        self.learner = RecipeLearner(root/'training', artifacts, Converter(), base, root/'model',
+            SimpleNamespace(), lambda: None, max_steps=7, process_backend=self.process)
+        self.assembly = build(task, artifacts=artifacts, decision_backend=object(), decision_model=base,
+            initial_model=base, inference=lambda request: self.fail('Contract checks must not infer'),
+            system_activator=ReferenceSystemActivator(base))
+        self.operations = ExperimentOperations(self.assembly, self.learner, Converter(), ())
+        self.definitions = {definition.spec.name: definition for definition in self.operations.definitions}
+
+    def test_recipe_schema_and_validator_use_backend_limits_and_defaults(self):
+        definition = self.definitions['define_recipe']
+        properties = definition.spec.input_schema['properties']
+        self.assertEqual(properties['steps'], {'type': 'integer', 'minimum': 1, 'maximum': 7, 'default': 7})
+        self.assertEqual(self.learner.validate_recipe({}),
+                         {'steps': 7, 'lr': 1e-4, 'seed': 0, 'weight_decay': 0.0, 'warmup_ratio': 0.0})
+        recipes = dict(self.learner.recipes)
+        for fields in ({'steps': 0}, {'steps': 8}, {'steps': 1.5}, {'steps': True},
+                       {'seed': -1}, {'seed': 2**31}, {'seed': .5}, {'seed': False},
+                       {'lr': 0}, {'lr': .01}, {'lr': '1e-4'}, {'lr': True},
+                       {'weight_decay': -.01}, {'weight_decay': .11}, {'warmup_ratio': .21},
+                       {'lr': float('nan')}, {'lr': float('inf')}, {'steps': 10**1000},
+                       {'other': 1}):
+            with self.subTest(fields=fields):
+                with self.assertRaises(ValueError):
+                    definition.validate(fields)
+                with self.assertRaises(ValueError):
+                    self.learner.define_recipe(fields)
+        self.assertEqual(self.learner.recipes, recipes)
+        for fields in ({}, {'steps': 1, 'lr': 1e-6, 'seed': 0},
+                       {'steps': 7, 'lr': 1e-3, 'seed': 2**31-1, 'weight_decay': .1, 'warmup_ratio': .2}):
+            call = definition.validate(fields)
+            result = self.operations.bindings['define_recipe'](call.arguments)
+            self.assertEqual(result.status.value, 'completed')
+            self.assertEqual(result.data['parameters'], self.learner.validate_recipe(fields))
+        self.assertFalse(self.process.requests)
+
+    def test_data_and_read_contracts_reject_shape_type_and_bound_mismatches(self):
+        schemas = {name: definition.spec.input_schema for name, definition in self.definitions.items()}
+        selection = schemas['choose_training_data']
+        self.assertEqual([branch['required'] for branch in selection['oneOf']], [['ids'], ['offset', 'limit']])
+        self.assertTrue(all(branch['additionalProperties'] is False for branch in selection['oneOf']))
+        self.assertNotIn('uniqueItems', selection['properties']['ids'])
+        self.assertIn('distinct', selection['properties']['ids']['description'])
+        self.assertEqual(schemas['preview_training_data']['properties']['offset']['maximum'], 2)
+        self.assertEqual(schemas['preview_training_data']['properties']['limit']['default'], 8)
+        self.assertEqual(schemas['prepare_data']['properties']['text']['minLength'], 1)
+        self.assertEqual(schemas['read_artifact']['properties']['artifact_id']['minLength'], 1)
+        before = self.assembly.artifacts.refs()
+        for name, invalids in {
+            'preview_training_data': ({'offset': 3}, {'offset': -1}, {'offset': True}, {'limit': 0}, {'limit': 9}, {'limit': 1.5}),
+            'choose_training_data': ({}, {'offset': 0}, {'limit': 1}, {'ids': ['one'], 'offset': 0},
+                {'ids': ['one'], 'offset': 0, 'limit': 1}, {'ids': []}, {'ids': ['one', 'one']},
+                {'ids': [1]}, {'ids': 'one'}, {'ids': ['one']*4097},
+                {'offset': 3, 'limit': 1}, {'offset': 0, 'limit': 257}, {'offset': 0, 'limit': True}),
+            'prepare_data': ({'text': ''}, {'text': 1}, {'text': 'x'*65537}, {}),
+            'read_artifact': ({'artifact_id': ''}, {'artifact_id': 1}, {}, {'artifact_id': 'one', 'path': '/tmp'})
+        }.items():
+            for arguments in invalids:
+                with self.subTest(name=name, arguments=str(arguments)[:120]), self.assertRaises(ValueError):
+                    self.definitions[name].validate(arguments)
+        self.assertEqual(self.assembly.artifacts.refs(), before)
+        self.assertFalse(self.process.requests)
+
+    @unittest.skipUnless(Draft202012Validator, 'optional jsonschema is not installed')
+    def test_medical_schemas_match_standard_validation(self):
+        for max_steps in (7, 64):
+            self.learner.max_steps = max_steps
+            operations = ExperimentOperations(self.assembly, self.learner, Converter(), ())
+            recipe = next(d for d in operations.definitions if d.spec.name == 'define_recipe')
+            Draft202012Validator.check_schema(recipe.spec.input_schema)
+            validator = Draft202012Validator(recipe.spec.input_schema)
+            for arguments, valid in (({}, True), ({'steps': max_steps}, True),
+                    ({'steps': max_steps+1}, False), ({'steps': 0}, False), ({'steps': 1.5}, False),
+                    ({'steps': True}, False), ({'seed': -1}, False), ({'lr': 1e-6}, True),
+                    ({'lr': 1e-3}, True), ({'lr': 1e-7}, False), ({'lr': .01}, False),
+                    ({'weight_decay': .11}, False), ({'warmup_ratio': .21}, False)):
+                with self.subTest(max_steps=max_steps, arguments=arguments):
+                    self.assertEqual(validator.is_valid(arguments), valid)
+                    if valid:
+                        recipe.validate(arguments)
+                    else:
+                        with self.assertRaises(ValueError):
+                            recipe.validate(arguments)
+        cases = {
+            'preview_training_data': (({}, True), ({'offset': 2, 'limit': 8}, True),
+                                     ({'offset': 3}, False), ({'limit': 9}, False)),
+            'choose_training_data': (({'ids': ['one']}, True), ({'offset': 0, 'limit': 256}, True),
+                ({}, False), ({'offset': 0}, False), ({'ids': ['one'], 'offset': 0}, False),
+                ({'ids': ['one'], 'offset': 0, 'limit': 1}, False), ({'ids': []}, False)),
+            'prepare_data': (({'text': 'x'}, True), ({'text': ''}, False), ({'text': 'x'*65537}, False)),
+            'read_artifact': (({'artifact_id': 'visible'}, True), ({'artifact_id': ''}, False))}
+        for name, entries in cases.items():
+            definition = self.definitions[name]
+            Draft202012Validator.check_schema(definition.spec.input_schema)
+            validator = Draft202012Validator(definition.spec.input_schema)
+            for arguments, valid in entries:
+                with self.subTest(name=name, arguments=str(arguments)[:100]):
+                    self.assertEqual(validator.is_valid(arguments), valid)
+                    if valid:
+                        definition.validate(arguments)
+                    else:
+                        with self.assertRaises(ValueError):
+                            definition.validate(arguments)
+
+    def test_valid_data_requests_preserve_domain_rejections_and_visible_summaries(self):
+        def execute(name, arguments):
+            call = self.definitions[name].validate(arguments)
+            return self.operations.bindings[name](call.arguments)
+        preview = execute('preview_training_data', {})
+        self.assertEqual([entry['id'] for entry in preview.data['rows']], ['one', 'two'])
+        self.assertEqual(execute('preview_training_data', {'offset': 2, 'limit': 8}).data['rows'], [])
+        selected = execute('choose_training_data', {'offset': 1, 'limit': 256})
+        self.assertEqual(selected.data['count'], 1)
+        summary = execute('read_artifact', {'artifact_id': selected.artifacts[0].artifact_id})
+        self.assertEqual(summary.data['count'], 1)
+        self.assertNotIn('content', summary.data)
+        external = ArtifactRef('external-adapter', 'peft_adapter', 'file:///nonexistent-adapter')
+        self.assembly.candidates['external'] = Candidate('external', 'initial', {'model': external}, ('actor',), 'initial')
+        reference = execute('read_artifact', {'artifact_id': external.artifact_id})
+        self.assertEqual(reference.data['reference'], asdict(external))
+        self.assertTrue(reference.data['requires_external_resolver'])
+        self.assertIsNone(reference.data['content'])
+        for name, arguments in (('choose_training_data', {'ids': ['unknown']}),
+                                ('choose_training_data', {'offset': 2, 'limit': 1}),
+                                ('read_artifact', {'artifact_id': 'nonvisible'}),
+                                ('prepare_data', {'text': 'invalid jsonl'})):
+            with self.subTest(name=name):
+                self.assertEqual(execute(name, arguments).status.value, 'failed')
+        self.assertFalse(self.process.requests)
 
 
 class MedicalExperimentIntegrationTests(unittest.TestCase):
@@ -488,7 +639,7 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         for fragment in ('"kind":"invoke"', '"operation":"<name from context.operations>"',
                          '"kind":"explore"', '"mode":"<mode from context.directive_modes>"',
                          'inside arguments', 'top-level kind', 'train requires nonempty top-level input_ids',
-                         'resume_mode="restart"', 'omit checkpoint or set it to null',
+                         'initialization is host-owned', 'origin is not an accepted model argument',
                          'Choose your own available action and research steps'):
             self.assertIn(fragment, guidance)
         self.assertIn(guidance, self.serving.contexts[0]['objective'])
@@ -510,8 +661,8 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
 
         def corrected(context):
             self.assertFalse(self.process.requests, 'Invalid proposal must not start training')
-            self.assertIn('restart cannot carry a checkpoint', context['objective'])
-            self.assertIn('Normally omit arguments.origin', context['objective'])
+            self.assertIn('arguments.origin is host-owned', context['objective'])
+            self.assertIn('Omit arguments.origin', context['objective'])
             return train(context)
 
         result = self.execute([invalid, corrected, evaluate, apply, FINISH])
