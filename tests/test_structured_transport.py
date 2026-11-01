@@ -1,5 +1,8 @@
 """Provider constraints are transmitted unchanged; invalid replies never execute."""
 import unittest
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import replace
 from unittest.mock import patch
 from rsisys.adapters.serving import VLLMBackend
@@ -28,6 +31,49 @@ class StructuredTransportTests(unittest.TestCase):
         self.assertEqual(response.model, MODEL)
         self.assertFalse(response.revision_verified)
         self.assertNotIn('tools', payload)
+
+    def test_real_http_preserves_schema_order_in_requests_and_native_options(self):
+        received = []
+        reply = self.reply()
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.append(self.rfile.read(int(self.headers['Content-Length'])))
+                body = json.dumps(reply).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        schema = {'oneOf': [
+            {'type': 'object', 'properties': {
+                'kind': {'const': 'invoke'}, 'operation': {'const': 'inspect'},
+                'arguments': {'type': 'object', 'properties': {
+                    'zeta': {'type': 'string'}, 'alpha': {'type': 'integer'}}},
+                'reason': {'type': 'string'}}, 'required': ['kind', 'operation', 'arguments']},
+            SCHEMA]}
+        binding = replace(self.binding, endpoint=f'http://127.0.0.1:{server.server_port}/v1')
+        try:
+            VLLMBackend(binding).generate(replace(self.request, response_schema=schema))
+            backend = VLLMBackend(binding, generation_options={'structured_outputs': {'json': schema}})
+            backend.generate(replace(self.request, response_schema=None))
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
+        self.assertEqual(len(received), 2)
+        for raw, path in zip(received, ('response_format', 'structured_outputs')):
+            payload = json.loads(raw)
+            wire = (payload[path]['json_schema']['schema'] if path == 'response_format'
+                    else payload[path]['json'])
+            self.assertEqual(wire, schema)
+            self.assertEqual(list(wire['oneOf'][0]['properties']),
+                             ['kind', 'operation', 'arguments', 'reason'])
+            self.assertEqual(list(wire['oneOf'][0]['properties']['arguments']['properties']),
+                             ['zeta', 'alpha'])
 
     def test_unstructured_requests_retain_existing_json_mode(self):
         with patch.object(self.backend, '_request', return_value=self.reply()) as call:
@@ -83,6 +129,8 @@ class StructuredTransportTests(unittest.TestCase):
             self.assertNotIn('review_after_seconds', train['properties'])
             recorded = json.loads((case.root/'run/model_requests.jsonl').read_text())
             self.assertEqual(recorded['request']['response_schema'], request.response_schema)
+            for logged, original in zip(recorded['request']['response_schema']['oneOf'], branches):
+                self.assertEqual(list(logged['properties']), list(original['properties']))
             self.assertEqual(recorded['request']['max_output_tokens'], request.max_output_tokens)
             self.assertFalse(case.process.requests)
         finally:

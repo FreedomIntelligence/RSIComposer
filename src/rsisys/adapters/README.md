@@ -164,7 +164,11 @@ adapter; optional frameworks remain imported only inside the worker.
 
 `VLLMBackend.supports_response_schema` advertises native structured-output
 transport. `GenerationRequest.response_schema` becomes `response_format` with
-`type=json_schema`, `strict=true` and that exact schema. This is distinct from
+`type=json_schema`, `strict=true` and that exact schema. Schema property order
+is preserved in the HTTP body, native generation options and medical request
+logs: constrained generation grammars may enforce that order. Canonical sorting
+for training/artifact hashes must not be reused for inference serialization.
+This is distinct from
 `json_object`, which only requests JSON. A server rejection is surfaced without
 retrying unconstrained. Conflicting native format/tool options, truncated replies
 and duplicate JSON keys fail before execution. Server support for the particular

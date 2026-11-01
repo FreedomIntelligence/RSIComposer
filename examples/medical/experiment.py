@@ -153,7 +153,9 @@ class DecisionBackend:
         self.monitor.event('model_decision_requested', call=self.calls, requested_model=model)
         request = replace(request, max_output_tokens=8192 if self.decision_thinking else 1024)
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
-            stream.write(encoded({'call': self.calls, 'request': asdict(request)}) + b'\n')
+            # Retain schema property order so request logs can reproduce decoding.
+            stream.write(json.dumps({'call': self.calls, 'request': asdict(request)},
+                ensure_ascii=False, allow_nan=False).encode() + b'\n')
         response = self.serving.generate(request)
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
             stream.write(encoded({'call': self.calls, 'requested_model': model,

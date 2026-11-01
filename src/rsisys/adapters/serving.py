@@ -31,7 +31,7 @@ class VLLMBackend(RemoteModelBackend):
         self.models = {}
         self._aliases = {}  # Historical pins survive release/removal of active bindings.
         self._bindings_lock = threading.RLock()
-        self.generation_options = json.loads(_json(generation_options or {}))
+        self.generation_options = json.loads(json.dumps(generation_options or {}, allow_nan=False))
         if set(self.generation_options) & {'model', 'messages', 'stream'}:
             raise ValueError('Native options cannot override request identity/messages/stream')
         if 'max_completion_tokens' in self.generation_options:
@@ -117,8 +117,10 @@ class VLLMBackend(RemoteModelBackend):
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs):
                 return None
+        # Schema property order affects constrained decoding. Canonical sorting is
+        # for artifact identities, never for the inference wire representation.
         request = Request(self.binding.endpoint.rstrip('/') + '/' + route,
-            data=None if payload is None else _json(payload).encode(), headers=headers,
+            data=None if payload is None else json.dumps(payload, allow_nan=False).encode(), headers=headers,
             method='GET' if payload is None else 'POST')
         try:
             with build_opener(NoRedirect).open(request, timeout=self.binding.timeout_seconds) as response:
