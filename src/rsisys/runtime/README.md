@@ -146,10 +146,16 @@ HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；
 
 `register(candidate, model=None)` 根据已知父版本合并变化，保留新清单但不改变 `current`；
 父版本有模型时，candidate 的 base_version 必须等于该模型的 revision，不能把系统版本 ID
-当成权重 revision。`get(version)` 与 `current` 返回独立副本。
+当成权重 revision。训练输出使用 `register_training(result, origin=提交时的 TrainingOrigin)`：
+完整校验 result.base 与 origin.initial_model，以及 candidate.parent_system 与 origin.parent_system，
+不要求初始化模型等于实验父系统的模型。因此可以先应用一轮 LoRA，再从原始权重训练另一个候选。
+`training_origin(candidate_id)` 返回保留的来源副本；同一候选 ID 不能更换训练来源。
+`get(version)` 与 `current` 返回独立副本。
 
 `compose(candidate_ids, *, version) -> SystemVersion` 接受至少一个、不重复的已注册候选 ID，
-要求共享同一个显式、已知 parent_system 和模型基准 revision；只合并各候选的 changes，
+要求共享同一个显式、已知 parent_system；普通组件候选沿用父模型基准，训练候选的初始化
+通过 register_training 单独校验。它们可在同一父系统下组合，无需把训练初始化 revision
+改写成父模型 revision。只合并各候选的 changes，
 再继承 parent 中未变化的组件。不同组件键直接 union，重叠键的 ArtifactRef 完全相同可接受，
 值不同则拒绝，不按候选顺序覆盖。没有修改模型的候选保留 parent 的模型；显式注册的模型
 变化可与组件变化组合，但多个不同的目标 ModelRef 会拒绝，不混合权重。组合单独保存来源
@@ -196,7 +202,7 @@ tools = BoundDecisionTools(capabilities.bindings)
 它确认后会真实更新 registry 的 manifest，但不代表模型部署或产物内容已验证。
 自定义 SystemActivator 负责实际组件准备、部署、外部效果和绑定原子性；registry 不替它回滚。
 该 registry 无全局实例或隐式存储，不会自动加入 Application 的 durable 状态；自定义恢复必须
-同时保存候选、组合来源、版本、current、应用意图与 activator 回执。
+同时保存候选、训练来源（training_origins）、组合来源、版本、current、应用意图与 activator 回执。
 
 ## Harness 外的具体后端
 

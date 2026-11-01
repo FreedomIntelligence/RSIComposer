@@ -20,6 +20,9 @@ class TrainingCommandHandler(CommandHandler):
         base = spec.base or (spec.origin.initial_model if spec.origin else getattr(harness.policy, 'model', None))
         if not isinstance(base, ModelRef):
             raise ValueError('Training requires a base model')
+        if spec.apply_result and base != getattr(harness.policy, 'model', None):
+            raise ValueError('Direct application requires the current role model as initializer; '
+                             'use separate system candidate registration and application for another initializer')
         state.request = ActorTrainingRequest(base, state.directive.input_refs,
                                              spec.recipe_ref, method=spec.method, origin=spec.origin)
 

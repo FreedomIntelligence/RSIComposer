@@ -40,7 +40,7 @@ from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write
 from rsisys.runtime.provenance import RunSource
 from rsisys.runtime.run_policy import RunContext, RunDecision, TimeRunPolicy
-from examples.qwen_toy.monitor import Monitor
+from examples.qwen_toy.monitor import ACTIVE, Monitor
 from .evaluation import MedicalEvaluator
 from .native import MedicalTrainingBackend
 from .run import build
@@ -138,6 +138,27 @@ class ExperimentSettings:
 
 class JournalMonitor(Monitor):
     """Existing public schema plus an unbounded append-only event archive."""
+    def __init__(self, root, base, objective, *, decision_model: ModelRef, **kwargs):
+        super().__init__(root, base, objective, **kwargs)
+        self.data['models']['decision_maker'] = {
+            'model_id': decision_model.model_id, 'revision': decision_model.revision}
+        self.write()
+
+    def advance(self, result):
+        super().advance(result)
+        # Terminal feedback ends exploration even when research continues.
+        if self.data['current'].get('status') not in ACTIVE:
+            self.stage('researching')
+
+    def stage(self, phase, *, status='running'):
+        super().stage(phase, status=status)
+        # Keep the last directive as evidence, without presenting its mode as
+        # ongoing work after feedback or controller shutdown.
+        if status != 'running' or self.data['current'].get('status') not in ACTIVE:
+            self.data['loops']['exploration']['summary'] = (
+                '等待下一条指令' if status == 'running' else f'当前阶段：{phase}')
+            self.write()
+
     def event(self, event, **details):
         super().event(event, **details)
         with (self.root / 'events.jsonl').open('ab') as stream:
@@ -859,7 +880,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'excluded': excluded, 'conversion_id': converter.conversion_id, 'conversion_metadata': converter.metadata})
         artifacts = FileArtifactStore(root / 'artifacts')
         monitor = JournalMonitor(root, base, 'Autonomous medical research', rounds=settings.max_trainings,
-                                 source=source)
+                                 source=source, decision_model=researcher)
         model_dir = settings.model_path.resolve()
         model_label = (model_dir.parent.parent.name.removeprefix('models--').replace('--', '-')
                        if model_dir.parent.name == 'snapshots' else model_dir.name)

@@ -61,6 +61,10 @@ class TrainingResult:
     simulated: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.base, ModelRef) or not isinstance(self.model, ModelRef):
+            raise TypeError('Training base and output model must be ModelRef')
+        if not isinstance(self.candidate, Candidate):
+            raise TypeError('Training output must contain a Candidate')
         if self.candidate.base_version != self.base.revision:
             raise ValueError("Candidate base version must match the training base")
         if self.model == self.base:

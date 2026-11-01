@@ -48,3 +48,5 @@ Transformers / PEFT SFT；其他 CLI 通过显式命令和 result_reader 接入�
 可选 `train` 需要配对注册 [training_directive()](../../../decision_making/action_space/directives.py) 和 [TrainingCommandHandler](command.py)，并注入 learner。handler 将 TrainSpec 与 Directive.input_refs 转为 ActorTrainingRequest，保留 origin；base 缺省时先使用 origin.initial_model，无 origin 才捕获角色模型。单个后端作业独立负责整个任务，不启动本地 RL 循环。提交重试、轮询、取消、证据记录及可选应用复用 Harness 的作业流程。装配方法见[使用指南](../../../../../../docs/GUIDE.md#接入整项训练任务)。
 
 [backend_training.py](../../../../../../examples/backend_training.py) 演示独立子进程中的真实 CPU 标量回归优化与产物回传，不是 LLM 训练，也不是 verl 的现成适配；该示例不演示 RL rollout。
+
+显式 origin 可从与当前角色不同的 initial_model 训练，但 `apply_result=True` 的直接角色替换要求初始化与当前角色相同，并在 prepare 时检查。跨初始化的候选应单独评测，再由 SystemRegistry 检查实验父版本并应用，不能绕过 stale-parent 校验。

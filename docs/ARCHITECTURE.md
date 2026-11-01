@@ -83,7 +83,7 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 [SystemRegistry](../src/rsisys/runtime/systems.py) 是可选的单写者组合状态，不是后端发现中心。`register(candidate, model=None)` 从已知父版本合并组件并保留候选，`get(version)` 读取清单，`current` 读取当前已启用组合；注册不采纳候选。`activate(candidate_id, idempotency_key=...)` 先检查候选父版本仍是 current，再由注入的 SystemActivator 确认精确清单已准备好，最后更新 current。旧父版本必须显式 rebase；只有 SystemActivationRejected 明确确认无副作用或已完成回滚时可释放 pending，其他异常继续冻结原意图等待核对。ReferenceSystemActivator 仅用于模型保持不变的引用级组合；真实部署和绑定事务须显式实现。
 
-[TrainingOrigin](../src/rsisys/loops/contracts/training.py) 显式保存 `parent_system`、`initial_model`、`resume_mode` 和可选 checkpoint。可选 train 接收 origin；base 缺省且有 origin 时采用 origin.initial_model，两者均缺省时捕获当前角色模型；显式 base 必须与 origin.initial_model 一致。restart 不允许运行 checkpoint；weights_only 只加载权重并重置优化器、调度器、步数和 RNG；full_state 必须提供完整状态 checkpoint，后端不能降级恢复语义。成功结果的 candidate.parent_system 必须保留请求来源。
+[TrainingOrigin](../src/rsisys/loops/contracts/training.py) 显式保存 `parent_system`、`initial_model`、`resume_mode` 和可选 checkpoint。可选 train 接收 origin；base 缺省且有 origin 时采用 origin.initial_model，两者均缺省时捕获当前角色模型；显式 base 必须与 origin.initial_model 一致。restart 不允许运行 checkpoint；weights_only 只加载权重并重置优化器、调度器、步数和 RNG；full_state 必须提供完整状态 checkpoint，后端不能降级恢复语义。成功结果的 candidate.parent_system 必须保留请求来源。系统注册训练结果使用 `register_training(result, origin)`，完整校验初始化 ModelRef 并保存来源；实验父系统可以使用另一轮 LoRA。组件组合不再把训练初始化等同于父模型，应用仍检查 parent_version 与 current，拒绝过期候选。
 
 [backend.py](../src/rsisys/loops/contracts/backend.py) 将方法、resume_modes、update_fields、checkpoint 导出及 reattach 能力显式分开声明。声明不支持的能力应在提交或操作前失败；已有无能力声明的后端继续实现原有 learner 端口。具体配方和 checkpoint 内容仍由后端验证。
 

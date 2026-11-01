@@ -22,7 +22,7 @@ from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobOutcome, JobProgress, JobRef, JobStatus
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
-from rsisys.loops.contracts.training import TrainingResult
+from rsisys.loops.contracts.training import TrainingOrigin, TrainingResult
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.systems import ReferenceSystemActivator
 
@@ -96,13 +96,22 @@ class FixtureProcess(ProcessTrainingBackend):
 
 
 class FixtureServing:
-    def __init__(self, path, *, actor_model, decision_model, artifacts, process, script, **kwargs):
+    token_count_mode = 'fixture_utf8_quarters_estimate'
+
+    def __init__(self, path, *, actor_model, decision_model, artifacts, process, script,
+                 actor_response=None, **kwargs):
         self.base, self.process, self.script = actor_model, process, iter(script)
         self.decision_model = decision_model
         self.contexts, self.prepared, self.activated, self.events = [], [], [], []
         self.weight_metadata = {actor_model: {'fixture': True}}
         self.release_count = 0
         self.model_calls = 0
+        self.actor_response = actor_response
+        self.actor_requests = []
+
+    def count_tokens(self, request):
+        # Synthetic estimate only; fixture decisions do not use a tokenizer.
+        return (len((request.system + request.prompt).encode('utf-8')) + 3) // 4
 
     def release_memory(self):
         self.release_count += 1
@@ -134,7 +143,9 @@ class FixtureServing:
             if request.model != self.base and not any(s.model == request.model for s in self.prepared):
                 raise AssertionError('Candidate generation before explicit preparation')
             self.events.append('generate:'+request.model.revision)
-            text = 'A' if request.model == self.base else 'B'
+            self.actor_requests.append(request)
+            text = (self.actor_response(request) if self.actor_response is not None
+                    else 'A' if request.model == self.base else 'B')
         return GenerationResponse(text, request.model, simulated=False)
 
     __call__ = generate
@@ -340,9 +351,10 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.serving = None
 
     def execute(self, script, *, research_started_callback=None, decision_model=None,
-                decision_backend=None, native_model_kwargs=None, **overrides):
+                decision_backend=None, native_model_kwargs=None, actor_response=None, **overrides):
         def serving_factory(path, **kwargs):
-            self.serving = FixtureServing(path, process=self.process, script=script, **kwargs)
+            self.serving = FixtureServing(path, process=self.process, script=script,
+                                          actor_response=actor_response, **kwargs)
             return self.serving
         settings = ExperimentSettings(self.task, self.root/'run', self.root/'fixture-model', **overrides)
         return run(settings, serving_factory=serving_factory, converter_factory=lambda *a, **kw: Converter(),
@@ -502,6 +514,108 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         feedback = self.serving.contexts[-1]['last_feedback']
         self.assertEqual(feedback['status'], 'failed')
         self.assertIn('Exact duplicate', feedback['error'])
+
+    def two_training_rounds(self, *, improve_second):
+        # Two frozen synthetic questions allow 0 -> .5 -> 1 without changing
+        # the evaluator, acceptance rule, or protocol between rounds.
+        (self.root/'dev.jsonl').write_bytes(
+            encoded(row('dev-one', 'B'))+b'\n'+encoded(row('dev-two', 'C'))+b'\n')
+        define = {'kind': 'invoke', 'operation': 'define_recipe',
+                  'arguments': {'steps': 16, 'lr': 2e-4, 'seed': 29}}
+        def second_train(context):
+            recipe = next(result['data']['recipe_ref'] for result in reversed(context['operation_results'])
+                          if isinstance(result.get('data'), dict) and 'recipe_ref' in result['data'])
+            return train(context, recipe)
+        def answer(request):
+            if request.model == self.serving.base:
+                return 'A'
+            first = next(iter(self.process.jobs.values())).model
+            if improve_second and request.model != first and 'Synthetic symbol dev-two' in request.prompt:
+                return 'C'
+            return 'B'
+        result = self.execute([train, evaluate, apply, define, second_train, evaluate, apply, FINISH],
+                              actor_response=answer, max_trainings=2)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 8)
+        self.assertEqual(result['trainings_reserved'], 2)
+        self.assertTrue(result['cleanup']['confirmed'])
+        self.assertEqual(len(self.process.requests), 2)
+        first, second = tuple(self.process.jobs.values())
+        self.assertNotEqual(first.model, second.model)
+        for index, ((request, native_key), output) in enumerate(zip(self.process.requests.values(), (first, second))):
+            with self.subTest(round=index+1):
+                parent = 'initial' if index == 0 else first.candidate.candidate_id
+                self.assertEqual(request.origin, TrainingOrigin(parent, self.serving.base))
+                self.assertEqual(request.base, self.serving.base)
+                self.assertEqual(output.candidate.parent_system, parent)
+                self.assertEqual(output.candidate.base_version, self.serving.base.revision)
+                recipe = json.loads(Path(request.recipe_ref).read_text())
+                self.assertEqual(recipe['initial_model'], asdict(self.serving.base))
+                self.assertEqual(recipe['training_args']['seed'], (0, 29)[index])
+                self.assertEqual([json.loads(line) for line in Path(recipe['train_dataset']).read_text().splitlines()],
+                                 [{'input_ids': [1, 2], 'labels': [-100, 2]}])
+                self.assertIn(':directive:', native_key)
+        self.assertNotEqual(second.base, first.model)
+        ledger = tuple(self.read('training/budget.json').values())
+        self.assertEqual([entry['status'] for entry in ledger], ['succeeded', 'succeeded'])
+        self.assertNotEqual(ledger[0]['recipe_ref'], ledger[1]['recipe_ref'])
+        self.assertNotEqual(ledger[0]['signature'], ledger[1]['signature'])
+        candidates = self.read('candidates.json')
+        self.assertEqual(set(candidates), {first.candidate.candidate_id, second.candidate.candidate_id})
+        evaluations = self.read('evaluations.json')
+        self.assertEqual(set(evaluations), {'initial', first.candidate.candidate_id, second.candidate.candidate_id})
+        self.assertEqual(evaluations['initial']['metrics']['score'], 0)
+        artifacts = FileArtifactStore(self.root/'run/artifacts')
+        raw_evidence = {ref.artifact_id: ref for ref in artifacts.refs() if ref.kind == 'medical_raw_evidence'}
+        for output, score in ((first, .5), (second, 1 if improve_second else .5)):
+            candidate = candidates[output.candidate.candidate_id]
+            self.assertEqual(candidate['parent_system'], output.candidate.parent_system)
+            self.assertEqual(candidate['base_version'], self.serving.base.revision)
+            provenance = json.loads(artifacts.get(ArtifactRef(**candidate['changes']['medical_training'])))
+            self.assertEqual(provenance['request']['origin'], asdict(TrainingOrigin(
+                output.candidate.parent_system, self.serving.base)))
+            measured = evaluations[output.candidate.candidate_id]
+            self.assertEqual(measured['metrics']['score'], score)
+            self.assertEqual(measured['protocol_ref'], evaluations['initial']['protocol_ref'])
+            raw = json.loads(artifacts.get(raw_evidence[measured['evidence_refs'][0]]))
+            self.assertEqual(raw['system']['version'], output.candidate.candidate_id)
+            self.assertEqual(raw['system']['model'], asdict(output.model))
+            self.assertEqual(len(raw['predictions']), 2)
+            calls = [request for request in self.serving.actor_requests if request.model == output.model]
+            self.assertEqual(len(calls), 2)
+            prepared = [system for system in self.serving.prepared if system.model == output.model]
+            self.assertTrue(prepared)
+            self.assertEqual(prepared[0].version, output.candidate.candidate_id)
+            self.assertLess(self.serving.events.index('prepare:'+output.candidate.candidate_id),
+                            self.serving.events.index('generate:'+output.model.revision))
+        return first, second
+
+    def test_two_recipe_restarts_register_evaluate_and_apply_with_fixed_initializer(self):
+        first, second = self.two_training_rounds(improve_second=True)
+        self.assertEqual([system.model for system in self.serving.activated], [first.model, second.model])
+        self.assertEqual(self.serving.activated[1].parent_version, first.candidate.candidate_id)
+        current = self.read('systems.json')['current']
+        self.assertEqual(current['version'], second.candidate.candidate_id)
+        self.assertEqual(current['model'], asdict(second.model))
+        self.assertEqual(self.serving.contexts[-1]['last_feedback']['status'], 'completed')
+        artifacts = FileArtifactStore(self.root/'run/artifacts')
+        interpretations = [json.loads(artifacts.get(ref)) for ref in artifacts.refs()
+                           if ref.kind == 'medical_interpretation']
+        application = next(value for value in interpretations
+                           if value.get('candidate_id') == second.candidate.candidate_id
+                           and value.get('activation_confirmed'))
+        self.assertTrue(application['accepted'])
+        self.assertEqual(application['incumbent'], first.candidate.candidate_id)
+        self.assertEqual(application['fixed_anchor'], 'initial')
+
+    def test_second_restart_is_evaluated_but_equal_accuracy_cannot_apply(self):
+        first, second = self.two_training_rounds(improve_second=False)
+        self.assertEqual([system.model for system in self.serving.activated], [first.model])
+        self.assertEqual(self.read('systems.json')['current']['version'], first.candidate.candidate_id)
+        feedback = self.serving.contexts[-1]['last_feedback']
+        self.assertEqual(feedback['status'], 'failed')
+        self.assertIn('at least one accuracy improvement and no accuracy regression', feedback['error'])
+        self.assertEqual(feedback['candidates'][0]['candidate_id'], second.candidate.candidate_id)
 
     def test_training_parallelism_reaches_native_recipe(self):
         result = self.execute([train, FINISH], training_processes=8)

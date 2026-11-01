@@ -496,8 +496,10 @@ class MedicalExampleTests(unittest.TestCase):
         with fixture_http('train') as (backend, calls):
             learner = FixtureLearner(self.artifacts)
             assembly = self.assembly(backend, learner=learner, bind_training_inputs=lambda r, a: r)
-            with patch.object(assembly.systems, 'register', side_effect=ValueError('fixture system registration rejected')):
+            with patch.object(assembly.systems, 'register_training',
+                              side_effect=ValueError('fixture system registration rejected')) as registration:
                 result = assembly.run(RunSettings('Verify registration failure', 2, 0))
+            registration.assert_called_once_with(learner.output, origin=learner.requests[0].origin)
             self.assertEqual(result.status, 'needs_input')
             self.assertEqual(assembly.runner.exploration.harness.state.last_feedback.status.value, 'failed')
             self.assertEqual(assembly.runner.decision_making.harness.state.last_feedback.status.value, 'failed')

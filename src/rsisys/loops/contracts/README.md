@@ -63,6 +63,7 @@ Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。
 [TrainingOrigin](training.py) 使用 `TrainingOrigin(parent_system, initial_model,
 resume_mode=ResumeMode.RESTART, checkpoint=None)` 显式区分实验父版本与初始权重。
 `parent_system` 是稳定的系统版本 ID，与 `initial_model.revision` 独立；它不是权重来源。
+训练结果进入 SystemRegistry 时使用 `register_training(result, origin=提交来源)`；注册检查实际声明的初始化，应用再检查实验父版本是否仍为 current。直接更新某个 loop 的角色模型没有系统版本上下文，仍要求当前角色模型与 result.base 相同；跨初始化的候选应用走 SystemRegistry。
 请求原有 `base` 仍用于训练结果和角色应用的版本检查；传入 origin 时由调用方和后端确认
 `initial_model` 与实际训练请求一致，框架不根据父系统隐式替换模型。
 

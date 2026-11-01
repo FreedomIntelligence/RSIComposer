@@ -140,7 +140,7 @@ class _MedicalTraining(TrainingCommandHandler):
             if candidate.parent_system != state.request.origin.parent_system:
                 raise ValueError('Training candidate parent differs from the prepared origin')
             try:
-                self.systems.register(candidate, model=result.model)
+                self.systems.register_training(result, origin=state.request.origin)
             except (ValueError, KeyError) as exc:
                 return replace(state.feedback, status=ExecutionStatus.FAILED,
                     summary='Training output could not be registered as a system candidate', candidates=(),

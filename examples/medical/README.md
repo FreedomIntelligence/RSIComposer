@@ -499,7 +499,13 @@ application intent/receipt retained.
 Training requests always carry `TrainingOrigin`. Default restart initialization is
 `training_initializer` (default the explicit baseline model), independent of the
 current experimental parent. The medical executor accepts only this host-bound
-origin: current parent, fixed initializer, restart and no checkpoint. This also
+origin: current parent, fixed initializer, restart and no checkpoint. Completed
+training outputs enter `SystemRegistry.register_training(result, origin=...)`,
+which checks the submitted initializer separately from the experiment parent.
+After a LoRA incumbent is applied, a later experiment can still restart from the
+original pinned model and inherit that incumbent's prompt/configuration. Its
+candidate must be deployed and evaluated before application; the parent must
+still be current and the configured acceptance rule must pass. This also
 applies to programmatic directives. A declared backend must support restart;
 other resume modes remain outside this medical assembly. The adapter must return the same
 parent in its candidate; the example never adds a parent after training.

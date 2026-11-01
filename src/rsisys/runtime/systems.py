@@ -6,6 +6,7 @@ from typing import Protocol
 
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.training import TrainingOrigin, TrainingResult
 from rsisys.loops.decision_making.action_space import OperationCall, OperationResult, OperationSpec
 from rsisys.loops.decision_making.action_space.capabilities import Capability
 
@@ -68,6 +69,7 @@ class SystemRegistry:
         self.activator = activator
         self._versions = {initial.version: deepcopy(initial)}
         self._candidates = {}
+        self._training_origins = {}
         self._compositions = {}
         self._receipts = {}
         self._rejections = {}
@@ -81,21 +83,50 @@ class SystemRegistry:
         return deepcopy(self._versions[version])
 
     def register(self, candidate: Candidate, *, model: ModelRef | None = None):
+        """Register a component change relative to its parent's model revision."""
+        return self._register(candidate, model=model, origin=None)
+
+    def register_training(self, result: TrainingResult, *, origin: TrainingOrigin):
+        """Validate training initialization independently of experiment ancestry.
+
+        The caller supplies the submitted origin, not an inferred current model.
+        Registration never authorizes applying an obsolete experimental parent.
+        """
+        if not isinstance(result, TrainingResult) or not isinstance(origin, TrainingOrigin):
+            raise TypeError('Training registration requires TrainingResult and TrainingOrigin')
+        result.__post_init__()
+        origin.__post_init__()
+        if result.base != origin.initial_model:
+            raise ValueError('Training result base differs from origin.initial_model')
+        if result.candidate.parent_system != origin.parent_system:
+            raise ValueError('Training candidate parent differs from submitted origin')
+        return self._register(result.candidate, model=result.model, origin=origin)
+
+    def training_origin(self, candidate_id: str) -> TrainingOrigin | None:
+        """Return retained submission provenance; ordinary candidates have none."""
+        if candidate_id not in self._candidates:
+            raise KeyError(candidate_id)
+        return deepcopy(self._training_origins.get(candidate_id))
+
+    def _register(self, candidate, *, model, origin):
         if not isinstance(candidate, Candidate) or not candidate.parent_system:
             raise ValueError('System candidate requires an explicit parent_system')
         parent = self._versions[candidate.parent_system]
-        if parent.model is not None and candidate.base_version != parent.model.revision:
+        if origin is None and parent.model is not None and candidate.base_version != parent.model.revision:
             raise ValueError('Candidate model base revision differs from its parent model')
         target = SystemVersion(candidate.candidate_id,
             {**parent.components, **candidate.changes},
             model if model is not None else parent.model, parent.version)
         previous = self._versions.get(target.version)
         if previous is not None:
-            if previous != target or self._candidates.get(target.version) != candidate:
+            if (previous != target or self._candidates.get(target.version) != candidate
+                    or self._training_origins.get(target.version) != origin):
                 raise ValueError('System version identity conflicts with existing content')
             return deepcopy(previous)
         self._versions[target.version] = deepcopy(target)
         self._candidates[target.version] = deepcopy(candidate)
+        if origin is not None:
+            self._training_origins[target.version] = deepcopy(origin)
         return deepcopy(target)
 
     def compose(self, candidate_ids: Iterable[str], *, version: str) -> SystemVersion:
@@ -110,14 +141,14 @@ class SystemRegistry:
         parents = {candidate.parent_system for candidate in candidates}
         if len(parents) != 1:
             raise ValueError('Composition requires the same explicit parent system')
-        if any(candidate.base_version != candidates[0].base_version for candidate in candidates):
-            raise ValueError('Composition requires the same model base revision')
+        component_bases = {candidate.base_version for candidate in candidates
+                           if candidate.candidate_id not in self._training_origins}
+        if len(component_bases) > 1:
+            raise ValueError('Composition requires the same model base revision for component changes')
         parent = self._versions[candidates[0].parent_system]
         changes = {}
         model = parent.model
         for candidate in candidates:
-            if parent.model is not None and candidate.base_version != parent.model.revision:
-                raise ValueError('Candidate model base revision differs from its parent model')
             for name, ref in candidate.changes.items():
                 if name in changes and changes[name] != ref:
                     raise ValueError(f'Conflicting component changes: {name}')

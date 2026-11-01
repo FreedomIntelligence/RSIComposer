@@ -6,6 +6,7 @@ from rsisys.loops.contracts.backend import BackendCapabilities
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.requests import TrainSpec
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import TrainingOrigin, ResumeMode, TrainingResult
 from rsisys.loops.decision_making.action_space.directives import training_directive
@@ -39,6 +40,19 @@ class TrainingOriginFlowTests(TestCase):
         self.assertEqual(definition.spec.input_schema['properties']['method']['enum'], ['sft'])
         args['method'] = 'rl'
         with self.assertRaises(NotImplementedError): definition.parser(args, ())
+
+    def test_direct_application_of_another_initializer_is_rejected_before_training(self):
+        harness = Mock()
+        harness.policy.model = replace(self.base, revision='incumbent-lora')
+        spec = TrainSpec('recipe', 'sft', apply_result=True, origin=self.origin)
+        state = CommandState(Directive('id', 'task', 'train', mode='train', payload=spec))
+        with self.assertRaisesRegex(ValueError, 'separate system candidate'):
+            TrainingCommandHandler().prepare(harness, state)
+        harness.submit_learning.assert_not_called()
+        state = CommandState(replace(state.directive, payload=replace(spec, apply_result=False)))
+        TrainingCommandHandler().prepare(harness, state)
+        self.assertEqual(state.request.base, self.base)
+        self.assertEqual(state.request.origin, self.origin)
 
     def test_initial_weights_must_match_request_base(self):
         with self.assertRaisesRegex(ValueError, 'initial_model'):
