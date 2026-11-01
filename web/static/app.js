@@ -337,7 +337,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   };
   const fit=()=>{
     frame=bounds();width=frame.right-frame.left;height=frame.bottom-frame.top;
-    scaleTo(Math.min((viewport.clientWidth-20)/width,(viewport.clientHeight-20)/height,1.25),false);
+    scaleTo(Math.max(.85,Math.min((viewport.clientWidth-20)/width,(viewport.clientHeight-20)/height,1.25)),false);
     view.autoFit=true;viewport.scrollLeft=0;viewport.scrollTop=0;
   };
   const zoomGroup=el("div","graph-control-group"),layoutGroup=el("div","graph-control-group");
@@ -473,14 +473,6 @@ function chartView(j, keys, title) {
   svg.addEventListener("keydown", event => { const actions = { ArrowLeft: selected-1, ArrowRight: selected+1, Home: 0, End: points.length-1 }; if (Object.hasOwn(actions,event.key)) { event.preventDefault(); inspect(actions[event.key]); } });
   figure.append(svg,readout); return figure;
 }
-function historyDetail(j) {
-  const rows = historyRows(j), wrap = el("div");
-  if (!rows.length) { wrap.append(empty(t("未记录历史；当前指标不能还原训练曲线。"))); return wrap; }
-  const table = el("table", "metric-table"), head = el("thead"), hr = el("tr"), body = el("tbody");
-  for (const name of [t("步数"), t("耗时（秒）"), t("已报告指标")]) { const th = el("th", "", name); th.scope = "col"; hr.append(th); } head.append(hr);
-  for (const p of rows) { const row = el("tr"); row.append(el("td", "", fmt(p.step)),el("td", "", fmt(p.elapsed_seconds)), el("td", "", Object.entries(p.metrics).map(([k,v])=>`${k}: ${fmt(v)}`).join(t("；")) || t("未报告"))); body.append(row); }
-  table.append(head,body); wrap.append(table); return wrap;
-}
 const baseAliases = ["baseline", "base", "before", "old"], newAliases = ["candidate", "new", "after", "current"];
 function metricRows(source) {
   const metrics = object(source), pairs = [], used = new Set();
@@ -498,7 +490,6 @@ function comparisonView(metrics) {
   for (const name of [t("指标"),t("基线"),t("候选"),t("候选 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
-const eventLabels={job:"任务状态更新",progress:"执行进度更新",phase:"运行阶段更新",inference:"模型推理",feedback:"执行反馈",model_decision_requested:"请求模型决策",model_decision_validated:"决策通过校验",model_decision_rejected:"决策未通过校验",training_review_requested:"请求训练复查",training_review_completed:"训练复查完成",activation_verified:"候选验证通过","training.started":"训练开始","evaluation.completed":"评测完成","candidate.accepted":"候选已采纳","candidate.rejected":"候选未采纳","model.bound":"模型绑定更新","run.started":"运行开始"};
 function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true; $("export-report").disabled=false; updateMetricsNavigation(); }
 // Pure snapshot-to-Markdown conversion: no model call, network request or upload.
 const md = value => asText(value, t("未报告")).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
@@ -520,7 +511,7 @@ function reportMarkdown(s) {
   if(!decisions.length)lines.push(t("未报告决策记录，无法重建决策或反馈。"));
   for(const g of decisionGroups(s)) {
     const r=g.row,f=feedbackFor(r,s);
-    lines.push(`### ${md(actionText(decisionAction(r)))}${g.rows.length>1?t(" · 重复报告 {p0} 次", {p0: g.rows.length}):""}`, "", `${md(dateText(r.timestamp))}${number(r.round)?t(" · 第 {p0} 轮", {p0: r.round}):""}`, "", t("反馈：{p0}", {p0: md(f.text)}), "",reportMetrics(f.metrics),"");
+    lines.push(`### ${md(actionText(decisionAction(r)))}${g.rows.length>1?t(" · 重复报告 {p0} 次", {p0: g.rows.length}):""}`, "", `${md(dateText(r.timestamp))}${number(r.round)?t(" · 第 {p0} 轮", {p0: r.round}):""}`, "", t("反馈：{p0}", {p0: md(object(r.feedback).summary||r.feedback_summary||f.text)}), "",reportMetrics(f.metrics),"");
     if(r.kind==="review" && f.job)lines.push(t("关联任务当前{p0}；不代表复查当时状态。", {p0: md(statusText(f.job.status))}),"");
     if(decisionAction(r)==="finish")lines.push(t("运行当前{p0}。", {p0: md(statusText(s.status))}),"");
     if(present(r.reason)||present(r.strategy))lines.push(t("决策原文："), "", md(r.reason||r.strategy), "");
@@ -573,9 +564,6 @@ function runRows(project) {
 }
 const projectName = p => p?.project_id === "unassigned" ? t("未归属") : asText(p?.name);
 function selectedProject() { return state.projects.find(p => p.project_id === state.projectId); }
-function runParentIds(row) {
-  return [...new Set([row.parent_run_id, ...(Array.isArray(row.source_run_ids) ? row.source_run_ids : [])].filter(identifier))];
-}
 function abortEntry(entry) {
   entry.controller?.abort(); entry.controller = null; entry.token = (entry.token || 0) + 1;
   if (entry.status === "pending") entry.status = entry.snapshot ? "ready" : "idle";
@@ -650,36 +638,26 @@ function executionSequence(s, scope) {
       decision.append(el("p","flow-label",t("决策")),el("h4","",actionText(decisionAction(row))),meta);
       if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
       if(present(row.reason))decision.append(el("p","decision-reason",row.reason));
-      if(present(row.strategy)&&row.strategy!==row.reason)decision.append(el("p","decision-reason",row.strategy));
-      const parameters=fieldList([[t("训练方法"),row.method],[t("训练方案"),row.recipe_ref],[t("评测方案"),row.protocol_ref],[t("复查间隔（秒）"),row.review_after_seconds]]);
-      if(parameters.childElementCount)decision.append(parameters);
+      if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row))decision.append(el("p","decision-reason",row.strategy));
       feedback.append(el("p","flow-label",t("执行反馈")),el("p","",object(row.feedback).summary||row.feedback_summary||f.text));
       if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
       if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
       if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
       if(f.job&&number(f.job.elapsed_seconds))feedback.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(f.job.elapsed_seconds)})));
-      const records=el("div");for(const record of g.rows)records.append(rawFields(record));
-      feedback.append(retainedDetails(JSON.stringify([s.run_id,"step",decisionKey(row)]),scope.flowOpen,t("记录详情（{p0} 条）", {p0: g.rows.length}),records));
       step.append(index,decision,feedback);if(metrics.childElementCount)step.append(metrics);
       const results=el("div","flow-results");
       if(f.job){
         const j=f.job,h=historyRows(j),isTraining=/train|sft|finetun/.test(asText(j.kind,""))||h.some(p=>number(metricValue(p.metrics,lossKeys)));
         if(row.kind==="review")results.append(el("p","quiet-note",t("关联任务当前快照")));
         if(isTraining){const charts=el("div","charts");charts.append(chartView(j,lossKeys,t("损失")),chartView(j,lrKeys,t("学习率")));results.append(charts);}
-        const detail=el("div");detail.append(rawFields(j));
-        if(h.length)detail.append(retainedDetails(JSON.stringify([s.run_id,"history",j.job_id]),scope.flowOpen,t("历史指标 · {p0} 点",{p0:h.length}),historyDetail(j)));
-        results.append(retainedDetails(JSON.stringify([s.run_id,"job",j.job_id]),scope.flowOpen,t("任务详情"),detail));
+
       }
       for(const result of relatedResults(row,s).filter(r=>r.type==="candidate")){
+        const reported=flattenMetrics(result.row.metrics),shown=flattenMetrics(f.metrics);
+        const alreadyShown=Object.keys(reported).length>0&&Object.entries(reported).every(([key,value])=>shown[key]===value);
+        if(alreadyShown){metrics.append(badge(result.row.status));continue;}
         const card=el("div","candidate-card");card.append(el("h4","",t("候选结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
       }
-      const events=list(s.events).filter(e=>{
-        const d={...e,...object(e.details)};
-        if(present(d.decision_id))return sameId(d.decision_id,row.decision_id);
-        if(present(d.job_id))return sameId(d.job_id,f.job?.job_id);
-        return row.kind==="directive"&&sameId(d.directive_id,row.directive_id)&&list(s.decisions).filter(r=>r.kind==="directive"&&sameId(r.directive_id,row.directive_id)).length===1;
-      });
-      if(events.length)results.append(retainedDetails(JSON.stringify([s.run_id,"events",decisionKey(row)]),scope.flowOpen,t("执行记录 · {p0} 条",{p0:events.length}),eventRecords(events)));
       if(results.childElementCount)step.append(results);entries.append(step);
     }
     more.hidden=groups.length<=limit;
@@ -688,11 +666,6 @@ function executionSequence(s, scope) {
   const more=el("button","more-button",t("显示更多执行步骤"));more.addEventListener("click",()=>{scope.flowLimits.set(s.run_id,(scope.flowLimits.get(s.run_id)||30)+30);fill();});
   section.append(more);fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
   return section;
-}
-function eventRecords(events) {
-  const box=el("div");
-  for(const event of events){const row=el("article","event");row.append(el("time","event-time",dateText(event.timestamp)),el("p","",t(eventLabels[event.kind])||asText(event.kind,t("未分类事件"))),rawFields({...event,...object(event.details)}));box.append(row);}
-  return box;
 }
 function runDetail(node, scope) {
   const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail"); scope.flowOpen ||= new Set();
@@ -710,32 +683,27 @@ function runDetail(node, scope) {
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){
       const candidates=el("div");
-      unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics),rawFields(c));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("候选结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
+      unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("候选 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("候选结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
     }
 
   }
-  const technical=el("div");technical.append(fieldList([[t("运行"),node.runId],[t("记录更新"),dateText(s?.updated_at||node.row.updated_at)]]));
-  for(const [role,model] of Object.entries(object(s?.models))){technical.append(el("h4","",role==="actor"?t("执行模型"):role==="decision_maker"?t("决策模型"):role),rawFields(model));}
-  if(s&&!Object.keys(object(s.models)).length)technical.append(empty(t("模型 revision 未报告。")));
   if(s){
-    for(const [name,loop] of Object.entries(object(s.loops)))technical.append(el("h4","",name==="exploration"?t("探索循环"):t("决策循环")),rawFields(loop));
-    if(list(s.events).length)technical.append(retainedDetails(JSON.stringify([node.runId,"events"]),scope.flowOpen,t("运行事件 · {p0} 条",{p0:list(s.events).length}),eventRecords(list(s.events))));
-    for(const round of list(s.round_results)){const r=el("div");r.append(rawFields(round),comparisonView(round.metrics));technical.append(retainedDetails(JSON.stringify([node.runId,"round",round.round]),scope.flowOpen,t("第 {p0} 轮",{p0:round.round}),r));}
     const unlinked=list(s.jobs).filter(j=>!list(s.decisions).some(d=>linkedJob(d,s)===j));
-    for(const job of unlinked){const data=el("div");data.append(rawFields(job),metricsDetail(job.metrics));if(historyRows(job).length)data.append(historyDetail(job));technical.append(retainedDetails(JSON.stringify([node.runId,"unlinked",job.job_id]),scope.flowOpen,t("未关联任务"),data));}
+    for(const job of unlinked){
+      const card=el("article","job-record"),heading=el("div","detail-heading");
+      heading.append(el("h4","",actionText(job.kind)),badge(job.status));card.append(heading);
+      if(present(job.step))card.append(progressView(job.step,job.total_steps));
+      card.append(metricsDetail(job.metrics));box.append(card);
+    }
   }
-  if(node.ancestryStatus==="unknown")technical.append(el("p","quiet-note",t("续接关系不完整，暂不认定完整迭代次数。")),rawFields({ancestry_reason:node.ancestryReason}));
-  else technical.append(fieldList([[t("续接次数"),node.iterationDepth]]));
-  const parents=runParentIds(s||node.row);
-  technical.append(el("h4","",t("运行关联依据")),el("p","quiet-note",parents.length?t("显式引用：{p0}", {p0: parents.join(t("、"))}):t("未报告显式父运行。")));
-  if(node.missing.length)technical.append(el("p","quiet-note",t("父引用不在本项目：{p0}", {p0: node.missing.join(t("、"))})));
-  if(node.ambiguous.length)technical.append(el("p","quiet-note",t("父 ID 歧义，未连线：{p0}", {p0: node.ambiguous.join(t("、"))})));
-  technical.append(el("h4","",t("流程顺序说明")),el("p","quiet-note",t("按已报告时间从早到晚展示，不表示因果。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。")));
-  box.append(retainedDetails(JSON.stringify([node.runId,"technical"]),scope.flowOpen,t("运行详情"),technical));return box;
+  if(node.ancestryStatus==="unknown")box.append(el("p","quiet-note",t("续接关系不完整，暂不认定完整迭代次数。")));
+  return box;
 }
+
 function projectDetail(node, model, scope) {
   if (node.type === "project") {
-    const box = el("div"); box.append(el("p", "eyebrow", t("项目")), el("h3", "", node.title), el("p", "", node.row.description || t("项目说明未报告。"))); const technical=el("details","record-details");technical.append(el("summary","",t("关系说明")),el("p","quiet-note",t("根节点固定在左侧。每向右一层表示一次明确的运行续接；同一父运行可以派生多个分支。资料引用不计入迭代深度。")),el("p","quiet-note",t("图展示当前公开快照，缺失或歧义引用不连线；训练进度完成不等于运行目标完成。")));box.append(technical);return box;
+    const box=el("div");box.append(el("h3","",projectName(node.row)));
+    if(node.row.description)box.append(el("p","",node.row.description));return box;
   }
   if (node.type === "run") return runDetail(node, scope);
   return el("div");

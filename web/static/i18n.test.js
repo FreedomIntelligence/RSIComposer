@@ -78,8 +78,8 @@ test("switching language rerenders cached graph/run, preserves selection/step/zo
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
   assert.equal(h.get("project-graph").graphView.scale,.75);assert.equal(h.get("project-graph").graphView.viewport.scrollLeft,123);assert.equal(h.get("project-graph").graphView.viewport.scrollTop,45);
   assert.match(text(h.get("project-graph")),/Metrics at review/);assert.match(text(h.get("project-graph")),/继续训练 原文 strategy/);
-  assert.match(text(h.get("project-graph")),/保留目标 objective/);assert.match(text(h.get("project-graph")),/错误 原文 log/);
-  assert.match(text(h.get("project-graph")),/custom.event/);
+  assert.match(text(h.get("project-graph")),/保留目标 objective/);assert.doesNotMatch(text(h.get("project-graph")),/错误 原文 log/);
+  assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
   assert.match(text(h.get("graph-tools")),/Fit/);assert.equal(findClass(h.get("graph-tools"),"graph-control-group").length,2);assert.equal(findClass(h.get("graph-tools"),"zoom-reset")[0].textContent,"75%");
   assert.equal(findClass(h.get("project-graph"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
@@ -91,7 +91,7 @@ test("unknown events and application errors/empty states switch without refetchi
   assert.equal(h.get("connection").textContent,"Disconnected");assert.equal(h.get("notice").textContent,"Request timed out.");assert.equal(h.get("empty-title").textContent,"Projects temporarily unavailable");assert.deepEqual(h.calls,[]);
   fixture(h);h.run('state.activeScope.cache.get("a").status="error"; state.activeScope.cache.get("a").errorInfo=uiError("运行快照协议或 ID 不匹配。"); renderProject(); RSII18n.setLanguage("zh"); RSII18n.setLanguage("en")');
   assert.match(text(h.get("project-graph")),/Run snapshot schema or ID mismatch/);assert.match(text(h.get("project-graph")),/Retaining the previous snapshot/);
-  assert.match(text(h.get("project-graph")),/custom.event/);
+  assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
 });
 
 test("flow navigation targets selected execution view and remains hidden without a snapshot", () => {

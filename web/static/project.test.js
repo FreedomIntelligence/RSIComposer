@@ -364,20 +364,20 @@ test("updated_at order changes relax cached runs even when nodes and edges stay 
   assert.equal(model(h).layoutStats.iterations, 0);
 });
 
-test("ResizeObserver fits actual graph bounds into a resized canvas and keeps them centered", () => {
+test("ResizeObserver preserves readable scale on dense graphs and allows scrolling", () => {
   const h = harness(); setup(h, [project("p", Array.from({ length: 15 }, (_, i) => run(String(i))))]);
   const host = h.get("project-graph"), view = host.graphView, viewport = view.viewport;
   const observer = h.observers.at(-1), initialScale = view.scale;
   assert.equal(observer.target, viewport);
   viewport.clientWidth = 320; viewport.clientHeight = 200; observer.callback();
-  assert.ok(view.scale < initialScale);
+  assert.ok(view.scale <= initialScale);assert.ok(view.scale>=.85);
   const plane = findClass(host, "graph-plane")[0];
   const [, dx, dy, scale] = plane.style.transform.match(/translate\(([-\d.e+]+)px,([-\d.e+]+)px\) scale\(([-\d.e+]+)\)/).map(Number);
   const nodes = model(h).nodes, xs = nodes.map(n => n.x * scale + dx), ys = nodes.map(n => n.y * scale + dy);
   assert.ok(Math.min(...xs) >= 0 && Math.max(...xs) <= viewport.clientWidth);
-  assert.ok(Math.min(...ys) >= 0 && Math.max(...ys) <= viewport.clientHeight);
+  assert.ok(Math.min(...ys)>=0);assert.ok(Math.max(...ys)>viewport.clientHeight);
   assert.ok(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - viewport.clientWidth / 2) < 1);
-  assert.ok(Math.abs((Math.min(...ys) + Math.max(...ys)) / 2 - viewport.clientHeight / 2) < 20);
+  assert.ok(Number.parseFloat(findClass(host,"graph-extent")[0].style.height)>viewport.clientHeight);
   assert.equal(viewport.scrollLeft, 0); assert.equal(viewport.scrollTop, 0);
   const resizedScale = view.scale; observer.callback(); assert.equal(view.scale, resizedScale);
   h.run("renderProject()"); assert.equal(observer.disconnected, true);
@@ -584,9 +584,9 @@ test("redrawing an idle graph preserves newly computed positions instead of cach
   assert.equal(h.frames.size, 0);
 });
 
-test("node controls have a 24px hit target and labels cannot intercept another node", () => {
+test("node controls have a 32px hit target and labels cannot intercept another node", () => {
   const css=fs.readFileSync(`${__dirname}/style.css`,"utf8");
-  assert.match(css,/\.graph-node \{[^}]*width: 24px; height: 24px;/);
+  assert.match(css,/\.graph-node \{[^}]*width: 32px; height: 32px;/);
   assert.match(css,/\.graph-node \{[^}]*transform: translate\(-50%, -50%\)/);
   assert.match(css,/\.graph-node \.node-label \{[^}]*position: absolute;[^}]*pointer-events: none/);
 });
@@ -677,7 +677,7 @@ test("root cannot be dragged and stays fixed while other nodes relax",()=>{
 });
 
 test("unchanged polling reuses run detail DOM without a refreshing message",async()=>{
-  const next=deferred(),snapshot=run("a",{decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",reason:"Choose a short training run"}]});
+  const next=deferred(),snapshot=run("a",{candidates:[{candidate_id:"unlinked",status:"accepted",metrics:{score:.8}}],decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",reason:"Choose a short training run"}]});
   const h=harness(()=>next.promise);setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');
   const detail=findClass(h.get("project-graph"),"run-detail")[0],record=findClass(detail,"record-details")[0];record.open=true;
   const pending=h.run('loadRun("a",state.activeScope,true)');
@@ -690,7 +690,7 @@ test("unchanged polling reuses run detail DOM without a refreshing message",asyn
 
 test("new feedback preserves native disclosures and selected step with a stable decision identity",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
-  seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",timestamp:"2026-11-01T00:00:02Z"}]}));h.run('selectRun("a")');
+  seed(h,"a",run("a",{candidates:[{candidate_id:"unlinked",status:"accepted",metrics:{score:.8}}],decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",timestamp:"2026-11-01T00:00:02Z"}]}));h.run('selectRun("a")');
   const detail=findClass(h.get("project-graph"),"graph-detail")[0];
   // Real DOM selectors, represented by the existing fake-DOM tree for this test.
   detail.querySelectorAll=()=>findClass(detail,"record-details").filter(d=>d.dataset.retainKey);
@@ -702,4 +702,23 @@ test("new feedback preserves native disclosures and selected step with a stable 
   assert.match(textOf(findClass(detail,"flow-step")[0]),/Recipe saved/);
   assert.equal(findClass(detail,"record-details").find(d=>d.dataset.retainKey===disclosure.dataset.retainKey).open,true);
   assert.equal(findClass(detail,"flow-map")[0].scrollLeft,123);
+});
+
+test("execution view shows decisions and results without internal identifiers or event dumps",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"private-decision-id",directive_id:"private-directive-id",timestamp:"2026-11-01T00:00:01Z",kind:"directive",source:"model",mode:"configure_prompt",strategy:"configure_prompt",reason:"Try a shorter instruction",feedback:{summary:"Instruction updated"},decision_revision:"local-sha256:internal"}],events:[{kind:"internal-event",summary:"event-debug-text"}]}));
+  h.run('selectRun("a")');
+  const text=textOf(findClass(h.get("project-graph"),"run-detail")[0]);
+  assert.match(text,/调整提示词/);assert.match(text,/Try a shorter instruction/);assert.match(text,/Instruction updated/);
+  assert.doesNotMatch(text,/记录详情|运行详情|运行事件|private-decision-id|private-directive-id|local-sha256|configure_prompt|event-debug-text/);
+  assert.match(h.run('reportMarkdown(state.snapshot)'),/private/);
+});
+
+test("candidate metrics already shown for a decision are not duplicated",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"evaluate",candidate_id:"c",metrics:{base_nll:1,candidate_nll:.8,eval_samples:10}}],candidates:[{candidate_id:"c",status:"accepted",metrics:{base_nll:1,candidate_nll:.8,eval_samples:10}}]}));h.run('selectRun("a")');
+  const detail=findClass(h.get("project-graph"),"run-detail")[0];
+  assert.equal(findClass(detail,"metric-table").length,1);
+  assert.equal(findClass(detail,"candidate-card").length,0);
+  assert.match(textOf(detail),/已采纳/);
 });
