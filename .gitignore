@@ -10,3 +10,6 @@ dist/
 
 # Local run databases, artifacts and snapshots
 runs/
+
+# Local verification evidence and optional runtime tooling
+.local/

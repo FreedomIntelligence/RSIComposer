@@ -161,3 +161,12 @@ to one logical NPU, and uses HCCL for distributed jobs. Single-NPU execution
 needs no distributed launcher. This does not install dependencies or allocate
 cluster resources. CANN and device visibility are preserved by the process
 adapter; optional frameworks remain imported only inside the worker.
+
+`VLLMBackend.supports_response_schema` advertises native structured-output
+transport. `GenerationRequest.response_schema` becomes `response_format` with
+`type=json_schema`, `strict=true` and that exact schema. This is distinct from
+`json_object`, which only requests JSON. A server rejection is surfaced without
+retrying unconstrained. Conflicting native format/tool options, truncated replies
+and duplicate JSON keys fail before execution. Server support for the particular
+schema is still required; domain validation and execution permissions remain in
+force. See [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/).

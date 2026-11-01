@@ -476,3 +476,15 @@ comparisons also include numerical/runtime differences and cannot isolate SFT
 quality. Use a matched serving backend for controlled quality conclusions.
 
 监控归属：多次实验默认归入 `medical-rsi`（医疗自主研究）。用 `--project-id` / `--project-name` 指定大项目，用 `--experiment-name` 命名本次实验；未指定实验名时使用运行目录名。项目归属不代表继承另一实验的模型或记忆，`--parent-run-id` 独立记录来源。
+
+With a `VLLMBackend` researcher, the medical wrapper forwards its native schema
+capability to `ResearchPolicy`. Each decision request carries the current action
+schemas; the serial example excludes wait, requires a finish rationale and
+training input references, and omits training-time review scheduling. This
+reflects existing execution rules, without prescribing research steps. Other
+backends keep their declared capability behavior. Operator evidence now includes
+`model_requests.jsonl` with the actual output budget and response schema, alongside
+raw responses. Preserve these locally like the other run evidence; they may contain
+research context. Schema-valid decisions can still be scientifically unhelpful or
+finish early; native output constraints do not establish autonomous research or
+training success.

@@ -111,3 +111,8 @@ ModelActivator 适配器只有在观察到 ready 且 model 与目标完全一致
 idempotency_key, changes)` 是独立控制请求，不替换原始 Directive。
 确认后的 `UpdateReceipt` 版本恰好增加 1；同键同请求重复返回原回执，不能用同键改变内容。
 支持哪些字段由可选 backend/handler 声明与验证，协议不承诺任意训练超参可热更新。
+
+Model requests may carry an optional `GenerationRequest.response_schema` JSON
+Schema. This is an output-format constraint, independent of model deployment and
+weight identity. Policies opt in only through a supporting backend; unsupported
+transports must fail explicitly rather than silently discard a requested schema.

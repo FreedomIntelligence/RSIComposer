@@ -207,6 +207,8 @@ def validate_local_application(app, *, ongoing=False):
         raise TypeError('Custom artifact stores need explicit snapshot integration')
     if not extension and dm.policy.max_validation_attempts != 1:
         raise ValueError('Custom policy retry budgets require an explicit recovery contract')
+    if not extension and dm.policy.structured_output:
+        raise ValueError('Structured policy backends require an explicit recovery contract')
     if not extension and dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):
         raise TypeError('Custom decision action bindings need explicit snapshot integration')
     expected_modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if app.config.learning == 'mock' else ())

@@ -40,10 +40,18 @@ class GenerationRequest:
     prompt: str
     system: str = ""
     max_output_tokens: int = 2048
+    response_schema: dict | None = None  # Optional native JSON Schema constraint.
 
     def __post_init__(self):
         if type(self.max_output_tokens) is not int or self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
+        if self.response_schema is not None:
+            import json
+            if not isinstance(self.response_schema, dict):
+                raise TypeError('response_schema must be a JSON Schema object or None')
+            # Copy caller-owned data and reject non-JSON schema values early.
+            object.__setattr__(self, 'response_schema', json.loads(
+                json.dumps(self.response_schema, allow_nan=False)))
 
 
 @dataclass(frozen=True)

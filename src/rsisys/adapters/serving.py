@@ -24,6 +24,8 @@ class VLLMBackend(RemoteModelBackend):
     ModelRef to a server alias; aliases may not represent two different revisions.
     """
 
+    supports_response_schema = True  # Transport support; server may reject a schema.
+
     def __init__(self, binding, models=None, *, generation_options=None):
         super().__init__(replace(binding, kind='chat_completions'))
         self.models = {}
@@ -68,6 +70,13 @@ class VLLMBackend(RemoteModelBackend):
         if self.binding.json_mode:
             payload['response_format'] = {'type': 'json_object'}
         payload.update(self.generation_options)
+        if request.response_schema is not None:
+            conflicts = {'response_format', 'structured_outputs', 'guided_json', 'guided_regex',
+                         'guided_grammar', 'tools', 'tool_choice'} & self.generation_options.keys()
+            if conflicts:
+                raise ValueError('Request schema conflicts with native generation options: ' + ', '.join(sorted(conflicts)))
+            payload['response_format'] = {'type': 'json_schema', 'json_schema': {
+                'name': 'rsisys_decision', 'strict': True, 'schema': request.response_schema}}
         payload['max_tokens'] = min(request.max_output_tokens,
                                    self.generation_options.get('max_tokens', request.max_output_tokens))
         payload.update(model=alias, messages=messages, stream=False)
@@ -79,6 +88,18 @@ class VLLMBackend(RemoteModelBackend):
                     or not isinstance(message['content'], str) or not message['content'].strip()
                     or message.get('refusal') or message.get('tool_calls')):
                 raise ValueError()
+            if request.response_schema is not None:
+                if data['choices'][0].get('finish_reason') != 'stop':
+                    raise ValueError('Structured response did not finish')
+                def unique_object(pairs):
+                    result = {}
+                    for key, value in pairs:
+                        if key in result:
+                            raise ValueError('Duplicate JSON response key')
+                        result[key] = value
+                    return result
+                if not isinstance(json.loads(message['content'], object_pairs_hook=unique_object), dict):
+                    raise ValueError('Structured response must be an object')
             usage = data.get('usage')
             usage = TokenUsage(usage.get('prompt_tokens'), usage.get('completion_tokens')) if usage else None
         except (KeyError, IndexError, TypeError, AttributeError, ValueError):

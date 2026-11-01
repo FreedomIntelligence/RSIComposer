@@ -52,6 +52,8 @@ class RemoteModelBackend:
         from urllib.request import Request, build_opener, HTTPRedirectHandler
         if not isinstance(request, GenerationRequest) or request.model.backend_id != self.binding.backend_id:
             raise ValueError("Generation request does not match this backend")
+        if request.response_schema is not None:
+            raise NotImplementedError('This backend does not implement native response_schema; use a supporting adapter')
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.binding.credential_env:
             key = os.environ.get(self.binding.credential_env)

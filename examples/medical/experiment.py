@@ -136,6 +136,10 @@ class DecisionBackend:
         self.check_deadline: Callable[[], None] = lambda: None
         self.training_active: Callable[[], bool] = lambda: False
 
+    @property
+    def supports_response_schema(self):
+        return getattr(self.serving, 'supports_response_schema', False) is True
+
     def generate(self, request):
         self.check_deadline()
         if self.training_active():
@@ -147,8 +151,10 @@ class DecisionBackend:
         write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
                                                   'requested_model': model})
         self.monitor.event('model_decision_requested', call=self.calls, requested_model=model)
-        response = self.serving.generate(replace(request,
-            max_output_tokens=8192 if self.decision_thinking else 1024))
+        request = replace(request, max_output_tokens=8192 if self.decision_thinking else 1024)
+        with (self.root / 'model_requests.jsonl').open('ab') as stream:
+            stream.write(encoded({'call': self.calls, 'request': asdict(request)}) + b'\n')
+        response = self.serving.generate(request)
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
             stream.write(encoded({'call': self.calls, 'requested_model': model,
                                   'response': asdict(response)}) + b'\n')
@@ -533,6 +539,22 @@ class ResearchPolicy(ModelDecisionPolicy):
         self.train_ref = train_ref
         self.finish_reason: str | None = None
 
+    def decision_schema(self, context):
+        schema = super().decision_schema(context)
+        # Match this example's existing serial execution rules, without choosing an action.
+        schema['oneOf'] = [branch for branch in schema['oneOf']
+                           if branch['properties']['kind']['const'] != 'wait']
+        for branch in schema['oneOf']:
+            fields = branch['properties']
+            if fields['kind']['const'] == 'finish':
+                fields['reason']['minLength'] = 1
+                branch['required'].append('reason')
+            if fields.get('mode', {}).get('const') == 'train':
+                fields.pop('review_after_seconds', None)
+                fields['input_ids']['minItems'] = 1
+                branch['required'].append('input_ids')
+        return schema
+
     def _generate_decision(self, context):
         # Keep the full archives in Harness/Experience, but avoid injecting the
         # same objective/directive bodies through several history streams.
@@ -577,7 +599,7 @@ class ResearchPolicy(ModelDecisionPolicy):
         name = names[0] if names else None
         normalized = None
         if name in operations ^ directives:
-            if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}:
+            if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds', 'reason'}:
                 raise ValueError('Unexpected fields in action envelope')
             if name in operations:
                 if payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None:
@@ -587,6 +609,8 @@ class ResearchPolicy(ModelDecisionPolicy):
                 normalized = {'kind': 'explore', 'mode': name, 'arguments': payload.get('arguments', {}),
                               'strategy': payload.get('strategy', 'Model requested '+name)}
                 normalized.update({key: payload[key] for key in ('input_ids', 'review_after_seconds') if key in payload})
+            if 'reason' in payload:
+                normalized['reason'] = payload['reason']
         if normalized is not None and normalized != payload:
             self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
             response = replace(response, text=json.dumps(normalized))

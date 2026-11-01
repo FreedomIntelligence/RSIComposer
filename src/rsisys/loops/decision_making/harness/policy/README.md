@@ -10,13 +10,21 @@
 
 ## 实现与替换
 
-同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None, max_validation_attempts=1)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
+同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None, max_validation_attempts=1, structured_output=None)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
 
 - invoke：operation 和 arguments；具体名称与参数由 Decision Action Space 校验。
 - explore：必填 strategy，mode 默认 execute。sft 需 recipe_ref，apply_result 默认 false；rl 需 recipe_ref，updates 默认 1，必须为正整数；evaluate 需 protocol_ref 和来自 context.candidates 的 candidate_id，也兼容 last_feedback.candidates；configure_prompt 需字符串 instructions。
 - wait：可选 job 对象含 job_id、backend，省略时让出一个调度轮次；finish：无额外必填参数。
 
 所有决策的可选顶层 `reason` 都保存在 `Decision.reason`，不会合并到 operation / directive 的 `arguments`。提示模型给出简短、可公开展示的决策依据：观察到的问题、为什么选择该动作、预期检查什么；这不是隐藏思维链，不读取或记录供应商原始 `reasoning_content`。`reason` 是模型的公开说明，不代表已经验证的事实。
+
+`structured_output=None` 在后端明确声明 `supports_response_schema=True` 时自动启用原生 JSON Schema 约束；`False` 显式关闭，`True` 在不支持的后端上于构造时明确报错。`policy.structured_output` 保存解析后的布尔值。启用后，普通决策和复查请求分别携带 `GenerationRequest.response_schema=policy.decision_schema(context)` 和 `policy.review_schema(context)`，不改变原有提示、模型身份检查或执行权限。
+
+两种 schema 均按当前上下文生成根 `oneOf`：每个可用操作各有一个 `kind="invoke"`、固定 `operation` 名称的分支；普通决策还为当前 `directive_modes` 中的每个 catalog 定义生成固定 `mode` 的 explore 分支，并保留 wait / finish。复查只包含当前操作和 `review_actions` 控制分支，不下发新指令。外层分支均设置 `additionalProperties=false`，操作和模式参数只放在嵌套的 `arguments`，不会把参数中的 `kind` 当成决策类型。自定义 `input_schema` 深拷贝后完整嵌入，保留其内部约束，不强制内部对象关闭额外属性，也不规定研究步骤或顺序。`reason` 仍可选，explore 保留必填 `strategy`、可选 `input_ids` 和正数或 null 的 `review_after_seconds`，wait 保留可选 job，复查保留可选正数或 null 的 `next_review_seconds`；不接受输入引用的模式只允许省略或空 `input_ids`。
+
+嵌入会改变 schema 的文档根，因此当前实现对输入 schema 中的文档内 `$ref`、`$dynamicRef`、`$recursiveRef`（空引用或以 `#` 开头，包括 JSON Pointer 和锚点）在请求模型前明确报错，不静默生成错误引用。可提供不使用文档内引用的 schema，或显式关闭 structured output；schema 的 `const` / `enum` / `default` / `examples` 中的引用字样属于数据，不受此限制。原生约束只负责生成格式；Action Space 校验、候选与输入引用检查、后端约束和权限检查仍按原边界执行。
+
+普通决策和复查共用严格 JSON 解析：同一对象中的重复键一律拒绝，包括 `arguments`、数组内对象等任意嵌套层级；不会选择最后一个值或修复歧义。不同对象可分别拥有同名键，例如外层 `kind="invoke"` 与 `arguments.kind="agenda"`。关闭 structured output 时也保留此检查。
 
 `max_validation_attempts` 为 1–8 的整数，表示普通 decide 的输出校验尝试总数，默认 1。
 仅 JSON 解析、提案结构或参数 schema 校验错误会带错误提示重新请求模型；传输失败、模型身份
