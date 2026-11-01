@@ -10,6 +10,7 @@ class Element {
   append(...nodes) { this.children.push(...nodes); }
   prepend(...nodes) { this.children.unshift(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
+  replaceChild(next,old) { const i=this.children.indexOf(old);if(i<0)throw Error("missing child");this.children[i]=next; }
   get childElementCount() { return this.children.length; }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   addEventListener(k, f) { this.listeners[k] = f; }
@@ -602,7 +603,7 @@ test("run execution subview follows the graph viewport and never inserts interna
   assert.equal(findClass(layout.children[1], "execution-sequence").length, 1);
   assert.equal(findClass(layout.children[1], "candidate-card").length, 1);
   assert.doesNotMatch(textOf(layout.children[1]), /导出此运行报告/);
-  assert.equal(typeof h.get("export-report").listeners.click, "function");
+  assert.equal(h.get("export-report").listeners.click, undefined);
 });
 
 test("execution navigation pages all steps, shows one detail and retains selection across repeated run clicks", () => {
@@ -711,7 +712,7 @@ test("execution view shows decisions and results without internal identifiers or
   const text=textOf(findClass(h.get("project-graph"),"run-detail")[0]);
   assert.match(text,/调整提示词/);assert.match(text,/Try a shorter instruction/);assert.match(text,/Instruction updated/);
   assert.doesNotMatch(text,/记录详情|运行详情|运行事件|private-decision-id|private-directive-id|local-sha256|configure_prompt|event-debug-text/);
-  assert.match(h.run('reportMarkdown(state.snapshot)'),/private/);
+  assert.equal(h.run('state.snapshot.decisions[0].decision_id'),"private-decision-id");
 });
 
 test("candidate metrics already shown for a decision are not duplicated",()=>{
@@ -721,4 +722,52 @@ test("candidate metrics already shown for a decision are not duplicated",()=>{
   assert.equal(findClass(detail,"metric-table").length,1);
   assert.equal(findClass(detail,"candidate-card").length,0);
   assert.match(textOf(detail),/已采纳/);
+});
+
+test("polling retains the attached detail/layout and restores current page scroll synchronously",async()=>{
+  const next=deferred(),h=harness(()=>next.promise);setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"finish"}]}));h.run('selectRun("a")');
+  const view=h.get("project-graph").graphView,layout=view.layout,detail=view.details;
+  h.ctx.window={scrollX:0,scrollY:700,scrollTo(options){this.scrollX=options.left;this.scrollY=options.top;assert.equal(options.behavior,"instant");}};
+  const originalReplace=layout.replaceChild.bind(layout);
+  layout.replaceChild=(...args)=>{originalReplace(...args);h.ctx.window.scrollY=0;};
+  const pending=h.run('loadRun("a",state.activeScope,true)');h.ctx.window.scrollY=980;
+  next.resolve(response(run("a",{decisions:[{decision_id:"d",kind:"finish",reason:"New feedback"}]})));await pending;
+  assert.equal(h.ctx.window.scrollY,980);assert.equal(h.get("project-graph").graphView.layout,layout);assert.equal(h.get("project-graph").graphView.details,detail);
+});
+
+test("blank-space panning works in both directions at scroll zero and persists through polling",()=>{
+  const h=harness();setup(h,[project("p",[run("a"),run("b")])]);
+  const viewport=h.get("project-graph").graphView.viewport;viewport.setPointerCapture=()=>{};
+  const before=findClass(h.get("project-graph"),"graph-plane")[0].style.transform;
+  viewport.listeners.pointerdown({button:0,target:{closest:()=>null},clientX:100,clientY:100,pointerId:1});
+  viewport.listeners.pointermove({clientX:160,clientY:220});viewport.listeners.pointerup();
+  const view=h.get("project-graph").graphView;
+  assert.equal(view.panX,60);assert.equal(view.panY,120);assert.equal(viewport.scrollTop,0);
+  const moved=findClass(h.get("project-graph"),"graph-plane")[0].style.transform;assert.notEqual(moved,before);
+  h.run('renderProject()');assert.equal(findClass(h.get("project-graph"),"graph-plane")[0].style.transform,moved);
+  const current=h.get("project-graph").graphView.viewport;current.setPointerCapture=()=>{};
+  current.listeners.pointerdown({button:0,target:{closest:()=>null},clientX:160,clientY:220,pointerId:2});
+  current.listeners.pointermove({clientX:100,clientY:100});current.listeners.pointerup();
+  assert.equal(view.panX,0);assert.equal(view.panY,0);assert.equal(findClass(h.get("project-graph"),"graph-plane")[0].style.transform,before);
+});
+
+test("ordinary refresh does not refit a scrolled automatic layout",()=>{
+  const h=harness();setup(h,[project("p",[run("a"),run("b")])]);
+  h.get("project-graph").graphView.viewport.scrollTop=150;
+  assert.equal(h.get("project-graph").graphView.autoFit,true);
+  h.run('renderProject()');assert.equal(h.get("project-graph").graphView.viewport.scrollTop,150);
+});
+
+test("sidebar selection switches project and node selection is the only run picker",()=>{
+  const h=harness();setup(h,[project("p",[run("a")]),project("q",[run("b")])]);
+  const buttons=h.get("project-list").children;assert.equal(buttons.length,2);assert.equal(buttons[0].attributes["aria-current"],"true");
+  h.run('refresh=function(){}');buttons[1].listeners.click();assert.equal(h.run('state.projectId'),"q");
+  assert.equal(h.get("project-list").children[1].attributes["aria-current"],"true");
+  const stable=h.get("project-list").children[1];h.run('renderSelectors()');assert.equal(h.get("project-list").children[1],stable);
+  assert.equal(h.get("run-select").listeners.change,undefined);
+});
+
+test("sidebar changes the deep link even when the new project has no selected cycle",()=>{
+  const h=harness();setup(h,[project("p",[run("a")]),project("q",[run("b")])]);seed(h,"a",run("a"));h.run('selectRun("a"); refresh=function(){}; history.replaceState=function(_,__,url){savedURL=String(url)}; selectProject("q")');
+  const url=new URL(h.run('savedURL'));assert.equal(url.searchParams.get('project'),'q');assert.equal(url.searchParams.has('run'),false);
 });

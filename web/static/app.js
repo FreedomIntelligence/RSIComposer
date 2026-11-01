@@ -45,17 +45,14 @@ function empty(text) { return el("p", "subtle-empty", text); }
 function dateText(v, withDate = true) { if (!v) return t("时间未报告"); const d = new Date(v); if (Number.isNaN(d.getTime())) return t("时间未报告"); return new Intl.DateTimeFormat(RSII18n.getLanguage() === "zh" ? "zh-CN" : "en-US", { ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d); }
 function secondsText(v) { if (!number(v) || v < 0) return t("未报告"); if (v > 0 && v < 1) return t("不足 1 秒"); const s = Math.floor(v); return [s >= 3600 ? t("{p0} 小时", {p0: Math.floor(s / 3600)}) : "", s >= 60 ? t("{p0} 分", {p0: Math.floor(s % 3600 / 60)}) : "", t("{p0} 秒", {p0: s % 60})].filter(Boolean).join(" "); }
 function fmt(v) { if (!number(v)) return "—"; if (v !== 0 && (Math.abs(v) < .0001 || Math.abs(v) >= 1e9)) return v.toExponential(4); return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(v); }
-const chrome = { connection: () => t("连接中"), tone: "", notice: "", noticeError: false,
+const chrome = { notice: "", noticeError: false,
   emptyTitle: () => t("等待第一次运行"), emptyDescription: () => t("尚无运行快照。") };
 const copy = value => typeof value === "function" ? value() : value;
 function uiError(key, params = {}) { return Object.assign(new Error(t(key, params)), { uiKey: key, uiParams: params }); }
 function errorText(error, fallback = "无法连接服务。") { return error?.uiKey ? t(error.uiKey, error.uiParams) : asText(error?.message || error?.error, t(fallback)); }
-function connection(text, tone = "") { chrome.connection=text;chrome.tone=tone;$("connection").textContent = copy(text); $("connection").className = `connection ${tone}`; }
 function notice(text, error = false) { chrome.notice=text;chrome.noticeError=error;const value=copy(text);$("notice").textContent = value; $("notice").hidden = !value; $("notice").className = `notice${error ? " error" : ""}`; }
-function showEmpty(title, text) { chrome.emptyTitle=title;chrome.emptyDescription=text; $("empty").hidden = false; $("empty-title").textContent = copy(title); $("empty-description").textContent = copy(text); $("export-report").disabled = !state.snapshot; }
+function showEmpty(title, text) { chrome.emptyTitle=title;chrome.emptyDescription=text; $("empty").hidden = false; $("empty-title").textContent = copy(title); $("empty-description").textContent = copy(text); }
 // Keep reported prose verbatim. Identifiers and long text live in disclosures.
-function fieldList(entries) { const dl = el("dl", "detail-grid"); for (const [k, v] of entries.filter(([, v]) => present(v))) dl.append(el("dt", "", k), el("dd", "", asText(v))); return dl; }
-function rawFields(row) { return fieldList(Object.entries(object(row)).filter(([, v]) => ["string", "number", "boolean"].includes(typeof v))); }
 function retainedDetails(key, store, title, content) {
   const d = el("details", "record-details"); d.dataset.retainKey=key; d.open = store.has(key); d.append(el("summary", "", title), content);
   d.addEventListener("toggle", () => { if (d.isConnected) { if (d.open) store.add(key); else store.delete(key); } }); return d;
@@ -184,6 +181,7 @@ function graphNeighborhood(model, key) {
 }
 // The graph is a single full-width plane; selected content follows it in normal flow.
 function renderGraph(host, model, key, onSelect, detailFor) {
+  const pagePosition=typeof window!=="undefined"?{left:window.scrollX,top:window.scrollY}:null;
   const previous = host.graphView, same = previous?.key === key;
   previous?.observer?.disconnect();
   previous?.stopSimulation?.();
@@ -195,7 +193,8 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   const bounds = () => ({ left: Math.min(...model.nodes.map(n=>n.x))-65, top: Math.min(...model.nodes.map(n=>n.y))-45,
     right: Math.max(...model.nodes.map(n=>n.x))+65, bottom: Math.max(...model.nodes.map(n=>n.y))+65 });
   let frame = same && !view.autoFit && view.frame ? {...view.frame} : bounds();
-  let width = frame.right-frame.left, height = frame.bottom-frame.top, offsetX=0, offsetY=0;
+  let width = frame.right-frame.left, height = frame.bottom-frame.top, offsetX=0, offsetY=0, pan=null;
+  view.panX ||= 0;view.panY ||= 0;
   const lines = svgEl("svg",{ width,height,"aria-hidden":"true" });
   const marker = svgEl("marker",{ id:`${host.id}-arrow`,viewBox:"0 0 8 8",refX:18,refY:4,markerWidth:5,markerHeight:5,orient:"auto" });
   marker.append(svgEl("path",{ d:"M0,0 L8,4 L0,8",fill:"context-stroke" })); const defs = svgEl("defs"); defs.append(marker); lines.append(defs);
@@ -256,6 +255,8 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     for(const n of model.nodes)place(n);
     for(const item of paths)draw(item);
     // Expand the canvas without changing its camera during dragging/settling.
+    frame.left=Math.min(frame.left,...model.nodes.map(n=>n.x-65));
+    frame.top=Math.min(frame.top,...model.nodes.map(n=>n.y-45));
     frame.right=Math.max(frame.right,...model.nodes.map(n=>n.x+65));
     frame.bottom=Math.max(frame.bottom,...model.nodes.map(n=>n.y+65));
     width=frame.right-frame.left;height=frame.bottom-frame.top;resize();
@@ -301,6 +302,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
       else if(root)node.x=Math.max(root.x+90,node.x);
       place(node);
       for(const item of incident.get(node.key)||[])draw(item);
+      frame.left=Math.min(frame.left,node.x-65);frame.top=Math.min(frame.top,node.y-45);
       frame.right=Math.max(frame.right,node.x+65);frame.bottom=Math.max(frame.bottom,node.y+65);
       width=frame.right-frame.left;height=frame.bottom-frame.top;resize();reheat();
     });
@@ -319,15 +321,15 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     buttons.set(node.key,button);place(node);plane.append(button);
   }
   const resize=()=>{
-    if(!view.dragging&&!view.simulating){
-      offsetX=Math.max(0,(viewport.clientWidth-width*view.scale)/2)-frame.left*view.scale;
-      offsetY=Math.max(0,(viewport.clientHeight-height*view.scale)/2)-frame.top*view.scale;
+    if((!view.dragging&&!view.simulating)||pan){
+      offsetX=Math.max(0,(viewport.clientWidth-width*view.scale)/2)-frame.left*view.scale+view.panX;
+      offsetY=Math.max(0,(viewport.clientHeight-height*view.scale)/2)-frame.top*view.scale+view.panY;
     }
     plane.style.width=`${frame.right}px`;plane.style.height=`${frame.bottom}px`;
     plane.style.transform=`translate(${offsetX}px,${offsetY}px) scale(${view.scale})`;
     lines.setAttribute("width",frame.right);lines.setAttribute("height",frame.bottom);
-    extent.style.width=`${Math.max(viewport.clientWidth,width*view.scale)}px`;
-    extent.style.height=`${Math.max(viewport.clientHeight,height*view.scale)}px`;
+    extent.style.width=`${Math.max(viewport.clientWidth,frame.right*view.scale+offsetX)}px`;
+    extent.style.height=`${Math.max(viewport.clientHeight,frame.bottom*view.scale+offsetY)}px`;
     zoomLabel.textContent=`${Math.round(view.scale*100)}%`;view.frame={...frame};
   };
   const scaleTo=(scale,centered=true)=>{
@@ -336,7 +338,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     if(centered){viewport.scrollLeft=cx*view.scale+offsetX-viewport.clientWidth/2;viewport.scrollTop=cy*view.scale+offsetY-viewport.clientHeight/2;}
   };
   const fit=()=>{
-    frame=bounds();width=frame.right-frame.left;height=frame.bottom-frame.top;
+    view.panX=0;view.panY=0;frame=bounds();width=frame.right-frame.left;height=frame.bottom-frame.top;
     scaleTo(Math.max(.85,Math.min((viewport.clientWidth-20)/width,(viewport.clientHeight-20)/height,1.25)),false);
     view.autoFit=true;viewport.scrollLeft=0;viewport.scrollTop=0;
   };
@@ -350,12 +352,11 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   }
   controls.append(zoomGroup,layoutGroup);
   viewport.addEventListener("wheel",e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();scaleTo(view.scale*(e.deltaY<0?1.1:1/1.1));}},{passive:false});
-  let pan=null;
   viewport.addEventListener("pointerdown",e=>{
     if(e.button!==0||e.target.closest("button"))return;
-    view.autoFit=false;pan={x:e.clientX,y:e.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};view.dragging=true;viewport.setPointerCapture(e.pointerId);viewport.classList.add("panning");
+    view.autoFit=false;view.panX-=viewport.scrollLeft;view.panY-=viewport.scrollTop;viewport.scrollLeft=0;viewport.scrollTop=0;pan={x:e.clientX,y:e.clientY,left:view.panX,top:view.panY};view.dragging=true;viewport.setPointerCapture(e.pointerId);viewport.classList.add("panning");resize();
   });
-  viewport.addEventListener("pointermove",e=>{if(pan){viewport.scrollLeft=pan.left-e.clientX+pan.x;viewport.scrollTop=pan.top-e.clientY+pan.y;}});
+  viewport.addEventListener("pointermove",e=>{if(pan){view.panX=pan.left+e.clientX-pan.x;view.panY=pan.top+e.clientY-pan.y;resize();}});
   const endPan=()=>{if(!pan)return;pan=null;view.dragging=false;viewport.classList.remove("panning");if(view.pendingRender){view.pendingRender=false;renderProject();}};
   viewport.addEventListener("pointerup",endPan);viewport.addEventListener("pointercancel",endPan);viewport.addEventListener("lostpointercapture",endPan);
   viewport.addEventListener("keydown",e=>{
@@ -363,9 +364,13 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     e.preventDefault();const keys=[...buttons.keys()],i=keys.indexOf(e.target.dataset.nodeKey),next=e.key==="Home"?0:e.key==="End"?keys.length-1:Math.max(0,Math.min(keys.length-1,i+(e.key==="ArrowRight"?1:-1)));
     buttons.get(keys[next]).focus();
   });
-  extent.append(plane);viewport.append(extent);const layout=el("div","graph-layout");layout.append(viewport);if(details)layout.append(details);
-  $("graph-tools").replaceChildren(controls);host.replaceChildren(layout);view.viewport=viewport;host.graphView=view;resize();
-  if(!same || view.autoFit || model.topologyChanged)fit();else{viewport.scrollLeft=view.left;viewport.scrollTop=view.top;}
+  extent.append(plane);viewport.append(extent);
+  const layout=same&&previous.layout?previous.layout:el("div","graph-layout");
+  if(same&&previous.layout)layout.replaceChild(viewport,previous.viewport);
+  else {layout.append(viewport);if(details)layout.append(details);host.replaceChildren(layout);}
+  view.layout=layout;
+  $("graph-tools").replaceChildren(controls);view.viewport=viewport;host.graphView=view;resize();
+  if(!same || (view.autoFit&&model.topologyChanged))fit();else{viewport.scrollLeft=view.left;viewport.scrollTop=view.top;}
   if(typeof ResizeObserver !== "undefined") {
     let lastWidth=viewport.clientWidth,lastHeight=viewport.clientHeight;
     view.observer=new ResizeObserver(()=>{
@@ -377,6 +382,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   }
   if(byKey.has(view.selected))select(byKey.get(view.selected),false);
   if(focusedKey)buttons.get(focusedKey)?.focus({preventScroll:true});
+  if(same&&pagePosition)window.scrollTo({...pagePosition,behavior:"instant"});
 }
 const sameId = (a, b) => present(a) && present(b) && a === b;
 function linkedJob(row, s) {
@@ -490,66 +496,10 @@ function comparisonView(metrics) {
   for (const name of [t("指标"),t("基线"),t("候选"),t("候选 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
-function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true; $("export-report").disabled=false; updateMetricsNavigation(); }
-// Pure snapshot-to-Markdown conversion: no model call, network request or upload.
-const md = value => asText(value, t("未报告")).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replace(/([\\`*_{}\[\]()#+.!|~-])/g, "\\$1");
-function reportMetrics(metrics) {
-  const entries = Object.entries(flattenMetrics(metrics));
-  return entries.length ? entries.map(([key,v]) => t("- {p0}（{p1}）：{p2}", {p0: md(metricText(key)), p1: md(key), p2: fmt(v)})).join("\n") : t("未报告指标。");
-}
-function reportDetails(row) {
-  const lines = Object.entries(object(row)).filter(([,v])=>["string","number","boolean"].includes(typeof v)).map(([k,v])=>t("- {p0}：{p1}", {p0: md(k), p1: md(v)}));
-  if (parentIds(row).length) lines.push(t("- 显式父决策：{p0}", {p0: parentIds(row).map(md).join(t("、"))}));
-  return t("<details>\n<summary>技术详情与原始记录</summary>\n\n{p0}\n\n</details>", {p0: lines.join("\n")});
-}
-function reportMarkdown(s) {
-  const jobs=list(s.jobs), decisions=list(s.decisions), candidates=list(s.candidates), rounds=list(s.round_results);
-  const lines=[t("# RSISys 运行报告"), "", state.demo ? t("> 示例数据 · 静态演示，不代表真实运行。") : t("> 来自当前公开快照；不调用模型，不上传数据。"), "", t("项目：{p0}", {p0: md(projectName(projectMeta(s.project)))}), t("系统：{p0}", {p0: md(projectMeta(s.project).system_id || t("未报告"))}), t("目标：{p0}", {p0: md(s.objective)}), "", t("运行状态：{p0}", {p0: md(statusText(s.status))}), t("快照时间：{p0}", {p0: md(s.updated_at)}), t("导出时间：{p0}", {p0: md(new Date().toISOString())}), "", t("本报告反映已读取的快照。缺失字段不代表零、成功或未执行；结束本轮研究不等于停止整个运行。")];
-  if($("connection").classList.contains("offline")) lines.push("",t("> 连接中断：本报告使用上次成功读取的快照，数据未更新。"));
-  if(!state.demo && ACTIVE.has(statusKey(s.status)) && Date.now()-Date.parse(s.updated_at)>120000) lines.push("",t("> 快照超过 2 分钟未更新。"));
-  lines.push("", t("## 决策与反馈"), "");
-  if(!decisions.length)lines.push(t("未报告决策记录，无法重建决策或反馈。"));
-  for(const g of decisionGroups(s)) {
-    const r=g.row,f=feedbackFor(r,s);
-    lines.push(`### ${md(actionText(decisionAction(r)))}${g.rows.length>1?t(" · 重复报告 {p0} 次", {p0: g.rows.length}):""}`, "", `${md(dateText(r.timestamp))}${number(r.round)?t(" · 第 {p0} 轮", {p0: r.round}):""}`, "", t("反馈：{p0}", {p0: md(object(r.feedback).summary||r.feedback_summary||f.text)}), "",reportMetrics(f.metrics),"");
-    if(r.kind==="review" && f.job)lines.push(t("关联任务当前{p0}；不代表复查当时状态。", {p0: md(statusText(f.job.status))}),"");
-    if(decisionAction(r)==="finish")lines.push(t("运行当前{p0}。", {p0: md(statusText(s.status))}),"");
-    if(present(r.reason)||present(r.strategy))lines.push(t("决策原文："), "", md(r.reason||r.strategy), "");
-    lines.push(t("<details>\n<summary>全部 {p0} 条原始记录</summary>\n", {p0: g.rows.length}),...g.rows.map(record=>reportDetails(record)),"\n</details>","");
-  }
-  lines.push(t("## 训练与评测"), "");
-  if(!jobs.length)lines.push(t("未报告任务，无法确认是否执行过训练或评测。未补造训练曲线。"), "");
-  for(const [i,j] of jobs.entries()) {
-    lines.push(t("### 任务 {p0} · {p1}", {p0: i+1, p1: md(actionText(j.kind))}),"",t("状态：{p0}", {p0: md(statusText(j.status))}),t("耗时：{p0}", {p0: secondsText(j.elapsed_seconds)}),t("步骤：{p0} / {p1}", {p0: number(j.step)?j.step:t("未报告"), p1: number(j.total_steps)?j.total_steps:t("未报告")}),"",reportMetrics(j.metrics),"");
-    if(["queued","pending","proposed","submitted"].includes(statusKey(j.status)))lines.push(t("尚未报告实际开始执行。"),"");
-    const history=historyRows(j);lines.push(t("快照历史：{p0} 点（最多 1000 点）。", {p0: history.length}));
-    if(!history.length)lines.push(t("无历史数据；当前指标不能还原训练过程。"));
-    for(const [keys,title] of [[lossKeys,t("损失")],[lrKeys,t("学习率")]]) {
-      const values=history.map(p=>metricValue(p.metrics,keys)).filter(number);
-      if(!values.length)lines.push(t("{p0}：未报告历史。", {p0: title}));
-      else lines.push(t("{p0}：{p1} 个数值点；首点 {p2}，末点 {p3}，范围 {p4} 至 {p5}{p6}。", {p0: title, p1: values.length, p2: fmt(values[0]), p3: fmt(values[values.length-1]), p4: fmt(Math.min(...values)), p5: fmt(Math.max(...values)), p6: values.length===1?t("；仅单点，无法判断趋势"):""}));
-    }
-    lines.push("",reportDetails(j),"");
-  }
-  lines.push(t("## 候选与轮次"), "");
-  if(!candidates.length)lines.push(t("未报告候选记录。"), "");
-  for(const [i,c] of candidates.entries()) lines.push(t("### 候选 {p0}", {p0: i+1}),"",t("状态：{p0}", {p0: md(statusText(c.status))}),"",reportMetrics(c.metrics),"",reportDetails(c),"");
-  if(!rounds.length)lines.push(t("未报告轮次结果，无法确认是否执行或应用候选。"), "");
-  for(const r of rounds)lines.push(t("### 第 {p0} 轮", {p0: number(r.round)?r.round:t("未知")}),"",r.applied===true?t("已应用候选。"):r.applied===false?t("未应用候选。"):t("是否应用：未报告。"),r.answer_correct===true?t("答案验证正确。"):r.answer_correct===false?t("答案验证不正确。"):t("答案验证：未报告。"),"",reportMetrics(r.metrics),"",reportDetails(r),"");
-  lines.push(t("## 数据范围"), "", t("仅包含当前公开快照（API 最多返回 300 条决策），不代表完整实验历史。数值为上报指标；差值的定义以生产端为准，不自动判定改善。缺失指标不补零。旧运行没有历史时不生成趋势。"), "",reportDetails({run_id:s.run_id,status:s.status,updated_at:s.updated_at}),"");
-  return lines.join("\n");
-}
-function downloadReport() {
-  if(!state.snapshot)return;
-  const blob=new Blob([reportMarkdown(state.snapshot)],{type:"text/markdown;charset=utf-8"}),url=URL.createObjectURL(blob),a=el("a");
-  a.href=url;a.download=t("RSISys-{p0}报告-{p1}.md", {p0: state.demo?t("示例-"):"", p1: new Date().toISOString().replace(/[:.]/g,"-")});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-$("export-report").addEventListener("click",downloadReport);
-
+function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true;  }
 function clearRun() {
   state.snapshot = null;
-  updateMetricsNavigation();
-  $("export-report").disabled = true;
+
 
 }
 function projectMeta(value) {
@@ -588,7 +538,7 @@ function projectModel(project, scope) {
   const runs = runRows(project), nodes = [{ key: "project-root", type: "project", row: project, title: `0 · ${projectName(project)}`, label: t("项目"), x: 20, y: 90 }], edges = [];
   runs.forEach((row, i) => {
     const key=JSON.stringify(["run",row.run_id]),entry=scope.cache.get(row.run_id);
-    nodes.push({key,type:"run",projectId:project.project_id,row:entry?.snapshot||row,runId:row.run_id,title:t("运行 {p0}",{p0:i+1}),label:t("运行"),summary:statusText(row.status),layoutOrder:i,loadStatus:entry?.status==="pending"&&entry.snapshot?"ready":entry?.status,missing:[],ambiguous:[]});
+    nodes.push({key,type:"run",projectId:project.project_id,row:entry?.snapshot||row,runId:row.run_id,title:t("研究轮次 {p0}",{p0:i+1}),label:t("研究轮次"),summary:statusText(row.status),layoutOrder:i,loadStatus:entry?.status==="pending"&&entry.snapshot?"ready":entry?.status,missing:[],ambiguous:[]});
   });
   const topology=RSILineage.build(nodes,edges);
   const signature = JSON.stringify([topology.nodes.map(n => [n.key,n.depth,n.treeRow]).sort(), topology.edges.map(e => [e.from,e.to,e.kind]).sort()]);
@@ -611,9 +561,9 @@ function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),heading=el("div","section-heading"),groups=executionGroups(s);
   section.id="execution-flow";
-  heading.append(el("h4","", t("执行流程")),el("span","quiet-note",t("{p0} 步", {p0: groups.length})));section.append(heading);
+  heading.append(el("h4","", t("决策与反馈")),el("span","quiet-note",t("{p0} 步", {p0: groups.length})));section.append(heading);
 
-  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label",t("运行内执行步骤"));section.append(navigation);
+  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label",t("本轮研究的决策"));section.append(navigation);
   const entries=el("ol","flow-steps");section.append(entries);
   const fill=(restoreFocus=false)=>{
     let selectedButton;
@@ -713,7 +663,6 @@ function setSelectedRun(id, scope) {
   scope.runId = id; state.runId = id;
   const s = scope.cache.get(id)?.snapshot;
   if (s) renderSnapshot(s); else clearRun();
-  $("run-select").value = id;
   if (!state.demo) {
     const url = new URL(location.href); url.searchParams.set("project", state.projectId);
     if (id) url.searchParams.set("run", id); else url.searchParams.delete("run");
@@ -727,8 +676,7 @@ function renderProject() {
   const scope = state.activeScope || activateProject(), model = projectModel(project, scope);
   $("project-name").textContent = projectName(project); $("project-description").textContent = project.description || "";
   $("project-system").textContent = "";
-  $("project-run-count").textContent = t("{p0} 次运行", {p0: runRows(project).length});
-  $("project-overview").hidden = false;
+  $("project-run-count").textContent = t("{p0} 轮研究", {p0: runRows(project).length});
   if (!model.nodes.some(n => n.key === scope.selected)) scope.selected = scope.runId ? JSON.stringify(["run", scope.runId]) : "project-root";
   if ($("project-graph").graphView) $("project-graph").graphView.selected = scope.selected;
   for (const n of model.nodes) n.selected = n.key === scope.selected;
@@ -761,13 +709,20 @@ function chooseProjects(input) {
   renderProject();
 }
 function renderSelectors() {
-  const runs = runRows(selectedProject());
-  const projects = state.projects.map(p => { const option = el("option", "", projectName(p)); option.value = p.project_id; return option; });
-  if (!projects.length) { const option = el("option", "", t("暂无项目")); option.value = ""; projects.push(option); }
-  $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
-  const all = el("option", "", t("选择运行")); all.value = "";
-  $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", t("运行 {p0} · {p1}", {p0: i + 1, p1: statusText(r.status)})); option.value = r.run_id; return option; }));
-  $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
+  const host=$("project-list"),signature=JSON.stringify([RSII18n.getLanguage(),state.projectId,state.projects.map(p=>[p.project_id,projectName(p)])]);
+  if(host.signature===signature)return;
+  host.signature=signature;
+  const buttons=state.projects.map(project=>{
+    const button=el("button","project-choice",projectName(project));button.type="button";
+    button.setAttribute("aria-current",project.project_id===state.projectId?"true":"false");
+    button.addEventListener("click",()=>selectProject(project.project_id));return button;
+  });
+  host.replaceChildren(...(buttons.length?buttons:[empty(t("暂无项目"))]));
+}
+function selectProject(id) {
+  if(id===state.projectId)return;
+  state.controller?.abort();++state.epoch;state.projectId=id;
+  activateProject();chooseProjects(state.projects);setSelectedRun(state.activeScope.runId,state.activeScope);refresh();
 }
 
 function selectRun(id) {
@@ -830,19 +785,19 @@ function schedule() {
 async function refresh() {
   clearTimeout(state.timer); state.controller?.abort();
   const epoch = ++state.epoch, controller = new AbortController(); state.controller = controller;
-  const timeout = setTimeout(() => controller.abort(), 8000); $("refresh").disabled = true;
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     if (state.demo) {
       const s = await fetchJSON("/demo.json", controller.signal);
       if (epoch !== state.epoch) return;
       const snapshots = [s, ...list(s.demo_runs)]; state.demoSnapshots = new Map(snapshots.map(r => [r.run_id, r]));
       chooseProjects([{ ...projectMeta(s.project), runs: snapshots }]);
-      connection(() => t("示例数据"), "demo"); notice(() => t("示例数据 · 静态演示，不代表真实运行。")); $("footer-source").textContent = t("示例数据 · 静态快照");
+      notice(() => t("示例数据 · 静态演示，不代表真实运行。")); $("footer-source").textContent = t("示例数据 · 静态快照");
     } else {
       const data = await fetchJSON("/api/projects", controller.signal);
       if (epoch !== state.epoch) return;
       if (!Array.isArray(data.projects)) throw uiError("项目清单格式无效。");
-      chooseProjects(data.projects); connection(() => t("已连接"), "online"); notice(""); $("footer-source").textContent = t("本地监控 · 只读");
+      chooseProjects(data.projects); notice(""); $("footer-source").textContent = t("本地监控 · 只读");
     }
     clearTimeout(timeout);
     const scope = state.activeScope;
@@ -851,11 +806,11 @@ async function refresh() {
     if (!state.projects.length) showEmpty(() => t("等待第一个项目"), () => t("尚无项目或运行快照；有数据后将自动显示。"));
   } catch (error) {
     if (epoch !== state.epoch) return;
-    connection(() => t("连接中断"), "offline"); notice(() => t("保留已读取的项目图与快照。{p0}", {p0: controller.signal.aborted ? t("请求超时。") : errorText(error,"无法连接监控服务。")}), true);
+    notice(() => t("保留已读取的项目图与快照。{p0}", {p0: controller.signal.aborted ? t("请求超时。") : errorText(error,"无法连接监控服务。")}), true);
     if (!selectedProject()) showEmpty(() => t("暂时无法读取项目"), () => t("请检查本地监控服务；恢复后将自动重新读取。"));
   } finally {
     clearTimeout(timeout);
-    if (epoch === state.epoch) { $("refresh").disabled = false; state.controller = null; schedule(); }
+    if (epoch === state.epoch) { state.controller = null; schedule(); }
   }
 }
 function switchDemo() {
@@ -877,11 +832,8 @@ function switchDemo() {
   $("projects").hidden = true;
   clearRun();
   state.snapshot = null;
-    $("export-report").disabled = true;
   $("demo").textContent = state.demo ? t("返回") : t("示例");
   $("demo").setAttribute("aria-pressed", String(state.demo));
-  $("auto-refresh").checked = state.demo ? false : state.auto;
-  $("auto-refresh").disabled = state.demo;
   $("empty").hidden = false;
   refresh();
 }
@@ -890,37 +842,21 @@ $("empty-demo").addEventListener("click", () => {
   if (!state.demo) switchDemo();
   else refresh();
 });
-$("refresh").addEventListener("click", refresh);
-$("auto-refresh").addEventListener("change", () => {
-  state.auto = $("auto-refresh").checked;
-  schedule();
-});
-$("run-select").addEventListener("change", () => selectRun($("run-select").value));
-$("project-select").addEventListener("change", () => { state.controller?.abort(); ++state.epoch; state.projectId = $("project-select").value; activateProject(); chooseProjects(state.projects); refresh(); });
-$("project-overview").addEventListener("click", () => selectRun(""));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(state.timer); $("project-graph").graphView?.stopSimulation?.(); }
   else if (state.auto && !state.demo) refresh();
 });
-function updateMetricsNavigation() {
-  const link=$("nav-metrics");if(!link)return;
-  link.hidden=!state.runId || !state.snapshot;
-  link.setAttribute("aria-disabled",String(link.hidden));
-}
 function renderLanguage() {
   RSII18n.applyStatic(document);
   for(const lang of ["zh","en"])$("lang-"+lang)?.setAttribute("aria-pressed",String(RSII18n.getLanguage()===lang));
   $("demo").textContent=state.demo?t("返回"):t("示例");
-  connection(chrome.connection,chrome.tone);notice(chrome.notice,chrome.noticeError);
+  notice(chrome.notice,chrome.noticeError);
   $("empty-title").textContent=copy(chrome.emptyTitle);$("empty-description").textContent=copy(chrome.emptyDescription);
   $("footer-source").textContent=state.demo?t("示例数据 · 静态快照"):t("本地监控 · 只读");
   if(state.projects.length || state.activeScope)renderSelectors();
   if(state.snapshot)renderSnapshot(state.snapshot);
-  renderProject();updateMetricsNavigation();
+  renderProject();
 }
-$("nav-metrics")?.addEventListener("click",event=>{
-  if(!state.runId || !state.snapshot){event.preventDefault();return;}
-});
 for(const lang of ["zh","en"])$("lang-"+lang)?.addEventListener("click",()=>RSII18n.setLanguage(lang));
 RSII18n.subscribe(renderLanguage);
 renderLanguage();

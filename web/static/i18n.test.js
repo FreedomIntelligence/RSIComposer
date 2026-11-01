@@ -87,17 +87,17 @@ test("switching language rerenders cached graph/run, preserves selection/step/zo
 });
 
 test("unknown events and application errors/empty states switch without refetching", () => {
-  const h=monitor();h.run('connection(()=>t("连接中断"),"offline"); notice(()=>t("请求超时。"),true); showEmpty(()=>t("暂时无法读取项目"),()=>t("请检查本地监控服务；恢复后将自动重新读取。")); RSII18n.setLanguage("en")');
-  assert.equal(h.get("connection").textContent,"Disconnected");assert.equal(h.get("notice").textContent,"Request timed out.");assert.equal(h.get("empty-title").textContent,"Projects temporarily unavailable");assert.deepEqual(h.calls,[]);
+  const h=monitor();h.run('notice(()=>t("请求超时。"),true); showEmpty(()=>t("暂时无法读取项目"),()=>t("请检查本地监控服务；恢复后将自动重新读取。")); RSII18n.setLanguage("en")');
+  assert.equal(h.get("connection").textContent,undefined);assert.equal(h.get("notice").textContent,"Request timed out.");assert.equal(h.get("empty-title").textContent,"Projects temporarily unavailable");assert.deepEqual(h.calls,[]);
   fixture(h);h.run('state.activeScope.cache.get("a").status="error"; state.activeScope.cache.get("a").errorInfo=uiError("运行快照协议或 ID 不匹配。"); renderProject(); RSII18n.setLanguage("zh"); RSII18n.setLanguage("en")');
   assert.match(text(h.get("project-graph")),/Run snapshot schema or ID mismatch/);assert.match(text(h.get("project-graph")),/Retaining the previous snapshot/);
   assert.doesNotMatch(text(h.get("project-graph")),/custom.event/);
 });
 
-test("flow navigation targets selected execution view and remains hidden without a snapshot", () => {
-  const h=monitor();assert.equal(h.get("nav-metrics").hidden,true);let prevented=false;h.get("nav-metrics").listeners.click({preventDefault(){prevented=true;}});assert.equal(prevented,true);
-  fixture(h);assert.equal(h.get("nav-metrics").hidden,false);h.get("nav-metrics").listeners.click({preventDefault(){throw Error("should navigate");}});assert.ok(html.includes('href="#execution-flow"'));assert.equal(findClass(h.get("project-graph"),"execution-sequence")[0].id,"execution-flow");
-  h.run('selectRun("")');assert.equal(h.get("nav-metrics").hidden,true);
+test("sidebar replaces navigation and run selectors; manual refresh and export are absent",()=>{
+  for(const id of ["nav-metrics","project-select","run-select","connection","refresh","auto-refresh","export-report"])
+    assert.ok(!html.includes(`id="${id}"`),id);
+  assert.ok(html.includes('id="project-list"'));
 });
 
 test("changing language during graph RAF defers its redraw, retains motion and performs no request", () => {
@@ -106,10 +106,5 @@ test("changing language during graph RAF defers its redraw, retains motion and p
   button.listeners.pointerdown({button:0,clientX:100,clientY:100,pointerId:1,stopPropagation(){}});
   button.listeners.pointermove({clientX:145,clientY:125,pointerId:1});assert.equal(h.frames.size,1);
   const node=button;h.get("lang-en").listeners.click();assert.equal(host.graphView,view);assert.equal(view.pendingRender,true);assert.equal(h.frames.size,1);assert.equal(findClass(host,"graph-node")[1],node);
-  h.frames.step();button.listeners.pointerup();h.frames.drain();assert.equal(view.simulating,false);assert.equal(view.pendingRender,false);assert.match(text(host),/Run 1/);assert.deepEqual(h.calls,[]);
-});
-
-test("export follows the selected UI language and retains reported original text", () => {
-  const h=monitor();fixture(h);h.run('RSII18n.setLanguage("en")');const report=h.run("reportMarkdown(state.snapshot)");
-  assert.match(report,/# RSISys run report/);assert.match(report,/保留目标 objective/);assert.match(report,/训练模型 原文 reason/);assert.match(report,/继续训练 原文 strategy/);assert.match(report,/custom\\.reward/);assert.deepEqual(h.calls,[]);
+  h.frames.step();button.listeners.pointerup();h.frames.drain();assert.equal(view.simulating,false);assert.equal(view.pendingRender,false);assert.match(text(host),/Research cycle 1/);assert.deepEqual(h.calls,[]);
 });

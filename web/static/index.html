@@ -15,30 +15,27 @@
   <a class="skip" href="#main" data-i18n="跳至内容">跳至内容</a>
   <header class="masthead">
     <a class="wordmark" href="/" aria-label="RSISys 首页" data-i18n-aria-label="RSISys 首页">RSISys<span>.</span></a>
-    <div class="header-actions"><nav aria-label="页面导航" data-i18n-aria-label="页面导航"><a href="#projects" data-i18n="项目">项目</a><a id="nav-metrics" href="#execution-flow" data-i18n="流程">流程</a><button id="demo" class="text-button" aria-pressed="false">示例</button></nav><div class="language-switch" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言"><button id="lang-zh" type="button" lang="zh-CN" aria-pressed="true">中</button><button id="lang-en" type="button" lang="en" aria-pressed="false">EN</button></div></div>
+    <div class="header-actions"><button id="demo" class="text-button" aria-pressed="false">示例</button><div class="language-switch" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言"><button id="lang-zh" type="button" lang="zh-CN" aria-pressed="true">中</button><button id="lang-en" type="button" lang="en" aria-pressed="false">EN</button></div></div>
   </header>
-  <main id="main">
-    <div class="toolbar">
-      <div class="run-control"><label for="project-select" data-i18n="项目">项目</label><select id="project-select"><option value="" data-i18n="正在读取…">正在读取…</option></select><label for="run-select" data-i18n="运行">运行</label><select id="run-select"><option value="" data-i18n="项目总览">项目总览</option></select></div>
-      <div class="refresh-controls">
-        <span id="connection" class="connection" role="status">连接中</span>
-        <label class="auto"><input id="auto-refresh" type="checkbox" checked /><span data-i18n="自动刷新">自动刷新</span></label>
-        <button id="refresh" aria-label="立即刷新" data-i18n-aria-label="立即刷新" title="立即刷新" data-i18n-title="立即刷新" data-i18n="刷新">刷新</button>
-        <button id="export-report" disabled data-i18n="导出">导出</button>
-      </div>
-    </div>
-    <div id="notice" class="notice" role="status" hidden></div>
-    <section id="projects" aria-labelledby="project-name" hidden>
-      <div class="project-heading"><div><h1 id="project-name"></h1><p id="project-description"></p><p id="project-system" hidden></p></div><button id="project-overview" class="text-button" data-i18n="详情">详情</button></div>
-      <div class="graph-header"><h2><span data-i18n="研究脉络">研究脉络</span> <span id="project-run-count"></span></h2><div id="graph-tools"></div></div>
-      <div id="project-graph"></div>
-    </section>
-    <section id="empty" class="empty-state" hidden>
-      <h1 id="empty-title">等待第一次运行</h1>
-      <p id="empty-description">尚无运行快照。</p>
-      <button id="empty-demo" data-i18n="浏览示例数据">浏览示例数据</button>
-    </section>
-  </main>
+  <div class="workspace-shell">
+    <aside class="project-sidebar" aria-labelledby="project-list-heading">
+      <h2 id="project-list-heading" data-i18n="项目">项目</h2>
+      <div id="project-list" class="project-list" role="group" aria-label="项目" data-i18n-aria-label="项目"></div>
+    </aside>
+    <main id="main">
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="projects" aria-labelledby="project-name" hidden>
+        <div class="project-heading"><div><h1 id="project-name"></h1><p id="project-description"></p><p id="project-system" hidden></p></div></div>
+        <div class="graph-header"><h2><span data-i18n="研究脉络">研究脉络</span> <span id="project-run-count"></span></h2><div id="graph-tools"></div></div>
+        <div id="project-graph"></div>
+      </section>
+      <section id="empty" class="empty-state" hidden>
+        <h1 id="empty-title">等待第一次运行</h1>
+        <p id="empty-description">尚无运行快照。</p>
+        <button id="empty-demo" data-i18n="浏览示例数据">浏览示例数据</button>
+      </section>
+    </main>
+  </div>
   <span id="footer-source" hidden></span>
   <noscript><p class="notice" data-i18n="请启用 JavaScript 以读取监控状态。">请启用 JavaScript 以读取监控状态。</p></noscript>
 </body>

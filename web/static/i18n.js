@@ -3,6 +3,11 @@
 (function (root) {
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
+  "研究轮次 {p0}": "Research cycle {p0}",
+  "研究轮次": "Research cycle",
+  "{p0} 轮研究": "{p0} research cycles",
+  "本轮研究的决策": "Decisions in this research cycle",
+
   "续接次数": "Continuation count",
   "续接关系不完整，暂不认定完整迭代次数。": "Incomplete ancestry; the full iteration count cannot be confirmed.",
   "调整提示词": "Adjust prompt",
