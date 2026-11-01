@@ -35,6 +35,7 @@ from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.exploration.harness.commands import CommandHandler
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write
+from rsisys.runtime.provenance import RunSource
 from rsisys.runtime.run_policy import RunContext, RunDecision
 from examples.qwen_toy.monitor import Monitor
 from .evaluation import MedicalEvaluator
@@ -75,6 +76,7 @@ class ExperimentSettings:
     max_train_steps: int = 64
     private_exclusions: tuple[Path, ...] = ()
     decision_thinking: bool = False
+    parent_run_id: str | None = None
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -92,6 +94,7 @@ class ExperimentSettings:
             raise TypeError('private_exclusions must be a tuple of Paths')
         if type(self.decision_thinking) is not bool:
             raise TypeError('decision_thinking must be boolean')
+        RunSource(self.run_dir.resolve().name, self.parent_run_id)
 
 
 class JournalMonitor(Monitor):
@@ -623,12 +626,14 @@ def persist(assembly, root):
 def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory=None,
         process_backend=None, identity_factory=model_identity) -> dict:
     root = settings.run_dir.resolve()
+    source = RunSource(root.name, settings.parent_run_id)
     root.mkdir(parents=True, exist_ok=True)
     # This marker intentionally survives success, exceptions, SIGTERM and crashes.
     with (root / 'controller-started.json').open('x') as stream:
         stream.write(encoded({'schema_version': 1, 'started_at': time.time()}).decode())
+    write_json(root / 'run.json', {**source.to_dict(), 'objective': 'Autonomous medical research'})
     serving = learner = assembly = monitor = backend = None
-    result = {'status': 'failed', 'reason': 'initialization_failed', 'run_id': root.name,
+    result = {'status': 'failed', 'reason': 'initialization_failed', **source.to_dict(),
               'researcher_finish_reason': None, 'baseline_seconds': None, 'research_seconds': 0.0}
     research_started = None
     started = time.monotonic()
@@ -652,7 +657,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'original_train_rows': len(original.train.read()), 'effective_train_rows': len(kept),
             'excluded': excluded, 'conversion_id': converter.conversion_id, 'conversion_metadata': converter.metadata})
         artifacts = FileArtifactStore(root / 'artifacts')
-        monitor = JournalMonitor(root, base, 'Autonomous medical research', rounds=settings.max_trainings)
+        monitor = JournalMonitor(root, base, 'Autonomous medical research', rounds=settings.max_trainings,
+                                 source=source)
         monitor.data['project'] = {'project_id': 'medical-rsi', 'name': '医疗自主研究', 'system_id': 'medical-qwen35-9b'}
         monitor.write()
         serving = (serving_factory or LocalTransformerServing)(str(settings.model_path.resolve()), actor_model=base,
@@ -805,6 +811,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('--task', type=Path, required=True)
     result.add_argument('--run-dir', type=Path, required=True)
+    result.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     result.add_argument('--model-path', type=Path, required=True)
     result.add_argument('--seconds', type=float, default=5400)
     result.add_argument('--max-trainings', type=int, default=3)

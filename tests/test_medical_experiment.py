@@ -200,6 +200,18 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.execute([FINISH])
 
+    def test_parent_is_only_a_declaration_and_is_kept_in_all_run_outputs(self):
+        result = self.execute([FINISH], parent_run_id='run5')
+        self.assertEqual(result['status'], 'completed', result)
+        for name in ('run.json', 'monitor.json', 'result.json'):
+            data = self.read(name)
+            self.assertEqual((data['run_id'], data['parent_run_id']), ('run', 'run5'))
+        self.assertEqual(result['trainings_reserved'], 0)
+        self.assertEqual(self.serving.activated, [])
+        args = parser().parse_args(['--task', str(self.task), '--run-dir', 'run6',
+                                   '--model-path', 'model', '--parent-run-id', 'run5'])
+        self.assertEqual(args.parent_run_id, 'run5')
+
     def test_real_build_sft_prepare_evaluate_apply_and_monitor_progress(self):
         result = self.execute([train, evaluate, apply, FINISH])
         self.assertEqual(result['status'], 'completed', result)

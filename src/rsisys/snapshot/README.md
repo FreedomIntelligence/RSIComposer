@@ -14,7 +14,16 @@
 
 候选最近评测摘要、指令版本归因与当前执行视图随内置状态保存；待补写复查记录也禁止捕获。复查计时和消息交付的进程内状态不是 Snapshot 的恢复承诺。运行策略仅兼容默认 `ResearcherRunPolicy()` 与 `cleanup_timeout_seconds=30`；time / goal、自定义 RunPolicy、改变默认策略参数或清理预算都会被内置捕获明确拒绝，不会静默恢复成 researcher 策略。
 
-恢复要求目标目录不存在，保留原 run_id 和任务目标；检查文件清单、摘要、框架源码指纹及 Python 主/次版本。源码版本必须精确匹配；旧快照不自动迁移。Experience SQLite schema 2 显式拒绝旧 schema。已完成准备结果可继续使用，训练与评测终态反馈从 Experience 读取，准备历史与执行轨迹从各自 memory 读取，旧 JobHandle 不重建，不能据旧 JobRef 继续轮询或调用后端 result。
+恢复要求目标目录不存在，默认保留原 run_id、parent_run_id 和任务目标；检查文件清单、摘要、框架源码指纹及 Python 主/次版本。源码版本必须精确匹配；旧快照不自动迁移。Experience SQLite schema 2 显式拒绝旧 schema。已完成准备结果可继续使用，训练与评测终态反馈从 Experience 读取，准备历史与执行轨迹从各自 memory 读取，旧 JobHandle 不重建，不能据旧 JobRef 继续轮询或调用后端 result。
+
+显式分叉为新运行使用 `restore_snapshot(snapshot, Path('runs/run6'), run_id='run6')`，
+或 `rsisys resume --snapshot ... --data-dir runs/run6 --run-id run6`。
+parent_run_id 自动取快照中的直接来源 run_id（例如 run5），不能手动覆盖为其他来源；
+禁止用相同 ID 创建自指父子。新身份与来源写入目标 `config.json` / `run.json`。
+已有 Experience 的 ID、run_id 和内容不重写，新增记录使用新 run_id，原目录不受影响。
+不传 `run_id` 的同 run 恢复不产生新的父子边。
+接入示例 monitor 时，它从目标 `run.json` 读取来源；目录名必须等于 run_id，
+父运行同样需以其 ID 命名目录。来源字段不会扩大上述状态与外部权重恢复范围。
 
 不捕获外部模型权重、优化器、在途作业、随机数生成器状态，也不保证逐位重放。保存 ModelRef 不代表已保存权重或验证远端版本可恢复；外部服务仍须提供绑定的模型版本。
 

@@ -16,10 +16,12 @@ def main() -> None:
     run = commands.add_parser('run', help='Start a new persistent local run')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--data-dir', type=Path)
+    run.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     run.add_argument('--literature', type=Path, action='append', default=[])
     resume = commands.add_parser('resume', help='Restore a quiescent snapshot into a NEW workspace')
     resume.add_argument('--snapshot', type=Path, required=True)
     resume.add_argument('--data-dir', type=Path, required=True)
+    resume.add_argument('--run-id', help='Fork as a new run; parent is taken automatically from the snapshot')
     for command in (run, resume):
         command.add_argument('--rounds', type=int)
         command.add_argument('--max-decision-steps', type=int)
@@ -43,9 +45,11 @@ def main() -> None:
                 config = ApplicationConfig.load(args.config)
                 if args.data_dir is not None:
                     config = replace(config, data_dir=args.data_dir.resolve())
+                if args.parent_run_id is not None:
+                    config = replace(config, parent_run_id=args.parent_run_id)
                 app = Application(config)
             else:
-                app = restore_snapshot(args.snapshot, args.data_dir)
+                app = restore_snapshot(args.snapshot, args.data_dir, run_id=args.run_id)
             with app:
                 if args.command == 'run':
                     for path in args.literature:
@@ -56,7 +60,7 @@ def main() -> None:
                 if result.status != 'waiting' and not app.runner.busy:
                     manifest = LocalSnapshotCapture(app).capture('after-run')
                     snapshot = str(app.config.data_dir / 'snapshots' / manifest.snapshot_id)
-                output = {'mode': 'local', 'run_id': app.config.run_id,
+                output = {'mode': 'local', **app.config.source.to_dict(),
                           'simulated': app.config.execution == 'mock' or any(
                               b.kind == 'mock' for b in app.config.backends.values()),
                           'training_performed': False, 'snapshot_supported': True,

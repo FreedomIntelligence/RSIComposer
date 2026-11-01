@@ -108,3 +108,18 @@ PYTHONPATH=src:. python -m examples.qwen_toy.export_swanlab runs/<run-id>/monito
 接口参考：[SwanLab init](https://docs.swanlab.cn/api/py-init.html)。
 
 训练过程由 Trainer 实际日志采样（当前每 2 步），记录 loss、学习率、梯度范数、epoch 等有限数值；不为没有上报的步骤插值。worker 在 `<job_id>.metrics.jsonl` 追加完整采样，HTTP 和 `monitor.json` 的 `jobs[].metric_history` 保留最近 1000 点。历史从任务接口传到监控，不依赖前端刷新频率。旧运行缺少历史时只显示最终指标。
+## Run ancestry
+
+The controller accepts `--run-dir runs/run6 --parent-run-id run5`. This is an
+explicit ancestry declaration, not a resume operation: model revision selection
+is unchanged and no prior memory, weights or optimizer state is restored.
+Omit the parent flag for an unknown/root source. The controller writes `run_id`
+and `parent_run_id` to `run.json`, `monitor.json` and `result.json`.
+
+`Monitor(..., source=None)` reads the current `run.json`; a supplied
+`RunSource('run6', 'run5')` must agree with that metadata. Monitored run IDs must
+equal their directory names, including the parent directory (`runs/run5`), since
+the web viewer identifies runs by directory name. Mismatches are rejected before
+monitor writes. Core Applications with other ID/directory combinations require
+an aligned integration. Offline `enrich_completed_run` preserves recorded ancestry
+and observation time; it never infers parents from history or sibling directories.

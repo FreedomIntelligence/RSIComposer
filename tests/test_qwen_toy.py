@@ -297,6 +297,26 @@ def servers(service):
 
 
 class QwenControllerTests(unittest.TestCase):
+    def test_declared_parent_is_persisted_without_restoring_actor_or_training(self):
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=['finish'])) as urls:
+            root = Path(directory) / 'run6'
+            result = self.execute(service, root, urls, extra_args=('--parent-run-id', 'run5'))
+            self.assertEqual(result['status'], 'completed')
+            for name in ('run.json', 'monitor.json', 'result.json'):
+                data = json.loads((root / name).read_text())
+                self.assertEqual((data['run_id'], data['parent_run_id']), ('run6', 'run5'))
+            self.assertEqual(result['actor_revision'], 'baseline')
+            self.assertEqual(service.jobs, {})
+
+    def test_legacy_namespace_without_parent_remains_supported(self):
+        with tempfile.TemporaryDirectory() as directory, servers(service := Services(plan=['finish'])) as urls:
+            args = parse_args(['--baseline-url', urls[0] + '/v1', '--worker-url', urls[1],
+                               '--run-dir', directory, '--poll-interval', '0.001'])
+            del args.parent_run_id
+            result = run(args)
+            self.assertEqual(result['status'], 'completed')
+            self.assertIsNone(result['parent_run_id'])
+
     def execute(self, service, root, urls, *, max_steps=100, timeout=10, rounds=1, review_after=2, require_review=False, extra_args=()):
         service.planned_rounds, service.review_after = rounds, review_after
         args = parse_args(['--baseline-url', urls[0] + '/v1', '--worker-url', urls[1],

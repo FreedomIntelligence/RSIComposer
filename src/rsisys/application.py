@@ -22,6 +22,7 @@ from rsisys.runtime.sandbox import MockSandboxBackend
 from rsisys.runtime.local_process import LocalProcessBackend
 from rsisys.runtime.runner import Runner
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.provenance import RunSource
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ApplicationConfig:
     experience_limit: int = 32
     memory_limit: int = 32
     run_id: str = field(default_factory=lambda: uuid4().hex)
+    parent_run_id: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.objective, str) or not self.objective.strip():
@@ -48,14 +50,17 @@ class ApplicationConfig:
             raise ValueError('memory_limit must be a positive integer')
         if set(self.roles) != {'decision_maker', 'actor'}:
             raise ValueError('Both decision_maker and actor role bindings are required')
-        if not isinstance(self.run_id, str) or not self.run_id:
-            raise ValueError('run_id is required')
+        RunSource(self.run_id, self.parent_run_id)
         for key, backend in self.backends.items():
             if key != backend.backend_id or backend.kind not in ('mock', 'http', 'chat_completions'):
                 raise ValueError('Invalid backend configuration')
         for model in self.roles.values():
             if model.backend_id not in self.backends:
                 raise ValueError('Model refers to an unknown backend')
+
+    @property
+    def source(self) -> RunSource:
+        return RunSource(self.run_id, self.parent_run_id)
 
     @classmethod
     def from_dict(cls, raw: dict, *, base_dir: Path):
@@ -125,6 +130,8 @@ class Application:
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
                     raise ValueError('Restored run identity does not match configuration')
+                if existing.get('parent_run_id') != config.parent_run_id:
+                    raise ValueError('Restored run source does not match configuration')
             self.store = SQLiteExperienceStore(root / 'experience.sqlite3')
             self._resources.callback(self.store.close)
             self.experience = BasicExperienceSystem(self.store, run_id=config.run_id)
@@ -148,7 +155,7 @@ class Application:
             self.runner = Runner(decision, exploration, run_policy=run_policy,
                                  cleanup_timeout_seconds=cleanup_timeout_seconds)
             if not _restore:
-                atomic_write(root / 'run.json', json_bytes({'run_id': config.run_id, 'objective': config.objective}))
+                atomic_write(root / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))
             if durable:
                 from rsisys.runtime.recovery import DurableRecovery

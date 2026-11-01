@@ -318,8 +318,8 @@ class LocalSnapshotCapture:
                 shutil.rmtree(staging)
 
 
-def restore_snapshot(directory, target):
-    """Fork a checkpoint into a new local workspace; never overwrite the source run."""
+def restore_snapshot(directory, target, *, run_id: str | None = None):
+    """Restore to a new workspace; a new run_id forks with automatic ancestry."""
     from rsisys.application import Application, ApplicationConfig
     from rsisys.runtime.artifacts import FileArtifactStore
     directory, target = Path(directory).resolve(), Path(target).resolve()
@@ -330,6 +330,13 @@ def restore_snapshot(directory, target):
     decision, actor = decode(states['decision']), decode(states['actor'])
     check_states(decision, actor)
     config = ApplicationConfig.from_dict(json.loads((directory / 'config.json').read_text()), base_dir=directory)
+    identity = json.loads((directory / 'run.json').read_text())
+    if any(identity.get(key) != value for key, value in {
+            **config.source.to_dict(), 'objective': config.objective}.items()):
+        raise ValueError('Snapshot run identity does not match configuration')
+    if run_id is not None:
+        source = config.source.child(run_id)
+        config = replace(config, **source.to_dict())
     if config.roles != manifest.role_bindings:
         raise ValueError('Snapshot model bindings are inconsistent')
     runtime = json.loads((directory / 'runtime.json').read_text())
@@ -359,7 +366,7 @@ def restore_snapshot(directory, target):
         for name in ('decision_memory.json', 'exploration_memory.json', 'decision_research.json'):
             shutil.copyfile(directory / name, staging / name)
         shutil.copytree(directory / 'artifacts', staging / 'artifacts')
-        shutil.copyfile(directory / 'run.json', staging / 'run.json')
+        atomic_write(staging / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
         atomic_write(staging / 'config.json', json_bytes(config.to_dict()))
         sync_tree(staging)
         staging.rename(target)

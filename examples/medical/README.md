@@ -432,3 +432,15 @@ finish, with the baseline unchanged. This is a live lifecycle check, not evidenc
 of medical improvement or a fresh holdout result. The fixture tests independently
 verify the same rejection behavior, native source/conversion provenance and
 candidate-serving routing without claiming model training quality.
+## Run ancestry declaration
+
+`python -m examples.medical.experiment` accepts
+`--run-dir runs/run6 --parent-run-id run5` (Python:
+`ExperimentSettings(..., parent_run_id='run5')`). This declares ancestry only.
+The medical controller still starts a fresh assembly; it has no cross-process
+continue/resume path and this flag restores no memory, model or optimizer state.
+`run.json`, `monitor.json` and `result.json` retain the same source fields.
+Omitting the flag leaves parent unknown; historical runs are not backfilled.
+Monitored IDs equal directory names: the parent is `runs/run5` with run_id run5,
+and the child is `runs/run6` with run_id run6. The monitor reads `run.json` by
+default and rejects conflicting sources or an ID/directory mismatch.

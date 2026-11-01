@@ -2,6 +2,26 @@
 
 提供跨 loop 推进、外部运行策略与公共基础能力；研究步骤和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 
+## 运行来源
+
+[provenance.py](provenance.py) 的 `RunSource(run_id, parent_run_id=None)` 仅表达身份和来源，
+不恢复状态。启动器可用 `parent_source.child('run6')` 自动取得直接父运行，传给 monitor；
+创建 Application 时将同样的 `run_id` / `parent_run_id` 传入 `ApplicationConfig`。
+Application 将这两个字段保存到 `config.json` / `run.json`，旧文件缺失 parent 时保持未知，
+不会根据目录顺序或历史记录推断。CLI `run --parent-run-id run5` 是操作者的来源声明。
+同目录 `Application.resume()` 保留原身份与 parent，不创建父子关系。
+
+快照默认延续原运行身份；显式 `restore_snapshot(snapshot, target, run_id='run6')`
+才建立新运行，并自动将快照的原 run_id 作为 parent。父运行原有 Experience 记录原样保留，
+副本中的新记录归属 run6，写入不影响父目录。详见[快照边界](../snapshot/README.md)。
+
+示例 monitor 默认读取当前 `run.json`，也接受 `source=RunSource(...)`；两者冲突时拒绝。
+Web 以目录名标识运行，因此受监控运行必须满足 `RunSource.run_id == run_dir.name`，
+monitor 在写入前校验此约束；受监控的父目录也必须与 parent_run_id 对齐。
+核心仍允许任意 run_id 与目录组合，但这些组合不能直接接入此 monitor。
+例如 run5 → run6 应使用目录 `runs/run5`、`runs/run6` 和同名 ID。
+来源声明本身不证明父运行存在或已经恢复其模型、记忆或优化器，也没有通用子进程启动器或历史补全。
+
 ## Runner 与作业
 
 [runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../docs/ARCHITECTURE.md)。

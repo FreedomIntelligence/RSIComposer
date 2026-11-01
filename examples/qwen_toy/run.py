@@ -51,6 +51,7 @@ from rsisys.loops.exploration.harness.memory import ExplorationMemory
 from rsisys.loops.exploration.loop import ExplorationLoop
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.provenance import RunSource
 from rsisys.runtime.runner import Runner
 from rsisys.runtime.run_policy import GoalRunPolicy, MetricGoal, ResearcherRunPolicy, TimeRunPolicy
 
@@ -265,18 +266,20 @@ def make_run_policy(args):
 
 def run(args):
     root = args.run_dir.resolve()
+    source = RunSource(root.name, getattr(args, 'parent_run_id', None))
     root.mkdir(parents=True, exist_ok=True)
-    if (root / 'result.json').exists() or (root / 'experience.sqlite3').exists():
+    if any((root / name).exists() for name in ('run.json', 'result.json', 'experience.sqlite3')):
         raise ValueError('Run directory already has controller records; use a fresh directory')
     lock = root / '.controller.lock'
     lock_fd = lock.open('x')
     store = None
     try:
+        atomic_write(root / 'run.json', json_bytes({**source.to_dict(), 'objective': OBJECTIVE}))
         deadline = Deadline(args.timeout)
         baseline = HTTPClient(args.baseline_url, deadline, timeout=args.request_timeout)
         worker = HTTPClient(args.worker_url, deadline, timeout=args.request_timeout)
         base = ModelRef('qwen-toy', args.model_name, args.base_revision)
-        monitor = Monitor(root, base, OBJECTIVE, rounds=args.rounds)
+        monitor = Monitor(root, base, OBJECTIVE, rounds=args.rounds, source=source)
         cancel_attempted, cancel_requested, cancellation_confirmed = False, False, False
         policy_cancelled_jobs = set()
 
@@ -457,7 +460,7 @@ def run(args):
         monitor.data.update(run_stop=run_stop, stop_reason=stop_reason, goal_reached=goal_reached,
                             remote_may_run=remote_may_run, remote_job_may_still_run=remote_may_run)
         result = {
-            'schema_version': 1, 'status': status, 'simulated': False,
+            'schema_version': 1, **source.to_dict(), 'status': status, 'simulated': False,
             'run_mode': args.run_mode, 'run_stop': run_stop, 'stop_reason': stop_reason,
             'goal_reached': goal_reached,
             'remote_may_run': remote_may_run,
@@ -507,6 +510,7 @@ def parse_args(argv=None):
     parser.add_argument('--max-context-chars', type=int, default=20000)
     parser.add_argument('--permissions', type=Path, help='External ActionPermissions JSON; default all installed capabilities')
     parser.add_argument('--run-dir', type=Path, default=Path('runs/qwen-toy'))
+    parser.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     parser.add_argument('--run-mode', choices=('researcher', 'time', 'goal'), default='researcher')
     parser.add_argument('--run-seconds', type=float,
                         help='RunPolicy duration: required for time; optional maximum for goal')

@@ -8,6 +8,7 @@ import time
 from uuid import uuid4
 
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.provenance import RunSource
 
 if __package__:
     from .worker import metric_history, public_metrics
@@ -63,11 +64,26 @@ def decision_summary(details, *, ident, round_number, at=None, source='model'):
     return row
 
 
+def monitor_source(root: Path, source: RunSource | None = None) -> RunSource:
+    """Use recorded identity; web addresses monitored runs by directory name."""
+    metadata = root / 'run.json'
+    if metadata.exists():
+        recorded = RunSource.from_dict(json.loads(metadata.read_text()))
+        if source is not None and source != recorded:
+            raise ValueError('Monitor source conflicts with run.json')
+        source = recorded
+    source = source if source is not None else RunSource(root.name)
+    if source.run_id != root.name:
+        raise ValueError('Monitored run_id must match its directory name')
+    return source
+
+
 class Monitor:
-    def __init__(self, root, base, objective, *, rounds=1):
+    def __init__(self, root, base, objective, *, rounds=1, source: RunSource | None = None):
+        source = monitor_source(root, source)
         self.root, self.jobs, self.candidates = root, {}, {}
         self.phase, self.started = 'starting', time.monotonic()
-        self.data = {'schema_version': 1, 'run_id': root.name, 'objective': objective,
+        self.data = {'schema_version': 1, **source.to_dict(), 'objective': objective,
                      'status': 'running', 'loops': {}, 'decisions': [], 'current': {},
                      'workflow': {'phase': 'starting', 'round': 1, 'rounds': rounds, 'completed_directives': 0},
                      'models': {role: {'model_id': base.model_id, 'revision': base.revision}
@@ -198,6 +214,10 @@ def enrich_completed_run(root):
     if result.get('status') not in ('completed', 'failed', 'timed_out'):
         raise ValueError('Only a finished controller run may be exported')
     snapshot = json.loads((root / 'monitor.json').read_text())
+    source = monitor_source(root, None if (root / 'run.json').exists() else RunSource.from_dict(snapshot))
+    if any(key in snapshot and snapshot[key] != value for key, value in source.to_dict().items()):
+        raise ValueError('Export source conflicts with monitor.json')
+    snapshot.update(source.to_dict())
     history = json.loads((root / 'decision_memory.json').read_text())['history']
     events = snapshot.get('events', [])
     validated = iter(e for e in events if e['kind'] == 'model_decision_validated')
