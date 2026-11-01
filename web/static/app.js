@@ -75,7 +75,6 @@ function progressView(step, total) {
   } else wrap.append(el("p", "progress-unknown", Number.isInteger(step) && step >= 0 ? `已报告 ${step} 步；总步数未报告或待核对` : "步骤进度未报告"));
   return wrap;
 }
-function jobNodeTitle(row) { const kind=asText(row.kind,""); return /train|sft|finetun|fine_tun|^rl$/.test(kind)?"训练结果":/eval/.test(kind)?"评测结果":"任务反馈"; }
 function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation; return row.mode || row.action || (row.kind === "finish" ? "finish" : undefined); }
 function decisionKey(row) { return asText(row.decision_id, JSON.stringify([row.timestamp, row.kind, row.round, row.directive_id, decisionAction(row), row.job_id])); }
 function sortedDecisions(s) { return list(s.decisions).map((row, i) => ({ row, i })).sort((a,b) => (Date.parse(b.row.timestamp) || 0) - (Date.parse(a.row.timestamp) || 0) || a.i - b.i).map(x => x.row); }
@@ -92,102 +91,7 @@ const identifier = v => typeof v === "string" && v.length > 0;
 function parentIds(row) {
   return [...new Set([row.parent_decision_id, ...(Array.isArray(row.source_decision_ids) ? row.source_decision_ids : [])].filter(identifier))];
 }
-// Edges use only identifiers reported in this run. No text, round, or version inference.
-function lineageModel(s) {
-  const groups = decisionGroups(s).reverse(), nodes = [], edges = [], ids = new Map(), directives = new Map(), edgeIndex = new Map(), occurrences = new Map();
-  groups.forEach((group, i) => {
-    const row = group.row, baseKey = `decision:${decisionKey(group.rows[group.rows.length - 1])}`, count = occurrences.get(baseKey) || 0;
-    occurrences.set(baseKey, count + 1);
-    const node = { key: `${baseKey}:${count}`, type: "decision", row, rows: group.rows,
-      label: row.kind === "review" ? "复查 / 调整" : decisionAction(row) === "apply_candidate" ? "版本调整" : "决策",
-      title: actionText(decisionAction(row)), summary: row.reason || row.strategy || "决策说明未报告", status: row.status,
-      x: 28 + i * 280, y: 54, missing: [], ambiguous: [] };
-    nodes.push(node);
-    for (const record of group.rows) {
-      if (identifier(record.decision_id)) { const matches = ids.get(record.decision_id) || new Set(); matches.add(node); ids.set(record.decision_id, matches); }
-      // Reviews are adjustments, not the origin of an experiment directive.
-      if (record.kind === "directive" && identifier(record.directive_id)) { const matches = directives.get(record.directive_id) || new Set(); matches.add(node); directives.set(record.directive_id, matches); }
-    }
-  });
-  const addEdge = (from, to, kind, evidence) => {
-    if (from.key === to.key) return;
-    const key = JSON.stringify([from.key, to.key, kind]);
-    let edge = edgeIndex.get(key);
-    if (!edge) { edge = { from: from.key, to: to.key, kind, evidence: [] }; edges.push(edge); edgeIndex.set(key, edge); }
-    if (!edge.evidence.includes(evidence)) edge.evidence.push(evidence);
-  };
-  const decisions = nodes.slice();
-  for (const node of decisions) for (const row of node.rows) for (const id of parentIds(row)) {
-    const matches = ids.get(id);
-    if (!matches) node.missing.push(id);
-    else if (matches.size !== 1) node.ambiguous.push(id);
-    else addEdge([...matches][0], node, "explicit", `父决策 ${id}`);
-  }
-  // Only disjoint, known timestamp ranges establish temporal order; missing/equal times get no edge.
-  const timeRange = node => {
-    const times = node.rows.map(r => Date.parse(r.timestamp));
-    return times.every(Number.isFinite) ? [Math.min(...times), Math.max(...times)] : null;
-  };
-  for (let i = 1; i < decisions.length; i++) {
-    const a = decisions[i - 1], b = decisions[i], at = timeRange(a), bt = timeRange(b);
-    if (at && bt && at[1] < bt[0] && !edges.some(e => e.from === a.key && e.to === b.key)) addEdge(a, b, "time", "仅时间先后");
-  }
-  const occupied = new Map();
-  let detached = 0;
-  for (const [type, rows] of [["job", list(s.jobs)], ["candidate", list(s.candidates)]]) rows.forEach((row, i) => {
-    const matches = identifier(row.directive_id) ? directives.get(row.directive_id) : null;
-    const origin = matches?.size === 1 ? [...matches][0] : null;
-    const column = origin ? decisions.indexOf(origin) : detached++;
-    const level = occupied.get(column) || 0; occupied.set(column, level + 1);
-    const node = { key: `${type}:${asText(row[`${type}_id`], i)}:${i}`, type, row,
-      label: type === "job" ? "实验反馈 · 当前快照" : "候选反馈 · 当前快照",
-      title: type === "job" ? jobNodeTitle(row) : `候选 ${i + 1}`, status: row.status,
-      summary: type === "job" ? (present(row.step) ? `已报告 ${asText(row.step)} 步` : "步骤未报告") : (row.revision || "版本未报告"),
-      x: 28 + column * 280, y: 236 + level * 154, missing: [], ambiguous: [] };
-    nodes.push(node);
-    if (origin) addEdge(origin, node, "directive", `指令 ${row.directive_id}`);
-  });
-  return { nodes, edges };
-}
-function graphDetail(node, model, s) {
-  const content = el("div");
-  content.append(el("p", "eyebrow", node.label), el("h3", "", node.title), badge(node.status));
-  if (node.type === "decision") {
-    content.append(proseView(node.row.reason || node.row.strategy || "决策说明未报告"));
-    const f = feedbackFor(node.row, s);
-    content.append(el("h4", "", "反馈"), el("p", "", f.text), metricsDetail(f.metrics));
-    const explicit = object(node.row.feedback);
-    if (present(explicit.summary) || present(node.row.feedback_summary)) content.append(el("p", "decision-reason", explicit.summary || node.row.feedback_summary));
-    if (node.row.kind === "review" && f.job) content.append(el("p", "quiet-note", `关联任务当前${statusText(f.job.status)}；不代表复查当时状态。`));
-    if (node.rows.length > 1) content.append(el("p", "repeat-count", `重复报告 ${node.rows.length} 次，保留全部原始记录。`));
-    const records = el("details", "record-details"); records.append(el("summary", "", `原始记录（${node.rows.length} 条）`));
-    for (const row of node.rows) { const record = el("div", "raw-record"); record.append(rawFields(row)); const parents = parentIds(row); if (parents.length) record.append(fieldList([["显式父决策", parents.join("、")]])); records.append(record); }
-    content.append(records);
-  } else {
-    content.append(metricsDetail(node.row.metrics));
-    if (node.type === "job") content.append(progressView(node.row.step, node.row.total_steps), el("p", "quiet-note", `训练历史：${historyRows(node.row).length} 个采样点。`));
-    const raw=el("details","record-details");raw.append(el("summary","","原始记录"),rawFields(node.row));content.append(raw);
-  }
-  if(node.type === "decision") {
-    const results = relatedResults(node.row,s);
-    content.append(el("h4","","相关结果 · 当前快照"));
-    if(!results.length)content.append(empty("未报告可唯一关联的任务或候选结果。"));
-    for(const {type,row,evidence} of results){
-      const card=el("article","related-result");card.append(el("h4","",type==="job"?actionText(row.kind):"候选结果"),badge(row.status),el("p","quiet-note",evidence));
-      if(type==="job")card.append(progressView(row.step,row.total_steps),metricsDetail(row.metrics));else card.append(comparisonView(row.metrics),metricsDetail(row.metrics));
-      if(type==="job"&&historyRows(row).length){const charts=el("div","charts");charts.append(chartView(row,lossKeys,"损失"),chartView(row,lrKeys,"学习率"));card.append(charts);}
-      content.append(card);
-    }
-  }
-  const incoming = model.edges.filter(e => e.to === node.key && e.kind !== "time");
-  content.append(el("h4", "", "关联依据"));
-  content.append(incoming.length ? fieldList(incoming.map(e => [e.kind === "explicit" ? "显式父决策" : "指令关联", e.evidence.join("、")])) : el("p", "quiet-note", "未报告可连接的父决策或指令关联。"));
-  if (node.missing.length) content.append(el("p", "quiet-note", `父引用不在当前快照：${[...new Set(node.missing)].join("、")}`));
-  if (node.ambiguous.length) content.append(el("p", "quiet-note", `父 ID 重复，未连线：${[...new Set(node.ambiguous)].join("、")}`));
-  return content;
-}
-// Finite, deterministic spatial-grid relaxation. Existing positions are pinned on refresh
-// and expansion; there is no animation loop and no all-pairs repulsion.
+// Bounded spatial relaxation; only manually moved nodes stay pinned.
 const LAYOUT = { iterations: 64, budget: 60000, cell: 76, bucket: 12, cache: 6000 };
 function hashUnit(key) {
   let hash = 2166136261;
@@ -196,20 +100,20 @@ function hashUnit(key) {
 }
 function readPositions(key) {
   try {
-    const rows = JSON.parse(localStorage.getItem(`rsisys-network-v1:${key}`) || "[]");
+    const rows = JSON.parse(localStorage.getItem(`rsisys-runs-v2:${key}`) || "[]");
     return new Map((Array.isArray(rows) ? rows : []).slice(-LAYOUT.cache).filter(r => Array.isArray(r) && typeof r[0] === "string" && number(r[1]?.x) && number(r[1]?.y) && r[1].x >= 36 && r[1].y >= 36 && r[1].x <= 100000 && r[1].y <= 100000));
   } catch { return new Map(); }
 }
 function savePositions(scope) {
-  try { localStorage.setItem(`rsisys-network-v1:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
+  try { localStorage.setItem(`rsisys-runs-v2:${scope.key}`, JSON.stringify([...scope.positions].slice(-LAYOUT.cache))); } catch { /* Storage can be disabled or full. In-memory positions still work. */ }
 }
-function networkLayout(model, positions = new Map()) {
+function networkLayout(model, positions = new Map(), { relax = false, pinned = new Set() } = {}) {
   const ordered = model.nodes.slice().sort((a,b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const byKey = new Map(ordered.map(n => [n.key,n])), anchors = ordered.filter(n => n.type === "run"), fresh = new Set();
   const center = { x: 560, y: 245 };
   const initialize = (n, origin, radius, angle) => {
     const cached = positions.get(n.key);
-    if (cached && number(cached.x) && number(cached.y)) { n.x = cached.x; n.y = cached.y; }
+    if (cached && number(cached.x) && number(cached.y)) { n.x = cached.x; n.y = cached.y; if (relax && !pinned.has(n.key)) fresh.add(n.key); }
     else { n.x = Math.max(44, origin.x + radius * Math.cos(angle)); n.y = Math.max(44, origin.y + radius * Math.sin(angle)); fresh.add(n.key); }
   };
   for (const n of ordered.filter(n => n.type === "project")) initialize(n, center, 0, 0);
@@ -275,12 +179,16 @@ function graphNeighborhood(model, key) {
 // The graph is a single full-width plane; selected content follows it in normal flow.
 function renderGraph(host, model, key, onSelect, detailFor) {
   const previous = host.graphView, same = previous?.key === key;
-  const view = same ? previous : { key, scale: 1, selected: model.nodes.find(n => n.selected)?.key || "project-root", left: 0, top: 0 };
+  previous?.observer?.disconnect();
+  const view = same ? previous : { key, autoFit: true, scale: 1, selected: model.nodes.find(n => n.selected)?.key || "project-root", left: 0, top: 0 };
   if (same) { view.left = previous.viewport.scrollLeft; view.top = previous.viewport.scrollTop; }
   const focusedKey = host.contains(document.activeElement) ? document.activeElement?.dataset.nodeKey : null;
   const controls = el("div","graph-controls"), zoomLabel = el("span","quiet-note"), viewport = el("div","graph-viewport"), extent = el("div","graph-extent"), plane = el("div","graph-plane");
   viewport.tabIndex = 0; viewport.setAttribute("role","region"); viewport.setAttribute("aria-label","关系图谱，拖拽节点或空白平移，Ctrl 或 Command 加滚轮缩放");
-  let width = Math.max(1120,...model.nodes.map(n => n.x+100)), height = Math.max(450,...model.nodes.map(n => n.y+70));
+  const bounds = () => ({ left: Math.min(...model.nodes.map(n=>n.x))-65, top: Math.min(...model.nodes.map(n=>n.y))-45,
+    right: Math.max(...model.nodes.map(n=>n.x))+65, bottom: Math.max(...model.nodes.map(n=>n.y))+65 });
+  let frame = same && !view.autoFit && view.frame ? {...view.frame} : bounds();
+  let width = frame.right-frame.left, height = frame.bottom-frame.top, offsetX=0, offsetY=0;
   const lines = svgEl("svg",{ width,height,"aria-hidden":"true" });
   const marker = svgEl("marker",{ id:`${host.id}-arrow`,viewBox:"0 0 8 8",refX:18,refY:4,markerWidth:5,markerHeight:5,orient:"auto" });
   marker.append(svgEl("path",{ d:"M0,0 L8,4 L0,8",fill:"context-stroke" })); const defs = svgEl("defs"); defs.append(marker); lines.append(defs);
@@ -313,10 +221,9 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     const button=el("button",`graph-node ${node.type}`); button.type="button"; button.dataset.nodeKey=node.key;
     button.setAttribute("aria-pressed",String(node.key===view.selected));
     button.append(el("span","node-dot"),el("span","node-label",node.title));
-    button.setAttribute("aria-label",`${node.title}${node.runTitle ? ` · ${node.runTitle}` : ""}${node.type==="run" ? ` · ${node.expanded?"收起":"展开"}` : ""}`);
+    button.setAttribute("aria-label", node.title);
     if (node.type==="run") {
-      button.setAttribute("aria-expanded",String(node.expanded));
-      button.append(el("span","node-state",node.loadStatus==="pending"?"…":node.loadStatus==="error"?"!":node.expanded?"−":"+"));
+      button.append(el("span","node-state",node.loadStatus==="pending"?"…":node.loadStatus==="error"?"!":""));
     }
     button.title=`${node.title} · ${asText(node.summary,"")}`;
     button.addEventListener("mouseenter",()=>highlight(node.key)); button.addEventListener("mouseleave",()=>highlight(view.selected));
@@ -333,11 +240,12 @@ function renderGraph(host, model, key, onSelect, detailFor) {
       if(!nodeDrag.moved)return;
       node.x=Math.max(36,nodeDrag.left+dx); node.y=Math.max(36,nodeDrag.top+dy); place(node);
       for(const item of incident.get(node.key)||[])draw(item);
-      width=Math.max(width,node.x+100);height=Math.max(height,node.y+70);resize();
+      frame.right=Math.max(frame.right,node.x+65);frame.bottom=Math.max(frame.bottom,node.y+65);
+      width=frame.right-frame.left;height=frame.bottom-frame.top;resize();
     });
     const finish = () => {
       if(nodeDrag?.node!==node)return;
-      if(nodeDrag.moved){suppressClick=node.key;const scope=state.activeScope;if(scope?.key===key){scope.positions.set(node.key,{x:node.x,y:node.y});savePositions(scope);}}
+      if(nodeDrag.moved){view.autoFit=false;view.frame={...frame};suppressClick=node.key;const scope=state.activeScope;if(scope?.key===key){scope.positions.set(node.key,{x:node.x,y:node.y});scope.pinned ||= new Set();scope.pinned.add(node.key);scope.needsRelax=true;savePositions(scope);view.pendingRender=true;}}
       nodeDrag=null;view.dragging=false;
       if(view.pendingRender){view.pendingRender=false;renderProject();}
     };
@@ -345,17 +253,26 @@ function renderGraph(host, model, key, onSelect, detailFor) {
     buttons.set(node.key,button);place(node);plane.append(button);
   }
   const resize=()=>{
-    plane.style.width=`${width}px`;plane.style.height=`${height}px`;plane.style.transform=`scale(${view.scale})`;
-    lines.setAttribute("width",width);lines.setAttribute("height",height);
-    extent.style.width=`${width*view.scale}px`;extent.style.height=`${height*view.scale}px`;zoomLabel.textContent=`${Math.round(view.scale*100)}%`;
+    offsetX=Math.max(0,(viewport.clientWidth-width*view.scale)/2)-frame.left*view.scale;
+    offsetY=Math.max(0,(viewport.clientHeight-height*view.scale)/2)-frame.top*view.scale;
+    plane.style.width=`${frame.right}px`;plane.style.height=`${frame.bottom}px`;
+    plane.style.transform=`translate(${offsetX}px,${offsetY}px) scale(${view.scale})`;
+    lines.setAttribute("width",frame.right);lines.setAttribute("height",frame.bottom);
+    extent.style.width=`${Math.max(viewport.clientWidth,width*view.scale)}px`;
+    extent.style.height=`${Math.max(viewport.clientHeight,height*view.scale)}px`;
+    zoomLabel.textContent=`${Math.round(view.scale*100)}%`;view.frame={...frame};
   };
   const scaleTo=(scale,centered=true)=>{
-    const cx=(viewport.scrollLeft+viewport.clientWidth/2)/view.scale,cy=(viewport.scrollTop+viewport.clientHeight/2)/view.scale;
-    view.scale=Math.max(.02,Math.min(3,scale));resize();
-    if(centered){viewport.scrollLeft=cx*view.scale-viewport.clientWidth/2;viewport.scrollTop=cy*view.scale-viewport.clientHeight/2;}
+    const cx=(viewport.scrollLeft+viewport.clientWidth/2-offsetX)/view.scale,cy=(viewport.scrollTop+viewport.clientHeight/2-offsetY)/view.scale;
+    view.autoFit=false;view.scale=Math.max(.02,Math.min(3,scale));resize();
+    if(centered){viewport.scrollLeft=cx*view.scale+offsetX-viewport.clientWidth/2;viewport.scrollTop=cy*view.scale+offsetY-viewport.clientHeight/2;}
   };
-  const fit=()=>{scaleTo(Math.min((viewport.clientWidth-12)/width,(viewport.clientHeight-12)/height,1),false);viewport.scrollLeft=0;viewport.scrollTop=0;};
-  for(const [label,title,action] of [["−","缩小",()=>scaleTo(view.scale/1.25)],["+","放大",()=>scaleTo(view.scale*1.25)],["适应","适应全部节点",fit],["100%","恢复原始大小",()=>scaleTo(1)]]){
+  const fit=()=>{
+    frame=bounds();width=frame.right-frame.left;height=frame.bottom-frame.top;
+    scaleTo(Math.min((viewport.clientWidth-20)/width,(viewport.clientHeight-20)/height,1.25),false);
+    view.autoFit=true;viewport.scrollLeft=0;viewport.scrollTop=0;
+  };
+  for(const [label,title,action] of [["−","缩小",()=>scaleTo(view.scale/1.25)],["+","放大",()=>scaleTo(view.scale*1.25)],["适应","适应全部节点",fit],["100%","恢复原始大小",()=>scaleTo(1)],["重排","自动调整节点布局",()=>{ const scope=state.activeScope;if(scope?.key!==key)return;scope.pinned.clear();scope.needsRelax=true;view.autoFit=true;renderProject(); }]]){
     const button=el("button","",label);button.type="button";button.setAttribute("aria-label",title);button.addEventListener("click",action);controls.append(button);
   }
   controls.append(zoomLabel,el("span","graph-hint quiet-note","拖拽节点 · 空白平移 · Ctrl/⌘ + 滚轮缩放"));
@@ -363,7 +280,7 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   let pan=null;
   viewport.addEventListener("pointerdown",e=>{
     if(e.button!==0||e.target.closest("button"))return;
-    pan={x:e.clientX,y:e.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};view.dragging=true;viewport.setPointerCapture(e.pointerId);viewport.classList.add("panning");
+    view.autoFit=false;pan={x:e.clientX,y:e.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};view.dragging=true;viewport.setPointerCapture(e.pointerId);viewport.classList.add("panning");
   });
   viewport.addEventListener("pointermove",e=>{if(pan){viewport.scrollLeft=pan.left-e.clientX+pan.x;viewport.scrollTop=pan.top-e.clientY+pan.y;}});
   const endPan=()=>{if(!pan)return;pan=null;view.dragging=false;viewport.classList.remove("panning");if(view.pendingRender){view.pendingRender=false;renderProject();}};
@@ -375,7 +292,16 @@ function renderGraph(host, model, key, onSelect, detailFor) {
   });
   extent.append(plane);viewport.append(extent);const layout=el("div","graph-layout");layout.append(viewport);if(details)layout.append(details);
   host.replaceChildren(controls,layout);view.viewport=viewport;host.graphView=view;resize();
-  if(!same)fit();else{viewport.scrollLeft=view.left;viewport.scrollTop=view.top;}
+  if(!same || view.autoFit || model.topologyChanged)fit();else{viewport.scrollLeft=view.left;viewport.scrollTop=view.top;}
+  if(typeof ResizeObserver !== "undefined") {
+    let lastWidth=viewport.clientWidth,lastHeight=viewport.clientHeight;
+    view.observer=new ResizeObserver(()=>{
+      if(!viewport.isConnected || view.dragging)return;
+      if(lastWidth===viewport.clientWidth && lastHeight===viewport.clientHeight)return;
+      lastWidth=viewport.clientWidth;lastHeight=viewport.clientHeight;
+      if(view.autoFit)fit();else resize();
+    });view.observer.observe(viewport);
+  }
   if(byKey.has(view.selected))select(byKey.get(view.selected),false);
   if(focusedKey)buttons.get(focusedKey)?.focus({preventScroll:true});
 }
@@ -657,10 +583,11 @@ function activateProject() {
   if (state.activeScope?.key === key) return state.activeScope;
   if (state.activeScope) {
     state.activeScope.view = $("project-graph").graphView;
+    state.activeScope.view?.observer?.disconnect();
     for (const entry of state.activeScope.cache.values()) abortEntry(entry);
   }
   let scope = state.scopes.get(key);
-  if (!scope) { scope = { key, expanded: new Set(), cache: new Map(), selected: "project-root", runId: "", view: null, positions: readPositions(key) }; state.scopes.set(key, scope); }
+  if (!scope) { scope = { key, pinned: new Set(), cache: new Map(), selected: "project-root", runId: "", view: null, positions: readPositions(key) }; state.scopes.set(key, scope); }
   state.activeScope = scope; $("project-graph").graphView = scope.view;
   state.runId = scope.runId; clearRun();
   return scope;
@@ -672,7 +599,7 @@ function projectModel(project, scope) {
   runs.forEach((row, i) => {
     const key = JSON.stringify(["run", row.run_id]), entry = scope.cache.get(row.run_id);
     const n = { key, type: "run", row, runId: row.run_id, title: `运行 ${i + 1}`, label: "运行", summary: statusText(row.status),
-       expanded: scope.expanded.has(row.run_id), loadStatus: entry?.status,
+       loadStatus: entry?.status,
       missing: [], ambiguous: [] };
     nodes.push(n); const matches = ids.get(row.run_id) || []; matches.push(n); ids.set(row.run_id, matches);
     edges.push({ from: "project-root", to: key, kind: "membership", evidence: ["项目归属"] });
@@ -693,25 +620,11 @@ function projectModel(project, scope) {
     if (Number.isFinite(at) && Number.isFinite(bt) && at < bt)
       edges.push({ from: a.key, to: b.key, kind: "time", evidence: ["记录更新时间顺序，不表示继承"] });
   }
-  for (const run of runNodes) {
-    if (!run.expanded) continue;
-    const entry = scope.cache.get(run.runId);
-    if (!entry?.snapshot) {
-      const status = entry?.status === "error" ? "读取失败 · 重试" : "正在读取…";
-      const key = JSON.stringify([run.runId, "load"]);
-      nodes.push({ key, type: "load", title: status, label: status, row: {}, runId: run.runId, x: run.x, y: 230 });
-      edges.push({ from: run.key, to: key, kind: "membership", evidence: [status] }); continue;
-    }
-    const branch = lineageModel(entry.snapshot), local = new Map(branch.nodes.map(n => [n.key,n]));
-    const incoming = new Set(branch.edges.map(e => e.to));
-    for (const n of local.values()) {
-      const key = JSON.stringify([run.runId, n.key]);
-      nodes.push({ ...n, key, localKey: n.key, runId: run.runId, runTitle: run.title, snapshot: entry.snapshot, branch });
-      if (!incoming.has(n.key)) edges.push({ from: run.key, to: key, kind: "membership", evidence: ["运行内记录"] });
-    }
-    for (const e of branch.edges) edges.push({ ...e, from: JSON.stringify([run.runId, e.from]), to: JSON.stringify([run.runId, e.to]) });
-  }
-  const model = networkLayout({ nodes, edges }, scope.positions);
+  const signature = JSON.stringify([nodes.map(n => n.key).sort(), edges.map(e => [e.from,e.to,e.kind]).sort()]);
+  const changed = scope.layoutSignature !== undefined && scope.layoutSignature !== signature;
+  const model = networkLayout({ nodes, edges }, scope.positions, { relax: changed || !!scope.needsRelax, pinned: scope.pinned });
+  model.topologyChanged = changed;
+  scope.layoutSignature = signature; scope.needsRelax = false;
   if (model.layoutStats.iterations) savePositions(scope);
   return model;
 }
@@ -724,16 +637,30 @@ function executionGroups(s) {
   });
 }
 function executionSequence(s, scope) {
-  scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set();
+  scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),heading=el("div","section-heading"),groups=executionGroups(s);
   heading.append(el("h4","", "执行流程"),el("span","quiet-note",`${groups.length} 步 · ${list(s.decisions).length} 条记录`));section.append(heading);
-  section.append(el("p","quiet-note","按已报告时间从早到晚展示。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。"));
+  const ordering=el("details","record-details");ordering.append(el("summary","","流程顺序说明"),el("p","quiet-note","按已报告时间从早到晚展示，不表示因果。未报告时间的记录按快照顺序列于末尾；当前结果不代表各决策时点的状态。"));section.append(ordering);
+  const navigation=el("ol","flow-map");navigation.setAttribute("aria-label","运行内执行步骤");section.append(navigation);
   const entries=el("ol","flow-steps");section.append(entries);
-  const fill=()=>{
-    entries.replaceChildren();
+  const fill=(restoreFocus=false)=>{
+    let selectedButton;
+    entries.replaceChildren();navigation.replaceChildren();
     const limit=scope.flowLimits.get(s.run_id)||30;
+    const keyOf=(g,i)=>JSON.stringify([decisionKey(g.rows[g.rows.length-1]),i]);
+    let selected=scope.flowSelected.get(s.run_id);
+    if(!groups.slice(0,limit).some((g,i)=>keyOf(g,i)===selected))selected=groups.length?keyOf(groups[0],0):null;
+    scope.flowSelected.set(s.run_id,selected);
     for(const [i,g] of groups.slice(0,limit).entries()){
-      const row=g.row,f=feedbackFor(row,s),step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
+      const row=g.row,f=feedbackFor(row,s),key=keyOf(g,i),item=el("li","flow-map-item"),button=el("button","flow-choice");
+      button.type="button";button.setAttribute("aria-pressed",String(key===selected));
+      button.setAttribute("aria-label",`步骤 ${i+1} · ${actionText(decisionAction(row))}`);
+      button.append(el("span","flow-number",String(i+1).padStart(2,"0")),el("span","",actionText(decisionAction(row))));
+      if(g.rows.length>1)button.append(el("span","quiet-note",`×${g.rows.length}`));
+      button.addEventListener("click",()=>{scope.flowSelected.set(s.run_id,key);fill(true);});item.append(button);navigation.append(item);
+      if(key!==selected)continue;
+      selectedButton=button;
+      const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?` · 第 ${row.round} 轮`:""}`);
       decision.append(el("p","flow-label","决策"),el("h4","",actionText(decisionAction(row))),meta);
@@ -748,6 +675,7 @@ function executionSequence(s, scope) {
       step.append(index,decision,feedback,metrics);entries.append(step);
     }
     more.hidden=groups.length<=limit;
+    if(restoreFocus)selectedButton?.focus({preventScroll:true});
   };
   const more=el("button","more-button","显示更多执行步骤");more.addEventListener("click",()=>{scope.flowLimits.set(s.run_id,(scope.flowLimits.get(s.run_id)||30)+30);fill();});
   section.append(more);fill();if(!groups.length)section.append(empty("尚无决策记录，不能重建执行流程。"));
@@ -783,15 +711,12 @@ function runDetail(node, scope) {
 }
 function projectDetail(node, model, scope) {
   if (node.type === "project") {
-    const box = el("div"); box.append(el("p", "eyebrow", "项目"), el("h3", "", node.title), el("p", "", node.row.description || "项目说明未报告。"), el("p", "quiet-note", "点击运行圆点展开或收起；可同时展开多个运行。")); return box;
+    const box = el("div"); box.append(el("p", "eyebrow", "项目"), el("h3", "", node.title), el("p", "", node.row.description || "项目说明未报告。"), el("p", "quiet-note", "选择运行，查看下方执行流程与结果。")); return box;
   }
   if (node.type === "run") return runDetail(node, scope);
-  if (node.type === "load") { const box = el("div"); box.append(el("p", "", scope.cache.get(node.runId)?.error || "正在读取运行快照…")); return box; }
-  const box = graphDetail({ ...node, key: node.localKey }, node.branch, node.snapshot);
-  box.prepend(el("p", "quiet-note", `${node.runTitle || "所选运行"} · 节点详情与结果`));
-  if (node.type === "job") { const charts = el("div"); charts.append(chartView(node.row, lossKeys, "损失"), chartView(node.row, lrKeys, "学习率")); box.append(charts); }
-  return box;
+  return el("div");
 }
+
 function setSelectedRun(id, scope) {
   scope.runId = id; state.runId = id;
   const s = scope.cache.get(id)?.snapshot;
@@ -810,17 +735,16 @@ function renderProject() {
   const scope = state.activeScope || activateProject(), model = projectModel(project, scope);
   $("project-name").textContent = project.name; $("project-description").textContent = project.description || "";
   $("project-system").textContent = "";
-  $("project-run-count").textContent = `${runRows(project).length} 次运行 · ${scope.expanded.size} 已展开`;
+  $("project-run-count").textContent = `${runRows(project).length} 次运行`;
   $("project-overview").hidden = false;
   if (!model.nodes.some(n => n.key === scope.selected)) scope.selected = scope.runId ? JSON.stringify(["run", scope.runId]) : "project-root";
   if ($("project-graph").graphView) $("project-graph").graphView.selected = scope.selected;
   for (const n of model.nodes) n.selected = n.key === scope.selected;
   renderGraph($("project-graph"), model, scope.key, node => {
     scope.selected = node.key;
-    if (node.type === "run") selectRun(node.runId, true);
-    else if (node.type === "load") loadRun(node.runId, scope, true);
+    if (node.type === "run") selectRun(node.runId);
     else if (node.runId) setSelectedRun(node.runId, scope);
-    else { setSelectedRun("", scope); }
+    else { selectRun(""); }
   }, node => projectDetail(node, model, scope));
   scope.view = $("project-graph").graphView;
   $("empty").hidden = true;
@@ -837,28 +761,27 @@ function chooseProjects(input) {
   }
   if (!selectedProject()) state.projectId = state.projects[0]?.project_id || "";
   const scope = activateProject(), runs = runRows(selectedProject()), valid = new Set(runs.map(r => r.run_id));
-  for (const id of scope.expanded) if (!valid.has(id)) { scope.expanded.delete(id); const entry = scope.cache.get(id); if (entry) abortEntry(entry); scope.cache.delete(id); }
+  for (const [id, entry] of scope.cache) if (!valid.has(id)) { abortEntry(entry); scope.cache.delete(id); }
   if (scope.runId && !valid.has(scope.runId)) { scope.runId = ""; state.runId = ""; clearRun(); }
-  if (deepRun) { scope.expanded.add(deepRun); scope.runId = deepRun; state.runId = deepRun; scope.selected = JSON.stringify(["run", deepRun]); }
+  if (deepRun) { scope.runId = deepRun; state.runId = deepRun; scope.selected = JSON.stringify(["run", deepRun]); }
   const projects = state.projects.map(p => { const option = el("option", "", p.name); option.value = p.project_id; return option; });
   if (!projects.length) { const option = el("option", "", "暂无项目"); option.value = ""; projects.push(option); }
   $("project-select").replaceChildren(...projects); $("project-select").value = state.projectId; $("project-select").disabled = !state.projects.length;
-  const all = el("option", "", "选择运行 · 图内展开"); all.value = "";
+  const all = el("option", "", "选择运行"); all.value = "";
   $("run-select").replaceChildren(all, ...runs.map((r, i) => { const option = el("option", "", `运行 ${i + 1} · ${statusText(r.status)}`); option.value = r.run_id; return option; }));
   $("run-select").value = state.runId; $("run-select").disabled = !runs.length;
   if (scope.runId) setSelectedRun(scope.runId, scope);
   renderProject();
 }
-function selectRun(id, toggle = false) {
+function selectRun(id) {
   const scope = activateProject();
-  if (!id) { scope.selected = "project-root"; setSelectedRun("", scope); renderProject(); return; }
-  if (!runRows(selectedProject()).some(r => r.run_id === id)) return;
-  scope.selected = JSON.stringify(["run", id]);
-  if (toggle && scope.expanded.has(id)) {
-    scope.expanded.delete(id); const entry = scope.cache.get(id); if (entry) abortEntry(entry);
-  } else scope.expanded.add(id);
+  if (id && !runRows(selectedProject()).some(r => r.run_id === id)) return;
+  if (scope.runId && scope.runId !== id) {
+    const previous = scope.cache.get(scope.runId); if (previous) abortEntry(previous);
+  }
+  scope.selected = id ? JSON.stringify(["run", id]) : "project-root";
   setSelectedRun(id, scope); renderProject();
-  if (scope.expanded.has(id)) loadRun(id, scope);
+  if (id) loadRun(id, scope);
 }
 async function loadRun(id, scope, force = false) {
   if (scope !== state.activeScope) return;
@@ -927,7 +850,7 @@ async function refresh() {
     clearTimeout(timeout);
     const scope = state.activeScope;
     if (scope.runId) setSelectedRun(scope.runId, scope);
-    await Promise.allSettled([...scope.expanded].map(id => loadRun(id, scope, true)));
+    if (scope.runId) await loadRun(scope.runId, scope, true);
     if (!state.projects.length) showEmpty("等待第一个项目", "尚无项目或运行快照；有数据后将自动显示。");
   } catch (error) {
     if (epoch !== state.epoch) return;
@@ -941,6 +864,7 @@ async function refresh() {
 function switchDemo() {
   if (state.activeScope) {
     state.activeScope.view = $("project-graph").graphView;
+    state.activeScope.view?.observer?.disconnect();
     for (const entry of state.activeScope.cache.values()) abortEntry(entry);
     state.activeScope = null;
   }

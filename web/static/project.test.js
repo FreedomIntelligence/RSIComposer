@@ -18,10 +18,16 @@ class Element {
 function harness(fetcher = async () => { throw new Error("unexpected fetch"); }, search = "") {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) { const e = new Element(); e.id = id; elements.set(id, e); } return elements.get(id); };
-  const ctx = vm.createContext({ document: { getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), addEventListener() {}, hidden: false }, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher });
+  const observers = [];
+  class ResizeObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  }
+  const ctx = vm.createContext({ ResizeObserver, document: { getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), addEventListener() {}, hidden: false }, location: { href: `http://localhost:8769/${search}`, search }, history: { replaceState() {} }, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, fetch: fetcher });
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
   vm.runInContext('state.auto = false; renderSnapshot = function(s) { state.snapshot = s; };', ctx);
-  return { ctx, get, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
+  return { ctx, get, observers, run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
 }
 const run = (id, extra = {}) => ({ schema_version: 1, run_id: id, updated_at: "2026-11-01T00:00:00Z", ...extra });
 const project = (id, runs) => ({ project_id: id, name: id, runs });
@@ -29,24 +35,47 @@ const response = data => ({ ok: true, json: async () => data });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 function setup(h, projects) { h.ctx.input = projects; h.run("chooseProjects(input)"); }
 function model(h) { return h.json("projectModel(selectedProject(), state.activeScope)"); }
-function seed(h, id, snapshot) { h.ctx.fixture = snapshot; h.ctx.id = id; h.run('state.activeScope.expanded.add(id); state.activeScope.cache.set(id, {snapshot: fixture, status: "ready", token: 0})'); }
+function seed(h, id, snapshot) { h.ctx.fixture = snapshot; h.ctx.id = id; h.run('state.activeScope.cache.set(id, {snapshot: fixture, status: "ready", token: 0})'); }
 
-test("project root contains every run without fetching snapshots; anchors survive multiple expansions", () => {
-  const h = harness(); setup(h, [project("p", [run("a"), run("b"), run("c")])]);
-  const before = model(h); assert.equal(before.nodes.length, 4); assert.equal(before.edges.filter(e => e.kind === "membership").length, 3);
-  seed(h, "a", run("a", { decisions: [{ decision_id: "same", mode: "train" }] })); seed(h, "b", run("b", { decisions: [{ decision_id: "same", mode: "evaluate" }] }));
-  const expanded = model(h); assert.equal(expanded.nodes.filter(n => n.type === "decision").length, 2);
-  assert.deepEqual(expanded.nodes.filter(n => n.type === "run").map(n => [n.key, n.x, n.y]), before.nodes.filter(n => n.type === "run").map(n => [n.key, n.x, n.y]));
-  h.run('selectRun("a", true)'); assert.deepEqual(model(h).nodes.filter(n => n.type === "decision").map(n => n.runId), ["b"]);
+test("project graph contains only the project and all runs before and after loading internal records", () => {
+  const calls = [], h = harness(async url => { calls.push(url); throw Error("unexpected fetch"); });
+  setup(h, [project("p", [run("a"), run("b"), run("c")])]);
+  const before = model(h);
+  assert.deepEqual(before.nodes.map(n => n.type), ["project", "run", "run", "run"]);
+  assert.equal(before.edges.filter(e => e.kind === "membership").length, 3);
+  for (const id of ["a", "b"]) seed(h, id, run(id, {
+    decisions: [{ decision_id: "same", kind: "directive", directive_id: "shared", mode: "train" }],
+    jobs: [{ job_id: "same-job", directive_id: "shared", metrics: { loss: 1 } }],
+    candidates: [{ candidate_id: "same-candidate", directive_id: "shared" }],
+  }));
+  h.run('selectRun("a"); selectRun("b"); selectRun("a")');
+  const after = model(h);
+  assert.deepEqual(after.nodes.map(n => [n.key, n.type, n.x, n.y]), before.nodes.map(n => [n.key, n.type, n.x, n.y]));
+  assert.deepEqual(after.edges, before.edges);
+  assert.equal(findClass(h.get("project-graph"), "graph-node").length, 4);
+  assert.equal(findClass(h.get("project-graph"), "flow-choice").length, 1);
+  assert.deepEqual(calls, []);
 });
 
-test("same decision/job/directive IDs in different runs have disjoint keys and edges", () => {
+test("same decision/job/directive/candidate IDs in different runs keep their own detail results", () => {
   const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
-  for (const id of ["a", "b"]) seed(h, id, run(id, { decisions: [{ decision_id: "same", kind: "directive", directive_id: "shared" }, { decision_id: "child", parent_decision_id: "same" }], jobs: [{ job_id: "same-job", directive_id: "shared", metrics: { loss: id === "a" ? 1 : 2 } }] }));
-  const graph = model(h), nodes = new Map(graph.nodes.map(n => [n.key, n]));
+  for (const [id, loss] of [["a", 1], ["b", 2]]) seed(h, id, run(id, {
+    decisions: [{ decision_id: "same", kind: "directive", directive_id: "shared", mode: "train", feedback: { summary: `feedback-${id}` } }],
+    jobs: [{ job_id: "same-job", directive_id: "shared", metrics: { loss } }],
+    candidates: [{ candidate_id: "same-candidate", directive_id: "shared", metrics: { accuracy: loss / 10 } }],
+  }));
+  for (const [id, other, loss] of [["a", "b", 1], ["b", "a", 2], ["a", "b", 1]]) {
+    h.ctx.selectedId = id; h.run('selectRun(selectedId)');
+    const detail = findClass(h.get("project-graph"), "run-detail")[0];
+    assert.match(textOf(detail), new RegExp(`feedback-${id}`));
+    assert.doesNotMatch(textOf(detail), new RegExp(`feedback-${other}`));
+    assert.equal(h.run('state.snapshot.jobs[0].metrics.loss'), loss);
+    assert.equal(findClass(detail, "candidate-card").length, 1);
+    assert.match(textOf(findClass(detail, "flow-metrics")[0]), new RegExp(`\\b${loss}\\b`));
+  }
+  const graph = model(h);
   assert.equal(new Set(graph.nodes.map(n => n.key)).size, graph.nodes.length);
-  for (const e of graph.edges.filter(e => ["explicit", "directive"].includes(e.kind))) assert.equal(nodes.get(e.from).runId, nodes.get(e.to).runId);
-  assert.deepEqual(graph.nodes.filter(n => n.type === "job").map(n => [n.runId, n.row.metrics.loss]), [["a", 1], ["b", 2]]);
+  assert.deepEqual(graph.nodes.map(n => n.type), ["project", "run", "run"]);
 });
 
 test("run timeline uses strict updated_at order; only explicit run parents create solid cross-run edges", () => {
@@ -68,11 +97,17 @@ test("ambiguous or self run references never guess a parent; multiple explicit p
   assert.equal(model(h).edges.filter(e => e.kind === "run-parent").length, 0);
 });
 
-test("legacy ?run= locates owning project and expands inside its only graph", () => {
-  const h = harness(undefined, "?project=wrong&run=target");
-  setup(h, [project("first", [run("other")]), project("owner", [run("target")])]);
-  assert.equal(h.run("state.projectId"), "owner"); assert.equal(h.run('state.activeScope.expanded.has("target")'), true);
-  assert.equal(h.get("project-graph").graphView.selected, JSON.stringify(["run", "target"]));
+test("legacy run-only and project/run deep links select and load the owning run", async () => {
+  for (const search of ["?run=target", "?project=wrong&run=target"]) {
+    const projects = [project("first", [run("other")]), project("owner", [run("target")])], calls = [];
+    const h = harness(async url => { calls.push(url); return response(url === "/api/projects" ? { projects } : run("target", { objective: "deep-linked run" })); }, search);
+    await h.run("refresh()");
+    assert.equal(h.run("state.projectId"), "owner"); assert.equal(h.run("state.runId"), "target");
+    assert.equal(h.get("project-graph").graphView.selected, JSON.stringify(["run", "target"]));
+    assert.equal(h.run("state.snapshot.objective"), "deep-linked run");
+    assert.deepEqual(calls, ["/api/projects", "/api/runs/target"]);
+    assert.deepEqual(model(h).nodes.map(n => n.type), ["project", "run"]);
+  }
 });
 
 test("parallel on-demand loads resolve out of order into their own run caches", async () => {
@@ -95,12 +130,35 @@ test("project switch aborts pending request and rejects late response even when 
   h.run('state.projectId = "one"; activateProject()'); assert.equal(h.run('state.activeScope.cache.get("same").snapshot'), null);
 });
 
-test("collapse aborts pending branch; reopening cannot accept older response", async () => {
-  const old = deferred(), fresh = deferred(); let count = 0;
-  const h = harness(() => ++count === 1 ? old.promise : fresh.promise); setup(h, [project("p", [run("a")])]);
-  h.run('state.activeScope.expanded.add("a")'); const first = h.run('loadRun("a", state.activeScope)'); h.run('selectRun("a", true); state.activeScope.expanded.add("a")'); const second = h.run('loadRun("a", state.activeScope)');
-  fresh.resolve(response(run("a", { objective: "fresh" }))); await second; old.resolve(response(run("a", { objective: "stale" }))); await first;
+test("repeated run clicks keep selection and the pending request, then reuse its loaded snapshot", async () => {
+  const pending = deferred(), calls = [], signals = [];
+  const h = harness((url, options) => { calls.push(url); signals.push(options.signal); return pending.promise; });
+  setup(h, [project("p", [run("a"), run("b")])]);
+  const click = () => findClass(h.get("project-graph"), "graph-node").find(n => n.dataset.nodeKey === JSON.stringify(["run", "a"])).listeners.click();
+  click(); click();
+  assert.equal(h.run("state.runId"), "a"); assert.equal(signals[0].aborted, false);
+  assert.equal(h.run('state.activeScope.cache.get("a").status'), "pending");
+  assert.deepEqual(model(h).nodes.map(n => n.type), ["project", "run", "run"]);
+  pending.resolve(response(run("a", { decisions: [{ decision_id: "d", mode: "train", feedback: { summary: "loaded feedback" } }] })));
+  await new Promise(resolve => setImmediate(resolve));
+  click(); click();
+  assert.deepEqual(calls, ["/api/runs/a"]);
+  assert.equal(h.get("project-graph").graphView.selected, JSON.stringify(["run", "a"]));
+  assert.equal(h.run("state.snapshot.run_id"), "a");
+  assert.match(textOf(findClass(h.get("project-graph"), "run-detail")[0]), /loaded feedback/);
+});
+
+test("changing run selection rejects a late old request and reopening loads a fresh snapshot", async () => {
+  const old = deferred(), fresh = deferred(), signals = []; let count = 0;
+  const h = harness((url, options) => { signals.push(options.signal); return ++count === 1 ? old.promise : fresh.promise; });
+  setup(h, [project("p", [run("a"), run("b")])]); seed(h, "b", run("b", { objective: "B" }));
+  h.run('selectRun("a"); selectRun("b"); selectRun("a")');
+  assert.equal(signals[0].aborted, true);
+  fresh.resolve(response(run("a", { objective: "fresh" }))); await new Promise(resolve => setImmediate(resolve));
+  old.resolve(response(run("a", { objective: "stale" }))); await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.run('state.activeScope.cache.get("a").snapshot.objective'), "fresh");
+  assert.equal(h.run("state.snapshot.objective"), "fresh");
+  assert.equal(h.run('state.activeScope.cache.get("b").snapshot.objective'), "B");
 });
 
 test("failed refresh keeps cached snapshot, exposes error, and retry recovers", async () => {
@@ -110,21 +168,38 @@ test("failed refresh keeps cached snapshot, exposes error, and retry recovers", 
   fail = false; await h.run('loadRun("a", state.activeScope, true)'); assert.equal(h.run('state.activeScope.cache.get("a").status'), "ready");
 });
 
-test("refresh preserves expanded runs, selected node, zoom and scroll; fetches only expanded runs", async () => {
+test("refresh reloads only the selected run, keeps other cached snapshots and preserves manual viewport", async () => {
   const projects = [project("p", [run("a"), run("b"), run("c")])], calls = [];
-  const h = harness(async url => { calls.push(url); return response(url === "/api/projects" ? { projects } : run(url.split("/").pop(), { decisions: [{ decision_id: "same", mode: "train" }] })); }); setup(h, projects);
-  for (const id of ["a", "b"]) seed(h, id, run(id, { decisions: [{ decision_id: "same", mode: "train" }] }));
-  h.run('renderProject(); state.activeScope.selected = projectModel(selectedProject(), state.activeScope).nodes.find(n => n.type === "decision").key; $("project-graph").graphView.scale = .8; $("project-graph").graphView.viewport.scrollLeft = 123; $("project-graph").graphView.viewport.scrollTop = 234');
-  const selected = h.run("state.activeScope.selected"); await h.run("refresh()");
-  assert.deepEqual(calls.sort(), ["/api/projects", "/api/runs/a", "/api/runs/b"]);
-  assert.deepEqual(h.json("[...state.activeScope.expanded]"), ["a", "b"]); assert.equal(h.get("project-graph").graphView.selected, selected);
+  const h = harness(async url => { calls.push(url); return response(url === "/api/projects" ? { projects } : run("a", { objective: "fresh A" })); }); setup(h, projects);
+  seed(h, "a", run("a", { objective: "cached A" })); seed(h, "b", run("b", { objective: "cached B" }));
+  h.run('selectRun("a"); $("project-graph").graphView.autoFit = false; $("project-graph").graphView.scale = .8; $("project-graph").graphView.viewport.scrollLeft = 123; $("project-graph").graphView.viewport.scrollTop = 234');
+  const before = model(h).nodes.map(n => [n.key, n.x, n.y]);
+  await h.run("refresh()");
+  assert.deepEqual(calls, ["/api/projects", "/api/runs/a"]);
+  assert.equal(h.run('state.activeScope.cache.get("a").snapshot.objective'), "fresh A");
+  assert.equal(h.run('state.activeScope.cache.get("b").snapshot.objective'), "cached B");
+  assert.equal(h.run('state.activeScope.cache.has("c")'), false);
+  assert.equal(h.get("project-graph").graphView.selected, JSON.stringify(["run", "a"]));
   assert.equal(h.get("project-graph").graphView.scale, .8); assert.equal(h.get("project-graph").graphView.viewport.scrollLeft, 123); assert.equal(h.get("project-graph").graphView.viewport.scrollTop, 234);
+  assert.deepEqual(model(h).nodes.map(n => [n.key, n.x, n.y]), before);
+  assert.equal(model(h).layoutStats.iterations, 0);
+  h.run('selectRun("b")'); assert.deepEqual(calls, ["/api/projects", "/api/runs/a"]); assert.equal(h.run("state.snapshot.objective"), "cached B");
+  h.run('selectRun("")'); calls.length = 0; await h.run("refresh()");
+  assert.deepEqual(calls, ["/api/projects"]); assert.equal(h.run("state.snapshot"), null);
 });
 
-test("demo has multiple expandable run snapshots and an explicit run parent", () => {
+test("demo keeps multiple run snapshots and explicit parents without adding internal graph nodes", () => {
   const demo = JSON.parse(fs.readFileSync(`${__dirname}/demo.json`, "utf8")); const h = harness(); setup(h, [project("demo", [demo, ...demo.demo_runs])]);
-  for (const s of [demo, ...demo.demo_runs]) seed(h, s.run_id, s);
-  const graph = model(h); assert.ok(graph.nodes.filter(n => n.type === "run").length > 1); assert.ok(new Set(graph.nodes.filter(n => n.type === "decision").map(n => n.runId)).size > 1); assert.ok(graph.edges.some(e => e.kind === "run-parent"));
+  for (const snapshot of [demo, ...demo.demo_runs]) seed(h, snapshot.run_id, snapshot);
+  const graph = model(h);
+  assert.ok(graph.nodes.filter(n => n.type === "run").length > 1);
+  assert.ok(graph.nodes.every(n => ["project", "run"].includes(n.type)));
+  assert.ok(graph.edges.some(e => e.kind === "run-parent"));
+  for (const snapshot of [demo, ...demo.demo_runs]) {
+    h.ctx.selectedId = snapshot.run_id; h.run('selectRun(selectedId)');
+    assert.equal(h.run("state.snapshot.run_id"), snapshot.run_id);
+    assert.equal(findClass(h.get("project-graph"), "execution-sequence").length, 1);
+  }
 });
 
 test("cached same run ID stays isolated by project and demo mode", () => {
@@ -166,9 +241,9 @@ test("network layout is deterministic under input reorder and keeps cached coord
   assert.ok(new Set(a.nodes.map(n=>n.y.toFixed(1))).size>5);
 });
 
-test("large dense graph has finite budget and bounded grid probes; stationary refresh does no relaxation", () => {
+test("large dense graph has finite budget and bounded grid probes; stationary layout does no relaxation", () => {
   const h=harness();const count=1800;
-  h.ctx.graph={nodes:Array.from({length:count},(_,i)=>({key:`n${i}`,type:"decision",runId:"r"})),edges:Array.from({length:count-1},(_,i)=>({from:`n${i}`,to:`n${i+1}`,kind:"time"}))};
+  h.ctx.graph={nodes:Array.from({length:count},(_,i)=>({key:`n${i}`,type:"run",runId:`r${i}`})),edges:Array.from({length:count-1},(_,i)=>({from:`n${i}`,to:`n${i+1}`,kind:"time"}))};
   const result=h.json('networkLayout(graph)');
   assert.ok(result.layoutStats.iterations<=64);
   assert.ok(result.layoutStats.iterations*(count+count-1)<=60000);
@@ -177,42 +252,103 @@ test("large dense graph has finite budget and bounded grid probes; stationary re
   assert.equal(h.run('networkLayout(graph,new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}]))).layoutStats.iterations'),0);
 });
 
+test("adding a run relaxes existing unpinned nodes while preserving the manually pinned run", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
+  h.run('state.activeScope.pinned.add(JSON.stringify(["run","a"]))');
+  const before = model(h), pinned = before.nodes.find(n => n.runId === "a"), movable = before.nodes.find(n => n.runId === "b");
+  h.ctx.newRun = run("c"); h.run("state.projects[0].runs.push(newRun)");
+  const after = model(h);
+  assert.ok(after.layoutStats.iterations > 0 && after.layoutStats.iterations <= 64);
+  assert.deepEqual(after.nodes.find(n => n.runId === "a"), pinned);
+  const moved = after.nodes.find(n => n.runId === "b");
+  assert.notDeepEqual([moved.x, moved.y], [movable.x, movable.y]);
+  assert.deepEqual(after.nodes.map(n => n.type), ["project", "run", "run", "run"]);
+  const stationary = model(h);
+  assert.equal(stationary.layoutStats.iterations, 0);
+  assert.deepEqual(stationary.nodes.map(n => [n.key, n.x, n.y]), after.nodes.map(n => [n.key, n.x, n.y]));
+});
+
+test("ResizeObserver fits actual graph bounds into a resized canvas and keeps them centered", () => {
+  const h = harness(); setup(h, [project("p", Array.from({ length: 15 }, (_, i) => run(String(i))))]);
+  const host = h.get("project-graph"), view = host.graphView, viewport = view.viewport;
+  const observer = h.observers.at(-1), initialScale = view.scale;
+  assert.equal(observer.target, viewport);
+  viewport.clientWidth = 320; viewport.clientHeight = 200; observer.callback();
+  assert.ok(view.scale < initialScale);
+  const plane = findClass(host, "graph-plane")[0];
+  const [, dx, dy, scale] = plane.style.transform.match(/translate\(([-\d.e+]+)px,([-\d.e+]+)px\) scale\(([-\d.e+]+)\)/).map(Number);
+  const nodes = model(h).nodes, xs = nodes.map(n => n.x * scale + dx), ys = nodes.map(n => n.y * scale + dy);
+  assert.ok(Math.min(...xs) >= 0 && Math.max(...xs) <= viewport.clientWidth);
+  assert.ok(Math.min(...ys) >= 0 && Math.max(...ys) <= viewport.clientHeight);
+  assert.ok(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - viewport.clientWidth / 2) < 1);
+  assert.ok(Math.abs((Math.min(...ys) + Math.max(...ys)) / 2 - viewport.clientHeight / 2) < 20);
+  assert.equal(viewport.scrollLeft, 0); assert.equal(viewport.scrollTop, 0);
+  const resizedScale = view.scale; observer.callback(); assert.equal(view.scale, resizedScale);
+  h.run("renderProject()"); assert.equal(observer.disconnected, true);
+  assert.equal(h.observers.at(-1).target, host.graphView.viewport);
+});
+
+test("automatic layout control clears manual pins, relaxes positions and fits the graph", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
+  h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:1800,y:1200}); state.activeScope.pinned.add(JSON.stringify(["run","a"])); $("project-graph").graphView.autoFit=false; renderProject()');
+  const before = model(h).nodes.find(n => n.runId === "a");
+  const control = descendants(h.get("project-graph")).find(n => n.attributes["aria-label"] === "自动调整节点布局");
+  control.listeners.click();
+  assert.equal(h.run("state.activeScope.pinned.size"), 0);
+  const after = model(h).nodes.find(n => n.runId === "a");
+  assert.notDeepEqual([after.x, after.y], [before.x, before.y]);
+  assert.equal(h.get("project-graph").graphView.autoFit, true);
+  assert.equal(h.get("project-graph").graphView.viewport.scrollLeft, 0);
+  assert.equal(h.get("project-graph").graphView.viewport.scrollTop, 0);
+  assert.equal(h.run("state.activeScope.selected"), "project-root");
+  assert.equal(model(h).layoutStats.iterations, 0);
+});
+
 test("position storage survives reload, rejects malformed coordinates and handles denied storage", () => {
   const h=harness(),saved=new Map();h.ctx.localStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
   setup(h,[project("p",[run("a")])]);
-  h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});savePositions(state.activeScope)');
+  h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});state.activeScope.pinned.add(JSON.stringify(["run","a"]));savePositions(state.activeScope)');
   const reloaded=harness();reloaded.ctx.localStorage=h.ctx.localStorage;setup(reloaded,[project("p",[run("a")])]);
   assert.deepEqual(model(reloaded).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[801,312]]);
-  saved.set('rsisys-network-v1:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
+  assert.equal(reloaded.run("state.activeScope.pinned.size"),0);
+  saved.set('rsisys-runs-v2:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
   assert.deepEqual(h.json('[...readPositions("bad")]'),[["ok",{x:44,y:55}]]);
   h.ctx.localStorage={getItem(){throw Error("denied");},setItem(){throw Error("full");}};
   assert.equal(h.run('readPositions("denied").size'),0);assert.doesNotThrow(()=>h.run('savePositions(state.activeScope)'));
 });
 
-test("hover highlights exactly one-hop nodes and incident edges, restoring selection on leave", () => {
-  const h=harness();setup(h,[project("p",[run("a"),run("b")])]);
-  seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train"}]}));h.run("renderProject()");
-  const host=h.get("project-graph"),buttons=findClass(host,"graph-node"),a=buttons.find(n=>n.attributes["aria-label"]==="运行 1 · 收起"),decision=buttons.find(n=>n.attributes["aria-label"]==="训练模型 · 运行 1");
-  decision.listeners.mouseenter();
-  assert.equal(decision.attributes["data-related"],"true");assert.equal(a.attributes["data-related"],"true");
-  assert.equal(buttons.find(n=>cssClass(n,"project")).attributes["data-related"],"false");
-  decision.listeners.mouseleave();assert.equal(buttons.find(n=>cssClass(n,"project")).attributes["data-related"],"true");
-  assert.equal(decision.attributes["data-related"],"false");
+test("hover highlights only a run's immediate neighbors and restores project selection on leave", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
+  const host = h.get("project-graph"), buttons = findClass(host, "graph-node");
+  const a = buttons.find(n => n.dataset.nodeKey === JSON.stringify(["run", "a"])), b = buttons.find(n => n.dataset.nodeKey === JSON.stringify(["run", "b"]));
+  const root = buttons.find(n => cssClass(n, "project"));
+  a.listeners.mouseenter();
+  assert.equal(a.attributes["data-related"], "true"); assert.equal(root.attributes["data-related"], "true"); assert.equal(b.attributes["data-related"], "false");
+  assert.deepEqual(findClass(host, "graph-edge").map(n => n.attributes["data-related"]), ["true", "false"]);
+  a.listeners.mouseleave(); assert.equal(b.attributes["data-related"], "true");
+  assert.ok(findClass(host, "graph-edge").every(n => n.attributes["data-related"] === "true"));
 });
 
-test("node dragging updates incident geometry and cache without selecting or collapsing its run", () => {
-  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train"}]}));h.run('renderProject(); $("project-graph").graphView.scale=.5');
-  const host=h.get("project-graph"),button=findClass(host,"graph-node").find(n=>cssClass(n,"run"));
-  button.setPointerCapture=()=>{};const x=parseFloat(button.style.left),y=parseFloat(button.style.top);
-  const event=(cx,cy)=>({button:0,clientX:cx,clientY:cy,pointerId:1,stopPropagation(){}});
-  const paths=findClass(host,"graph-edge"),before=paths.map(p=>p.attributes.d);
-  button.listeners.pointerdown(event(10,20));button.listeners.pointermove(event(40,45));button.listeners.pointerup();button.listeners.click();
-  assert.equal(parseFloat(button.style.left),x+60);assert.equal(parseFloat(button.style.top),y+50);
-  assert.equal(h.run('state.activeScope.expanded.has("a")'),true);
-  assert.equal(h.run('state.activeScope.selected'),"project-root");
-  assert.notDeepEqual(paths.map(p=>p.attributes.d),before);
-  assert.deepEqual(h.json('state.activeScope.positions.get(JSON.stringify(["run","a"]))'),{x:x+60,y:y+50});
-  h.run("renderProject()");assert.deepEqual(model(h).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[x+60,y+50]]);
+test("dragging pins only the moved run, redraws edges and relaxes other nodes without changing selection", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
+  h.run('$("project-graph").graphView.scale = .5');
+  const host = h.get("project-graph"), key = JSON.stringify(["run", "a"]);
+  const button = findClass(host, "graph-node").find(n => n.dataset.nodeKey === key);
+  button.setPointerCapture = () => {};
+  const x = parseFloat(button.style.left), y = parseFloat(button.style.top), before = model(h);
+  const event = (cx, cy) => ({ button: 0, clientX: cx, clientY: cy, pointerId: 1, stopPropagation() {} });
+  const paths = findClass(host, "graph-edge"), geometry = paths.map(p => p.attributes.d);
+  button.listeners.pointerdown(event(10, 20)); button.listeners.pointermove(event(40, 45));
+  assert.equal(parseFloat(button.style.left), x + 60); assert.equal(parseFloat(button.style.top), y + 50);
+  assert.notDeepEqual(paths.map(p => p.attributes.d), geometry);
+  button.listeners.pointerup(); button.listeners.click();
+  const after = model(h);
+  assert.deepEqual(h.json("[...state.activeScope.pinned]"), [key]);
+  assert.deepEqual(h.json('state.activeScope.positions.get(JSON.stringify(["run","a"]))'), { x: x + 60, y: y + 50 });
+  assert.equal(h.run("state.activeScope.selected"), "project-root"); assert.equal(h.run("state.runId"), "");
+  assert.ok(after.nodes.some(n => n.key !== key && before.nodes.some(old => old.key === n.key && (old.x !== n.x || old.y !== n.y))));
+  assert.equal(after.layoutStats.iterations, 0);
+  h.run("renderProject()"); assert.deepEqual(model(h).nodes.map(n => [n.key, n.x, n.y]), after.nodes.map(n => [n.key, n.x, n.y]));
 });
 
 test("node controls have a 24px hit target and labels cannot intercept another node", () => {
@@ -222,22 +358,48 @@ test("node controls have a 24px hit target and labels cannot intercept another n
   assert.match(css,/\.graph-node \.node-label \{[^}]*position: absolute;[^}]*pointer-events: none/);
 });
 
-test("graph details follow the full-width viewport and job labels distinguish outcomes from decisions", () => {
-  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"train",mode:"train"}],jobs:[{job_id:"j",kind:"train"},{job_id:"e",kind:"evaluate"}]}));h.run("renderProject()");
-  const graph=model(h);assert.deepEqual(graph.nodes.filter(n=>n.type==="job").map(n=>n.title),["训练结果","评测结果"]);
-  const layout=findClass(h.get("project-graph"),"graph-layout")[0];
-  assert.equal(layout.children.length,2);assert.ok(cssClass(layout.children[0],"graph-viewport"));assert.ok(cssClass(layout.children[1],"graph-detail"));assert.equal(layout.children[1].tagName,"section");
+test("run execution subview follows the graph viewport and never inserts internal graph nodes", () => {
+  const h = harness(); setup(h, [project("p", [run("a")])]);
+  seed(h, "a", run("a", { decisions: [{ decision_id: "train", mode: "train" }], jobs: [{ job_id: "j", kind: "train" }, { job_id: "e", kind: "evaluate" }], candidates: [{ candidate_id: "candidate", status: "accepted" }] }));
+  h.run('selectRun("a")');
+  const layout = findClass(h.get("project-graph"), "graph-layout")[0];
+  assert.equal(layout.children.length, 2); assert.ok(cssClass(layout.children[0], "graph-viewport")); assert.ok(cssClass(layout.children[1], "graph-detail")); assert.equal(layout.children[1].tagName, "section");
+  assert.equal(findClass(layout.children[0], "graph-node").length, 2);
+  assert.equal(findClass(layout.children[0], "flow-choice").length, 0);
+  assert.equal(findClass(layout.children[1], "execution-sequence").length, 1);
+  assert.equal(findClass(layout.children[1], "candidate-card").length, 1);
+  assert.match(textOf(layout.children[1]), /导出此运行报告/);
 });
 
-test("run detail exposes chronological decision, feedback and metrics for every step, with bounded initial rendering", () => {
-  const h=harness();setup(h,[project("p",[run("a")])]);
-  const decisions=Array.from({length:35},(_,i)=>({decision_id:`d${i}`,timestamp:new Date(Date.UTC(2026,10,1,0,i)).toISOString(),mode:"train",reason:`reason ${i}`,metrics:{loss:i},feedback:{summary:`feedback ${i}`}})).reverse();
-  seed(h,"a",run("a",{decisions}));
-  const detail=h.run('runDetail(projectModel(selectedProject(),state.activeScope).nodes.find(n=>n.type==="run"),state.activeScope)');
-  let steps=findClass(detail,"flow-step");assert.equal(steps.length,30);assert.match(textOf(steps[0]),/feedback 0/);assert.match(textOf(steps[29]),/feedback 29/);
-  for(const step of steps){assert.equal(findClass(step,"flow-decision").length,1);assert.equal(findClass(step,"flow-feedback").length,1);assert.equal(findClass(step,"flow-metrics").length,1);}
-  const more=findClass(detail,"more-button")[0];more.listeners.click();assert.equal(findClass(detail,"flow-step").length,35);assert.equal(more.hidden,true);
-  const rerender=h.run('runDetail(projectModel(selectedProject(),state.activeScope).nodes.find(n=>n.type==="run"),state.activeScope)');assert.equal(findClass(rerender,"flow-step").length,35);
+test("execution navigation pages all steps, shows one detail and retains selection across repeated run clicks", () => {
+  const h = harness(); setup(h, [project("p", [run("a"), run("b")])]);
+  const decisions = Array.from({ length: 35 }, (_, i) => ({ decision_id: `d${i}`, timestamp: new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString(), mode: "train", reason: `reason-${i}-end`, metrics: { loss: i }, feedback: { summary: `feedback-${i}-end` } })).reverse();
+  seed(h, "a", run("a", { decisions })); seed(h, "b", run("b", { decisions: [{ decision_id: "d0", mode: "evaluate", feedback: { summary: "only B" } }] }));
+  h.run('selectRun("a")');
+  const detail = findClass(h.get("project-graph"), "run-detail")[0];
+  assert.equal(findClass(detail, "flow-choice").length, 30); assert.equal(findClass(detail, "flow-step").length, 1);
+  assert.match(textOf(findClass(detail, "flow-step")[0]), /feedback-0-end/);
+  const choices = findClass(detail, "flow-choice");
+  assert.equal(choices[0].attributes["aria-label"], "步骤 1 · 训练模型");
+  choices[29].listeners.click();
+  const step = findClass(detail, "flow-step")[0];
+  assert.match(textOf(step), /feedback-29-end/); assert.doesNotMatch(textOf(step), /feedback-0-end/);
+  assert.match(textOf(findClass(step, "flow-decision")[0]), /reason-29-end/);
+  assert.match(textOf(findClass(step, "flow-metrics")[0]), /\b29\b/);
+  for (const name of ["flow-decision", "flow-feedback", "flow-metrics"]) assert.equal(findClass(step, name).length, 1);
+  assert.equal(findClass(detail, "flow-choice").filter(n => n.attributes["aria-pressed"] === "true").length, 1);
+  findClass(detail, "more-button")[0].listeners.click();
+  assert.equal(findClass(detail, "flow-choice").length, 35); assert.equal(findClass(detail, "flow-step").length, 1);
+  assert.equal(findClass(detail, "more-button")[0].hidden, true);
+  findClass(detail, "flow-choice")[34].listeners.click();
+  const clickA = () => findClass(h.get("project-graph"), "graph-node").find(n => n.dataset.nodeKey === JSON.stringify(["run", "a"])).listeners.click();
+  clickA(); clickA();
+  assert.match(textOf(findClass(h.get("project-graph"), "flow-step")[0]), /feedback-34-end/);
+  assert.equal(findClass(h.get("project-graph"), "graph-node").length, 3);
+  h.run('selectRun("b")'); assert.match(textOf(findClass(h.get("project-graph"), "flow-step")[0]), /only B/);
+  clickA();
+  assert.equal(findClass(h.get("project-graph"), "flow-choice").length, 35);
+  assert.match(textOf(findClass(h.get("project-graph"), "flow-step")[0]), /feedback-34-end/);
 });
 
 test("unknown execution timestamps retain snapshot order without implying chronology; repeat finish retains originals", () => {
@@ -245,12 +407,15 @@ test("unknown execution timestamps retain snapshot order without implying chrono
   const groups=h.json("executionGroups(fixture)");assert.deepEqual(groups.map(g=>g.row.decision_id),["early","later","u1","u2","f1"]);assert.equal(groups[4].rows.length,2);
 });
 
-test("decision detail includes only exact related results and keeps review metrics separate from current job metrics", () => {
+test("execution detail keeps review metrics separate from exact current job and candidate results", () => {
   const h=harness();h.ctx.fixture={decisions:[{decision_id:"d",kind:"directive",directive_id:"dir",mode:"train"},{decision_id:"r",kind:"review",action:"continue",job_id:"job",metrics:{loss:.7}}],jobs:[{job_id:"job",directive_id:"dir",kind:"train",metrics:{loss:.1}}],candidates:[{candidate_id:"candidate",directive_id:"dir",metrics:{accuracy:.9}},{candidate_id:"other",directive_id:"outside",metrics:{accuracy:.5}}]};
   const results=h.json("relatedResults(fixture.decisions[0],fixture)");assert.deepEqual(results.map(r=>r.type),["job","candidate"]);assert.equal(results[1].row.candidate_id,"candidate");
   assert.deepEqual(h.json("feedbackFor(fixture.decisions[1],fixture).metrics"),{loss:.7});
-  const detail=h.run('(()=>{const g=lineageModel(fixture);return graphDetail(g.nodes.find(n=>n.row.decision_id==="r"),g,fixture);})()');
-  assert.match(textOf(detail),/不代表复查当时状态/);assert.match(textOf(detail),/相关结果 · 当前快照/);
+  const detail=h.run('executionSequence({...fixture,run_id:"a"},{})');
+  findClass(detail,"flow-choice")[1].listeners.click();
+  assert.match(textOf(detail),/不代表复查当时状态/);
+  assert.match(textOf(findClass(detail,"flow-metrics")[0]),/0\.7/);
+  assert.doesNotMatch(textOf(findClass(detail,"flow-metrics")[0]),/0\.1/);
   assert.equal(h.json('relatedResults({job_id:"missing",directive_id:"dir"},fixture)').length,0);
   assert.equal(h.json('relatedResults({job_id:"dup"},{jobs:[{job_id:"dup"},{job_id:"dup"}]})').length,0);
 });
