@@ -145,3 +145,112 @@ test("switching demo invalidates real requests immediately before demo fixture l
   pending.resolve(response(run("a", { objective: "late real run" }))); await request;
   assert.equal(h.run('state.snapshot'), null); assert.equal(h.get("project-graph").graphView, null);
 });
+
+function descendants(node) { return [node,...node.children.flatMap(descendants)]; }
+function textOf(node) { return [node.textContent||"",...node.children.map(textOf)].join(" "); }
+function cssClass(node,name) { return (node.className||node.attributes.class||"").split(" ").includes(name); }
+function findClass(node,name) { return descendants(node).filter(n=>cssClass(n,name)); }
+
+test("network layout is deterministic under input reorder and keeps cached coordinates without further simulation", () => {
+  const h=harness();
+  const graph={nodes:[{key:"project-root",type:"project"},...Array.from({length:8},(_,i)=>({key:JSON.stringify(["run",String(i)]),type:"run",runId:String(i)}))],edges:Array.from({length:8},(_,i)=>({from:"project-root",to:JSON.stringify(["run",String(i)]),kind:"membership"}))};
+  h.ctx.graph=graph;
+  const a=h.json("networkLayout(structuredGraph = JSON.parse(JSON.stringify(graph)))");
+  h.ctx.graph={nodes:graph.nodes.slice().reverse(),edges:graph.edges.slice().reverse()};
+  const b=h.json("networkLayout(JSON.parse(JSON.stringify(graph)))");
+  const coords=g=>g.nodes.map(n=>[n.key,n.x,n.y]).sort((a,b)=>a[0].localeCompare(b[0]));
+  assert.deepEqual(coords(a),coords(b));
+  h.ctx.graph=a;
+  const cached=h.json('networkLayout(graph,new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}])))');
+  assert.deepEqual(coords(cached),coords(a));assert.equal(cached.layoutStats.iterations,0);
+  assert.ok(new Set(a.nodes.map(n=>n.y.toFixed(1))).size>5);
+});
+
+test("large dense graph has finite budget and bounded grid probes; stationary refresh does no relaxation", () => {
+  const h=harness();const count=1800;
+  h.ctx.graph={nodes:Array.from({length:count},(_,i)=>({key:`n${i}`,type:"decision",runId:"r"})),edges:Array.from({length:count-1},(_,i)=>({from:`n${i}`,to:`n${i+1}`,kind:"time"}))};
+  const result=h.json('networkLayout(graph)');
+  assert.ok(result.layoutStats.iterations<=64);
+  assert.ok(result.layoutStats.iterations*(count+count-1)<=60000);
+  assert.ok(result.layoutStats.comparisons<=result.layoutStats.iterations*count*9*12);
+  assert.ok(result.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)&&n.x>=36&&n.y>=36));
+  assert.equal(h.run('networkLayout(graph,new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}]))).layoutStats.iterations'),0);
+});
+
+test("position storage survives reload, rejects malformed coordinates and handles denied storage", () => {
+  const h=harness(),saved=new Map();h.ctx.localStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
+  setup(h,[project("p",[run("a")])]);
+  h.run('state.activeScope.positions.set(JSON.stringify(["run","a"]),{x:801,y:312});savePositions(state.activeScope)');
+  const reloaded=harness();reloaded.ctx.localStorage=h.ctx.localStorage;setup(reloaded,[project("p",[run("a")])]);
+  assert.deepEqual(model(reloaded).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[801,312]]);
+  saved.set('rsisys-network-v1:bad',JSON.stringify([["nan",{x:null,y:3}],["negative",{x:-3,y:50}],["ok",{x:44,y:55}]]));
+  assert.deepEqual(h.json('[...readPositions("bad")]'),[["ok",{x:44,y:55}]]);
+  h.ctx.localStorage={getItem(){throw Error("denied");},setItem(){throw Error("full");}};
+  assert.equal(h.run('readPositions("denied").size'),0);assert.doesNotThrow(()=>h.run('savePositions(state.activeScope)'));
+});
+
+test("hover highlights exactly one-hop nodes and incident edges, restoring selection on leave", () => {
+  const h=harness();setup(h,[project("p",[run("a"),run("b")])]);
+  seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train"}]}));h.run("renderProject()");
+  const host=h.get("project-graph"),buttons=findClass(host,"graph-node"),a=buttons.find(n=>n.attributes["aria-label"]==="运行 1 · 收起"),decision=buttons.find(n=>n.attributes["aria-label"]==="训练模型 · 运行 1");
+  decision.listeners.mouseenter();
+  assert.equal(decision.attributes["data-related"],"true");assert.equal(a.attributes["data-related"],"true");
+  assert.equal(buttons.find(n=>cssClass(n,"project")).attributes["data-related"],"false");
+  decision.listeners.mouseleave();assert.equal(buttons.find(n=>cssClass(n,"project")).attributes["data-related"],"true");
+  assert.equal(decision.attributes["data-related"],"false");
+});
+
+test("node dragging updates incident geometry and cache without selecting or collapsing its run", () => {
+  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train"}]}));h.run('renderProject(); $("project-graph").graphView.scale=.5');
+  const host=h.get("project-graph"),button=findClass(host,"graph-node").find(n=>cssClass(n,"run"));
+  button.setPointerCapture=()=>{};const x=parseFloat(button.style.left),y=parseFloat(button.style.top);
+  const event=(cx,cy)=>({button:0,clientX:cx,clientY:cy,pointerId:1,stopPropagation(){}});
+  const paths=findClass(host,"graph-edge"),before=paths.map(p=>p.attributes.d);
+  button.listeners.pointerdown(event(10,20));button.listeners.pointermove(event(40,45));button.listeners.pointerup();button.listeners.click();
+  assert.equal(parseFloat(button.style.left),x+60);assert.equal(parseFloat(button.style.top),y+50);
+  assert.equal(h.run('state.activeScope.expanded.has("a")'),true);
+  assert.equal(h.run('state.activeScope.selected'),"project-root");
+  assert.notDeepEqual(paths.map(p=>p.attributes.d),before);
+  assert.deepEqual(h.json('state.activeScope.positions.get(JSON.stringify(["run","a"]))'),{x:x+60,y:y+50});
+  h.run("renderProject()");assert.deepEqual(model(h).nodes.filter(n=>n.type==="run").map(n=>[n.x,n.y]),[[x+60,y+50]]);
+});
+
+test("node controls have a 24px hit target and labels cannot intercept another node", () => {
+  const css=fs.readFileSync(`${__dirname}/style.css`,"utf8");
+  assert.match(css,/\.graph-node \{[^}]*width: 24px; height: 24px;/);
+  assert.match(css,/\.graph-node \{[^}]*transform: translate\(-50%, -50%\)/);
+  assert.match(css,/\.graph-node \.node-label \{[^}]*position: absolute;[^}]*pointer-events: none/);
+});
+
+test("graph details follow the full-width viewport and job labels distinguish outcomes from decisions", () => {
+  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"train",mode:"train"}],jobs:[{job_id:"j",kind:"train"},{job_id:"e",kind:"evaluate"}]}));h.run("renderProject()");
+  const graph=model(h);assert.deepEqual(graph.nodes.filter(n=>n.type==="job").map(n=>n.title),["训练结果","评测结果"]);
+  const layout=findClass(h.get("project-graph"),"graph-layout")[0];
+  assert.equal(layout.children.length,2);assert.ok(cssClass(layout.children[0],"graph-viewport"));assert.ok(cssClass(layout.children[1],"graph-detail"));assert.equal(layout.children[1].tagName,"section");
+});
+
+test("run detail exposes chronological decision, feedback and metrics for every step, with bounded initial rendering", () => {
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  const decisions=Array.from({length:35},(_,i)=>({decision_id:`d${i}`,timestamp:new Date(Date.UTC(2026,10,1,0,i)).toISOString(),mode:"train",reason:`reason ${i}`,metrics:{loss:i},feedback:{summary:`feedback ${i}`}})).reverse();
+  seed(h,"a",run("a",{decisions}));
+  const detail=h.run('runDetail(projectModel(selectedProject(),state.activeScope).nodes.find(n=>n.type==="run"),state.activeScope)');
+  let steps=findClass(detail,"flow-step");assert.equal(steps.length,30);assert.match(textOf(steps[0]),/feedback 0/);assert.match(textOf(steps[29]),/feedback 29/);
+  for(const step of steps){assert.equal(findClass(step,"flow-decision").length,1);assert.equal(findClass(step,"flow-feedback").length,1);assert.equal(findClass(step,"flow-metrics").length,1);}
+  const more=findClass(detail,"more-button")[0];more.listeners.click();assert.equal(findClass(detail,"flow-step").length,35);assert.equal(more.hidden,true);
+  const rerender=h.run('runDetail(projectModel(selectedProject(),state.activeScope).nodes.find(n=>n.type==="run"),state.activeScope)');assert.equal(findClass(rerender,"flow-step").length,35);
+});
+
+test("unknown execution timestamps retain snapshot order without implying chronology; repeat finish retains originals", () => {
+  const h=harness();h.ctx.fixture={decisions:[{decision_id:"u1",mode:"train"},{decision_id:"later",mode:"train",timestamp:"2026-11-01T01:00:00Z"},{decision_id:"u2",mode:"evaluate"},{decision_id:"early",mode:"train",timestamp:"2026-11-01T00:00:00Z"},{decision_id:"f1",kind:"finish",reason:"done"},{decision_id:"f2",kind:"finish",reason:"done"}]};
+  const groups=h.json("executionGroups(fixture)");assert.deepEqual(groups.map(g=>g.row.decision_id),["early","later","u1","u2","f1"]);assert.equal(groups[4].rows.length,2);
+});
+
+test("decision detail includes only exact related results and keeps review metrics separate from current job metrics", () => {
+  const h=harness();h.ctx.fixture={decisions:[{decision_id:"d",kind:"directive",directive_id:"dir",mode:"train"},{decision_id:"r",kind:"review",action:"continue",job_id:"job",metrics:{loss:.7}}],jobs:[{job_id:"job",directive_id:"dir",kind:"train",metrics:{loss:.1}}],candidates:[{candidate_id:"candidate",directive_id:"dir",metrics:{accuracy:.9}},{candidate_id:"other",directive_id:"outside",metrics:{accuracy:.5}}]};
+  const results=h.json("relatedResults(fixture.decisions[0],fixture)");assert.deepEqual(results.map(r=>r.type),["job","candidate"]);assert.equal(results[1].row.candidate_id,"candidate");
+  assert.deepEqual(h.json("feedbackFor(fixture.decisions[1],fixture).metrics"),{loss:.7});
+  const detail=h.run('(()=>{const g=lineageModel(fixture);return graphDetail(g.nodes.find(n=>n.row.decision_id==="r"),g,fixture);})()');
+  assert.match(textOf(detail),/不代表复查当时状态/);assert.match(textOf(detail),/相关结果 · 当前快照/);
+  assert.equal(h.json('relatedResults({job_id:"missing",directive_id:"dir"},fixture)').length,0);
+  assert.equal(h.json('relatedResults({job_id:"dup"},{jobs:[{job_id:"dup"},{job_id:"dup"}]})').length,0);
+});
