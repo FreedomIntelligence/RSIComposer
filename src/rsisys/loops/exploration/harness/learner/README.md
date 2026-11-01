@@ -2,6 +2,8 @@
 
 提供后端中立（backend-neutral）的训练请求与作业接口。[默认 Exploration Harness](../README.md) 保留简单的本地 SFT/RL 流程，也可显式启用整项训练任务委托。
 
+[LearningExecution](__init__.py) 封装默认执行流程：使用 JobBook 提交、查询、取消作业，校验并记录终态、保留候选及应用版本。它与训练算法后端分离；本地控制、SFT/train 指令和 LocalRLExecution 共用这条路径。外部调用仍通过 Harness 入口遵守占用检查。
+
 ## 接口与输入
 
 [ActorLearner](__init__.py) 提供 `submit(request, *, idempotency_key)`、`poll(job)`、`cancel(job)`、`result(job)`；后端 cancel 返回 None，默认 Harness 的 cancel_learning 返回 JobOutcome。ActorTrainingRequest 包含 base、recipe_ref、method、data_refs 和 trajectory_refs。

@@ -146,9 +146,9 @@ class BackendTrainingTests(unittest.TestCase):
             with self.subTest(cancel=cancel):
                 runner, backend = self.make(apply=True)
                 harness = runner.exploration.harness
-                apply = Mock(wraps=harness._apply_learning,
+                apply = Mock(wraps=harness.learning.apply,
                     side_effect=[ModelActivationPending('deployment pending'), DEFAULT])
-                harness._apply_learning = apply
+                harness.learning.apply = apply
                 with self.assertRaisesRegex(ModelActivationPending, 'deployment pending'):
                     self.finish(runner)
                 state = harness.commands.receipts[harness.commands.active]

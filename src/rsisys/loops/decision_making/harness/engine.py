@@ -25,7 +25,7 @@ from ..action_space.access import authorized_space
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy, ModelDecisionPolicy
 from .decision import Decision
-from .tools import DecisionTools
+from .tools import DecisionTools, execute_operation, record_operation
 
 from .state import (DecisionContext, DecisionState, _PendingOperationRecord, _PendingReviewRecord, _ReviewSession,
                     DirectiveProvenance, CandidateEvaluation)
@@ -66,20 +66,8 @@ class DefaultDecisionHarness:
         pending = self.state.pending_operation_record
         if pending is None:
             raise RuntimeError('No operation recording is pending')
-        ident, call, result = pending.record_id, pending.call, pending.result
-        self.memory.append(HistoryEntry(
-            record_id=ident, kind="operation", task_id=None, summary=result.summary,
-            simulated=result.simulated, source_refs=tuple(ref.artifact_id for ref in result.artifacts),
-            details={"operation": asdict(call) if call else None, "result": asdict(result)},
-        ))
-        self.experience.record(ExperienceRecord(
-            record_id=ident, kind="runtime_feedback", scope="decision_maker", directive_id=None,
-            summary=f"Preparation operation {result.status.value}", simulated=result.simulated,
-            source_refs=(f"history:decision_maker:{ident}",),
-            details={"operation": call.name if call else None, "status": result.status.value,
-                     "error": result.error, "elapsed_seconds": pending.elapsed_seconds,
-                     "history_ref": ident, "history_owner": "decision_maker"},
-        ))
+        result = pending.result
+        record_operation(pending, self.memory, self.experience)
         self.state.operation_results.append(deepcopy(result))
         if pending.job is not None:
             self.state.pending_job = None
@@ -166,34 +154,16 @@ class DefaultDecisionHarness:
             if (result.kind != 'invoke' or result.operation.name not in
                     {spec.name for spec in context.operations}):
                 raise ValueError('Review may only invoke available operations within its budget')
-            call = result.operation
-            operation_spec = next(spec for spec in context.operations if spec.name == call.name)
-            started = perf_counter()
-            try:
-                call = action_space.validate(call)
-                observed = self.tools.execute(call)
-                if isinstance(observed, JobRef):
-                    # This is a submission receipt, not completion of the backend job.
-                    # Its tool/provider owns polling; do not replace the in-flight experiment.
-                    observed = OperationResult('Operation submitted; backend job is not yet complete', (),
-                        result.simulated, data={'job': asdict(observed), 'status': 'submitted'})
-                if not isinstance(observed, OperationResult):
-                    raise TypeError('Review operations must return OperationResult or JobRef')
-                observed.__post_init__()
-                observed = replace(observed, simulated=observed.simulated or result.simulated)
-            except Exception as exc:
-                observed = OperationResult('Research operation failed', (), result.simulated,
-                    ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
+            operation_spec = next(spec for spec in context.operations if spec.name == result.operation.name)
+            execution = execute_operation(self.tools, action_space, result.operation,
+                                          simulated=result.simulated, clock=perf_counter)
+            observed = execution.observation()
             session.simulated = session.simulated or observed.simulated
             session.queries_used += 1
-            record_id = str(uuid4())
-            session.pending_result = deepcopy(observed)
-            session.pending_entry = HistoryEntry(record_id, 'operation', progress.directive_id,
-                observed.summary, observed.simulated,
-                source_refs=tuple(ref.artifact_id for ref in observed.artifacts),
-                details={'event': 'review_query' if operation_spec.read_only else 'review_operation',
-                         'operation': asdict(call), 'result': asdict(observed),
-                         'elapsed_seconds': perf_counter() - started})
+            session.pending_record = _PendingOperationRecord(
+                str(uuid4()), execution.call, observed, execution.elapsed_seconds, None,
+                task_id=progress.directive_id,
+                event='review_query' if operation_spec.read_only else 'review_operation')
             self._flush_review_query()
         if not isinstance(result, ReviewDecision):
             raise TypeError('Policy review must return a ReviewDecision')
@@ -213,13 +183,14 @@ class DefaultDecisionHarness:
 
     def _flush_review_query(self):
         session = self.state.review_session
-        if session is None or session.pending_entry is None:
+        if session is None or session.pending_record is None:
             return
-        self.memory.append(deepcopy(session.pending_entry))
-        session.query_refs.append(f'history:decision_maker:{session.pending_entry.record_id}')
+        pending = session.pending_record
+        record_operation(pending, self.memory)
+        session.query_refs.append(f'history:decision_maker:{pending.record_id}')
         session.context = replace(session.context,
-            operation_results=(*session.context.operation_results, deepcopy(session.pending_result)))
-        session.pending_entry = session.pending_result = None
+            operation_results=(*session.context.operation_results, deepcopy(pending.result)))
+        session.pending_record = None
 
     def _call_policy(self, method, context):
         received = 0
@@ -274,26 +245,22 @@ class DefaultDecisionHarness:
                                             "decision_model": asdict(context.decision_model) if context.decision_model else None,
                                             "execution_model": asdict(context.execution.model) if context.execution.model else None}))
         if decision.kind == "invoke":
-            started = perf_counter()
-            call = decision.operation
+            execution = execute_operation(self.tools, action_space, decision.operation,
+                                          simulated=decision.simulated, clock=perf_counter)
+            if isinstance(execution.outcome, JobRef):
+                self.state.pending_job = execution.outcome
+                self.state.pending_operation = execution.call
+                self.state.pending_simulated = execution.simulated
+                return LoopStepResult("waiting", job=execution.outcome)
+            result = execution.observation()
             try:
-                call = action_space.validate(call)
-                result = self.tools.execute(call)
-            except Exception as exc:
-                failure = OperationResult("Decision operation failed", (), decision.simulated,
-                                          ExecutionStatus.FAILED, f"{type(exc).__name__}: {exc}")
-                try:
-                    self._record_operation(call, failure, elapsed_seconds=perf_counter() - started)
-                except Exception as record_error:
-                    exc.add_note(f"Could not record operation failure: {record_error}")
-                raise
-            if isinstance(result, JobRef):
-                self.state.pending_job = result
-                self.state.pending_operation = deepcopy(call)
-                self.state.pending_simulated = decision.simulated
-                return LoopStepResult("waiting", job=result)
-            result = replace(result, simulated=result.simulated or decision.simulated)
-            self._record_operation(call, result, elapsed_seconds=perf_counter() - started)
+                self._record_operation(execution.call, result, elapsed_seconds=execution.elapsed_seconds)
+            except Exception as record_error:
+                if execution.error is None:
+                    raise
+                execution.error.add_note(f"Could not record operation failure: {record_error}")
+            if execution.error is not None:
+                raise execution.error
             return LoopStepResult("progressed", operation_result=result)
         if decision.kind == "explore":
             directive = replace(decision.directive,

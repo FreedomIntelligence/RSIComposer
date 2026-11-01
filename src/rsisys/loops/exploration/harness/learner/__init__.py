@@ -1,10 +1,25 @@
-from dataclasses import dataclass
-from typing import Protocol
+from __future__ import annotations
 
+import json
+from copy import deepcopy
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Protocol
+from uuid import uuid4
+
+from rsisys.experience.records import ExperienceRecord
+from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.loops._memory import MemoryStore
 from rsisys.loops.contracts.artifacts import ArtifactRef
-from rsisys.loops.contracts.training import TrainingResult
-from rsisys.loops.contracts.jobs import JobRef, JobOutcome
-from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
+from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
+from rsisys.loops.contracts.training import ModelActivator, TrainingResult
+from rsisys.runtime.jobs import JobBook, InvalidJobResult
+from rsisys.runtime.model import prepare_model_activation
+
+from ..policy import ActorPolicy
+
+if TYPE_CHECKING:
+    from ..state import ExplorationState
 
 
 @dataclass(frozen=True)
@@ -50,3 +65,109 @@ class UnimplementedActorLearner:
 
     def cancel(self, job: JobRef) -> None:
         raise NotImplementedError("Training backend is not implemented.")
+
+
+class LearningExecution:
+    """Own training validation, evidence retries, retained candidates and activation."""
+
+    def __init__(self, policy: ActorPolicy, memory: MemoryStore, experience: ExperienceSystem,
+                 state: ExplorationState, jobs: JobBook[ActorTrainingRequest, TrainingResult],
+                 model_activator: ModelActivator | None = None):
+        self.policy, self.memory, self.experience = policy, memory, experience
+        self.state, self.jobs, self.model_activator = state, jobs, model_activator
+
+    def validate_payload(self, payload, expected, *, apply: bool) -> None:
+        if self.jobs.backend is None:
+            raise NotImplementedError('Training directives require a learner')
+        if not isinstance(payload, expected):
+            raise ValueError(f'Training requires {expected.__name__}')
+        if apply and not isinstance(self.policy, ModelUpdatable):
+            raise TypeError('This command requires a model-updatable policy')
+
+    def submit(self, request: ActorTrainingRequest, *, idempotency_key: str) -> JobRef:
+        if not isinstance(request, ActorTrainingRequest):
+            raise TypeError("Expected ActorTrainingRequest")
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
+            raise RuntimeError("Cannot start training during environment interaction")
+        available = {r.record_id for r in self.memory.history(kind="trajectory")}
+        if any(ref not in available for ref in request.trajectory_refs):
+            raise ValueError("Training references must identify this loop's trajectory history")
+        return self.jobs.submit(request, idempotency_key=idempotency_key)
+
+    def poll(self, job: JobRef) -> JobOutcome[TrainingResult]:
+        outcome = self.jobs.poll(job)
+        return self._record(outcome)
+
+    def cancel(self, job: JobRef) -> JobOutcome[TrainingResult]:
+        return self._record(self.jobs.cancel(job))
+
+    def _record(self, outcome: JobOutcome[TrainingResult]) -> JobOutcome[TrainingResult]:
+        request = self.jobs.request(outcome.job)
+        if outcome.status == JobStatus.SUCCEEDED:
+            result = outcome.result
+            if not isinstance(result, TrainingResult) or result.base != request.base:
+                raise InvalidJobResult("Training result does not match the submitted base", outcome)
+            if "actor" not in result.candidate.affected_roles:
+                raise InvalidJobResult("Training result does not target this loop's role", outcome)
+            candidate_id = result.candidate.candidate_id
+            if (candidate_id in self.state.candidate_results
+                    and self.state.candidate_results[candidate_id] != result):
+                raise InvalidJobResult('Candidate ID reused with different training content', outcome)
+            self.state.candidate_results[candidate_id] = deepcopy(result)
+        if outcome.terminal and outcome.job not in self.state.recorded_training:
+            self.experience.record(ExperienceRecord(
+                record_id=self.state.training_record_ids.setdefault(outcome.job, str(uuid4())),
+                kind="training_run", scope="actor", directive_id=None,
+                summary=f"actor learning {outcome.status}",
+                simulated=outcome.simulated or bool(outcome.result and outcome.result.simulated),
+                source_refs=tuple(f"history:actor:{ref}" for ref in request.trajectory_refs) + tuple(ref.artifact_id for ref in request.data_refs)
+                + (tuple(ref.artifact_id for ref in outcome.result.candidate.changes.values())
+                   if outcome.result else ()),
+                details={"request": asdict(request), "outcome": asdict(outcome)},
+            ))
+            self.state.recorded_training.add(outcome.job)
+        return outcome
+
+    def apply(self, job: JobRef) -> ModelRef:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
+            raise RuntimeError("Cannot replace the actor during environment interaction")
+        outcome = self.poll(job)
+        if outcome.status != JobStatus.SUCCEEDED:
+            raise RuntimeError(f"Training has no usable result: {outcome.status}")
+        result = outcome.result
+        model = self.apply_result(result)
+        self.state.applied_training.add(job)
+        return model
+
+    def candidate_result(self, candidate_id: str) -> TrainingResult:
+        """Read a retained result without requiring its training job or backend."""
+        if candidate_id not in self.state.candidate_results:
+            raise ValueError(f'Unknown candidate: {candidate_id}')
+        return deepcopy(self.state.candidate_results[candidate_id])
+
+    def apply_candidate(self, candidate_id: str) -> ModelRef:
+        if self.state.rl is not None and not self.state.rl.terminal:
+            raise RuntimeError('An RL cycle owns model updates; advance it with step_rl')
+        return self.apply_result(self.candidate_result(candidate_id))
+
+    def apply_result(self, result: TrainingResult) -> ModelRef:
+        if self.state.active_directive_id is not None or self.state.pending_episode is not None:
+            raise RuntimeError('Cannot replace the actor during environment interaction')
+        if self.jobs.busy:
+            raise RuntimeError('Cannot replace the model while another training job is active')
+        if 'actor' not in result.candidate.affected_roles:
+            raise ValueError("Training result does not target this loop's role")
+        if not isinstance(self.policy, ModelUpdatable):
+            raise TypeError("This policy does not support model updates")
+        candidate_id = result.candidate.candidate_id
+        if candidate_id in self.state.applied_candidates:
+            if self.policy.model != result.model:
+                raise ValueError('Previously applied candidate is stale relative to this policy')
+            return result.model
+        if self.policy.model != result.base:
+            raise ValueError("Training base is stale relative to this policy")
+        ready = prepare_model_activation(result, self.model_activator,
+            idempotency_key=json.dumps(('exploration', 'candidate', candidate_id)))
+        self.policy.update_model(ready)
+        self.state.applied_candidates.add(candidate_id)
+        return result.model

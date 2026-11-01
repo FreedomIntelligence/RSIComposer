@@ -36,7 +36,7 @@ class ApplyCandidateHandler(CommandHandler):
         spec = state.directive.payload
         if not isinstance(spec, ApplyCandidateSpec):
             raise ValueError('apply_candidate requires ApplyCandidateSpec')
-        state.request = harness.candidate_result(spec.candidate_id)
+        state.request = harness.learning.candidate_result(spec.candidate_id)
 
     def cancel_before_start(self, harness, state, action_space):
         return Feedback(state.directive.directive_id, ExecutionStatus.CANCELLED,
@@ -50,7 +50,7 @@ class ApplyCandidateHandler(CommandHandler):
             status = ExecutionStatus.CANCELLED if state.cancel_requested else ExecutionStatus.COMPLETED
             if not state.cancel_requested:
                 state.phase = 'applying'
-                harness.apply_candidate_for_command(result.candidate.candidate_id,
+                harness.commands.apply_candidate(result.candidate.candidate_id,
                                                     directive_id=directive.directive_id)
             # Freeze identity and content before persistence. A lost write response
             # retries only the record, even if cancellation arrives after binding.

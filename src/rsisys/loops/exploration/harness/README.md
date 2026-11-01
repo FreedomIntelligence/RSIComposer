@@ -6,7 +6,7 @@
 
 ## 默认实现与分派
 
-[DefaultExplorationHarness](engine.py) 接收 `policy, environment, experience, learner=None, evaluator=None`，可选关键字参数为 `memory=None, memory_limit=32, command_handlers=None`；默认使用 ExplorationMemory。Actor 上下文包含当前任务 history 和工作记忆，不默认注入共享 Experience。
+[DefaultExplorationHarness](engine.py) 接收 `policy, environment, experience, learner=None, evaluator=None`，可选关键字参数为 `memory=None, memory_limit=32, command_handlers=None, model_activator=None`；默认使用 ExplorationMemory。Actor 上下文包含当前任务 history 和工作记忆，不默认注入共享 Experience。
 
 | 系统指令 | 默认流程 | 调用 ActorPolicy.act |
 |---|---|---|
@@ -27,15 +27,19 @@ configure_prompt 将 instructions 保存到 Harness 状态，空字符串清空�
 | 组件 | 默认职责 |
 |---|---|
 | [policy](policy/README.md) | Actor 环境动作选择 |
-| [environment](environment/README.md) | 执行动作、生成观察与工具副作用 |
+| [environment](environment/README.md) | Environment 执行动作；EpisodeExecution 运行 episode、保存轨迹与反馈、重试证据写入 |
 | [memory](memory/README.md) | 本地轨迹与工作记忆 |
-| [learner](learner/README.md) | 后端中立的训练请求、作业及可选 train handler |
-| [evaluation](evaluation/README.md) | 候选评测后端 |
+| [learner](learner/README.md) | LearningExecution 管理训练作业、校验结果、保留候选与应用版本；算法仍由 learner 后端执行 |
+| [evaluation](evaluation/README.md) | EvaluationExecution 管理评测作业、校验结果与记录证据；评分由 evaluator 后端执行 |
 | [commands.py](commands.py) | 系统指令接收、校验、分派与交付状态 |
-| [rl.py](rl.py) | RLPlan / RLState |
+| [rl.py](rl.py) | RLPlan / RLState，以及编排 episode → 训练 → 应用版本的 LocalRLExecution |
 | [state.py](state.py) | 执行、训练和待写结果状态 |
 
 Action Space 位于 [../action_space/](../action_space/README.md)，只描述和校验 Actor 环境动作。上述 policy、上下文、记忆、工具/环境、learner/evaluator 是默认 Harness 的内部实现；可整体替换成不含 memory 的 Harness。
+
+engine 负责装配、控制占用和兼容公开入口；具体执行由公开组件 `episodes`、`learning`、`evaluations`、`local_rl` 完成。commands 直接消费组件方法，不回调 Harness 私有执行方法。EpisodeExecution 只接收 policy、environment、memory、experience、state 和 memory_limit；LearningExecution 接收 policy、memory、experience、state、JobBook 和 model_activator；EvaluationExecution 接收 experience、state 和 JobBook；LocalRLExecution 接收 episode、learning 和 state。四者均可独立构造，不持有 Harness。
+
+现有 policy、environment、memory、experience、memory_limit、training、evaluation、learner、model_activator 属性保留转发，保证替换依赖后执行使用新对象。快照恢复赋值 `harness.state` 时，同步四个组件的 state；替换 `episodes` 或 `learning` 时同步 LocalRL 的组件引用。自行装配的组件应共享同一 state、policy、memory 和 experience，并在空闲边界替换。组件方法供执行编排使用；外部本地控制仍使用 Harness 入口以遵守指令占用。快照只支持内置组件和一致的依赖绑定，自定义组件需要显式快照集成。
 
 ## 生命周期与本地控制
 

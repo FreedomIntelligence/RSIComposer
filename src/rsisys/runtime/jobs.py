@@ -7,6 +7,15 @@ from uuid import uuid4
 from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobOutcome
 
 
+class InvalidJobResult(ValueError):
+    """A cached terminal result violates the request/identity contract."""
+
+    def __init__(self, message: str, outcome: JobOutcome):
+        super().__init__(message)
+        self.job = outcome.job
+        self.simulated = outcome.simulated or bool(getattr(outcome.result, 'simulated', False))
+
+
 class JobBackend(Protocol):
     """Reserved interface; no cluster jobs are submitted by the scaffold."""
 

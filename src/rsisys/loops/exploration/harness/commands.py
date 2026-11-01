@@ -12,23 +12,15 @@ from rsisys.experience.records import ExperienceRecord
 from rsisys.loops.contracts.coordination import ExplorationProgress
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
-from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobOutcome, JobProgress
+from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
+from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 from rsisys.loops.contracts.training import ModelActivationPending
+from rsisys.runtime.jobs import InvalidJobResult
 from .learner import ActorTrainingRequest
 from .evaluation import EvaluationRequest
 from .rl import RLPlan
-
-
-class InvalidJobResult(ValueError):
-    """A cached terminal result violates this harness's request/identity contract."""
-
-    def __init__(self, message: str, outcome: JobOutcome):
-        super().__init__(message)
-        self.job = outcome.job
-        self.simulated = outcome.simulated or bool(getattr(outcome.result, 'simulated', False))
 
 
 @dataclass
@@ -156,12 +148,7 @@ class ExplorationCommands:
 
         Handler support for the default harness only; starts no external work.
         """
-        if self.loop.learner is None:
-            raise NotImplementedError('Training directives require a learner')
-        if not isinstance(payload, expected):
-            raise ValueError(f'Training requires {expected.__name__}')
-        if apply and not isinstance(self.loop.policy, ModelUpdatable):
-            raise TypeError('This command requires a model-updatable policy')
+        self.loop.learning.validate_payload(payload, expected, apply=apply)
 
     def _prepare_sft(self, state):
         payload = state.directive.payload
@@ -232,7 +219,7 @@ class ExplorationCommands:
     def _advance_execute(self, state, action_space):
         state.phase = 'executing'
         try:
-            self._finish(state, self.loop._run_episode(state.directive, action_space))
+            self._finish(state, self.loop.episodes.run(state.directive, action_space))
         except BaseException as exc:
             if self.loop.state.pending_episode is not None:
                 raise  # Save system feedback before exposing a terminal receipt.
@@ -281,17 +268,14 @@ class ExplorationCommands:
         not returned; uncertain work retains the receipt for a later advance.
         """
         loop, directive = self.loop, state.directive
+        executor = loop.learning if training else loop.evaluations
         if state.phase in ('accepted', 'submitting'):
             # Submission may have succeeded remotely before raising. Retain request/key.
             state.phase = 'submitting'
-            submit = loop._submit_learning if training else loop._submit_evaluation
-            state.job = submit(state.request, idempotency_key=state.idempotency_key)
+            state.job = executor.submit(state.request, idempotency_key=state.idempotency_key)
             state.phase = 'running'
             return
-        if training:
-            poll = loop.cancel_learning if state.cancel_requested else loop.poll_learning
-        else:
-            poll = loop.cancel_evaluation if state.cancel_requested else loop.poll_evaluation
+        poll = executor.cancel if state.cancel_requested else executor.poll
         try:
             outcome = poll(state.job)
         except InvalidJobResult as exc:
@@ -314,7 +298,7 @@ class ExplorationCommands:
         application_error = None
         if training and result and directive.payload.apply_result and not state.cancel_requested:
             try:
-                loop._apply_learning(state.job)
+                loop.learning.apply(state.job)
             except ModelActivationPending:
                 raise  # Retry application of this job without a terminal receipt.
             except Exception as exc:
@@ -336,16 +320,16 @@ class ExplorationCommands:
     def _advance_rl(self, state, action_space):
         loop, directive = self.loop, state.directive
         if state.phase == 'accepted':
-            loop._start_rl(RLPlan(replace(directive, mode='execute', payload=None),
+            loop.local_rl.start(RLPlan(replace(directive, mode='execute', payload=None),
                                   directive.payload.recipe_ref, directive.payload.updates))
             state.phase = 'running'
             return
         failure = None
         try:
             if state.cancel_requested and not loop.state.rl.cancel_requested:
-                rl = loop._cancel_rl()
+                rl = loop.local_rl.cancel()
             else:
-                rl = loop._step_rl(action_space)
+                rl = loop.local_rl.step(action_space)
         except BaseException as exc:
             rl = deepcopy(loop.state.rl)
             if not rl.terminal:
@@ -380,3 +364,12 @@ class ExplorationCommands:
             raise RuntimeError('Cannot acknowledge unfinished exploration')
         if self.active == directive_id:
             self.active = None
+
+    def apply_candidate(self, candidate_id: str, *, directive_id: str) -> ModelRef:
+        """Handler support: apply under the owning, uncancelled command receipt."""
+        if self.active != directive_id:
+            raise RuntimeError('Candidate application requires the owning directive')
+        state = self.receipts[directive_id]
+        if state.cancel_requested or state.feedback is not None:
+            raise RuntimeError('Cannot apply a candidate for a cancelled or finished directive')
+        return self.loop.learning.apply_candidate(candidate_id)

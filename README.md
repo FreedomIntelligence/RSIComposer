@@ -47,4 +47,4 @@ pixi run test
 
 ## 文档维护
 
-架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy）；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。
+架构图标出 Harness 内的 Decision Policy 与 Exploration Policy（ActorPolicy），以及协调层和具体执行组件的边界；组件细节见各自 README。每个职责组件保留一个 README，backends/ 的具体实现由所属组件统一说明，单文件模块由所在目录 README 说明。字段与签名以链接源码为准，运行示例放在 examples/，不另建全局说明或旧版本副本。

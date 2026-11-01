@@ -208,6 +208,30 @@ class FoundationTests(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, 'bindings'):
                 LocalSnapshotCapture(app).capture('unsupported')
 
+    def test_snapshot_rejects_custom_execution_components_before_writing(self):
+        with Application(self.config()) as app:
+            actor = app.runner.exploration.harness
+            for name in ('episodes', 'learning', 'evaluations', 'local_rl'):
+                with self.subTest(component=name):
+                    original = getattr(actor, name)
+                    try:
+                        setattr(actor, name, object())
+                        with self.assertRaisesRegex(TypeError, 'execution components'):
+                            LocalSnapshotCapture(app).capture('custom-execution')
+                        self.assertFalse((app.config.data_dir / 'snapshots').exists())
+                    finally:
+                        setattr(actor, name, original)
+
+    def test_snapshot_rejects_divergent_execution_state(self):
+        from rsisys.loops.exploration.harness.state import ExplorationState
+        with Application(self.config()) as app:
+            actor = app.runner.exploration.harness
+            for component in (actor.learning, actor.evaluations, actor.local_rl):
+                with self.subTest(component=type(component).__name__), patch.object(component, 'state', ExplorationState()):
+                    with self.assertRaisesRegex(TypeError, 'execution component bindings'):
+                        LocalSnapshotCapture(app).capture('divergent-execution')
+                    self.assertFalse((app.config.data_dir / 'snapshots').exists())
+
     def test_snapshot_restores_query_result_and_rebinds_provider(self):
         from rsisys.loops.decision_making.action_space import OperationCall
         from rsisys.loops.decision_making.harness.decision import Decision

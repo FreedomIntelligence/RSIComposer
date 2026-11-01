@@ -65,6 +65,8 @@ class _PendingOperationRecord:
     elapsed_seconds: float | None
     job: JobRef | None
     resume_result: OperationResult | None = None
+    task_id: str | None = None
+    event: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,8 +87,7 @@ class _ReviewSession:
     queries_used: int = 0
     query_refs: list[str] = field(default_factory=list)
     simulated: bool = False
-    pending_entry: HistoryEntry | None = None
-    pending_result: OperationResult | None = None
+    pending_record: _PendingOperationRecord | None = None
 
 
 @dataclass

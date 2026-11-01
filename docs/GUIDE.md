@@ -139,6 +139,8 @@ exploration = ExplorationLoop(
 
 内部控制通过 `loop.harness`，动作定义通过 `loop.action_space` 访问。例如 `decision.harness.resume(job, result)`、`exploration.harness.submit_learning(...)`；本地执行使用 `exploration.harness.run(directive, exploration.action_space)`，本地 RL 推进使用 `exploration.harness.step_rl(exploration.action_space)`。loop 不提供旧 policy / memory / space 属性或本地控制方法别名。
 
+默认实现将执行放在现有组件中：Decision 的 tools 统一普通操作与运行中 review 的执行/记录；Exploration 的 environment、learner、evaluation 和 rl.py 分别负责 episode、学习、评测和本地 RL 推进。对外仍使用上述 Harness 入口，以保留占用检查；内部执行组件不负责跨 loop 调度。
+
 也可直接实现 Harness 协议并整体替换，无需提供 memory 或 tools 子接口。示例：
 
 - [loop_internals.py](../examples/loop_internals.py)：训练请求、查询、版本应用和独立评测。

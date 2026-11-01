@@ -2,6 +2,8 @@
 
 对候选进行评测，结果返回 [默认 Exploration Harness](../README.md)，不自行接受候选或更新模型。
 
+[EvaluationExecution](__init__.py) 封装默认评测流程，接收 JobBook、共享 Experience 和探索状态，负责请求提交、终态身份校验与可重试的证据记录。评分逻辑仍由 Evaluator 后端实现；本地控制与 evaluate 指令共用这一组件。
+
 ## 接口
 
 [Evaluator](__init__.py) 提供 `submit(request, *, idempotency_key)` / `poll(job)` / `cancel(job)` / `result(job)`；后端 cancel 返回 None，默认 Harness 的 cancel_evaluation 返回 JobOutcome。EvaluationRequest 包含 candidate、非空 protocol_ref 和 `data_refs: tuple[ArtifactRef, ...] = ()`；新增字段位于末尾，原有 `EvaluationRequest(candidate, protocol_ref)` 构造仍有效。data_refs 必须为 ArtifactRef 元组，空元组表示没有显式输入产物。EvaluationResult 包含 candidate_id、protocol_ref、metrics、evidence_refs 和 simulated。

@@ -2,6 +2,8 @@
 
 拥有任务语义和执行副作用，接收校验后的 Action，产生下一次观察。所属流程见 [默认 Exploration Harness](../README.md)。
 
+[EpisodeExecution](__init__.py) 是默认 Harness 的 episode 执行组件：组合 Actor policy、Environment、Action Space 与本地 memory，汇总反馈并保留待写证据。环境本身仍只负责 reset / step / close；替换环境不必重写整个 episode 流程。具体依赖及控制入口见 Harness README。
+
 ## 接口
 
 [Environment](__init__.py) 提供 reset(Directive) → observation、step(Action) → Transition、close()。Transition 包含 observation、terminated、simulated、可选 reward、产物和 error。

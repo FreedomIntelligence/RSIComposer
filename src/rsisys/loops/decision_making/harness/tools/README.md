@@ -10,6 +10,14 @@
 
 `DemoDecisionTools(sandbox, artifacts)` 内置 prepare_data：在 sandbox 中执行 echo 并轮询一次，成功后保存 demo_input，simulated 取自后端；失败抛异常，最终释放 sandbox。Demo/Local tools 均接受可选 `extra_bindings`，不能覆盖内置操作。
 
+## 共用执行与记录
+
+默认 Harness 的普通 step 与运行中 review 都使用本模块的 `execute_operation`：通过当前 Action Space 校验参数、检查权限，执行 tools，验证返回类型并合并 simulated 标记。返回 `OperationExecution`，保存独立复制的调用参数、结果、耗时和异常；工具对输入的修改不会改写回执。失败产生可记录的 OperationResult，由调用方决定抛出异常或交给 policy 继续分析。
+
+`record_operation` 使用固定记录 ID 写本地 history，普通决策同时写系统反馈。review 的原始结果留在本地，由最终复查记录引用。写入失败后 Harness 保留回执，只补写、不重复调用工具。
+
+这条共用路径不接管调度：普通决策收到 JobRef 后等待 resume；review 将其作为 submitted 回执继续研究，不宣称后台任务已经完成。
+
 ## 只读查询
 
 [QueryTools](queries.py) 只通过显式 `QueryProvider.describe_queries()` / `query(request)` 访问提供者，不反射其内部状态。`QueryTools(provider, artifacts=None)` 暴露 `specs`、`definitions` 和 `bindings`；装配把 definitions 加入 Action Space、bindings 加入原 tools，保留 `tools.query_tools` 供绑定校验。没有查询能力的外部 Harness 不广告查询。

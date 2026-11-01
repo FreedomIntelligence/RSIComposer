@@ -6,7 +6,7 @@
 
 [DefaultDecisionHarness](engine.py) 接收 `policy, tools, experience, learner=None`，可选关键字参数包括 `experience_limit=32, memory=None, memory_limit=32, review_tool_limit=4`。缺省 memory 使用 DecisionMemory；前两个 limit 为正整数，限制上下文条数而非 token。review_tool_limit 是单次复查最多执行的操作数，允许为 0。
 
-默认流程为读取目标、全部来源的系统反馈与本地上下文 → policy 选择 Decision → Action Space 校验 → tools 执行本地操作或发布 Directive → 接纳反馈。同步准备后可继续推进；发布指令后等待反馈，不能在交付前生成下一条指令。`receive_feedback` 清空本轮准备结果、保留最新反馈，最近一次完全相同的交付可幂等重试。
+默认流程为读取目标、全部来源的系统反馈与本地上下文 → policy 选择 Decision → Action Space 校验 → tools 执行本地操作或发布 Directive → 接纳反馈。普通决策与运行中 review 共用 tools 中的操作执行入口：参数校验与授权 → 工具调用 → 结果归一化 → 固定回执记录。Harness 只决定后续等待、继续研究或交付，不再各维护一套调用逻辑。同步准备后可继续推进；发布指令后等待反馈，不能在交付前生成下一条指令。`receive_feedback` 清空本轮准备结果、保留最新反馈，最近一次完全相同的交付可幂等重试。
 
 `DecisionState.candidates` 按 candidate_id 保存历轮已接收候选，`DecisionContext.candidates` 提供其深拷贝 tuple；该字段追加在原上下文字段之后，默认空 tuple，兼容旧位置参数。候选不受 experience_limit / memory_limit 截断，评测等不含候选的反馈不会清空它们。同 ID 同内容去重；同 ID 不同内容（含单次反馈内冲突）在写入 history / Experience 前拒绝。两份反馈记录成功后才更新候选和交付状态，写入失败可用原反馈重试。
 
@@ -24,7 +24,7 @@
 |---|---|
 | [policy](policy/README.md) | 构建模型请求，选择操作或系统指令 |
 | [memory](memory/README.md) | research 历史、工作记忆与决策记录 |
-| [tools](tools/README.md) | 执行已校验的本地 research 操作 |
+| [tools](tools/README.md) | 操作绑定，以及普通决策 / review 共用的执行与回执记录 |
 | [learner](learner/README.md) | 决策者自身训练后端 |
 | [decision.py](decision.py) | Decision 与推进结果 |
 | [state.py](state.py) | 上下文、生命周期状态与待写结果 |

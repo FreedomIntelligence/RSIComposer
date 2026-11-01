@@ -120,6 +120,21 @@ class LocalSnapshotCapture:
         dm, actor = decision_loop.harness, exploration_loop.harness
         if type(dm) is not DefaultDecisionHarness or type(actor) is not DefaultExplorationHarness:
             raise TypeError('Custom harnesses need explicit snapshot integration')
+        from rsisys.loops.exploration.harness.environment import EpisodeExecution
+        from rsisys.loops.exploration.harness.learner import LearningExecution
+        from rsisys.loops.exploration.harness.evaluation import EvaluationExecution
+        from rsisys.loops.exploration.harness.rl import LocalRLExecution
+        for component, expected in ((actor.episodes, EpisodeExecution), (actor.learning, LearningExecution),
+                                    (actor.evaluations, EvaluationExecution), (actor.local_rl, LocalRLExecution)):
+            if type(component) is not expected:
+                raise TypeError('Custom execution components need explicit snapshot integration')
+        bindings = ((actor.learning.state, actor.state), (actor.evaluations.state, actor.state),
+                    (actor.local_rl.state, actor.state), (actor.learning.policy, actor.policy),
+                    (actor.learning.memory, actor.memory), (actor.learning.experience, actor.experience),
+                    (actor.evaluations.experience, actor.experience),
+                    (actor.local_rl.episodes, actor.episodes), (actor.local_rl.learning, actor.learning))
+        if any(actual is not expected for actual, expected in bindings):
+            raise TypeError('Custom execution component bindings need explicit snapshot integration')
         if dm.model_activator is not None or actor.model_activator is not None:
             raise TypeError('Custom model activators need explicit snapshot integration')
         if app.runner.busy or actor.command_busy:

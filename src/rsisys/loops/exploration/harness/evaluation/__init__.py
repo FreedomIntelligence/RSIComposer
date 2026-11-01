@@ -1,9 +1,18 @@
-from dataclasses import dataclass
-from typing import Protocol
+from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Protocol
+from uuid import uuid4
+
+from rsisys.experience.records import ExperienceRecord
+from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
-from rsisys.loops.contracts.jobs import JobRef, JobOutcome
+from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
+from rsisys.runtime.jobs import JobBook, InvalidJobResult
+
+if TYPE_CHECKING:
+    from ..state import ExplorationState
 
 
 @dataclass(frozen=True)
@@ -47,3 +56,42 @@ class UnimplementedEvaluator:
 
     def result(self, job: JobRef) -> EvaluationResult:
         raise NotImplementedError('Candidate evaluation is not implemented.')
+
+
+class EvaluationExecution:
+    """Validate and record evaluation jobs with independently retryable evidence."""
+
+    def __init__(self, experience: ExperienceSystem, state: ExplorationState,
+                 jobs: JobBook[EvaluationRequest, EvaluationResult]):
+        self.experience, self.state, self.jobs = experience, state, jobs
+
+    def submit(self, request: EvaluationRequest, *, idempotency_key: str) -> JobRef:
+        if not isinstance(request, EvaluationRequest):
+            raise TypeError("Expected EvaluationRequest")
+        return self.jobs.submit(request, idempotency_key=idempotency_key)
+
+    def poll(self, job: JobRef) -> JobOutcome[EvaluationResult]:
+        return self._record(self.jobs.poll(job))
+
+    def cancel(self, job: JobRef) -> JobOutcome[EvaluationResult]:
+        return self._record(self.jobs.cancel(job))
+
+    def _record(self, outcome: JobOutcome[EvaluationResult]) -> JobOutcome[EvaluationResult]:
+        request = self.jobs.request(outcome.job)
+        if outcome.status == JobStatus.SUCCEEDED:
+            result = outcome.result
+            if (not isinstance(result, EvaluationResult)
+                    or result.candidate_id != request.candidate.candidate_id
+                    or result.protocol_ref != request.protocol_ref):
+                raise InvalidJobResult("Evaluation result does not match the candidate and protocol", outcome)
+        if outcome.terminal and outcome.job not in self.state.recorded_evaluation:
+            self.experience.record(ExperienceRecord(
+                record_id=self.state.evaluation_record_ids.setdefault(outcome.job, str(uuid4())),
+                kind="evaluation", scope="actor", directive_id=None,
+                summary=f"Candidate evaluation {outcome.status}",
+                simulated=outcome.simulated or bool(outcome.result and outcome.result.simulated),
+                source_refs=outcome.result.evidence_refs if outcome.result else (),
+                details={"request": asdict(request), "outcome": asdict(outcome)},
+            ))
+            self.state.recorded_evaluation.add(outcome.job)
+        return outcome

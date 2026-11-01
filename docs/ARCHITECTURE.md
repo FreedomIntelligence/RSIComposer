@@ -26,9 +26,20 @@ src/rsisys/
 └── __main__.py            # CLI 薄入口
 ```
 
-`DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。业务编排位于各自 `harness/engine.py`；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
+`DecisionMakingLoop(harness, action_space)` 与 `ExplorationLoop(harness, action_space)` 是组合边界。`harness/engine.py` 负责默认装配、状态协调和公开入口；`loop.py` 只委托公开端点，Decision 的 `run` 额外提供有界推进。默认实现的策略、上下文、记忆、工具、learner/evaluator 和状态均由 Harness 封装。memory/tools 是默认实现细节，不是框架要求每个 Harness 单独暴露的接口；可整体换成不含 memory 的实现。
 
 Policy 位于默认 Harness 内部：[DecisionPolicy.decide](../src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](../src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
+
+默认执行职责落在现有组件中，不新增平级系统：
+
+| 位置 | 执行职责 | Harness 保留的职责 |
+|---|---|---|
+| Decision `tools/` | 普通 step 与 review 共用参数校验、授权、执行、结果归一化及固定回执记录 | 上下文、policy 调用、预算、等待 / 继续与反馈接纳 |
+| Exploration `environment/` | EpisodeExecution 运行 Actor episode、记录轨迹与系统反馈，失败补写 | 指令占用与本地控制入口 |
+| Exploration `learner/`、`evaluation/` | LearningExecution / EvaluationExecution 管理作业、验证结果、记录证据；learning 还保留候选并应用版本 | 选择对应执行组件 |
+| Exploration `rl.py` | LocalRLExecution 顺序协调 rollout、训练和应用 | 对外启动 / 推进 / 取消入口 |
+
+这些执行组件只持有所需的 policy、environment、memory、Experience、状态和作业依赖，不反向持有整个 Harness。它们是默认实现内部的职责划分；外部 Harness 不必照搬。Command handler 复用这些组件，普通本地调用与系统指令不各写一套算法。
 
 内置细节通过 `loop.harness` 访问；Action Space 通过 `loop.action_space` 访问，不保留 `loop.policy`、`loop.memory`、`loop.space` 等旧属性别名。内部组件和默认行为分别见 [Decision Harness](../src/rsisys/loops/decision_making/harness/README.md) 与 [Exploration Harness](../src/rsisys/loops/exploration/harness/README.md)。
 

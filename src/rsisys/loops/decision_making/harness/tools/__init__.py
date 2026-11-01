@@ -1,10 +1,15 @@
-"""Execution bindings for validated decision operations."""
+"""Shared operation execution and receipts; callers decide whether to wait or continue."""
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
+from time import perf_counter
 from typing import Protocol
 
 from rsisys.loops.contracts.jobs import JobRef, JobStatus
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops._memory import HistoryEntry
+from rsisys.experience.records import ExperienceRecord
 from rsisys.runtime.artifacts import ArtifactStore
 from rsisys.runtime.sandbox import ExecRequest, SandboxBackend, SandboxSpec
 from ...action_space import OperationCall, OperationResult
@@ -12,6 +17,62 @@ from ...action_space import OperationCall, OperationResult
 
 class DecisionTools(Protocol):
     def execute(self, call: OperationCall) -> OperationResult | JobRef: ...
+
+
+@dataclass(frozen=True)
+class OperationExecution:
+    call: OperationCall
+    outcome: OperationResult | JobRef
+    elapsed_seconds: float
+    simulated: bool
+    error: Exception | None = None
+
+    def observation(self) -> OperationResult:
+        """A job reference acknowledges submission, never backend completion."""
+        if isinstance(self.outcome, JobRef):
+            return OperationResult('Operation submitted; backend job is not yet complete', (),
+                self.simulated, data={'job': asdict(self.outcome), 'status': 'submitted'})
+        return deepcopy(self.outcome)
+
+
+def execute_operation(tools, action_space, call: OperationCall, *, simulated=False,
+                      clock=perf_counter) -> OperationExecution:
+    """Validate/authorize and execute once, without choosing a scheduling policy."""
+    started = clock()
+    call = deepcopy(call)
+    error = None
+    try:
+        call = deepcopy(action_space.validate(call))
+        outcome = tools.execute(deepcopy(call))
+        if not isinstance(outcome, (OperationResult, JobRef)):
+            raise TypeError('Tool must return OperationResult or JobRef')
+        if isinstance(outcome, OperationResult):
+            outcome.__post_init__()
+            outcome = replace(outcome, simulated=outcome.simulated or simulated)
+        outcome = deepcopy(outcome)
+    except Exception as exc:
+        error = exc
+        outcome = OperationResult('Decision operation failed', (), simulated,
+            ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
+    return OperationExecution(call, outcome, clock() - started, simulated, error)
+
+
+def record_operation(pending, memory, experience=None):
+    """Write the same frozen receipt on retry; the caller commits its own state afterwards."""
+    ident, call, result = pending.record_id, pending.call, pending.result
+    details = {'operation': asdict(call) if call else None, 'result': asdict(result)}
+    if pending.event is not None:
+        details.update(event=pending.event, elapsed_seconds=pending.elapsed_seconds)
+    memory.append(HistoryEntry(ident, 'operation', pending.task_id, result.summary, result.simulated,
+        source_refs=tuple(ref.artifact_id for ref in result.artifacts), details=details))
+    if experience is not None:
+        experience.record(ExperienceRecord(
+            record_id=ident, kind='runtime_feedback', scope='decision_maker', directive_id=pending.task_id,
+            summary=f'Preparation operation {result.status.value}', simulated=result.simulated,
+            source_refs=(f'history:decision_maker:{ident}',),
+            details={'operation': call.name if call else None, 'status': result.status.value,
+                     'error': result.error, 'elapsed_seconds': pending.elapsed_seconds,
+                     'history_ref': ident, 'history_owner': 'decision_maker'}))
 
 
 class BoundDecisionTools:
