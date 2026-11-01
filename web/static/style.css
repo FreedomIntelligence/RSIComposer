@@ -18,14 +18,8 @@ button:disabled { opacity: .5; cursor: default; } input[type="checkbox"] { min-h
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .chart-point:focus-visible { outline: 2px solid var(--orange); outline-offset: 4px; }
 [hidden] { display: none !important; } .mono, code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .masthead, .workspace-shell, footer { width: min(1600px, calc(100% - 80px)); margin: auto; }
-.workspace-shell { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 32px; align-items: start; }
+.workspace-shell { display: block; }
 main { min-width: 0; padding-bottom: 48px; }
-.project-sidebar { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; min-width: 0; padding: 24px 20px 24px 0; border-right: 1px solid var(--line); }
-.project-sidebar h2 { font-size: 18px; margin-bottom: 14px; }
-.project-list { display: flex; flex-direction: column; gap: 6px; }
-.project-list > button { display: block; width: 100%; min-width: 0; padding: 9px 12px; border-color: transparent; text-align: left; font-size: 14px; overflow-wrap: anywhere; }
-.project-list > button:hover { background: var(--panel); border-color: var(--line); }
-.project-list > button[aria-current="true"], .project-list > button[aria-pressed="true"] { background: var(--panel); border-color: var(--line); color: var(--orange); }
 .masthead { display: flex; align-items: center; gap: 28px; padding: 25px 0; border-bottom: 1px solid var(--line); }
 .wordmark { font: 700 30px/1 var(--serif); letter-spacing: -1.5px; } .wordmark span { color: var(--orange); }
 .header-actions { display: flex; align-items: center; gap: 28px; margin-left: auto; }
@@ -95,14 +89,7 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .detail-objective { max-width: 900px; margin-top: 12px; color: var(--muted); }
 .execution-sequence { margin: 24px 0 0; }
 .execution-sequence h4 { margin: 0; font-size: 21px; }
-.flow-map { display: flex; align-items: stretch; gap: 22px; list-style: none; padding: 8px 2px 16px; margin: 18px 0 0; overflow-x: auto; }
-.flow-map-item { position: relative; flex: 0 0 auto; }
-.flow-map-item:not(:last-child)::after { content: ""; position: absolute; width: 22px; height: 1px; background: var(--line); right: -22px; top: 50%; }
-.flow-choice { display: flex; align-items: center; gap: 10px; padding: 12px 15px; white-space: nowrap; background: var(--paper); }
-.flow-choice[aria-pressed="true"] { border-color: var(--orange); background: #f4e8df; color: var(--orange); }
-.flow-number { font-size: 14px; opacity: .7; }
 .flow-steps { list-style: none; padding: 0; margin: 18px 0 0; }
-.flow-map[hidden] + .flow-steps { margin-top: 0; }
 .flow-step { display: flex; flex-direction: column; gap: 22px; padding: 0; }
 .flow-step > * { min-width: 0; }
 .flow-index { display: none; }
@@ -119,10 +106,6 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
   .masthead, .workspace-shell, footer { width: calc(100% - 40px); }
   .workspace-shell { display: flex; flex-direction: column; gap: 0; }
   .workspace-shell > * { width: 100%; }
-  .project-sidebar { position: static; max-height: none; overflow: visible; padding: 16px 0; border-right: 0; border-bottom: 1px solid var(--line); }
-  .project-sidebar h2 { margin-bottom: 10px; }
-  .project-list { flex-direction: row; overflow-x: auto; padding: 4px 2px 8px; }
-  .project-list > button { flex: 0 0 auto; width: auto; max-width: 240px; }
   .run-heading { flex-direction: column; gap: 14px; }
   .run-meta { text-align: left; display: flex; align-items: center; gap: 12px; }
   .run-meta p { margin: 0; }
@@ -164,6 +147,22 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .result-error { color: var(--red); }
 .evaluation-purpose { margin-top: 16px; }
 
-.project-choice-name, .project-choice-id { display: block; }
-.project-choice-id { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .provenance-link { display: inline-block; margin: 8px 16px 0 0; text-decoration: underline; overflow-wrap: anywhere; }
+
+/* Management and experiment are separate views, sharing the same data cache. */
+.workspace-shell { display: block; }
+.experiment-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,340px),1fr)); gap: 20px; padding-bottom: 40px; }
+.experiment-card { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 24px; color: var(--ink); text-decoration: none; }
+.experiment-card:hover { border-color: var(--orange); background: var(--panel); }
+.experiment-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.experiment-card h2 { font-size: 23px; line-height: 1.4; overflow-wrap: anywhere; }
+.experiment-card p { margin-top: 16px; }
+.back-link { border: 0; padding: 4px 0; margin-top: 24px; color: var(--muted); }
+.back-link:hover { background: transparent; color: var(--ink); }
+#projects .project-heading { padding-top: 20px; }
+#project-name { overflow-wrap: anywhere; font-size: clamp(26px,3vw,38px); }
+.flow-map { display: block; overflow: auto; max-height: 460px; margin: 0 0 28px; padding: 0; border: 1px solid var(--line); border-radius: 8px; overscroll-behavior: contain; }
+.flow-map svg { display: block; max-width: none; }
+.decision-node { cursor: pointer; }
+.decision-node:focus-visible { outline: none; }
+.decision-node:focus-visible circle { stroke: var(--orange); stroke-width: 3; }

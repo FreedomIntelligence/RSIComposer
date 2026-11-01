@@ -20,6 +20,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/lineage.js": ("lineage.js", "text/javascript; charset=utf-8"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
+          "/decisions.js": ("decisions.js", "text/javascript; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
           "/style.css": ("style.css", "text/css; charset=utf-8"),
           "/demo.json": ("demo.json", "application/json; charset=utf-8")}
@@ -261,7 +262,7 @@ class RunStore:
                     for field in ("parent_run_id", "source_run_ids"):
                         if field in snapshot:
                             row[field] = snapshot[field]
-                    row["counts"] = {key: len(snapshot[key]) for key in ("jobs", "candidates", "events")}
+                    row["counts"] = {key: len(snapshot[key]) for key in ("decisions", "jobs", "candidates", "events")}
                 except SnapshotError as error:
                     if error.status == 404:
                         continue  # Ignore unrelated directories and runs without a snapshot.

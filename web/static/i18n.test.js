@@ -68,20 +68,24 @@ test("static translation touches only explicit UI markers and preserves adjacent
 
 test("switching language rerenders direct decisions and preserves project, selected step, cache and model prose", () => {
   const h=monitor();fixture(h);
-  findClass(h.get("project-content"),"flow-choice")[1].listeners.click();
-  h.run('state.activeScope.flowLimits.set("a",60)');
+  findClass(h.get("project-content"),"decision-node")[1].listeners.click();
   findClass(h.get("project-content"),"flow-map")[0].scrollLeft=123;
-  const before=h.json('[state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]');
+  findClass(h.get("project-content"),"flow-map")[0].scrollTop=67;
+  const before=h.json('[state.page,state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]');
   const snapshot=h.run("state.snapshot"),cache=h.run("state.activeScope.cache");
   h.get("lang-en").listeners.click();
   assert.equal(h.get("lang-en").attributes["aria-pressed"],"true");assert.equal(h.get("lang-zh").attributes["aria-pressed"],"false");
-  assert.deepEqual(h.json('[state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]'),before);
+  assert.deepEqual(h.json('[state.page,state.projectId,state.runId,[...state.activeScope.flowSelected],state.activeScope.cache.size]'),before);
   assert.equal(h.run("state.snapshot"),snapshot);assert.equal(h.run("state.activeScope.cache"),cache);assert.deepEqual(h.calls,[]);
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,123);
+  assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollTop,67);
   assert.match(text(h.get("project-content")),/Metrics at review/);assert.match(text(h.get("project-content")),/继续训练 原文 strategy/);
   assert.doesNotMatch(text(h.get("project-content")),/保留目标 objective/);assert.equal(h.run("state.snapshot.objective"),"保留目标 objective");assert.doesNotMatch(text(h.get("project-content")),/错误 原文 log/);
   assert.doesNotMatch(text(h.get("project-content")),/custom.event/);
-  assert.match(text(h.get("project-content")),/Decisions and feedback/);
+  assert.match(text(h.get("project-content")),/Research graph/);assert.match(text(h.get("project-content")),/2 decisions/);
+  const graphNodes=findClass(h.get("project-content"),"decision-node");
+  assert.equal(graphNodes.length,2);assert.equal(graphNodes[1].getAttribute("aria-pressed"),"true");
+  assert.match(graphNodes[0].getAttribute("aria-label"),/Train model/);assert.match(text(h.get("project-content")),/Experiment start/);
   assert.equal(findClass(h.get("project-content"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
   h.get("lang-zh").listeners.click();assert.match(text(h.get("project-content")),/复查时指标/);assert.deepEqual(h.calls,[]);
@@ -95,15 +99,29 @@ test("unknown events and application errors/empty states switch without refetchi
   assert.doesNotMatch(text(h.get("project-content")),/custom.event/);
 });
 
-test("sidebar replaces navigation and run selectors; manual refresh and export are absent",()=>{
-  for(const id of ["nav-metrics","project-select","run-select","connection","refresh","auto-refresh","export-report"])
-    assert.ok(!html.includes(`id="${id}"`),id);
-  assert.ok(html.includes('id="project-list"'));
+test("management language changes translate experiment cards without opening or fetching details", () => {
+  const h=monitor();setup(h,[project("a",[run("a",{status:"running",counts:{decisions:35}})],{name:"研究项目 原文"})]);
+  h.get("lang-en").listeners.click();
+  assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
+  assert.equal(h.run("state.snapshot"),null);assert.equal(h.get("project-content").children.length,0);
+  assert.equal(h.get("experiment-count").textContent,"1 experiments");
+  assert.match(text(h.get("project-list")),/研究项目 原文/);assert.match(text(h.get("project-list")),/Running/);assert.match(text(h.get("project-list")),/35 decisions/);
+  h.get("lang-zh").listeners.click();assert.match(text(h.get("project-list")),/35 次决策/);assert.deepEqual(h.calls,[]);
 });
 
-test("direct project page has no graph script, controls, viewport or multi-run counter", () => {
+test("management cards replace sidebar navigation; manual refresh and export are absent",()=>{
+  for(const id of ["nav-metrics","project-select","run-select","connection","refresh","auto-refresh","export-report"])
+    assert.ok(!html.includes(`id="${id}"`),id);
+  assert.match(html,/<section\b[^>]*id="management"[^>]*>[\s\S]*?id="project-list"[\s\S]*?<\/section>/);
+  assert.doesNotMatch(html,/<aside\b/);
+  assert.ok(html.includes('id="back-projects"'));
+});
+
+test("experiment detail loads the decision graph without the old multi-run project graph", () => {
   for(const name of ["/lineage.js",'id="graph-tools"','id="project-run-count"','id="project-graph"'])assert.ok(!html.includes(name),name);
   assert.ok(html.includes('id="project-content"'));
+  const scripts=[...html.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(m=>m[1]);
+  assert.deepEqual(scripts,["/i18n.js","/decisions.js","/app.js"]);
   assert.doesNotMatch(appSource,/RSILineage|project-root|projectModel|renderGraph|networkLayout|研究轮次|unassigned/);
   const css=fs.readFileSync(`${__dirname}/style.css`, "utf8");
   assert.doesNotMatch(css,/graph-node|graph-viewport|graph-controls|graph-header|graph-tools/);

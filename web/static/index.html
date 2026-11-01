@@ -4,10 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#faf9f5" />
-  <title>RSISys · 实验项目</title>
+  <title>RSISys</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/style.css" />
   <script src="/i18n.js" defer></script>
+  <script src="/decisions.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -17,14 +18,15 @@
     <div class="header-actions"><button id="demo" class="text-button" aria-pressed="false">示例</button><div class="language-switch" role="group" aria-label="界面语言" data-i18n-aria-label="界面语言"><button id="lang-zh" type="button" lang="zh-CN" aria-pressed="true">中</button><button id="lang-en" type="button" lang="en" aria-pressed="false">EN</button></div></div>
   </header>
   <div class="workspace-shell">
-    <aside class="project-sidebar" aria-labelledby="project-list-heading">
-      <h2 id="project-list-heading" data-i18n="项目">项目</h2>
-      <div id="project-list" class="project-list" role="group" aria-label="项目" data-i18n-aria-label="项目"></div>
-    </aside>
     <main id="main">
       <div id="notice" class="notice" role="status" hidden></div>
+      <section id="management" aria-labelledby="management-title">
+        <div class="project-heading"><h1 id="management-title" data-i18n="项目管理">项目管理</h1><span id="experiment-count" class="quiet-note"></span></div>
+        <div id="project-list" class="experiment-grid"></div>
+      </section>
       <section id="projects" aria-labelledby="project-name" hidden>
-        <div class="project-heading"><div><h1 id="project-name"></h1><p id="project-description"></p></div></div>
+        <button id="back-projects" class="back-link" data-i18n="← 所有实验">← 所有实验</button>
+        <div class="project-heading"><div><h1 id="project-name"></h1><p id="project-description" hidden></p></div></div>
         <div id="project-content"></div>
       </section>
       <section id="empty" class="empty-state" hidden>

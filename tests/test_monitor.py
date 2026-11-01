@@ -183,7 +183,7 @@ class MonitorProjectionTests(unittest.TestCase):
             self.assertEqual(data['decisions'], [{'reason': 'Public reason'}])
             self.assertNotIn('TOP_SECRET', json.dumps(data))
             # Run-list summaries retain their existing compact contract.
-            self.assertEqual(store.list()[0]['counts'], {'jobs': 0, 'candidates': 0, 'events': 0})
+            self.assertEqual(store.list()[0]['counts'], {'decisions': 1, 'jobs': 0, 'candidates': 0, 'events': 0})
 
 
 class MonitorTests(unittest.TestCase):
@@ -270,7 +270,7 @@ class MonitorTests(unittest.TestCase):
                    loops={"decision_making": {"status": "running", "summary": "Planning"}},
                    models={"actor": {"model_id": "actor", "revision": "r2"}})
         summary = json.loads(self.get("/api/runs")[2])["runs"][0]
-        self.assertEqual(summary["counts"], {"jobs": 1, "candidates": 0, "events": 0})
+        self.assertEqual(summary["counts"], {"decisions": 0, "jobs": 1, "candidates": 0, "events": 0})
         self.assertNotIn("jobs", summary)
         status, headers, body = self.get("/api/runs/run-1")
         data = json.loads(body)

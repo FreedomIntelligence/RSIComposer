@@ -3,6 +3,17 @@
 (function (root) {
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
+  "记录顺序，不表示因果": "Recorded order, not causality",
+  "明确的父决策": "Declared parent decision",
+  "引用的决策": "Referenced decision",
+  "项目管理": "Project management",
+  "← 所有实验": "← All experiments",
+  "{p0} 个实验": "{p0} experiments",
+  "{p0} 次决策": "{p0} decisions",
+  "暂无实验": "No experiments yet",
+  "实验起点": "Experiment start",
+  "研究脉络": "Research trajectory",
+
   "选择版本": "Select a version",
   "采用改动": "Apply the change",
   "新版本": "New version",

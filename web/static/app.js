@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   demo: false, runId: "", realRunId: "", snapshot: null, controller: null,
   epoch: 0, timer: null, auto: true,
-  queryApplied: false,
+  queryApplied: false, page: "management",
   projects: [], projectId: "", realProjectId: "", scopes: new Map(), activeScope: null, demoSnapshots: new Map(),
 };
 const ACTIVE = new Set(["running", "active", "training", "evaluating", "queued", "pending", "starting", "submitted", "in_progress"]);
@@ -278,27 +278,29 @@ function concreteFeedback(row) {
 function executionSequence(s, scope) {
   scope.flowLimits ||= new Map(); scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const section=el("section","execution-sequence"),groups=executionGroups(s);
+  const graphRows=groups.map(g=>g.row),graphKeys=new Map(RSIDecisions.layout(graphRows).nodes.filter(n=>n.row).map(n=>[groups[n.index],n.key]));
   section.id="execution-flow";
 
-  const navigation=el("ol","flow-map");navigation.hidden=groups.length<2;navigation.setAttribute("aria-label",t("本次运行的决策"));section.append(navigation);
+  const navigation=el("div","flow-map");navigation.setAttribute("aria-label",t("本次运行的决策"));section.append(navigation);
   const entries=el("ol","flow-steps");section.append(entries);
   const fill=(restoreFocus=false)=>{
-    let selectedButton;
-    entries.replaceChildren();navigation.replaceChildren();
-    const limit=scope.flowLimits.get(s.run_id)||30;
-    const keyOf=g=>decisionKey(g.rows[g.rows.length-1]);
+    const scroll={left:navigation.scrollLeft,top:navigation.scrollTop};
+    entries.replaceChildren();
+    const limit=groups.length;
+    const keyOf=g=>graphKeys.get(g);
     let selected=scope.flowSelected.get(s.run_id);
     if(!groups.slice(0,limit).some((g,i)=>keyOf(g,i)===selected))selected=groups.length?keyOf(groups[0],0):null;
     scope.flowSelected.set(s.run_id,selected);
-    for(const [i,g] of groups.slice(0,limit).entries()){
-      const row=g.row,f=feedbackFor(row,s),key=keyOf(g,i),item=el("li","flow-map-item"),button=el("button","flow-choice");
-      button.type="button";button.setAttribute("aria-pressed",String(key===selected));
-      button.setAttribute("aria-label",t("步骤 {p0} · {p1}", {p0: i+1, p1: actionText(decisionAction(row))}));
-      button.append(el("span","flow-number",String(i+1).padStart(2,"0")),el("span","",actionText(decisionAction(row))));
-      if(g.rows.length>1)button.append(el("span","quiet-note",`×${g.rows.length}`));
-      button.addEventListener("click",()=>{scope.flowSelected.set(s.run_id,key);fill(true);});item.append(button);if(groups.length>1)navigation.append(item);
+    navigation.replaceChildren(RSIDecisions.render({
+      rows:graphRows,selected,
+      startLabel:t("实验起点"),label:(row,index)=>`${index+1} · ${actionText(decisionAction(row))}`,
+      edgeLabel:kind=>t({sequence:"记录顺序，不表示因果",parent:"明确的父决策",source:"引用的决策"}[kind]),
+      onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
+    }));
+    navigation.scrollLeft=scroll.left;navigation.scrollTop=scroll.top;
+    for(const [i,g] of groups.entries()){
+      const row=g.row,f=feedbackFor(row,s),key=keyOf(g);
       if(key!==selected)continue;
-      selectedButton=button;
       const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
@@ -336,17 +338,15 @@ function executionSequence(s, scope) {
       }
       if(results.childElementCount)step.append(results);entries.append(step);
     }
-    more.hidden=groups.length<=limit;
-    if(restoreFocus)selectedButton?.focus({preventScroll:true});
+    if(restoreFocus)navigation.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
   };
-  const more=el("button","more-button",t("显示更多执行步骤"));more.addEventListener("click",()=>{scope.flowLimits.set(s.run_id,(scope.flowLimits.get(s.run_id)||30)+30);fill();});
-  section.append(more);fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
+  fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
   return section;
 }
 function runDetail(node, scope) {
   const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail"); scope.flowOpen ||= new Set();
   const heading=el("div","detail-heading"),identity=el("div");
-  identity.append(el("h3","",t("决策与反馈")));
+  identity.append(el("h3","",t("研究脉络")),el("p","quiet-note",t("{p0} 次决策",{p0:list(s?.decisions).length})));
   heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
   if(entry?.status==="pending"&&!s)box.append(el("p","load-message",t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
@@ -391,14 +391,14 @@ function setSelectedRun(id, scope) {
   const s = scope.cache.get(id)?.snapshot;
   if (s) renderSnapshot(s); else clearRun();
   if (!state.demo) {
-    const url = new URL(location.href); url.searchParams.set("project", state.projectId);
+    const url = new URL(location.href); url.searchParams.delete("project");
     if (id) url.searchParams.set("run", id); else url.searchParams.delete("run");
-    history.replaceState(null, "", url);
+    if(state.page==="experiment")history.replaceState(null, "", url);
   }
 }
 function renderProject() {
-  const project = selectedProject(); $("projects").hidden = !project;
-  if (!project) return;
+  const project = selectedProject(); $("management").hidden = state.page!=="management"; $("projects").hidden = state.page!=="experiment" || !project;
+  if (!project || state.page!=="experiment") return;
   const scope = state.activeScope || activateProject(), row = runRows(project)[0];
   $("project-name").textContent = projectName(project); $("project-description").textContent = project.description || "";
   const host=$("project-content"),details=scope.details || (scope.details=el("section","project-detail"));
@@ -410,9 +410,9 @@ function renderProject() {
     for(const d of details.querySelectorAll?.("details[data-retain-key]")||[]){
       scope.flowOpen ||= new Set();if(d.open)scope.flowOpen.add(d.dataset.retainKey);else scope.flowOpen.delete(d.dataset.retainKey);
     }
-    const scroll=details.querySelector?.(".flow-map")?.scrollLeft||0;
+    const oldMap=details.querySelector?.(".flow-map"),scroll={left:oldMap?.scrollLeft||0,top:oldMap?.scrollTop||0};
     details.replaceChildren(runDetail({runId:row.run_id,row},scope));
-    const map=details.querySelector?.(".flow-map");if(map)map.scrollLeft=scroll;
+    const map=details.querySelector?.(".flow-map");if(map){map.scrollLeft=scroll.left;map.scrollTop=scroll.top;}
     scope.detailFingerprint=fingerprint;
     if(position&&host.firstElementChild===details&&(window.scrollX!==position.left||window.scrollY!==position.top))window.scrollTo({...position,behavior:"instant"});
   }
@@ -426,6 +426,7 @@ function chooseProjects(input) {
   if (!state.demo && !state.queryApplied) {
     const params = new URLSearchParams(location.search);
     requestedRun = params.get("run"); requestedProject = params.get("project") || previous;
+    state.page = requestedRun || requestedProject ? "experiment" : "management";
     state.queryApplied = true;
   }
   const target=state.projects.find(p=>p.project_id===requestedRun)
@@ -439,24 +440,36 @@ function chooseProjects(input) {
   renderSelectors();renderProject();
 }
 function renderSelectors() {
-  const host=$("project-list"),signature=JSON.stringify([RSII18n.getLanguage(),state.projectId,state.projects.map(p=>[p.project_id,projectName(p)])]);
+  const host=$("project-list"),signature=JSON.stringify([RSII18n.getLanguage(),state.projects]);
+  $("experiment-count").textContent=t("{p0} 个实验",{p0:state.projects.length});
   if(host.signature===signature)return;
   host.signature=signature;
-  const buttons=state.projects.map(project=>{
-    const button=el("button","project-choice");button.type="button";
-    button.append(el("span","project-choice-name",projectName(project)));
-    if(!projectName(project).includes(project.project_id))button.append(el("span","project-choice-id mono",project.project_id));
-    button.setAttribute("aria-current",project.project_id===state.projectId?"true":"false");
-    button.addEventListener("click",()=>selectProject(project.project_id));return button;
+  const cards=state.projects.map(project=>{
+    const row=runRows(project)[0],card=el("a","experiment-card");card.href=`?run=${encodeURIComponent(row.run_id)}`;
+    const head=el("div","experiment-card-heading");head.append(el("h2","",projectName(project)),badge(row.status));card.append(head);
+    card.append(el("p","quiet-note",dateText(row.updated_at)));
+    if(row.counts?.decisions!==undefined)card.append(el("p","",t("{p0} 次决策",{p0:row.counts.decisions})));
+    card.addEventListener("click",event=>{if(event?.metaKey||event?.ctrlKey||event?.shiftKey||event?.altKey)return;event?.preventDefault();selectProject(project.project_id);});return card;
   });
-  host.replaceChildren(...(buttons.length?buttons:[empty(t("暂无项目"))]));
+  host.replaceChildren(...(cards.length?cards:[empty(t("暂无实验"))]));
 }
-function selectProject(id) {
-  if(!state.projects.some(p=>p.project_id===id))return;
-  if(id!==state.projectId){
-    clearTimeout(state.timer);state.controller?.abort();++state.epoch;state.projectId=id;
-    chooseProjects(state.projects);
-  } else { setSelectedRun(state.runId,state.activeScope);renderProject(); }
+function navigateURL(id,replace=false) {
+  if(state.demo)return;
+  const url=new URL(location.href);url.searchParams.delete("project");url.searchParams.delete("run");url.hash="";
+  if(id)url.searchParams.set("run",id);
+  (replace?history.replaceState:history.pushState).call(history,null,"",url);
+}
+function showManagement(push=true) {
+  clearTimeout(state.timer);state.controller?.abort();++state.epoch;
+  if(state.activeScope)for(const entry of state.activeScope.cache.values())abortEntry(entry);
+  state.page="management";if(push)navigateURL("");renderSelectors();renderProject();schedule();
+}
+function selectProject(id,push=true) {
+  if(!state.projects.some(p=>p.project_id===id))return Promise.resolve();
+  const changed=id!==state.projectId||state.page!=="experiment";
+  clearTimeout(state.timer);state.controller?.abort();++state.epoch;state.page="experiment";
+  if(changed&&push)navigateURL(id);
+  state.projectId=id;chooseProjects(state.projects);
   return loadRun(state.runId,state.activeScope).finally(schedule);
 }
 // Retain run selection as a compatibility entry point; the sole run is the project.
@@ -528,7 +541,7 @@ async function refresh() {
     clearTimeout(timeout);
     const scope = state.activeScope;
     if (scope.runId) setSelectedRun(scope.runId, scope);
-    if (scope.runId) await loadRun(scope.runId, scope, true);
+    if (scope.runId && state.page==="experiment") await loadRun(scope.runId, scope, true);
     if (!state.projects.length) showEmpty(() => t("等待第一个项目"), () => t("尚无项目或运行快照；有数据后将自动显示。"));
   } catch (error) {
     if (epoch !== state.epoch) return;
@@ -550,7 +563,7 @@ function switchDemo() {
   state.demo = !state.demo;
   state.runId = state.demo ? "" : state.realRunId;
   state.projectId = state.demo ? "" : state.realProjectId;
-  state.projects = [];
+  state.projects = []; state.page="management";
   $("projects").hidden = true;
   clearRun();
   state.snapshot = null;
@@ -559,6 +572,12 @@ function switchDemo() {
   $("empty").hidden = false;
   refresh();
 }
+$("back-projects").addEventListener("click",()=>showManagement());
+if(typeof window!=="undefined")window.addEventListener("popstate",()=>{
+  const params=new URLSearchParams(location.search),id=params.get("run")||params.get("project");
+  if(id&&state.projects.some(p=>p.project_id===id))selectProject(id,false);
+  else showManagement(false);
+});
 $("demo").addEventListener("click", switchDemo);
 $("empty-demo").addEventListener("click", () => {
   if (!state.demo) switchDemo();

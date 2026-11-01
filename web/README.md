@@ -17,7 +17,7 @@ python3 web/server.py --runs-dir runs
 python3 web/server.py --runs-dir /path/to/runs --port 8765
 ```
 
-**一次 RSI 启动就是一个项目、一个实验，对应一个 `run_id`。** 项目 ID 始终等于运行目录名，每个项目恰好包含一个运行。Qwen、医疗、旧快照的 `project_id` / `group` / `system_id` 都不会把多个运行合并；没有“未归属”分组。历史运行文件保持原样。
+**一次 RSI 启动就是一个实验，对应一个 `run_id`。** 首页是项目管理入口，集中列出独立实验；进入实验详情页后展示其内部的决策脉络。兼容 API 的 `project_id` 仍等于运行目录名，不新增与实验一一对应的“项目”业务层。Qwen、医疗、旧快照的 `project_id` / `group` / `system_id` 都不会把多个运行合并；没有“未归属”分组。历史运行文件保持原样。
 
 已移除项目注册表、`configs/monitor-projects.json` 和 `--projects-file` 参数；旧启动命令去掉该参数即可。项目从可读取的 `monitor.json` 自动发现，不创建空注册项目。
 
@@ -29,21 +29,23 @@ python3 web/server.py --runs-dir /path/to/runs --port 8765
 
 右上角「中 / EN」切换完整界面语言，默认中文。选择保存在浏览器 localStorage 的 `rsisys-language`（`zh` / `en`），重载后恢复；存储不可用时保留当前页面内的选择。按钮、状态、空态、指标名、图表提示、流程和详情标题均跟随语言；日期使用相应 locale。
 
-切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，保留所选项目、执行步骤、分页、展开记录及流程横向滚动。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
+切换只用已缓存的项目与运行数据重新渲染，不触发 API 请求，保留当前页面、所选实验和决策、展开记录及图谱横纵滚动。模型 `reason` / `strategy` / `objective`、反馈和日志原文、项目名称与说明、技术 ID 和协议字段保持原样。已知指标显示友好名称，原始 key 放在 title；自定义指标保留可见 key，便于区分。
 
-无外部依赖或翻译 API。页面以 `defer` 依次加载 `/i18n.js` 和 `/app.js`。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态内容。
+无外部依赖或翻译 API。页面以 `defer` 依次加载 `/i18n.js`、`/decisions.js` 和 `/app.js`。全局 `RSII18n` 提供 `t(key, params)`、`getLanguage()`、`setLanguage("zh" | "en")`、`applyStatic(document)` 和 `subscribe(listener)`；订阅返回取消函数。`messages` 为只读双语字典，`storageKey` 为存储键。动态文案显式调用 `t()`，参数使用 `{p0}` 等模板；静态 UI 仅通过 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title` / `data-i18n-placeholder` 标记翻译，不遍历替换模型文本。计数与标签分开标记，以保留动态内容。
 
-Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the selected project, execution step, pagination and expanded records. Reported model text and logs stay verbatim.
+Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the current page, selected experiment and decision, graph scroll and expanded records. Reported model text and logs stay verbatim.
 
 ## 数据与交互
 
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
-- 左侧每个项目对应一次真实启动；选择项目直接查看该运行的决策、任务、指标和反馈。一个实验可以包含多轮决策和训练，决策轮次不产生额外项目。`?run=<id>` 与 `?project=<id>&run=<id>` 的项目身份统一为该 `run_id`。
-- `parent_run_id` 和 `source_run_ids` 在「来源记录」折叠区呈现为项目链接，可指向其他项目；续接启动仍是独立项目，不因父链或资料引用而合并。未发现对应项目时仍保留来源 ID 和链接，不补造来源。
-- 首屏读取 `/api/projects` 后，自动选择深链接指定的项目或首个项目，再读取其 `/api/runs/<id>`；切换项目直接加载对应实验。缓存隔离每个项目和运行，切换时取消旧请求并拒绝迟到响应。每次刷新完成后间隔 5 秒刷新项目清单及当前实验，不提供手动刷新、暂停、连接状态或导出控件；隐藏页面暂停轮询，回到前台立即更新。已有快照时静默刷新，不展示“正在刷新”。失败保留旧数据并提供重试。
+- `/` 为项目管理页，以卡片列出实验名称、状态、更新时间和已报告决策数；只读取清单，不自动进入第一个实验。点击实验进入 `?run=<id>`，返回按钮和浏览器前进 / 后退保持两页导航。旧 `?project=<id>&run=<id>` 深链接继续兼容。
+- 实验详情顶部的研究脉络只包含该 run 内的决策节点：固定起点、圆点和直线，自左向右排列。点击节点后，下方显示对应决策的理由、提交内容、反馈和指标。图谱使用当前快照中的全部决策（API 上限 300），不再分页列出步骤按钮。
+- `decisions.js` 将明确的 `parent_decision_id` 绘成父子分支，`source_decision_ids` 绘成引用虚线；没有明确父关系时按记录顺序连线，仅表示先后，不代表因果。缺失、歧义或循环关系不会生成虚假依赖。图谱支持横纵滚动，不压缩节点到无法阅读。
+- 跨实验的 `parent_run_id` 和 `source_run_ids` 留在「来源记录」中，以链接打开来源实验；不进入实验内部的决策图谱。
+- 每 5 秒静默刷新：管理页只更新清单，实验页更新清单与当前实验。隐藏页面暂停轮询，切换实验取消旧请求并拒绝迟到响应。缓存按实验隔离；不显示连接状态、手动刷新或导出工具栏。
 - 刷新保持详情容器挂在原位置，不把页面高度短暂折叠，并保留页面滚动位置。刷新无数据变化时复用运行详情 DOM；有新反馈时，按稳定决策身份保留所选步骤、展开记录及流程横向滚动。中英切换同样保留状态。保留候选结果和来源记录折叠区的展开状态。
-- 执行流程按已报告时间从早到晚排列；未知时间保留快照顺序列于末尾，不补造因果。首批显示 30 个步骤，可继续加载。每次展示一个步骤的**决策理由、提交内容、实际反馈、进度及结果**。只有“执行已完成”等通用状态时不显示反馈块；缺失的理由不补造。`evaluate` 显示为“验证改动效果”，明确评测与采用改动是两个步骤。训练步骤带损失 / 学习率曲线与历史点，评测带基线 / 候选对比。重复 finish 聚合并保留全部原始记录；“结束本轮研究”不代表整个运行已停止。
+- 执行流程按已报告时间从早到晚排列；未知时间保留快照顺序列于末尾，不补造因果。图谱显示当前快照中的全部决策。每次展示一个步骤的**决策理由、提交内容、实际反馈、进度及结果**。只有“执行已完成”等通用状态时不显示反馈块；缺失的理由不补造。`evaluate` 显示为“验证改动效果”，明确评测与采用改动是两个步骤。训练步骤带损失 / 学习率曲线与历史点，评测带基线 / 候选对比。重复 finish 聚合并保留全部原始记录；“结束本轮研究”不代表整个运行已停止。
 - 已知动作使用中英友好名称，例如 `configure_prompt` → 调整提示词、`define_recipe` → 定义训练方案；自定义动作直接显示原名，只有没有动作字段时才显示“未命名决策”。模型理由、策略及反馈原文不改写。与动作名称完全重复的 strategy 不再重复展示；页面不展示技术 ID、版本哈希或协议字段列表。
 - 只按明确唯一的 `job_id`、`candidate_id` 或指令引用关联反馈；找不到指定 job 或存在歧义时不回退猜测。复查时指标与关联任务当前结果分开展示。原始事件留在快照和日志中，不进入阅读界面。
 - 已移除重复的“指标与记录”区域。执行步骤直接呈现决策与结果，已移除“记录详情”“运行详情”“运行事件”和任务原始字段列表。未关联的任务 / 候选只保留状态及指标摘要。技术字段仍保留在公开 API 和运行文件中；底层运行数据不删除。
@@ -90,7 +92,7 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
 
 ## HTTP 接口
 
-`GET /api/projects`：保留 `projects` 数组协议，每项恰好包含一个运行，不包含完整快照。项目和内部运行的 `project_id` 都等于该运行的 `run_id`。
+`GET /api/projects`：为兼容保留 `projects` 数组协议，界面将各项称为实验，每项恰好包含一个运行，不包含完整快照。项目和内部运行的 `project_id` 都等于该运行的 `run_id`。
 
 ```json
 {
@@ -152,7 +154,7 @@ node --test web/static/*.test.js
 
 服务测试覆盖一启动一项目、旧标签不合并、名称后缀去重、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。Node 只用于检查与测试，服务运行不依赖 Node。
 
-界面采用项目侧栏与实验详情布局，使用暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
+界面采用独立的实验管理页与实验详情页，使用暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 
 浏览器 QA 截图放在临时目录 `/tmp/rsisys-*`，不写入 runs、不作为源码入库。
 
