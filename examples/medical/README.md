@@ -150,6 +150,10 @@ It also resolves an omitted `candidate_id` only when exactly one candidate exist
 multiple candidates require an explicit model choice. Raw model output and the
 resolved directive are recorded separately. Validation retries include the failed
 proposal, error and available candidate IDs, without silently selecting an experiment.
+The example policy also normalizes a swapped `invoke`/`explore` envelope only
+when the action name uniquely identifies a currently allowed operation or directive.
+Arguments are unchanged, original/normalized forms are logged, and normal permission
+and schema checks still apply. Disabled or ambiguous names gain no access this way.
 
 The frozen source selection is train/primary/guardrail **1024/128/64**. Before
 training, the tokenizer checks complete chat-template sequences, including the

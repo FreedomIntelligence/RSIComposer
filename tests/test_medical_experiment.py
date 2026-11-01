@@ -240,6 +240,43 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.serving.activated), 1)
         self.assertEqual(len(self.read('evaluations.json')), 2)
 
+    def test_unique_registered_action_normalizes_envelope_without_changing_parameters(self):
+        recipe = {'kind': 'explore', 'mode': 'define_recipe', 'strategy': 'Researcher recipe',
+                  'arguments': {'steps': 32, 'lr': 1e-4, 'seed': 42, 'weight_decay': .01, 'warmup_ratio': .1}}
+        def invoke_training(context):
+            ref = next(r['data']['recipe_ref'] for r in context['operation_results']
+                       if isinstance(r.get('data'), dict) and 'recipe_ref' in r['data'])
+            value = train(context, ref)
+            value['kind'], value['operation'] = 'invoke', value.pop('mode')
+            return value
+        result = self.execute([recipe, invoke_training, evaluate, apply, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(self.process.requests), 1)
+        request, _ = next(iter(self.process.requests.values()))
+        native_recipe = json.loads(Path(request.recipe_ref).read_text())
+        self.assertEqual(native_recipe['training_args']['seed'], 42)
+        self.assertEqual(native_recipe['training_args']['warmup_ratio'], .1)
+        events = [json.loads(line) for line in (self.root/'run/events.jsonl').read_text().splitlines()]
+        normalized = [event for event in events if event['kind'] == 'decision_envelope_normalized']
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[0]['details']['normalized']['arguments'], recipe['arguments'])
+        self.assertIn('"mode": "define_recipe"', (self.root/'run/model_responses.jsonl').read_text().replace('\\"', '"'))
+
+    def test_envelope_normalization_does_not_restore_a_disabled_training_action(self):
+        denied = {'kind': 'invoke', 'operation': 'train', 'arguments': {}}
+        result = self.execute([train, denied, FINISH], max_trainings=1)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(self.process.requests), 1)
+        self.assertNotIn('train', self.serving.contexts[1]['directive_modes'])
+
+    def test_operation_normalization_rejects_nonempty_directive_inputs(self):
+        denied = {'kind': 'explore', 'mode': 'define_recipe', 'strategy': 'Invalid input scope',
+                  'arguments': {}, 'input_ids': ['unrelated']}
+        result = self.execute([denied, FINISH])
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertFalse(self.process.requests)
+        self.assertIn('cannot consume directive inputs', self.serving.contexts[-1]['objective'])
+
     def test_ambiguous_candidate_requires_model_choice_and_preserves_error_context(self):
         prompt = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Second candidate',
                   'arguments': {'instructions': 'Return one legal label.'}}

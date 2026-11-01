@@ -476,6 +476,33 @@ class ResearchPolicy(ModelDecisionPolicy):
         self.train_ref = train_ref
         self.finish_reason: str | None = None
 
+    def _parse_decision(self, response, context):
+        """Resolve envelope spelling only when an allowed action has one owner.
+
+        This is a provider-facing parser adaptation, not another executor. The
+        unchanged action-space validation/permission checks still run afterward.
+        """
+        payload = json.loads(response.text)
+        operations = {spec.name for spec in context.operations}
+        directives = set(context.directive_modes)
+        kind = payload.get('kind') if isinstance(payload, dict) else None
+        normalized = None
+        if kind == 'explore' and payload.get('mode') in operations - directives:
+            if (set(payload) - {'kind', 'mode', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}
+                    or payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None):
+                raise ValueError('Operation envelope cannot consume directive inputs or scheduling fields')
+            normalized = {'kind': 'invoke', 'operation': payload['mode'], 'arguments': payload.get('arguments', {})}
+        elif kind == 'invoke' and payload.get('operation') in directives - operations:
+            if set(payload) - {'kind', 'operation', 'strategy', 'arguments', 'input_ids', 'review_after_seconds'}:
+                raise ValueError('Unexpected fields in directive envelope')
+            normalized = {key: value for key, value in payload.items() if key not in ('kind', 'operation')}
+            normalized.update(kind='explore', mode=payload['operation'],
+                              strategy=payload.get('strategy', 'Model requested '+payload['operation']))
+        if normalized is not None:
+            self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
+            response = replace(response, text=json.dumps(normalized))
+        return super()._parse_decision(response, context)
+
     def decide(self, context):
         hint = ''
         for attempt in range(3):
