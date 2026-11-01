@@ -431,7 +431,7 @@ class MedicalExampleTests(unittest.TestCase):
             self.assertEqual(result.status, 'done')
             feedback = assembly.runner.decision_making.harness.state.last_feedback
             self.assertEqual(feedback.status.value, 'failed')
-            self.assertIn('did not strictly improve', feedback.error)
+            self.assertIn('at least one accuracy improvement and no accuracy regression', feedback.error)
             self.assertEqual(assembly.systems.current.version, 'initial')
             rejection = json.loads(self.artifacts.get(assembly.evaluator.evidence[feedback.evidence_refs[0]]))
             self.assertEqual(rejection['kind'], 'application_rejection')
@@ -686,10 +686,65 @@ pathlib.Path(os.environ['RSISYS_RESULT_FILE']).write_text(json.dumps(result))
             evidence = [json.loads(self.artifacts.get(ref)) for ref in assembly.evaluator.evidence.values()]
             self.assertFalse(any(item['kind'] == 'raw_development_failure' for item in evidence))
 
+    def test_pareto_accuracy_comparisons_and_current_incumbent(self):
+        from examples.medical.evaluation import pareto_acceptance
+        from rsisys.loops.exploration.harness.evaluation import EvaluationResult
+        guard = write_rows(self.root/'guard.jsonl', [row('g', 'Triangle', benchmark='medxpertqa')])
+        task = replace(self.task, development=self.task.development + (Benchmark('medxpertqa', 'guardrail', guard),))
+        def result(a, b):
+            return EvaluationResult('fixture', task.protocol_ref,
+                {'medqa.accuracy': a, 'medxpertqa.accuracy': b, 'score': a}, (), True)
+        self.assertNotEqual(task.protocol_ref, replace(task, selection_rule='primary_guardrail').protocol_ref)
+        with self.assertRaises(ValueError):
+            replace(task, selection_rule='unknown')
+        incumbent = result(0.5, 0.5)
+        for a, b, accepted, comparison in [
+                (0.6, 0.5, True, 'improvement'), (0.5, 0.6, True, 'improvement'),
+                (0.6, 0.6, True, 'improvement'), (0.5, 0.5, False, 'tie'),
+                (0.6, 0.4, False, 'tradeoff'), (0.4, 0.6, False, 'tradeoff'),
+                (0.4, 0.5, False, 'regression')]:
+            with self.subTest(a=a, b=b):
+                decision = pareto_acceptance(task, result(a, b), incumbent)
+                self.assertEqual(decision['accepted'], accepted)
+                self.assertEqual(decision['comparison'], comparison)
+        self.assertFalse(pareto_acceptance(task, result(0.6, 0.5), result(0.7, 0.5))['accepted'])
+        for invalid in (float('nan'), float('inf'), -0.1, 1.1, True):
+            with self.assertRaises(ValueError):
+                pareto_acceptance(task, result(invalid, 0.5), incumbent)
+
+    def test_pareto_tradeoff_measurement_is_retained_without_application(self):
+        guard = write_rows(self.root/'guard.jsonl', [row('g', 'Triangle', benchmark='medxpertqa')])
+        task = replace(self.task, development=self.task.development + (Benchmark('medxpertqa', 'guardrail', guard),),
+                       guardrails=False, max_guardrail_drop=1)
+        prompt = self.artifacts.put(b'', kind='medical_prompt')
+        systems = SystemRegistry(SystemVersion('initial', {'prompt': prompt}, MODEL), ReferenceSystemActivator(MODEL))
+        outputs = iter(['B', 'A', 'A', 'B'])
+        candidates = {}
+        evaluator = MedicalEvaluator(task, self.artifacts, systems, candidates,
+            lambda request: GenerationResponse(next(outputs), request.model, True))
+        evaluator.establish_anchor()
+        candidate = Candidate('tradeoff', MODEL.revision, {}, ('actor',), 'initial')
+        systems.register(candidate)
+        candidates[candidate.candidate_id] = candidate
+        job = evaluator.submit(EvaluationRequest(candidate, task.protocol_ref), idempotency_key='tradeoff')
+        while evaluator.poll(job).status == JobStatus.RUNNING:
+            pass
+        self.assertEqual(evaluator.result(job).candidate_id, 'tradeoff')
+        verdict = evaluator.interpret('tradeoff')
+        self.assertFalse(verdict['accepted'])
+        self.assertEqual(verdict['comparison'], 'tradeoff')
+        self.assertIn('tradeoff', candidates)
+        self.assertIsNotNone(evaluator.measurement('tradeoff'))
+        self.assertEqual(systems.current.version, 'initial')
+        replacement = MedicalEvaluator(task, self.artifacts, systems, candidates, lambda r: None,
+            acceptance_policy=lambda task, candidate, incumbent: {'accepted': False, 'selection_rule': 'custom'})
+        replacement._anchor, replacement._outputs = evaluator._anchor, evaluator._outputs
+        self.assertEqual(replacement.interpret('tradeoff')['selection_rule'], 'custom')
+
     def test_fixed_anchor_guardrail_never_drifts_and_optional_setting(self):
         guard = write_rows(self.root/'guard.jsonl', [row('g', 'Select the triangle symbol', benchmark='medmcqa')])
         task = replace(self.task, development=self.task.development + (Benchmark('medmcqa', 'guardrail', guard),),
-                       max_guardrail_drop=0.02)
+                       max_guardrail_drop=0.02, selection_rule="primary_guardrail")
         prompt = self.artifacts.put(b'', kind='medical_prompt')
         systems = SystemRegistry(SystemVersion('initial', {'prompt': prompt}, MODEL), ReferenceSystemActivator(MODEL))
         outputs = iter(['B', 'A', 'A', 'B'])

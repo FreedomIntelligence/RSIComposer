@@ -37,6 +37,7 @@ A local task JSON references train and development files relative to itself:
     {"benchmark_id":"medxpertqa","role":"primary","path":"/absolute/user/primary.jsonl"},
     {"benchmark_id":"medqa","role":"guardrail","path":"/absolute/user/guardrail.jsonl"}
   ],
+  "selection_rule": "pareto",
   "guardrails": true,
   "max_guardrail_drop": 0.02,
   "max_output_tokens": 32
@@ -159,10 +160,10 @@ while other permitted research actions can continue. Recipe steps are bounded by
 `--max-train-steps`; the default recipe uses 32 steps, learning rate 1e-4,
 microbatch 1 and gradient accumulation 2.
 
-The research objective requests a real SFT candidate prepared for inference and
-measured against the baseline when feasible. Prompt-only results do not answer
-that question. This is an objective, not an enforced action sequence or training
-quota: the model chooses its plan and can finish with an explanation of obstacles.
+The research objective is to improve both MedXpertQA and MedQA performance.
+The researcher chooses data, SFT recipes, inference prompts or combinations;
+no particular method or training submission is required. It chooses its plan
+and can finish with a reason within the externally defined capabilities and budget.
 
 The initial baseline is measured before research starts and its evidence is
 readable through `read_artifact`. It is not a proposed candidate. Candidate
@@ -331,10 +332,19 @@ activation supports prompt changes with an unchanged model. `SystemRegistry`
 merges component candidates, enforces their explicit parent and applies via CAS.
 A prompt proposal creates a candidate without mutating the incumbent. Evaluation
 uses `EvaluationSpec`, so the default harness retains candidate evaluation context.
-Application rechecks strict primary improvement against the current incumbent.
-Guardrails, enabled by default, compare against the **initial fixed anchor**, never
-a gradually weaker incumbent. `guardrails: false` is a choice made before freezing
-the task. No candidate is automatically selected on a tie. A known candidate that
+Application rechecks the frozen `selection_rule` against the current incumbent.
+The default `pareto` rule requires at least one development benchmark accuracy to
+strictly improve and none to decrease, including MedQA-only improvements. Ties
+are not accepted. Tradeoff candidates retain their measurements, raw evidence and
+registry entries for subsequent comparison, but cannot replace the incumbent.
+The `score` primary metric remains a reporting convenience, not the Pareto selector.
+`MedicalEvaluator(..., acceptance_policy=callable)` replaces the selector explicitly;
+the callable receives `(task, candidate_measurement, incumbent_measurement)` and
+returns a dictionary with boolean `accepted` and policy evidence.
+The explicit legacy `selection_rule: "primary_guardrail"` requires primary improvement
+and uses `guardrails`/`max_guardrail_drop` relative to the initial fixed anchor.
+Those legacy tolerance fields do not relax the Pareto rule. The selection rule is
+included in the frozen protocol hash; historical runs are not rewritten. A known candidate that
 fails acceptance, has no successful evaluation, or has failed interpretation
 receives FAILED application feedback plus a rejection artifact. The incumbent stays
 unchanged and the researcher chooses its next action; rejection does not exit the

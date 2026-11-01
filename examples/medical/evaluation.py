@@ -1,4 +1,5 @@
 """Fixed development evaluator, raw generation evidence, and separate acceptance."""
+import math
 from copy import deepcopy
 from dataclasses import asdict
 from uuid import uuid4
@@ -19,12 +20,34 @@ class MedicalEvaluationError(RuntimeError):
     """Terminal evaluation failure; inspect the attached raw partial evidence."""
 
 
+def pareto_acceptance(task, candidate, incumbent):
+    """Strict improvement on at least one accuracy, no drop on any accuracy."""
+    deltas = {}
+    for benchmark in task.development:
+        key = benchmark.benchmark_id + '.accuracy'
+        before, after = incumbent.metrics[key], candidate.metrics[key]
+        if any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1
+               for v in (before, after)):
+            raise ValueError('Acceptance requires finite accuracies in [0, 1]')
+        deltas[key] = after - before
+    improved = [key for key, delta in deltas.items() if delta > 0]
+    regressed = [key for key, delta in deltas.items() if delta < 0]
+    return {'selection_rule': 'pareto', 'metric_deltas': deltas,
+            'improved_metrics': improved, 'regressed_metrics': regressed,
+            'accepted': bool(improved) and not regressed,
+            'comparison': ('tradeoff' if improved and regressed else
+                           'improvement' if improved else 'regression' if regressed else 'tie')}
+
+
 class MedicalEvaluator:
-    def __init__(self, task, artifacts, systems, candidates, inference, *, prepare_inference=None):
+    def __init__(self, task, artifacts, systems, candidates, inference, *, prepare_inference=None, acceptance_policy=None):
         if not callable(inference):
             raise TypeError('An explicit inference callable is required')
         if prepare_inference is not None and not callable(prepare_inference):
             raise TypeError('prepare_inference must be callable or None')
+        if acceptance_policy is not None and not callable(acceptance_policy):
+            raise TypeError('acceptance_policy must be callable or None')
+        self.acceptance_policy = acceptance_policy
         self._task, self.artifacts, self.systems = task, artifacts, systems
         self.candidates, self.inference = candidates, inference
         self.prepare_inference = prepare_inference
@@ -149,11 +172,18 @@ class MedicalEvaluator:
             for b in self.task.development if b.role == 'guardrail')
         if result.simulated != incumbent.simulated or result.simulated != self._anchor.simulated:
             raise ValueError('Cannot compare simulated and provider measurements')
+        decision = {'selection_rule': 'primary_guardrail',
+                    'accepted': primary and (guardrail or not self.task.guardrails)}
+        policy = self.acceptance_policy or (pareto_acceptance if self.task.selection_rule == 'pareto' else None)
+        if policy is not None:
+            decision = policy(self.task, deepcopy(result), deepcopy(incumbent))
+            if not isinstance(decision, dict) or type(decision.get('accepted')) is not bool:
+                raise ValueError('Acceptance policy must return a boolean accepted verdict')
         return {'kind': 'acceptance_interpretation', 'candidate_id': candidate_id,
             'incumbent': incumbent.candidate_id, 'fixed_anchor': self._anchor.candidate_id,
             'protocol_ref': self.task.protocol_ref, 'primary_improved': primary,
             'guardrail_passed': guardrail, 'guardrails_enabled': self.task.guardrails,
-            'accepted': primary and (guardrail or not self.task.guardrails),
+            **decision,
             'source_refs': list(result.evidence_refs + incumbent.evidence_refs + self._anchor.evidence_refs)}
 
     def submit(self, request, *, idempotency_key):

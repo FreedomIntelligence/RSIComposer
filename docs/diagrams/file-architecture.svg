@@ -161,7 +161,7 @@
 <rect x="100" y="2120" width="2200" height="185" rx="16" fill="#FFF8E8" stroke="#A86B13" stroke-width="1.8" stroke-dasharray="8 5"/>
 <text x="124" y="2145" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#A86B13" text-anchor="start">可换 · 需适配</text>
 <text x="124" y="2184" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#A86B13" text-anchor="start">examples/medical/ · 独立装配与可替换领域规则</text>
-<text x="124" y="2218" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run</text>
+<text x="124" y="2218" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">task.py：冻结引用；evaluation.py：分样本 poll / 原始证据 / 可换验收（默认 Pareto）；run.py：装配 / prepare / check / run</text>
 <text x="124" y="2247" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由</text>
 <text x="124" y="2276" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">experiment.py：独立 researcher 与 actor 装配；Transformers / SGLang / Ascend：可替换推理</text>
 </g>

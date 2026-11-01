@@ -197,11 +197,13 @@ class _ApplyMedical(CommandHandler):
                     interpretation = self.evaluator.interpret(ident)
                     if not interpretation['accepted']:
                         reasons = []
-                        if not interpretation['primary_improved']:
+                        if interpretation.get('selection_rule') == 'pareto':
+                            reasons.append('requires at least one accuracy improvement and no accuracy regression')
+                        elif interpretation.get('selection_rule') == 'primary_guardrail' and not interpretation['primary_improved']:
                             reasons.append('primary score did not strictly improve over the current incumbent')
-                        if interpretation['guardrails_enabled'] and not interpretation['guardrail_passed']:
+                        if interpretation.get('selection_rule') == 'primary_guardrail' and interpretation['guardrails_enabled'] and not interpretation['guardrail_passed']:
                             reasons.append('fixed-anchor guardrail failed')
-                        raise MedicalApplicationRejected('; '.join(reasons))
+                        raise MedicalApplicationRejected('; '.join(reasons) or 'Rejected by the configured acceptance policy')
                 except (MedicalApplicationRejected, MedicalEvaluationError) as exc:
                     return self._reject(state, str(exc))
                 state.data['interpretation'] = interpretation

@@ -88,10 +88,13 @@ class MedicalTask:
     guardrails: bool = True
     max_guardrail_drop: float = 0.02
     max_output_tokens: int = 32
+    selection_rule: str = "pareto"
 
     def __post_init__(self):
         if not isinstance(self.train, DataRef) or not isinstance(self.development, tuple):
             raise TypeError('Task requires frozen train/development references')
+        if self.selection_rule not in ('pareto', 'primary_guardrail'):
+            raise ValueError('Unknown frozen selection_rule')
         ids = [b.benchmark_id for b in self.development]
         if (not ids or len(ids) != len(set(ids)) or any(b not in LABELS for b in ids)
                 or sum(b.role == 'primary' for b in self.development) != 1
@@ -133,7 +136,7 @@ def validate_training(rows, excluded):
 
 def prepare(config, *, base_directory=Path('.')):
     """Freeze local paths from a small explicit config; no downloads or conversions."""
-    allowed = {'train', 'development', 'guardrails', 'max_guardrail_drop', 'max_output_tokens'}
+    allowed = {'train', 'development', 'guardrails', 'max_guardrail_drop', 'max_output_tokens', 'selection_rule'}
     if set(config) - allowed:
         raise ValueError('Unknown medical task fields')
     def ref(path):

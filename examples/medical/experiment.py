@@ -824,8 +824,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         result['baseline_seconds'] = time.monotonic()-baseline_started
         write_json(root / 'baseline.json', {'result': asdict(anchor), 'seconds': result['baseline_seconds']})
         persist(assembly, root)
-        objective = ('Investigate whether supervised adaptation of this model on MedQA improves difficult '
-            'MedXpertQA performance without degrading the MedQA guardrail. '
+        objective = ('Autonomously research and improve this model to increase both '
+            'MedXpertQA and MedQA accuracy within the available resource budget. '
             'MedXpertQA has ten answer labels A-J; MedQA has four A-D. Grading requires exactly '
             'one legal label, with no period, prefix or explanation. Prompt changes apply to both benchmarks. '
             'The initial baseline has ALREADY been measured; its results and evidence IDs are below. '
@@ -835,11 +835,12 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'are unavailable until a candidate exists. Do not invent a candidate or repeat baseline measurement. '
             'You choose the research steps and may conduct multiple rounds, change training data/recipe or prompt, '
             'evaluate, apply an accepted candidate, or finish with your reason at any time. '
-            'The requested deliverable is a real SFT candidate loaded for inference and compared on the frozen '
-            'development set, when feasible. Prompt-only experiments do not answer the supervised-adaptation '
-            'question. If you cannot obtain that comparison, explain the obstacle in your finish reason. '
+            'Choose data construction, SFT recipes, inference prompts or combinations according to your hypotheses. '
+            'No particular method or training submission is required. Compare candidates using frozen development evidence. '
             'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
-            'No candidate may be applied without the existing improvement/guardrail acceptance check. '
+            f'Application follows frozen selection_rule={task.selection_rule}. '
+            'The default pareto rule requires at least one accuracy improvement over the current incumbent and no decreases. '
+            'Tradeoff candidates remain available for comparison. '
             'Only method=sft and restart from the fixed initializer are installed; no real RL. '
             'Use define_recipe for controlled steps/lr/seed/weight_decay/warmup_ratio, '
             'preview_training_data (at most 8 rows), choose_training_data for a subset, '
