@@ -7,6 +7,8 @@ from functools import partial
 
 from ...action_space import OperationCall, OperationResult, OperationSpec
 from ...action_space.capabilities import Capabilities, Capability
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.runtime.json_tools import EvidencePathError, evidence_value
 from ..context import encoded, result_id
 from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, page_limit, page_offset
 
@@ -97,9 +99,9 @@ class ResearchTools:
             'Read revision before retrying conflicts; summaries are model notes, not validated findings.',
             patch_schema), agenda.validate_patch)
         archive = _Definition(OperationSpec('research_archive',
-            'Read archived JSON; concatenate 1000-character chunks per record. Follow next_cursor; '
-            'pages are byte-bounded. operation_results IDs are SHA-256. '
-            'With record_id, evidence_path selects a JSON Pointer; cursors pin source and path.',
+            'Read archived JSON in byte-bounded 1000-character chunks; follow next_cursor. '
+            'operation_results uses SHA-256 IDs and wraps receipts under /result. '
+            'evidence_path is a JSON Pointer (empty=root); cursors pin records and path.',
             schema({'collection': {'enum': ['history', 'memories', 'operation_results', 'decision_graph',
                                             'research_items', 'research_revisions',
                                             *(['experience'] if experience is not None else [])]},
@@ -181,14 +183,15 @@ class ResearchTools:
         for row in rows:
             value = row
             if pointer is not None:
-                for part in pointer[1:].split('/') if pointer else ():
-                    key = part.replace('~1', '/').replace('~0', '~')
-                    if isinstance(value, dict):
-                        value = value[key]
-                    elif isinstance(value, (tuple, list)) and key.isascii() and key.isdecimal():
-                        value = value[int(key)]
-                    else:
-                        raise ValueError('evidence_path does not identify an archived value')
+                try:
+                    value = evidence_value(row, pointer)
+                except EvidencePathError as exc:
+                    return OperationResult('Archive evidence path rejected', (), False,
+                        ExecutionStatus.FAILED, str(exc), data={
+                            'collection': collection, 'record_id': args['record_id'],
+                            'evidence_path': pointer, 'root_fields': list(row)[:16],
+                            'read_path': {'operation': 'research_archive', 'collection': collection,
+                                          'record_id': args['record_id'], 'evidence_path': ''}})
             content = encoded(value)
             record_chunks = max(1, (len(content) + 999) // 1000)
             for chunk in range(max(0, start - offset), min(record_chunks, start + args['limit'] - offset)):

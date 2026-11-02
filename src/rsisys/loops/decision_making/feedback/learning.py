@@ -13,7 +13,7 @@ import json
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
 from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.json_tools import encoded, result_id
+from rsisys.runtime.json_tools import encoded, result_id, EvidencePathError, evidence_value
 from rsisys.runtime.json_tools import load_object as _load_object
 from .attempts import attempt_schema, validate_attempt_updates, apply_attempt_updates, attempt_view
 from .evidence import candidate_evidence, claim_schema, validate_claims, admitted_candidate_evidence
@@ -626,6 +626,8 @@ class FeedbackLearning:
             if (job_id is None or not isinstance(evidence_path, str) or len(evidence_path) > 1000
                     or (evidence_path and not evidence_path.startswith('/'))):
                 raise ValueError('Evidence reading requires a job ID and a JSON pointer of at most 1000 characters')
+            if job_id not in self.state['jobs']:
+                raise EvidencePathError('Evidence job ID is not recorded; list feedback jobs before reading evidence')
             row = self.state['jobs'][job_id]
             value = row.get('raw_input', row['input'])
             root = '/raw_input' if 'raw_input' in row else '/input'
@@ -634,14 +636,7 @@ class FeedbackLearning:
                 value = row['dispatch_attempts']
                 root = '/dispatch_attempts'
                 pointer = pointer[len('/dispatch_attempts'):]
-            for part in pointer.split('/')[1:] if pointer else ():
-                key = part.replace('~1', '/').replace('~0', '~')
-                if isinstance(value, dict):
-                    value = value[key]
-                elif isinstance(value, (list, tuple)) and key.isascii() and key.isdecimal():
-                    value = value[int(key)]
-                else:
-                    raise ValueError('Evidence path does not identify a recorded value')
+            value = evidence_value(value, pointer)
             text = encoded(value)
             interpretation = evidence_path.startswith(('/dispatch_attempts', '/grouping_context/attempts'))
             metadata = {'job_id': job_id, 'evidence_path': evidence_path,

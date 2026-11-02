@@ -5,6 +5,8 @@ Other harnesses supply FeedbackAdapter rather than inheriting this implementatio
 """
 from copy import deepcopy
 from dataclasses import asdict, replace
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.runtime.json_tools import EvidencePathError
 
 from ..feedback import FeedbackAdapter, FeedbackEvidence, FeedbackLearningService
 from ..action_space import OperationCall, OperationResult, OperationSpec
@@ -218,7 +220,14 @@ class LearningTools:
     def execute(self, call):
         if call.name != READ_SPEC.name:
             return self.base.execute(call)
-        data = self.learning.read(**_read_arguments(call.arguments))
+        try:
+            data = self.learning.read(**_read_arguments(call.arguments))
+        except EvidencePathError as exc:
+            return OperationResult('Feedback evidence path rejected', (), False,
+                ExecutionStatus.FAILED, str(exc), data={
+                    'job_id': call.arguments.get('job_id'),
+                    'evidence_path': call.arguments.get('evidence_path'),
+                    'read_operation': READ_SPEC.name})
         return OperationResult('Feedback learning proposals; validation still required', (),
                                bool(data.get('simulated', False)), data=data)
 

@@ -127,7 +127,7 @@ class EvidenceProjectionTests(unittest.TestCase):
             operation = projected.operation_results[0]
             self.assertEqual(operation.data['facts']['/data/quality_metrics'], METRICS)
             recovered = read_original(tools, operation.data['evidence_card'])
-            self.assertEqual(recovered['result'], json.loads(encoded(asdict(raw.operation_results[0]))))
+            self.assertEqual(recovered, json.loads(encoded(asdict(raw.operation_results[0]))))
             observation = projected.experience[0]
             self.assertEqual(observation.details['facts']['/details/outcome/result/metrics'], METRICS)
             self.assertEqual(read_original(tools, observation.details['evidence_card']),

@@ -308,6 +308,8 @@ def evidence_working_view(context, *, latest=False):
                     omissions=omissions)
                 if required:
                     card['evidence_card']['summary_preview'] = _preview(row.summary, 128)
+            if collection == 'operation_results':
+                card['evidence_card']['read_path']['evidence_path'] = '/result'
             updates = {'summary': 'Archived evidence; read original for prose and qualifications.'}
             updates['data' if collection == 'operation_results' else 'details'] = card
             if latest and collection == 'operation_results':
