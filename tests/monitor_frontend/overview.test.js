@@ -77,7 +77,7 @@ test("polling and languages preserve explicit selection and unlinked history exp
   await h.run('loadRun("a",state.activeScope,true)');
   assert.equal(findClass(host(h),"active-job").length,2);assert.equal(history(h).open,true);assert.equal(findClass(history(h),"job-record").length,4);
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),selected);assert.match(textOf(findClass(host(h),"flow-step")[0]),/Historical rationale/);
-  h.get("lang-en").listeners.click();assert.equal(history(h).open,true);assert.match(visibleText(host(h)),/Unlinked task history · 4/);
+  h.get("lang-en").listeners.click();assert.equal(history(h).open,true);assert.match(visibleText(host(h)),/Association diagnostics · 4/);
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),selected);
   history(h).open=false;h.get("lang-zh").listeners.click();assert.equal(history(h).open,false);
 });
@@ -114,4 +114,18 @@ test("legacy runs retain active tasks and experiment logs with strict job associ
   assert.equal(findClass(host(h),"flow-map").length,0);assert.match(textOf(findClass(logs,"flow-step")[0]),/Historical rationale/);
   assert.equal(h.run('linkedJob(state.snapshot.decisions[0],state.snapshot)'),undefined);
   assert.equal(findClass(history(h),"job-record").length,4);
+});
+
+
+test("legacy evaluator aliases recover only uniquely corroborated directives and baseline stays separate",()=>{
+  const s=fixture();s.decisions[0].job_id="backend-id";s.decisions[0].directive_id="eval-directive";
+  s.jobs[0]={job_id:"evaluation:result",kind:"evaluate",directive_id:"eval-directive",status:"succeeded"};
+  s.jobs.push({job_id:"evaluation:initial",kind:"evaluate",status:"succeeded"});
+  const h=open(s);
+  assert.equal(h.run('linkedJob(state.snapshot.decisions[0],state.snapshot).job_id'),"evaluation:result");
+  const baseline=findClass(host(h),"record-details").find(n=>n.dataset.retainKey===JSON.stringify(["a","baseline"]));
+  assert.ok(baseline);assert.equal(findClass(baseline,"job-record").length,1);
+  assert.equal(findClass(history(h),"job-record").length,3);
+  h.run('state.snapshot.jobs.push({job_id:"another",directive_id:"eval-directive"})');
+  assert.equal(h.run('linkedJob(state.snapshot.decisions[0],state.snapshot)'),undefined);
 });

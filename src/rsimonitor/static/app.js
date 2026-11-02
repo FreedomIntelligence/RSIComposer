@@ -86,14 +86,20 @@ const identifier = v => typeof v === "string" && v.length > 0;
 const sameId = (a, b) => present(a) && present(b) && a === b;
 function linkedJob(row, s) {
   const jobs = list(s.jobs);
-  // A declared but missing job must not silently fall back to another task.
-  if (present(row.job_id)) { const matches=jobs.filter(j => sameId(j.job_id,row.job_id)); return matches.length===1?matches[0]:undefined; }
+  // Recover only the known legacy evaluator alias, with both explicit identities.
+  if (present(row.job_id)) {
+    const matches=jobs.filter(j => sameId(j.job_id,row.job_id));
+    if(matches.length)return matches.length===1?matches[0]:undefined;
+    const legacy=jobs.filter(j => j.kind==="evaluate" && sameId(j.directive_id,row.directive_id)
+      && identifier(row.candidate_id) && j.job_id===`evaluation:${row.candidate_id}`);
+    return legacy.length===1 && jobs.filter(j=>sameId(j.directive_id,row.directive_id)).length===1 ? legacy[0] : undefined;
+  }
   const matches = jobs.filter(j => sameId(j.directive_id, row.directive_id));
   return matches.length === 1 ? matches[0] : undefined;
 }
 function relatedResults(row,s) {
   const results=[],job=linkedJob(row,s);
-  if(job)results.push({type:"job",row:job,evidence:present(row.job_id)?t("明确任务 ID 关联；结果为当前快照。"):t("唯一指令 ID 关联；结果为当前快照。")});
+  if(job)results.push({type:"job",row:job,evidence:sameId(row.job_id,job.job_id)?t("明确任务 ID 关联；结果为当前快照。"):t("唯一指令 ID 关联；结果为当前快照。")});
   const candidates=list(s.candidates),matches=present(row.candidate_id)?candidates.filter(c=>sameId(c.candidate_id,row.candidate_id)):[];
   if(matches.length===1)results.push({type:"candidate",row:matches[0],evidence:t("明确候选 ID 关联；结果为当前快照。")});
   // Original directives can report multiple resulting candidates; reviews never
@@ -457,17 +463,22 @@ function runDetail(node, scope) {
       overview.append(el("h4","",t("当前任务 · {p0}",{p0:active.length})));
       const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true));overview.append(cards);box.append(overview);
     }
-    if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或未关联任务历史。")));
+    if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或关联诊断。")));
     box.append(executionSequence(s,scope));
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){
       const candidates=el("div");
       unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("待验证版本 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("版本结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
     }
-    const unlinked=jobs.filter(j=>!active.includes(j)&&!list(s.decisions).some(d=>linkedJob(d,s)===j));
+    const baselines=jobs.filter(j=>j.role==="baseline" || (j.job_id==="evaluation:initial" && !present(j.directive_id)));
+    if(baselines.length){
+      const records=el("div");for(const job of baselines)records.append(jobRecord(job));
+      box.append(retainedDetails(JSON.stringify([node.runId,"baseline"]),scope.flowOpen,t("实验基线"),records));
+    }
+    const unlinked=jobs.filter(j=>!active.includes(j)&&!baselines.includes(j)&&!list(s.decisions).some(d=>linkedJob(d,s)===j));
     if(unlinked.length){
       const history=el("div","unlinked-job-history");for(const job of unlinked)history.append(jobRecord(job));
-      box.append(retainedDetails(JSON.stringify([node.runId,"unlinked-jobs"]),scope.flowOpen,t("未关联任务历史 · {p0}",{p0:unlinked.length}),history));
+      box.append(retainedDetails(JSON.stringify([node.runId,"unlinked-jobs"]),scope.flowOpen,t("关联诊断 · {p0}",{p0:unlinked.length}),history));
     }
   }
   const record=s || node.row, sources=[...new Set([record.parent_run_id, ...listStrings(record.source_run_ids)].filter(identifier))];

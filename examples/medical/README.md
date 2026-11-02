@@ -700,3 +700,5 @@ new settings default to enforcement. Old frozen runs and historical records are
 not backfilled. Feedback learning retains the contract and gathers receipts from
 the recorded attempt. Strict admission is refused by generic local snapshot
 capture until it has an explicit recovery contract, rather than silently lost.
+
+评测监控进度沿用 `MedicalEvaluator` 返回的真实任务编号，与 Decision 回执一致；同步初始评测独立标记为基线。测量完成后仍等待评测解释，最终成功或失败状态以 evaluator 的 JobOutcome 为准。

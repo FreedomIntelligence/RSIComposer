@@ -280,3 +280,5 @@ PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED
 监控生产端保留系统生成的 `decision_id`。采纳仅从成功 `OperationResult` / `Feedback` 的 `adopted_candidate_ids` 与已成功产出的候选来源对应；评测不会变成候选生产者，失败或未知来源不画采纳边。离线导出沿用历史中的明确身份和回执。参考端到端示例 `PYTHONPATH=src:. python examples/decision_graph.py --run-dir runs/decision-graph-demo`；它使用模拟任务验证并行、组合采纳和后续消费，不代表真实模型训练。
 
 项目管理页按项目内最近一次实验的 `updated_at` 倒序排列；项目内实验同样按更新时间倒序。缺失或无效时间置后，相同时间保留清单原顺序；自动刷新本身不改变更新时间。
+
+评测进度与最终结果使用同一后端 `job_id`；初始基线任务以 `role: "baseline"` 标识并单独折叠显示。历史医疗评测的 `evaluation:<candidate_id>` 别名仅在候选身份吻合且指令对应唯一任务时关联到决策；任意未知任务编号不回退匹配。无法确认的记录保留在折叠的关联诊断中。

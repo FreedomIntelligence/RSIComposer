@@ -990,14 +990,38 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
 
 def evaluator_factory(monitor, root):
     class ObservedEvaluator(MedicalEvaluator):
+        _monitor_job = None
+
+        def poll(self, job):
+            self._monitor_job = job
+            try:
+                outcome = super().poll(job)
+                self.monitor_outcome(job, outcome)
+                return outcome
+            finally:
+                self._monitor_job = None
+
+        def monitor_outcome(self, job, outcome):
+            request = self._jobs[job][0]
+            details = {'candidate_id': request.candidate.candidate_id}
+            if outcome.result is not None:
+                details['metrics'] = outcome.result.metrics
+            if outcome.error:
+                details['error'] = outcome.error
+            monitor.event('job', kind='evaluate', job_id=job.job_id,
+                          status=outcome.status.value, **details)
+
         def _measure(self, system):
             before = len(self._partial.get(system.version, ()))
             result = super()._measure(system)
             predictions = self._partial.get(system.version, ())
             if len(predictions) > before:
                 row = predictions[-1]
-                monitor.event('job', kind='evaluate', job_id='evaluation:'+system.version,
-                    status='succeeded' if result else 'running', step=len(predictions),
+                monitor.event('job', kind='evaluate',
+                    job_id=self._monitor_job.job_id if self._monitor_job else 'baseline:'+system.version,
+                    **({'role': 'baseline'} if self._monitor_job is None else {}),
+                    status=('succeeded' if result else 'running') if self._monitor_job is None else 'running',
+                    step=len(predictions),
                     total_steps=sum(len(b.data.read()) for b in self.task.development),
                     candidate_id=system.version, metrics={'correct': int(row['correct'])})
                 write_json(root / 'evaluation_progress.json', self._partial)

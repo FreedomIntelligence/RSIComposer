@@ -40,7 +40,7 @@ DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "direc
                    "feedback_summary", "error")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
-JOB_FIELDS = ("job_id", "kind", "status", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
+JOB_FIELDS = ("job_id", "kind", "status", "role", "candidate_id", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
 PRIVATE_KEY = re.compile(r"secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|response|payload|sample|dataset|training_data", re.I)
 
 
