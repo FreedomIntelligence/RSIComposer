@@ -84,9 +84,9 @@ class RequiredAttemptTests(unittest.TestCase):
         self.assertEqual(record['status'], 'failed')
         self.assertIsNone(record['research_attempt_id'])
 
-    def test_new_medical_settings_enable_contract_by_default(self):
+    def test_new_medical_settings_leave_grouping_to_feedback(self):
         settings = ExperimentSettings(Path('task'), Path('run'), Path('model'))
-        self.assertTrue(settings.require_research_attempts)
+        self.assertFalse(settings.require_research_attempts)
 
 
 class RequiredAttemptIntegrationTests(unittest.TestCase):

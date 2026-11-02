@@ -4,6 +4,11 @@
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
   "研究尝试": "Attempts",
+  "由模型整理，分组不代表成功或采纳。": "Organized by a model; grouping does not imply success or adoption.",
+  "部分详情未包含在当前快照中（{p0} 条）。": "Some details are outside the current snapshot ({p0} records).",
+  "整理版本 {p0}": "Interpretation revision {p0}",
+  "模拟整理": "Simulated interpretation",
+  "整理来源与历史": "Interpretation sources and history",
   "实验基线": "Experiment baseline",
   "关联诊断 · {p0}": "Association diagnostics · {p0}",
   "当前任务": "Active tasks",

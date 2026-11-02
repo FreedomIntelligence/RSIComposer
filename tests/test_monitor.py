@@ -17,6 +17,23 @@ class MonitorProjectionTests(unittest.TestCase):
     def project(self, **fields):
         return monitor.project_snapshot({'schema_version': 1, **fields}, 'run-1')
 
+    def test_interpretation_projection_preserves_missing_members_and_public_provenance(self):
+        item = {'attempt_id': 'a', 'title': 'Idea', 'summary': 'Interpretation only',
+                'member_decision_ids': ['outside-window', 'inside'], 'source_refs': ['artifact:report'],
+                'revision': 2, 'simulated': False, 'private': 'PRIVATE',
+                'provenance': {'job_id': 'j', 'input_digest': 'digest', 'secret': 'PRIVATE',
+                               'model': {'backend_id': 'b', 'model_id': 'm', 'revision': 'r', 'secret': 'PRIVATE'}}}
+        view = {'schema_version': 1, 'authority': 'model_interpretation', 'items': [item],
+                'revisions': [{**item, 'revision': 1}], 'ungrouped_decision_ids': ['other']}
+        projected = self.project(decisions=[{'decision_id': 'inside'}], research_attempts=view)
+        self.assertEqual(projected['research_attempts']['items'][0]['member_decision_ids'], ['outside-window', 'inside'])
+        self.assertEqual(projected['research_attempts']['items'][0]['provenance']['model']['model_id'], 'm')
+        self.assertEqual(projected['research_attempts']['revisions'][0]['revision'], 1)
+        self.assertNotIn('research_attempt_id', projected['decisions'][0])
+        self.assertNotIn('PRIVATE', json.dumps(projected))
+        self.assertEqual(self.project(research_attempts={**view, 'items': []})['research_attempts']['items'], [])
+        self.assertNotIn('research_attempts', self.project(research_attempts={**view, 'authority': 'untrusted'}))
+
     def test_explicit_action_changes_and_outcomes_are_projected_without_raw_payloads(self):
         data = self.project(decisions=[{'reason': 'Improve the answer format',
             'changes': [{'field': 'instructions', 'after': 'Answer concisely.', 'payload': 'PRIVATE'},

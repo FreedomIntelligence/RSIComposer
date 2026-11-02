@@ -685,20 +685,25 @@ finish early; native output constraints do not establish autonomous research or
 training success.
 
 
-New medical research requires explicit Attempt membership for every exploration
-directive (including prompt changes, training, evaluation and application) and
-`define_recipe`, `choose_training_data`, `prepare_data`. The decision-maker starts
-an idea with `research_attempt_title` or continues its known `research_attempt_id`;
-the executor assigns new IDs and rejects missing/unknown/renamed membership before
-side effects. An Attempt is a research idea and its execution, not an operation
-type, successful result, or mandatory training job. Public reads, waits, project
-notes and stopping may remain ungrouped. `attempt-contract.json` records the run's
-admission contract. Canonical and portable schemas require new/continue fields;
-local validation still checks empty titles and known IDs. Legacy callers can
-explicitly set `ExperimentSettings.require_research_attempts=False`; the CLI and
-new settings default to enforcement. Old frozen runs and historical records are
-not backfilled. Feedback learning retains the contract and gathers receipts from
-the recorded attempt. Strict admission is refused by generic local snapshot
-capture until it has an explicit recovery contract, rather than silently lost.
+New medical research leaves Attempt membership optional. Decisions still describe
+concrete actions in `reason` / `strategy`, with executable parameters and inputs;
+missing Attempt metadata does not block prompt, data, training or evaluation work.
+With `--feedback-learning`, the decision model organizes observed decisions and
+feedback into versioned Attempt interpretations in the same bounded learning call.
+`feedback_learning.json` preserves responses, cited decision IDs, source references,
+model identity, input digest and every accepted revision. Unknown references,
+stale revisions and conflicting membership do not alter the execution ledger;
+grouping errors remain inspectable through `feedback_learning_read`. Ambiguous
+records can remain ungrouped. Summaries are unverified memory, not proof of success,
+adoption, pre-action intent, or authorization for training/harness changes.
+
+Monitor `research_attempts` publishes this interpretation view independently of raw
+Decision records, including during final cleanup. Without feedback learning no
+automatic grouping is performed. Explicit legacy membership remains supported;
+`require_research_attempts=True` is an opt-in host contract, no longer the medical
+default. Old runs are not retroactively grouped. The interpretation input is a
+bounded evidence window, so omitted history is not claimed as reviewed. No extra
+model call is added solely for grouping, and all learning calls retain the existing
+shared run budget and separate learning limits.
 
 评测监控进度沿用 `MedicalEvaluator` 返回的真实任务编号，与 Decision 回执一致；同步初始评测独立标记为基线。测量完成后仍等待评测解释，最终成功或失败状态以 evaluator 的 JobOutcome 为准。

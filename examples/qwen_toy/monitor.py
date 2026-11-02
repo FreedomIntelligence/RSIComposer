@@ -270,6 +270,10 @@ class Monitor:
             self.data['loops']['exploration'] = {'status': 'running', 'summary': MODE_NAMES.get(row['mode'], row['mode'])}
         self.write()
 
+    def sync_attempt_interpretations(self, view):
+        """Publish an already validated interpretation; never rewrite decisions."""
+        self.data['research_attempts'] = deepcopy(view)
+
     def sync_research_attempts(self, decision_records):
         """Project accepted harness membership; call after stepping, before advance."""
         for row in self.data['decisions']:

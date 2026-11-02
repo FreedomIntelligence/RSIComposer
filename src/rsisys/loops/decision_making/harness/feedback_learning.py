@@ -15,6 +15,7 @@ from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
 from rsisys.runtime.files import atomic_write, json_bytes
 from .context import encoded, result_id
 from .policy import _load_object
+from .attempt_learning import attempt_schema, validate_attempt_updates, apply_attempt_updates, attempt_view
 
 
 KINDS = ('memory', 'training_data', 'harness_change', 'system_change')
@@ -60,7 +61,7 @@ class SerializedLearningBackend:
             return self.backend.generate(request)
 
 
-def _schema(refs):
+def _schema(refs, grouping_context=None):
     properties = {
         'kind': {'enum': list(KINDS)},
         'content': {'type': 'string', 'minLength': 1, 'maxLength': 2400},
@@ -80,8 +81,10 @@ def _schema(refs):
                 'required': ['input', 'target', 'target_status'], 'additionalProperties': False}
         branches.append({'type': 'object', 'properties': fields, 'required': list(fields),
                          'additionalProperties': False})
-    return {'type': 'object', 'properties': {'proposals': {'type': 'array', 'maxItems': 6,
-        'items': {'oneOf': branches}}}, 'required': ['proposals'], 'additionalProperties': False}
+    fields = {'proposals': {'type': 'array', 'maxItems': 6, 'items': {'oneOf': branches}}}
+    if grouping_context is not None:
+        fields['attempt_updates'] = attempt_schema(grouping_context, refs)
+    return {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}
 
 
 def validate_proposals(text, refs):
@@ -159,7 +162,8 @@ class FeedbackLearning:
             atomic_write(self.path, json_bytes(state))
         self.state = state
 
-    def capture(self, directive, feedback, model, history=(), *, evaluations=(), research_context=None):
+    def capture(self, directive, feedback, model, history=(), *, evaluations=(), research_context=None,
+                grouping_context=None):
         self._assert_owner()
         if self._closed:
             raise RuntimeError('Feedback learning is closed')
@@ -187,10 +191,22 @@ class FeedbackLearning:
                         and row.details['directive'].get('directive_id') in directives)][-16:]
         packet = {'receipt': receipt, 'evaluations': [asdict(row) for row in evaluations],
                   'history': selected, 'research_context': scope}
+        if grouping_context is not None:
+            packet['grouping_context'] = deepcopy(grouping_context)
         while len(json_bytes(packet)) > self.limits['max_input_bytes'] and packet['history']:
             packet['history'].pop(0)
+        if grouping_context is not None:
+            # The current receipt/history already carries these observations;
+            # do not pay for duplicate evidence or call duplicates extra coverage.
+            history_ids = {item['record_id'] for item in packet['history']}
+            packet['grouping_context']['observations'] = [item for item in grouping_context.get('observations', [])
+                                                         if item['record_id'] not in history_ids]
         refs = [source, *('history:' + row['record_id'] for row in packet['history']),
                 *('decision:' + item['decision_id'] for item in members)]
+        if grouping_context is not None:
+            refs.extend('decision:' + item['decision_id'] for item in grouping_context.get('decisions', []))
+            refs.extend('history:' + item['record_id'] for item in grouping_context.get('observations', []))
+        refs = list(dict.fromkeys(refs))
         # Artifact IDs alone do not imply that their contents were supplied.
         packet['source_refs'] = refs
         row = {'job_id': ident, 'receipt_digest': digest, 'model': asdict(model), 'input': packet,
@@ -198,7 +214,10 @@ class FeedbackLearning:
                'coverage': {item['record_id']: result_id(item) for item in packet['history']},
                'simulated': bool(directive.simulated or feedback.simulated
                    or any(item.get('simulated', False) for item in packet['history'])
-                   or any(item.get('simulated', False) for item in packet['evaluations'])), 'response': None}
+                   or any(item.get('simulated', False) for item in packet['evaluations'])
+                   or any(item.get('simulated', False) for item in (grouping_context or {}).get('observations', []))
+                   or any(item.get('proposal', {}).get('simulated', False)
+                          for item in (grouping_context or {}).get('decisions', []))), 'response': None}
         if len(json_bytes(packet)) > self.limits['max_input_bytes']:
             row.update(status='input_too_large', error='Complete learning input exceeds byte budget')
         elif sum(item['status'] in ('queued', 'running') for item in self.state['jobs'].values()) >= self.limits['max_pending']:
@@ -222,7 +241,18 @@ class FeedbackLearning:
                     'research_context records explicit attempt membership and observed member decisions at receipt time. '
                     'An attempt groups decisions around an idea; this snapshot is not its completion receipt. '
                     'A completed step or learning job never establishes attempt success or closure. '
-                    'Do not merge attempts by title, infer missing membership, or turn source links into adoption. '
+                    'Explicit ledger membership remains unchanged. Never turn source links into adoption. '
+                    'When grouping_context is supplied, also return attempt_updates (an array, possibly empty). '
+                    'Organize observed decisions into research ideas as retrospective interpretations, not execution facts. '
+                    'Each update contains attempt_id (null for new), base_revision (0 for new), title, summary, '
+                    'member_decision_ids and source_refs. Continue an existing interpretation by its ID and exact revision. '
+                    'Supply observed members to add or retain; the host preserves earlier members and evidence. '
+                    'Never combine unrelated ideas or group solely by adjacency or title. '
+                    'Cite decision:<id> for every member, use only supplied decisions and references. '
+                    'Explain the idea, concrete changes, observations, limitations and unresolved questions in summary. '
+                    'Separate observed pre-action intent from retrospective hypotheses. '
+                    'Leave ambiguous records ungrouped. Execution completion does not prove idea success or adoption. '
+                    'An empty attempt_updates is valid; do not force an experiment or a grouping. '
                     'Later feedback may extend or contradict this snapshot; state the scope of each conclusion. '
                     'issuing_decision_model identifies dispatch provenance; learning_decision_model identifies '
                     'the policy interpreting feedback now. Do not attribute both actions to one version. '
@@ -232,7 +262,8 @@ class FeedbackLearning:
                     'Do not choose the next research action, stop the run, or assert that proposals are applied. '
                     'Write concise public conclusions, not hidden chain-of-thought.'),
             max_output_tokens=self.limits['max_output_tokens'],
-            response_schema=_schema(row['input']['source_refs']) if self.backend.supports_response_schema else None)
+            response_schema=_schema(row['input']['source_refs'], row['input'].get('grouping_context'))
+                if self.backend.supports_response_schema else None)
 
     def _work(self, row):
         # No stores, policy mutation, or memory writes in this thread.
@@ -247,10 +278,20 @@ class FeedbackLearning:
         try:
             if response.model != request.model:
                 raise ValueError('Learning model identity mismatch')
-            proposals = validate_proposals(response.text, row['input']['source_refs'])
+            payload = _load_object(response.text)
+            grouping = row['input'].get('grouping_context')
+            updates = payload.pop('attempt_updates', []) if grouping is not None else []
+            proposals = validate_proposals(json.dumps(payload), row['input']['source_refs'])
+            # Grouping failure is isolated from valid feedback and execution.
+            grouping_error = None
+            try:
+                updates = validate_attempt_updates(updates, grouping or {}, row['input']['source_refs'])
+            except (ValueError, TypeError, KeyError) as exc:
+                updates, grouping_error = [], str(exc)
         except (ValueError, TypeError, KeyError) as exc:
             return {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}', 'response': receipt}
         return {'status': 'completed', 'error': None, 'proposals': proposals,
+                'attempt_updates': updates, 'grouping_error': grouping_error,
                 'response': receipt, 'simulated': row['simulated'] or response.simulated}
 
     def poll(self, *, dispatch=True):
@@ -265,6 +306,12 @@ class FeedbackLearning:
                 result = {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}'}
             state = deepcopy(self.state)
             state['jobs'][ident].update(result)
+            row = state['jobs'][ident]
+            if row['status'] == 'completed':
+                try:
+                    row['attempt_revisions'] = apply_attempt_updates(row, self.attempts()['items'])
+                except ValueError as exc:
+                    row.update(attempt_revisions=[], grouping_error=str(exc))
             self._commit(state)
             del self._futures[ident]
         if not dispatch or self._closed or self._futures:
@@ -274,6 +321,18 @@ class FeedbackLearning:
             return
         state = deepcopy(self.state)
         row = state['jobs'][queued['job_id']]
+        # Refresh only the interpretation catalog at dispatch. Execution evidence
+        # remains the immutable capture, and model provenance hashes the actual input.
+        grouping = row['input'].get('grouping_context')
+        if grouping is not None:
+            supplied = {r['decision_id'] for r in grouping['decisions']}
+            catalog = self.attempts()['items']
+            grouping['attempts'] = [r for r in catalog
+                                   if set(r['member_decision_ids']).intersection(supplied) or r in catalog[-8:]]
+            if len(json_bytes(row['input'])) > self.limits['max_input_bytes']:
+                row.update(status='input_too_large', error='Grouping catalog exceeds byte budget')
+                self._commit(state)
+                return
         if state['attempted'] >= self.limits['max_calls']:
             row.update(status='budget_exhausted', error='Learning request budget exhausted')
             self._commit(state)
@@ -290,6 +349,9 @@ class FeedbackLearning:
             state['jobs'][row['job_id']].update(status='failed', error=f'Submission failed: {exc}')
             self._commit(state)
 
+    def attempts(self, decision_ids=()):
+        return attempt_view(self.state['jobs'].values(), decision_ids)
+
     def read(self, job_id=None, *, offset=0, limit=8, research_attempt_id=None):
         self._assert_owner()
         if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 16:
@@ -302,16 +364,21 @@ class FeedbackLearning:
             return deepcopy({'job_id': job_id, 'status': row['status'], 'model': row['model'],
                 'receipt_digest': row['receipt_digest'], 'proposals': row['proposals'],
                 'research_context': row['input'].get('research_context', {}),
+                'attempt_revisions': deepcopy(row.get('attempt_revisions', [])),
+                'grouping_error': row.get('grouping_error'),
                 'source_refs': row['input']['source_refs'], 'error': row['error'],
                 'simulated': row['simulated'], 'authority': 'unverified_proposals',
                 'training_ready': False, 'applied': False})
         rows = list(self.state['jobs'].values())
         if research_attempt_id is not None:
-            rows = [row for row in rows if row['input'].get('research_context', {}).get('research_attempt_id') == research_attempt_id]
+            rows = [row for row in rows if row['input'].get('research_context', {}).get('research_attempt_id') == research_attempt_id
+                    or any(r['attempt_id'] == research_attempt_id for r in row.get('attempt_revisions', []))]
         return {'attempted': self.state['attempted'], 'limit': self.limits['max_calls'], 'total': len(rows),
                 'items': [{'job_id': r['job_id'], 'status': r['status'],
                            **{key: r['input'].get('research_context', {}).get(key)
                               for key in ('decision_id', 'research_attempt_id', 'research_attempt_title')},
+                           'interpreted_attempt_ids': [a['attempt_id'] for a in r.get('attempt_revisions', [])],
+                           'grouping_error': r.get('grouping_error'),
                            'kinds': [p['kind'] for p in r['proposals']]} for r in rows[offset:offset+limit]],
                 'next_offset': offset+limit if offset+limit < len(rows) else None}
 

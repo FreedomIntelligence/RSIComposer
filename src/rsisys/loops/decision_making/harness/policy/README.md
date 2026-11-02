@@ -17,8 +17,10 @@
 普通决策和 review invoke 还支持可选顶层 `research_attempt_id` / `research_attempt_title`。
 仅给 title 请求新 attempt，由 Harness 创建 UUID；给 decision_graph 中已知的 ID 继续同一想法，
 省略 title 时仍记录 canonical title，提供时不能改名。ID 最长 200 字符，title 最长 500 字符，
-默认分别为 None / 空字符串；省略两项保留 ungrouped 兼容语义。模型提示建议标题描述假设或
-方法，同一运行内从修改、评测、比较到采纳都复用 ID；竞争方案可独立分组。解析器不分配 ID，
+默认分别为 None / 空字符串；省略两项不阻止执行。默认提示要求具体行动、参数和验证计划，
+不要求模型维护分组；启用 feedback learning 时，由反馈整理模型增量构建独立的 Attempt 解释视图。
+显式归属仍用于兼容：同一运行内可复用已有 ID，竞争方案可独立分组。解释视图的 ID 不写入
+原始执行归属字段。解析器不分配 ID，
 不把归属字段传入 arguments；Harness 接纳后在 ledger 与 history 顶层记录解析后的归属，
 原始 proposal 不变。新旧 snapshot、重试及并行细节见 [Harness](../README.md)。
 

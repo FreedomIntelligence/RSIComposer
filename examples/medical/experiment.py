@@ -148,7 +148,7 @@ class ExperimentSettings:
     feedback_learning: bool = False
     decision_max_output_tokens: int = 8192
     decision_response_retries: int = 2
-    require_research_attempts: bool = True
+    require_research_attempts: bool = False
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -243,7 +243,10 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
             'proposal_only_unless_installed': ['harness_changes', 'system_changes', 'decision_model_training'],
             'training': 'Only installed SFT with restart from the fixed initializer; no real RL is installed.',
             'feedback_learning': ('When enabled, feedback learning produces unverified proposals and a read-only '
-                                  'operation; it does not install changes or train either model.'),
+                                  'operation, and incrementally organizes observed decisions into versioned Attempt '
+                                  'interpretations without rewriting execution records. Decisions still specify concrete '
+                                  'actions, parameters and evaluation plans; membership is optional. '
+                                  'Learning does not install changes or train either model.'),
         },
         'resources': resources,
         'scientific_evaluation': {
@@ -1193,7 +1196,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                              if not spec.read_only))
         write_json(root / 'attempt-contract.json', {'required': attempt_contract.required,
             'all_exploration_directives': True, 'required_operations': attempt_contract.operations,
-            'grouping_owner': 'decision_maker', 'historical_membership_inference': False})
+            'grouping_owner': 'feedback_memory' if settings.feedback_learning else 'optional_explicit',
+            'historical_membership_inference': False, 'interpretation_only': True})
         def policy_factory(native_backend, model):
             if dsh_config is not None:
                 backend.serving = native_backend
@@ -1283,6 +1287,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         while True:
             step = assembly.runner.step(objective)
             monitor.sync_research_attempts(decision.state.decision_records)
+            if hasattr(decision, 'attempt_interpretations'):
+                monitor.sync_attempt_interpretations(decision.attempt_interpretations())
             backend.flush_monitor_events()
             monitor.advance(step)
             if step.event.get('run_control') == 'research_restarted':
@@ -1321,6 +1327,9 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 close = getattr(assembly.runner.decision_making.harness, 'close', None)
                 if callable(close):
                     close()
+                harness = assembly.runner.decision_making.harness
+                if monitor is not None and hasattr(harness, 'attempt_interpretations'):
+                    monitor.sync_attempt_interpretations(harness.attempt_interpretations())
         except Exception as exc:
             cleanup_errors.append(f'decision harness close: {type(exc).__name__}: {exc}')
         try:

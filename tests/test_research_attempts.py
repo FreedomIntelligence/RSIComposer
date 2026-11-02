@@ -296,8 +296,9 @@ class AttemptPolicyTests(unittest.TestCase):
                     self.assertEqual(decision.research_attempt_id, fields.get('research_attempt_id'))
                     self.assertEqual(decision.research_attempt_title, fields.get('research_attempt_title', ''))
                     request = policy.backend.generate.call_args.args[0]
-                    self.assertIn('starts a NEW research attempt', request.system)
-                    self.assertIn('never inferred', request.system)
+                    self.assertIn('Attempt grouping is optional', request.system)
+                    self.assertIn('concrete executable action', request.system)
+                    self.assertIn('organizes research ideas retrospectively', request.system)
                     branches = [b for b in request.response_schema['oneOf'] if 'kind' in b['properties']]
                     for branch in branches:
                         self.assertEqual(branch['properties']['research_attempt_id']['maxLength'], 200)

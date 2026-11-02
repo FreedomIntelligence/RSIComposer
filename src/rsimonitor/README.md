@@ -124,7 +124,7 @@ lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记�
 读取 `runs/<run-id>/monitor.json`，协议为 `schema_version: 1`。支持 `workflow`、`current`、`decisions`、`jobs`、`candidates`、`round_results` 和 `events`；旧快照与缺省字段保持兼容。字段缺失显示未报告，不补零、不补造执行结果。
 
 - `/` 为项目管理页，按大项目分块，每个项目下以卡片列出实验名称、状态、更新时间和已报告决策数。项目名称与实验名称独立，缺少归属的实验归入“未归属”。首页只读取清单，不自动进入实验。点击实验进入 `?project=<project-id>&run=<run-id>`；仅指定项目时仍停留管理页，指定 run 时由其真实归属确定上级项目。返回按钮和浏览器前进 / 后退保持两页导航。
-- 实验详情分别显示实验名和所属项目名；项目导航与 run 隔离保持不变。主图仅显示「研究尝试 / Attempts」：只按该 run 内明确记录的 `research_attempt_id` 合并，一次尝试一个节点，标题取 `research_attempt_title` 原文。首次进入不自动选择主节点或展开详情；点击主节点后显示完整内部决策子图，逐条选择查看现有理由、提交内容、反馈和指标。尝试可以包含调整提示词、评测、比较、采用等多条决策；所有子决策（包括 wait 和 finish）分别保留。尝试没有独立的完成回执，界面不根据子步骤成功推断整个尝试成功，也不从标题推断结果。
+- 实验详情分别显示实验名和所属项目名；项目导航与 run 隔离保持不变。主图仅显示「研究尝试 / Attempts」：优先按该 run 的 `research_attempts` 模型整理视图合并，一次尝试一个节点，标题取整理模型原文；未提供新视图的旧实验才沿用 `research_attempt_id` / `research_attempt_title` 显式分组。首次进入不自动选择主节点或展开详情；点击主节点后显示完整内部决策子图，逐条选择查看现有理由、提交内容、反馈和指标。尝试可以包含调整提示词、评测、比较、采用等多条决策；所有子决策（包括 wait 和 finish）分别保留。尝试没有独立的完成回执，界面不根据子步骤成功推断整个尝试成功，也不从标题推断结果。
 - 「当前任务 / Active tasks」仅在有明确活动状态的任务时显示紧凑卡片，包括已关联和未关联任务，以及所有并行任务；不展开历史指标。运行已完成、失败、取消或停止时不把残留 running 等任务当成当前执行，冲突以简短提示保留，原始状态仍可在关联节点或未关联任务历史中查看。没有活动任务时不显示空任务区，运行状态及读取错误仍可见。
 - 旧实验没有有效尝试身份时显示「未记录研究尝试」，不按候选、动作、时间或相邻顺序猜测分组。没有「全部记录」并行主图或切换入口。辅助记录及所有未归属决策只在默认折叠的「实验日志 / Experiment logs」中检查，即使它们涉及依赖、采纳或来源关系，也不会成为主图节点。日志保留当前公开快照的每条决策（API 上限 300），逐条展示理由、执行反馈、进度、结果，并提供折叠的原始决策证据；未归属记录明确标注「未记录研究尝试」。
 - `decisions.js` 沿用已记录的 `depends_on_decision_ids`、`adopted_decision_ids`、`source_decision_ids` 和兼容字段 `parent_decision_id`。尝试主图只收缩两个端点均有明确尝试归属的真实跨组关系，不经未归属记录补造中转或传递边，保留并行分支和多结果采纳汇合；同一对节点只画最强关系（采纳 > 依赖 > 引用），原始关系类型与端点保留在前端模型的 `edge.types` / `edge.decisions`。依赖用灰色实线，已确认采纳用强调色实线，来源引用用虚线。布局起点只是画布锚点，不表示依赖。尝试主图不补造顺序边。完整决策投影仍保留原始关系，供内部子图与日志核对。
@@ -238,7 +238,7 @@ lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记�
 
 运行列表及快照可包含可选 `parent_run_id` 字符串与 `source_run_ids` 字符串数组；其中 `parent_run_id` 定义续接来源，`source_run_ids` 定义资料引用；两者均不改变项目身份。
 
-`GET /api/runs/<id>`：返回协议字段的只读投影，始终包含 `experiment_name` 和 `project: {project_id, name}`；有效归属可额外包含公开的 `description`、`system_id`，缺失时不补造。决策可包含 `research_attempt_id`、`research_attempt_title` 字符串，以及 `parent_decision_id`、`depends_on_decision_ids`、`adopted_decision_ids`、`source_decision_ids` 等已记录关系。目录名是路由和返回 `run_id` 的权威来源，即使快照内 `run_id` 不一致也不改变；项目归属则来自快照的有效 `project.project_id`。不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
+`GET /api/runs/<id>`：返回协议字段的只读投影，始终包含 `experiment_name` 和 `project: {project_id, name}`；有效归属可额外包含公开的 `description`、`system_id`，缺失时不补造。快照可包含与决策分离的 `research_attempts` 模型整理视图（见下文）。历史决策可包含 `research_attempt_id`、`research_attempt_title` 字符串，以及 `parent_decision_id`、`depends_on_decision_ids`、`adopted_decision_ids`、`source_decision_ids` 等已记录关系。目录名是路由和返回 `run_id` 的权威来源，即使快照内 `run_id` 不一致也不改变；项目归属则来自快照的有效 `project.project_id`。不跟随快照内的路径或文件引用。无快照返回 404，损坏或写入中的 JSON 返回 503（带 `Retry-After: 2`），不支持的协议版本返回 422，文件超过 4 MiB 返回 413。
 
 建议生产端在同一目录写临时文件，再原子替换 `monitor.json`。服务不会监听或读数据库、训练样本、配置、日志、模型文件。
 
@@ -282,3 +282,12 @@ PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED
 项目管理页按项目内最近一次实验的 `updated_at` 倒序排列；项目内实验同样按更新时间倒序。缺失或无效时间置后，相同时间保留清单原顺序；自动刷新本身不改变更新时间。
 
 评测进度与最终结果使用同一后端 `job_id`；初始基线任务以 `role: "baseline"` 标识并单独折叠显示。历史医疗评测的 `evaluation:<candidate_id>` 别名仅在候选身份吻合且指令对应唯一任务时关联到决策；任意未知任务编号不回退匹配。无法确认的记录保留在折叠的关联诊断中。
+
+
+### 模型整理的研究尝试
+
+`research_attempts` 是与原始 `decisions` 分离的增量解释视图：`schema_version: 1`、`authority: "model_interpretation"`，包含 `items`、`revisions`、`ungrouped_decision_ids`。每个条目记录 `attempt_id`、`title`、`summary`、`member_decision_ids`、`source_refs`、`revision`、`provenance`（job、模型身份、输入摘要）和 `simulated`。生产端通过 `Monitor.sync_attempt_interpretations(view)` 复制后端已校验的快照；此方法不更改原始决策字段，随下一次 `write()` 发布。
+
+前端优先展示这份视图，点击节点展开摘要、整理来源和版本历史、成员决策及反馈。空 `items` 表示尚未整理出尝试，保留实验日志，不回退猜测或旧分组。没有新视图的历史实验继续支持旧的显式归组。分组仅表达模型对研究工作的整理，不宣告执行成功、方案采纳或控制执行。主图连线仍来自真实 Decision 依赖与采纳回执；时间顺序和整理模型的摘要不会产生新的关系。
+
+快照只保留近期决策时，Attempt 和其成员 ID 不因详情缺失而消失，节点明确提示部分详情不在当前快照，并保留证据引用供核对。异步整理尚未关联的 Decision 留在日志中，不作为错误。整理来源文本作为纯文本显示，不执行模型输出。

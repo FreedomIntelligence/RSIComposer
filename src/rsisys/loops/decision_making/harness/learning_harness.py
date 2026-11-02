@@ -25,8 +25,62 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
         self.feedback_learning.capture(directive, feedback, self.policy.model,
             self.memory.history(),
             evaluations=tuple(self.state.candidate_evaluations.values()),
-            research_context=self._learning_scope(directive.directive_id))
+            research_context=self._learning_scope(directive.directive_id),
+            grouping_context=self._grouping_scope(directive.directive_id))
         self.feedback_learning.poll()
+
+    def _grouping_scope(self, directive_id):
+        """Bounded evidence window, independent of canonical execution membership."""
+        records = self.state.decision_records
+        ident = self.state.directive_decisions.get(directive_id)
+        selected = list(records)[-24:]
+        if ident in records and ident not in selected:
+            selected.append(ident)
+        # Keep producer and declared dependency links, including older decisions.
+        for key in list(selected):
+            record = records[key]
+            sources = list(record.get('source_decision_ids', ())) + list(record.get('depends_on_decision_ids', ()))
+            proposal = record['proposal']
+            directive = proposal.get('directive') or {}
+            payload = directive.get('payload') or {}
+            candidates = [payload.get('candidate_id')] if isinstance(payload, dict) else []
+            for ref in directive.get('input_refs', ()):
+                candidates.append(ref.get('artifact_id'))
+            for candidate in candidates:
+                origin = self.state.candidate_origins.get(candidate)
+                if isinstance(origin, str):
+                    sources.append(origin)
+            for source in sources:
+                if source in records and source not in selected and len(selected) < 32:
+                    selected.append(source)
+        graph = {r['decision_id']: r for r in self._decision_graph()}
+        decisions = []
+        for key in selected:
+            record = records[key]
+            proposal = record['proposal']
+            action = {k: deepcopy(proposal[k]) for k in ('kind', 'operation', 'simulated') if k in proposal}
+            if proposal.get('directive'):
+                action['directive'] = {k: deepcopy(proposal['directive'][k])
+                    for k in ('mode', 'strategy', 'payload', 'input_refs')}
+            decisions.append({**graph[key], 'kind': record['kind'], 'reason': record.get('reason', ''),
+                'proposal': action, 'error': record.get('error'),
+                'directive_id': record.get('directive_id'),
+                'decision_model': deepcopy(record.get('decision_model'))})
+        catalog = self.attempt_interpretations()['items']
+        attempts = [r for r in catalog if set(r['member_decision_ids']).intersection(selected) or r in catalog[-8:]]
+        directives = {records[key].get('directive_id') for key in selected} - {None}
+        observations = [asdict(h) for h in self.memory.history()
+                        if h.task_id in directives or h.record_id in selected
+                        or h.details.get('decision_id') in selected]
+        return {'decisions': decisions, 'attempts': attempts, 'observations': observations[-16:],
+                'total_observations': len(observations),
+                'candidate_origins': {key: value for key, value in self.state.candidate_origins.items()
+                                      if value in selected},
+                'scope': 'bounded_observed_decisions', 'total_decisions': len(records),
+                'truncated': len(decisions) < len(records), 'receipt_decision_id': ident}
+
+    def attempt_interpretations(self):
+        return self.feedback_learning.attempts(self.state.decision_records)
 
     def _learning_scope(self, directive_id):
         """Snapshot canonical membership; never infer groups from a proposal/title."""
@@ -54,7 +108,8 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
     @staticmethod
     def _memory(row):
         proposals = [p for p in row['proposals'] if p['kind'] == 'memory']
-        if not proposals:
+        interpretations = row.get('attempt_revisions', [])
+        if not proposals and not interpretations:
             return None
         receipt = row['input']['receipt']
         feedback, directive = receipt['feedback'], receipt['directive']
@@ -65,6 +120,7 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
         return Memory('feedback-learning:' + row['job_id'], 'episodic',
             encoded({'receipt_facts': facts, 'interpretations': proposals, 'learned_by': row['model'],
                      'research_context': row['input'].get('research_context', {}),
+                     'attempt_interpretations': interpretations,
                      'simulated': row['simulated'], 'authority': 'unverified_interpretations',
                      'read_operation': 'feedback_learning_read', 'job_id': row['job_id']}),
             tuple(row['input']['source_refs']),
@@ -99,7 +155,11 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
             'recent': [{'job_id': row['job_id'], 'status': row['status'],
                         'research_attempt_id': row['input'].get('research_context', {}).get('research_attempt_id'),
                         'kinds': [p['kind'] for p in row['proposals']]} for row in jobs[-6:]]}
-        return replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
+        attempts = self.attempt_interpretations()
+        return replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation,
+            'attempt_interpretations': {'authority': attempts['authority'], 'total': len(attempts['items']),
+                'recent': attempts['items'][-8:], 'read_operation': 'feedback_learning_read',
+                'note': 'Retrospective model interpretations; not execution membership or proof of success.'}})
 
     def close(self, *, timeout=30):
         self.feedback_learning.close(timeout=timeout)

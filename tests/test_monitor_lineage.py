@@ -17,6 +17,19 @@ from rsimonitor import project_snapshot
 
 
 class MonitorLineageTests(unittest.TestCase):
+    def test_interpretation_sync_copies_view_without_rewriting_decisions(self):
+        with TemporaryDirectory() as tmp:
+            monitor = Monitor(Path(tmp), ModelRef('test', 'model', 'v1'), 'goal')
+            monitor.data['decisions'] = [{'decision_id': 'd', 'reason': 'Original'}]
+            view = {'schema_version': 1, 'authority': 'model_interpretation', 'items': [
+                {'attempt_id': 'a', 'title': 'Idea', 'member_decision_ids': ['d']}],
+                'revisions': [], 'ungrouped_decision_ids': []}
+            monitor.sync_attempt_interpretations(view)
+            view['items'][0]['title'] = 'Mutated outside monitor'
+            monitor.write()
+            self.assertEqual(monitor.data['decisions'], [{'decision_id': 'd', 'reason': 'Original'}])
+            self.assertEqual(project_snapshot(monitor.data, 'run')['research_attempts']['items'][0]['title'], 'Idea')
+
     def test_membership_is_only_published_after_harness_acceptance(self):
         with TemporaryDirectory() as tmp:
             model = ModelRef('test', 'model', 'v1')

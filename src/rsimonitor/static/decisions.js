@@ -244,8 +244,27 @@
     return { nodes, edges:rooted, width, height, issues };
   }
 
-  function attempts(rows = []) {
-    const full=layout(rows),records=full.nodes.filter(n=>n.row),groups=[],byID=new Map(),owner=new Map(),issues=[...full.issues];
+  function attempts(rows = [], interpretations = null) {
+    const interpreted=interpretations?.schema_version===1 && interpretations.authority==="model_interpretation";
+    const items=interpreted && Array.isArray(interpretations.items)?interpretations.items:[];
+    const definitions=new Map(),membership=new Map(),conflicts=new Set();
+    for(const item of items){
+      if(!identifier(item?.attempt_id)||definitions.has(item.attempt_id))continue;
+      definitions.set(item.attempt_id,item);
+      for(const id of Array.isArray(item.member_decision_ids)?item.member_decision_ids:[]){
+        if(!identifier(id))continue;
+        if(membership.has(id)&&membership.get(id)!==item.attempt_id)conflicts.add(id);
+        membership.set(id,item.attempt_id);
+      }
+    }
+    // View-only membership: the original decision ledger remains untouched.
+    const projected=interpreted?rows.map(row=>{
+      const copy={...row};delete copy.research_attempt_id;delete copy.research_attempt_title;
+      const id=conflicts.has(row.decision_id)?null:membership.get(row.decision_id),item=definitions.get(id);
+      if(item){copy.research_attempt_id=id;copy.research_attempt_title=item.title;}
+      return copy;
+    }):rows;
+    const full=layout(projected),records=full.nodes.filter(n=>n.row),groups=[],byID=new Map(),owner=new Map(),issues=[...full.issues];
     const used=new Set(full.nodes.map(n=>n.key));
     for(const node of records){
       const row=node.row,id=row.research_attempt_id;
@@ -265,6 +284,18 @@
       }
       group.rows.push(row);group.members.push(node);owner.set(node.key,group.key);
     }
+    // Keep interpreted attempts even when all members predate the bounded snapshot.
+    for(const [id,item] of definitions){
+      let group=byID.get(id);
+      if(!group){
+        let key="attempt:"+JSON.stringify(id);while(used.has(key))key="attempt:"+key;used.add(key);
+        group={key,index:groups.length,row:{},rows:[],members:[],type:"attempt",attemptID:id,titles:identifier(item.title)?[item.title]:[]};
+        byID.set(id,group);groups.push(group);
+      }
+      group.interpretation=item;
+      const visible=new Set(group.rows.map(row=>row.decision_id));
+      group.missingDecisionIDs=[...new Set(Array.isArray(item.member_decision_ids)?item.member_decision_ids:[])].filter(id=>!visible.has(id));
+    }
     for(const group of groups)if(group.type==="attempt"){
       group.title=group.titles[0]||"";
       if(group.titles.length>1)issues.push({type:"conflicting-title",key:group.key});
@@ -272,7 +303,7 @@
     const contracted=new Map(),attemptKeys=new Set(groups.filter(g=>g.type==="attempt").map(g=>g.key));
     const rawByKey=new Map(records.map(n=>[n.key,n]));
     for(const edge of full.edges){
-      if(edge.from==="root")continue;
+      if(edge.from==="root" || (interpreted&&edge.kind==="sequence"))continue;
       const from=owner.get(edge.from),to=owner.get(edge.to);
       if(from===to||!attemptKeys.has(from)||!attemptKeys.has(to))continue;
       const key=JSON.stringify([from,to]);

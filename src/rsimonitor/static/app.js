@@ -365,7 +365,7 @@ function experimentLogs(s,scope,projection) {
 }
 function executionSequence(s, scope) {
   scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
-  const model=RSIDecisions.attempts(list(s.decisions)),projection=model;
+  const model=RSIDecisions.attempts(list(s.decisions),s.research_attempts),projection=model;
   const groups=executionGroups(s,model);
   const section=el("section","execution-sequence");section.id="execution-flow";
   scope.graphView ||= {};
@@ -415,6 +415,22 @@ function executionSequence(s, scope) {
         scope.attemptSteps.set(key,chosen);row=members.find(n=>n.key===chosen)?.row;
         detailIndex=members.findIndex(n=>n.key===chosen);
         const stages=el("li","attempt-stages");stages.append(el("h4","attempt-title",attemptTitle(g)));
+        if(g.interpretation){
+          const info=g.interpretation;
+          if(present(info.summary))stages.append(el("p","result-summary attempt-summary",info.summary));
+          stages.append(el("p","quiet-note",t("由模型整理，分组不代表成功或采纳。")));
+          if(g.missingDecisionIDs?.length)stages.append(el("p","quiet-note",t("部分详情未包含在当前快照中（{p0} 条）。",{p0:g.missingDecisionIDs.length})));
+          const provenance=el("div","attempt-provenance"),source=object(info.provenance),model=object(source.model);
+          for(const value of [model.model_id,model.revision,source.job_id,source.input_digest])if(present(value))provenance.append(el("p","",String(value)));
+          if(present(info.revision))provenance.append(el("p","",t("整理版本 {p0}",{p0:info.revision})));
+          if(info.simulated===true)provenance.append(el("p","",t("模拟整理")));
+          for(const ref of listStrings(info.source_refs))if(typeof ref==="string")provenance.append(el("p","",ref));
+          if(g.missingDecisionIDs?.length)provenance.append(el("pre","",g.missingDecisionIDs.join("\n")));
+          const history=list(s.research_attempts?.revisions).filter(r=>r.attempt_id===info.attempt_id);
+          for(const revision of history)provenance.append(el("p","",`${revision.revision ?? ""} · ${revision.summary || ""}`));
+          stages.append(retainedDetails(JSON.stringify([s.run_id,key,"interpretation"]),scope.flowOpen,t("整理来源与历史"),provenance));
+        }
+        if(!members.length){entries.append(stages);continue;}
         const childHeading=el("div","attempt-heading");childHeading.append(el("p","flow-label",t("尝试内决策")),el("p","quiet-note",t("{p0} 次决策",{p0:members.length})));stages.append(childHeading);
         const childShell=el("div","trajectory-shell attempt-shell"),childMap=el("div","flow-map attempt-map");
         childMap.setAttribute("aria-label",t("尝试内决策"));

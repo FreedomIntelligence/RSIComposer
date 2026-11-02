@@ -574,10 +574,13 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
 不会自动训练、修改代码或应用候选。事实指标直接复制回执，解释带来源且保持 unverified。
 `feedback_learning_read` 可分页查看任务或读取某个任务的建议。
 
-Attempt 沿用执行端已记录的 decision 集合：学习输入、memory 和监控使用相同的
-`research_attempt_id`。整理时可读取同一 attempt 的已记录决策与相关回执，按反馈时点
-保留快照；同名不同 ID 不合并，单步骤或学习完成不推断整个 attempt 完成。列表查询可
-按 `research_attempt_id` 筛选。建议不会自动变成前端的成功状态或新增研究尝试。
+Attempt 可由反馈整理模型把已观察到的 Decision 和回执增量组织成研究想法；
+Decision 仍说明具体行动、参数与验证计划，不必填写归属。整理沿用反馈学习调用，
+独立保存成员引用、摘要、模型来源、输入摘要哈希和修订历史，不改写执行账本。
+`feedback_learning_read` 可查看整理及错误，并按整理后的 `research_attempt_id` 查询。
+前端读取 `research_attempts` 解释视图；未知引用、旧版本覆盖和成员冲突会被拒绝，
+证据不足的记录可以暂未归组。模型总结不证明实验成功、采纳或事前假设；
+没有开启反馈学习时不自动归组，旧显式归属仍兼容，历史记录不会自动补写。
 
 记忆进入下一次决策的前缀；未验证的解释不会仅凭“读过历史”就隐藏原始证据。
 原有 compact 负责带来源的历史归档，保留最新两条历史与完整最新反馈。这只是便于

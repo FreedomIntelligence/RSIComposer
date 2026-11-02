@@ -133,6 +133,38 @@ def experiment_name(raw, run_id):
                  if isinstance(value, str) and value.strip()), run_id)
 
 
+def attempt_interpretations(raw):
+    """Bounded public projection; interpretation is distinct from execution truth."""
+    if not isinstance(raw, dict) or raw.get('schema_version') != 1 or raw.get('authority') != 'model_interpretation':
+        return None
+
+    def strings(values):
+        return [v[:1000] for v in values[:10000] if isinstance(v, str)] if isinstance(values, list) else []
+
+    def items(values):
+        projected = []
+        for row in values[:MAX_ROWS] if isinstance(values, list) else []:
+            if not isinstance(row, dict) or not isinstance(row.get('attempt_id'), str) or not row['attempt_id'].strip():
+                continue
+            item = {key: row[key][:limit] for key, limit in (('attempt_id', 200), ('title', 500), ('summary', 4000)) if isinstance(row.get(key), str)}
+            item['member_decision_ids'] = strings(row.get('member_decision_ids'))
+            item['source_refs'] = strings(row.get('source_refs'))
+            if type(row.get('revision')) is int:
+                item['revision'] = row['revision']
+            if type(row.get('simulated')) is bool:
+                item['simulated'] = row['simulated']
+            provenance = row.get('provenance')
+            if isinstance(provenance, dict):
+                item['provenance'] = pick(provenance, ('job_id', 'input_digest'))
+                item['provenance']['model'] = pick(provenance.get('model'), ('backend_id', 'model_id', 'revision'))
+            projected.append(item)
+        return projected
+
+    return {'schema_version': 1, 'authority': 'model_interpretation',
+            'items': items(raw.get('items')), 'revisions': items(raw.get('revisions')),
+            'ungrouped_decision_ids': strings(raw.get('ungrouped_decision_ids'))}
+
+
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
@@ -142,6 +174,9 @@ def project_snapshot(raw, run_id):
         result["parent_run_id"] = raw["parent_run_id"][:128]
     if isinstance(raw.get("source_run_ids"), list):
         result["source_run_ids"] = [v[:128] for v in raw["source_run_ids"][:100] if isinstance(v, str)]
+    interpreted = attempt_interpretations(raw.get("research_attempts"))
+    if interpreted is not None:
+        result["research_attempts"] = interpreted
     result["project"] = run_project(raw, run_id)
     result["loops"] = {key: pick(raw.get("loops", {}).get(key), ("status", "summary"))
                        for key in ("decision_making", "exploration")} if isinstance(raw.get("loops"), dict) else {}

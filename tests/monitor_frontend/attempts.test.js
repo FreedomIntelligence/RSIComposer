@@ -194,3 +194,26 @@ test("supplied projection and input remain unchanged during render and child cam
   const before=JSON.stringify(projection);h.run('const standalone=RSIDecisions.render({model:projection,height:280});standalone.zoomBy(1.5);standalone.reset();standalone.dispose();');
   assert.equal(JSON.stringify(projection),before);
 });
+
+
+const interpretedView=(items)=>({schema_version:1,authority:"model_interpretation",items,revisions:[],ungrouped_decision_ids:[]});
+test("post-hoc interpretations group without mutating decisions or inventing adoption and sequence edges",()=>{
+  const rows=[d("x","legacy"),d("y",null,{second:2}),d("z",null,{second:3,depends_on_decision_ids:["x","y"],adopted_decision_ids:["x","y"]})],before=JSON.stringify(rows);
+  const view=interpretedView([{attempt_id:"a",title:"Prompt hypothesis",summary:"Measured a variation",member_decision_ids:["x"]},{attempt_id:"b",title:"Data hypothesis",member_decision_ids:["y"]},{attempt_id:"join",title:"Combine",member_decision_ids:["z"]}]);
+  const model=attempts(rows,view);assert.equal(model.attemptCount,3);assert.equal(JSON.stringify(rows),before);
+  assert.deepEqual(links(model).map(e=>e.kind),["adoption","adoption"]);
+  assert.equal(attempt(model,"legacy"),undefined);assert.equal(attempt(model,"a").interpretation.summary,"Measured a variation");
+  const empty=attempts(rows,interpretedView([]));assert.equal(empty.attemptCount,0);assert.equal(empty.ungroupedCount,3);
+  const old=attempts(rows);assert.equal(old.attemptCount,1);
+});
+test("interpretations retain entirely missing members and exclude conflicting memberships",()=>{
+  const rows=[d("x",null)],view=interpretedView([{attempt_id:"a",title:"A",member_decision_ids:["missing","x"]},{attempt_id:"b",title:"B",member_decision_ids:["x"]}]);
+  const model=attempts(rows,view);assert.equal(model.attemptCount,2);assert.equal(model.ungroupedCount,1);assert.deepEqual(attempt(model,"a").missingDecisionIDs,["missing","x"]);assert.equal(links(model).length,0);assertFinite(model);
+});
+test("selected interpretation shows summary, model source, revision, and honest partial details",()=>{
+  const view=interpretedView([{attempt_id:"archived",title:"Archived idea",summary:"A model summary, not success",member_decision_ids:["older-decision"],source_refs:["artifact:report"],revision:2,provenance:{job_id:"summary-job",model:{model_id:"organizer",revision:"v1"},input_digest:"digest"},simulated:true}]);
+  view.revisions=[{...view.items[0],revision:1,summary:"Earlier summary"}];
+  const snapshot=run("a",{decisions:[d("new",null)],research_attempts:view}),h=open(snapshot);
+  const main=findClass(findClass(h.get("project-content"),"flow-map")[0],"decision-node");assert.equal(main.length,1);main[0].listeners.click();
+  const content=textOf(h.get("project-content"));assert.match(content,/A model summary, not success/);assert.match(content,/部分详情/);assert.match(content,/organizer/);assert.match(content,/artifact:report/);assert.match(content,/Earlier summary/);assert.equal(findClass(h.get("project-content"),"attempt-map").length,0);
+});
