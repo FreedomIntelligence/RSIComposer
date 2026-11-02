@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from rsisys.monitor import project_snapshot
+from rsimonitor import project_snapshot
 
 
 def export(snapshot, *, project, mode='offline', logdir='swanlog', sdk=None):

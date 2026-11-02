@@ -11,14 +11,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from rsisys.monitor import MonitorServer, RunStore, project_snapshot
-from rsisys.monitor import server
+from rsimonitor import MonitorServer, RunStore, project_snapshot
+from rsimonitor import server
 
 
 class MonitorPackageTests(unittest.TestCase):
     def test_module_cli_has_no_preloaded_module_warning(self):
         result = subprocess.run(
-            [sys.executable, '-m', 'rsisys.monitor.server', '--help'],
+            [sys.executable, '-m', 'rsimonitor.server', '--help'],
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
@@ -42,7 +42,7 @@ class MonitorPackageTests(unittest.TestCase):
             self.assertEqual(store.list()[0]['status'], 'running')
 
     def test_runtime_assets_are_complete_without_development_fixtures(self):
-        assets = files('rsisys.monitor').joinpath('static')
+        assets = files('rsimonitor').joinpath('static')
         expected = {'index.html', 'style.css', 'i18n.js', 'decisions.js', 'app.js'}
         self.assertEqual({asset.name for asset in assets.iterdir()}, expected)
         self.assertEqual({filename for filename, _ in server.STATIC.values()}, expected)

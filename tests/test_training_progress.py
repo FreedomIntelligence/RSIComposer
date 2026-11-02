@@ -15,7 +15,7 @@ from examples.qwen_toy.adapters import WorkerJobs
 from examples.qwen_toy.monitor import Monitor
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.monitor import project_snapshot
+from rsimonitor import project_snapshot
 
 
 def worker_fixture():

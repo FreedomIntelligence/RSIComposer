@@ -79,7 +79,7 @@ worker 为每个候选保存独立 LoRA adapter；从父候选训练时复制父
 
 - result.json：模型选择的 `experiments` 序列、状态、预算、模型调用次数、训练提交次数、候选与 Actor 版本、取消确认，以及 `run_mode`、`run_stop`、`stop_reason`、`goal_reached`。
 - round_results / round-N.json：每次 Actor execute 的观察记录。保留旧字段名供前端读取，**不是预设实验轮次或训练次数**。
-- monitor.json：研究操作、实验指令、复查、任务进度、候选与版本，以及同样的停止原因和清理状态，供[监控前端](../../src/rsisys/monitor/README.md)读取。触发目标停止的最后一次反馈仍记录为完整实验，并更新候选指标。 作业沿用其所属决策的 round 和 directive_id；迟到的旧作业进度不会被归到当前新指令，也不会覆盖当前作业进度。
+- monitor.json：研究操作、实验指令、复查、任务进度、候选与版本，以及同样的停止原因和清理状态，供[监控前端](../../src/rsimonitor/README.md)读取。触发目标停止的最后一次反馈仍记录为完整实验，并更新候选指标。 作业沿用其所属决策的 round 和 directive_id；迟到的旧作业进度不会被归到当前新指令，也不会覆盖当前作业进度。
 - experience.sqlite3：系统反馈；两份 memory JSON：各自任务历史；decision_research.json：模型首次 patch 后保存的完整研究笔记和修订日志；artifacts：轻量引用对应的产物。
 - worker 的 adapter、训练/评测结果和日志由 worker 数据目录保留。
 

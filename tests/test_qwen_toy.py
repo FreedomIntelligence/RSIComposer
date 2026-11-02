@@ -21,7 +21,7 @@ from examples.qwen_toy.adapters import (
     Deadline, HTTPClient, RevisionBackend, TRAIN_REF, WorkerActivator, WorkerEvaluator, WorkerTrainer,
 )
 from examples.qwen_toy.run import BudgetedModel, OBJECTIVE, ResearchBudget, parse_args, run
-from rsisys.monitor import project_snapshot
+from rsimonitor import project_snapshot
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.loops.contracts.jobs import JobStatus
 from rsisys.loops.contracts.model_service import GenerationRequest, GenerationResponse, ModelRef

@@ -254,7 +254,7 @@ def system_flow():
         'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
         'native.py：数据转换 / 训练证据；Transformers / SGLang / Ascend 推理适配，训练前释放本地资源',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    replaceable(s, 'monitor-library', 100, 2490, 2200, 170, 'src/rsisys/monitor/ · 可独立使用的实验可视化', (
+    replaceable(s, 'monitor-library', 100, 2490, 2200, 170, 'src/rsimonitor/ · 可独立使用的实验可视化', (
         'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
         '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
     ), BLUE, '#EFF5FF', title_size=29)
@@ -375,7 +375,7 @@ def file_architecture():
         'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
         'experiment.py：独立 researcher 与 actor 装配；Transformers / SGLang / Ascend：可替换推理',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    replaceable(s, 'monitor-library', 100, 2350, 2200, 170, 'src/rsisys/monitor/ · 可独立使用的实验可视化', (
+    replaceable(s, 'monitor-library', 100, 2350, 2200, 170, 'src/rsimonitor/ · 可独立使用的实验可视化', (
         'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
         '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
     ), BLUE, '#EFF5FF', title_size=29)

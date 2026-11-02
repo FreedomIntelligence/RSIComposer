@@ -3,8 +3,8 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const { layout } = require("../../src/rsisys/monitor/static/decisions.js");
-const source = fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/decisions.js`, "utf8");
+const { layout } = require("../../src/rsimonitor/static/decisions.js");
+const source = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/decisions.js`, "utf8");
 const row = (id, second = 0, extra = {}) => ({ decision_id: id,
   timestamp: new Date(Date.UTC(2026, 10, 1, 0, 0, second)).toISOString(), ...extra });
 const get = (model, key) => model.nodes.find(node => node.key === key);

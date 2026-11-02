@@ -12,7 +12,7 @@ dependencies = []
 
 [project.scripts]
 rsisys = "rsisys.cli:main"
-rsisys-monitor = "rsisys.monitor.server:main"
+rsimonitor = "rsimonitor.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -23,4 +23,4 @@ test = ["jsonschema>=4,<5"]
 
 [tool.setuptools.package-data]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
-"rsisys.monitor" = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js"]
+"rsimonitor" = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js"]

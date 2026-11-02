@@ -8,7 +8,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from rsisys.monitor import server as monitor
+from rsimonitor import server as monitor
 
 
 class MonitorProjectionTests(unittest.TestCase):

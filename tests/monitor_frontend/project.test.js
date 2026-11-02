@@ -3,7 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const source = fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/app.js`, "utf8");
+const source = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/app.js`, "utf8");
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const textOf = node => descendants(node).map(n => n.textContent || "").join(" ");
 const findClass = (node, name) => descendants(node).filter(n => (n.className || "").split(" ").includes(name));
@@ -50,8 +50,8 @@ function harness(fetcher = async () => { throw Error("unexpected fetch"); }, sea
   const flushFrames=(limit=600)=>{for(let i=0;frames.size&&i<limit;i++)frame();assert.equal(frames.size,0,"graph animation did not become idle");};
   Object.assign(window,{requestAnimationFrame,cancelAnimationFrame});
   const ctx = vm.createContext({ document, window, location, history, AbortController, URL, URLSearchParams, setTimeout, clearTimeout, requestAnimationFrame,cancelAnimationFrame,performance:{now:()=>now},fetch: fetcher });
-  vm.runInContext(fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/i18n.js`, "utf8"), ctx);
-  vm.runInContext(fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/decisions.js`, "utf8"), ctx);
+  vm.runInContext(fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/i18n.js`, "utf8"), ctx);
+  vm.runInContext(fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/decisions.js`, "utf8"), ctx);
   // Observe the real renderer and lifecycle rather than replacing graph behavior.
   const renders=[],decisions=ctx.RSIDecisions;
   ctx.RSIDecisions={...decisions,render(options){

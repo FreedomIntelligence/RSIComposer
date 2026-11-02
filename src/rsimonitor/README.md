@@ -1,6 +1,6 @@
 # RSISys 实验监控库
 
-Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端依赖、构建或发布站点；不启动训练、不修改运行文件。源码位于 `src/rsisys/monitor/`，随 `rsisys` 包安装，要求 Python 3.12+；HTTP 服务运行仅依赖 Python 标准库。
+Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端依赖、构建或发布站点；不启动训练、不修改运行文件。源码位于 `src/rsimonitor/`，作为独立顶层 Python 包，随 `rsisys` distribution 安装，要求 Python 3.12+；HTTP 服务运行仅依赖 Python 标准库。
 
 ## 启动
 
@@ -9,23 +9,23 @@ Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端�
 ```sh
 cd RSISys
 python3.12 -m pip install .
-rsisys-monitor --runs-dir runs
+rsimonitor --runs-dir runs
 ```
 
 打开 [http://localhost:8765](http://localhost:8765)。默认绑定 `127.0.0.1:8765`，Ctrl-C 停止。`--runs-dir` 相对当前工作目录解析，也可使用绝对路径：
 
 ```sh
-rsisys-monitor --runs-dir /path/to/runs --port 8765
+rsimonitor --runs-dir /path/to/runs --port 8765
 ```
 
-源码环境也可使用 `PYTHONPATH=src python3.12 -m rsisys.monitor.server --runs-dir runs`。
+源码环境也可使用 `PYTHONPATH=src python3.12 -m rsimonitor.server --runs-dir runs`。
 
 ## Python 库 API
 
 其他实验代码可直接复用读取、投影及 HTTP 服务，无需仓库顶层目录：
 
 ```python
-from rsisys.monitor import RunStore, MonitorServer, project_snapshot
+from rsimonitor import RunStore, MonitorServer, project_snapshot
 
 store = RunStore("/path/to/runs")
 projects = store.projects()     # 项目及运行摘要
@@ -39,7 +39,7 @@ with MonitorServer(("127.0.0.1", 8765), "/path/to/runs") as server:
 
 `project_snapshot(raw, run_id)` 接受快照字典与权威运行 ID，返回公开字段投影；不读取或写入文件。
 `RunStore(root)` 只读已有 `monitor.json`；`MonitorServer(address, runs_dir)` 使用同一投影并提供 UI 与 API。
-需要嵌入 CLI 时可调用 `rsisys.monitor.server.main(argv=None)`，传入参数列表；缺省解析进程参数。
+需要嵌入 CLI 时可调用 `rsimonitor.server.main(argv=None)`，传入参数列表；缺省解析进程参数。
 wheel 内含五个运行资源（HTML、CSS、三个 JavaScript 文件），无需前端构建。前端测试与 demo fixture
 位于 `tests/monitor_frontend/`，不打入 wheel，也不通过 HTTP 发布。
 
@@ -67,13 +67,13 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
 `127.0.0.1:8877`。旧地址 `http://localhost:8767/` 的兼容隧道已停用，不能作为入口。
 
 modelmate 部署使用安装 wheel 的包目录 `RSISys/monitor-ui/package`，数据目录是 `RSISys/runs/`。
-前端与服务端源码均以本仓库 `src/rsisys/monitor/` 为准；发布时构建并安装 wheel 到该目录，
-使用其中的 `rsisys.monitor.server:main`，参数为 `--runs-dir /path/to/RSISys/runs --port 8877`。
+前端与服务端源码均以本仓库 `src/rsimonitor/` 为准；发布时构建并安装 wheel 到该目录，
+使用其中的 `rsimonitor.server:main`，参数为 `--runs-dir /path/to/RSISys/runs --port 8877`。
 例如 `python3.12 -m pip install --upgrade --target /path/to/RSISys/monitor-ui/package /path/to/rsisys.whl`
 （wheel 文件名使用实际构建产物），然后从已安装目录启动：
 
 ```sh
-PYTHONPATH=/path/to/RSISys/monitor-ui/package python3.12 -m rsisys.monitor.server --runs-dir /path/to/RSISys/runs --port 8877
+PYTHONPATH=/path/to/RSISys/monitor-ui/package python3.12 -m rsimonitor.server --runs-dir /path/to/RSISys/runs --port 8877
 ```
 
 服务或静态资源变化时只重启该监控进程。`monitor-ui/version.json` 记录来源版本与文件摘要，
@@ -222,7 +222,7 @@ lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记�
 
 ```sh
 PYTHONPATH=src python3.12 -m unittest discover -s tests -p 'test_monitor*.py' -v
-node --check src/rsisys/monitor/static/app.js
+node --check src/rsimonitor/static/app.js
 node --test tests/monitor_frontend/*.test.js
 ```
 
@@ -234,7 +234,7 @@ node --test tests/monitor_frontend/*.test.js
 
 ## 生产端与历史记录
 
-[Qwen toycase 的 monitor.py](../../../examples/qwen_toy/monitor.py) 从模型的结构化 Decision / ReviewDecision 和实际 Runner 结果生成上述摘要；[worker](../../../examples/qwen_toy/worker.py) 在 Trainer callback 中报告真实 global_step、max_steps、耗时及已记录的 loss / learning_rate。UI 从 monitor.json 读取，不直接访问训练服务。
+[Qwen toycase 的 monitor.py](../../examples/qwen_toy/monitor.py) 从模型的结构化 Decision / ReviewDecision 和实际 Runner 结果生成上述摘要；[worker](../../examples/qwen_toy/worker.py) 在 Trainer callback 中报告真实 global_step、max_steps、耗时及已记录的 loss / learning_rate。UI 从 monitor.json 读取，不直接访问训练服务。
 
 已完成的旧 toycase 可以显式补导出已有决策记录：
 

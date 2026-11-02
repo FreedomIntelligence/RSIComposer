@@ -3,9 +3,9 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const i18nSource = fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/i18n.js`, "utf8");
-const appSource = fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/app.js`, "utf8");
-const html = fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/index.html`, "utf8");
+const i18nSource = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/i18n.js`, "utf8");
+const appSource = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/app.js`, "utf8");
+const html = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/index.html`, "utf8");
 // Reuse the existing graph/RAF harness without registering its regression tests.
 const shared = fs.readFileSync(`${__dirname}/project.test.js`, "utf8").split('\ntest("')[0];
 const { harness, setup, seed, run, project,graphState,dragGraphNode } = new Function("require", "__dirname", `${shared}\nreturn {harness,setup,seed,run,project,graphState,dragGraphNode};`)(require, __dirname);
@@ -145,6 +145,6 @@ test("experiment detail loads the decision graph without the old multi-run proje
   const scripts=[...html.matchAll(/<script\b[^>]*src="([^"]+)"/g)].map(m=>m[1]);
   assert.deepEqual(scripts,["/i18n.js","/decisions.js","/app.js"]);
   assert.doesNotMatch(appSource,/RSILineage|project-root|projectModel|renderGraph|networkLayout|研究轮次/);
-  const css=fs.readFileSync(`${__dirname}/../../src/rsisys/monitor/static/style.css`, "utf8");
+  const css=fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/style.css`, "utf8");
   assert.doesNotMatch(css,/graph-node|graph-viewport|graph-controls|graph-header|graph-tools/);
 });

@@ -4,7 +4,7 @@ __all__ = ["RunStore", "MonitorServer", "project_snapshot"]
 
 
 def __getattr__(name):
-    # Keep `python -m rsisys.monitor.server` from preloading its target module.
+    # Keep `python -m rsimonitor.server` from preloading its target module.
     if name in __all__:
         from . import server
 

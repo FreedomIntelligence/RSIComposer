@@ -5,7 +5,7 @@
 - **两个 loop**：各自由 Harness 与 Action Space 组成；Decision Policy 选择研究步骤，Actor Policy 选择环境动作。训练、评测和提示词调整是发给 Exploration 的系统指令。
 - **轻量协同**：框架负责指令、作业、反馈与版本引用，不统一各训练框架的数据格式；跨框架数据对齐由接入方完成。
 - **自主研究**：支持隔离的并行任务、显式决策依赖、多结果采纳与汇合；研究尝试（Attempt）记录围绕同一想法的一组决策。
-- **实验监控**：`rsisys.monitor` 是包内可独立启动的只读可视化模块。一个项目包含多个实验，一个实验对应一次完整 RSI run；进入实验查看尝试、决策理由、改动、反馈和训练指标。
+- **实验监控**：`rsimonitor` 是与 `rsisys` 并列的只读可视化包。一个项目包含多个实验，一个实验对应一次完整 RSI run；进入实验查看尝试、决策理由、改动、反馈和训练指标。
 
 项目介绍、架构和使用方法统一维护在本 README；组件接口与边界留在各目录 README。
 
@@ -18,7 +18,7 @@ Python 3.12+，在仓库根目录安装：
 ```sh
 python -m pip install -e .
 rsisys demo --config configs/demo.json
-rsisys-monitor --runs-dir runs
+rsimonitor --runs-dir runs
 ```
 
 监控默认访问 `http://127.0.0.1:8765/`。未产生 `monitor.json` 时显示空列表；监控不会启动研究或训练。
@@ -45,7 +45,7 @@ pixi run test
 - 中英切换与静默自动刷新，保留所选节点、展开状态和画布位置。
 
 ```python
-from rsisys.monitor import MonitorServer, RunStore
+from rsimonitor import MonitorServer, RunStore
 
 store = RunStore("runs")
 projects = store.projects()
@@ -56,7 +56,7 @@ with MonitorServer(("127.0.0.1", 8765), "runs") as server:
     server.serve_forever()
 ```
 
-生产端原子写入轻量快照；监控不读取 checkpoint、训练样本或任意日志文件，不执行训练控制。监控接口不等于统一训练数据协议。协议、API、接入方法与部署说明见 [Monitor README](src/rsisys/monitor/README.md)。现有 SwanLab 导出为可选示例，见 [export_swanlab.py](examples/qwen_toy/export_swanlab.py)。
+生产端原子写入轻量快照；监控不读取 checkpoint、训练样本或任意日志文件，不执行训练控制。监控接口不等于统一训练数据协议。协议、API、接入方法与部署说明见 [Monitor README](src/rsimonitor/README.md)。现有 SwanLab 导出为可选示例，见 [export_swanlab.py](examples/qwen_toy/export_swanlab.py)。
 
 ## 系统架构
 
@@ -77,7 +77,6 @@ src/rsisys/
 ├── experience/            # 共享系统反馈库
 ├── runtime/               # Runner、RunPolicy、SystemRegistry、恢复与公共后端
 ├── adapters/              # 可替换的具体训练 / serving 接入，位于 Harness 外
-├── monitor/              # 可独立使用的只读实验监控、HTTP API 与前端资源
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── application.py         # 本地持久化装配
@@ -85,6 +84,8 @@ src/rsisys/
 ├── cli.py                 # 命令逻辑
 └── __main__.py            # CLI 薄入口
 ```
+
+`src/rsimonitor/` 与 `src/rsisys/` 并列，包含监控 API 与前端资源，通过公开快照读取实验，不依赖双 loop 的内部实现。
 
 `examples/medical/` 位于源码包外，独立组合任务、固定评测协议、两个 Harness 与 Runner。
 它使用共享端口和 adapters，不向核心注入医学数据集、验收阈值或训练配方。
@@ -614,6 +615,6 @@ node --test tests/monitor_frontend/*.test.js
 | [Runtime](src/rsisys/runtime/README.md) | Runner、RunPolicy、作业与组合版本 |
 | [适配器](src/rsisys/adapters/README.md) | 原生进程训练、vLLM 推理和部署 |
 | [Snapshot](src/rsisys/snapshot/README.md) | 内置组合保存恢复及自定义边界 |
-| [Monitor](src/rsisys/monitor/README.md) | 实验可视化、快照协议与只读 API |
+| [Monitor](src/rsimonitor/README.md) | 实验可视化、快照协议与只读 API |
 
 全局文档只维护本 README；组件维护各自 README，示例位于 `examples/`，`docs/diagrams/` 仅存架构图与其生成脚本。
