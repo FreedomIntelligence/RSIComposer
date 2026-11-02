@@ -207,7 +207,7 @@ history 中。`DecisionContext.decision_graph` 提供同一 ID/title 对，polic
 [dsh.py](dsh.py) 的 `DeepSeekDecisionHarness` 使用 DSH 持久会话和原生上下文压缩，
 复用默认操作回执、反馈和候选协调，不为科研步骤增加固定顺序。
 `dsh_decision_factory(DSHConfig(...))` 可直接传给 Application / build_demo 的 decision_factory。
-可选依赖与实际使用示例见[使用指南](../../../../../docs/GUIDE.md#使用-dsh-harness)。
+可选依赖与实际使用示例见[使用指南](../../../../../README.md#使用-dsh-harness)。
 
 模型推理在单独 worker 中进行；step 在等待期间返回 waiting，收到提案后在 Runner 线程
 执行并重新校验当前权限。运行中 review 与决策共用一个会话，不并发写同一原生历史。

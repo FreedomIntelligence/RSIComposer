@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2540" viewBox="0 0 2400 2540" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="2780" viewBox="0 0 2400 2780" role="img" aria-labelledby="title desc">
 <title id="title">RSISys 系统流程图</title>
-<desc id="desc">两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。默认上下文在完整 GenerationRequest 构造后的 request 阶段计数，80k token 触发 compact，压缩后总输入目标 24k；raw archive 原文不变，保护最新完整工具反馈及其最近 history 配对；替代 Harness 的持久 session 与会话压缩由原生 DSH 唯一负责，RSISys 保留权限、预算与双 loop 协调。Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。runtime 中的 RunPolicy 可替换；SystemRegistry 管理组件清单的父版本与 current。TrainingOrigin 区分实验父系统与初始权重。具体训练和 serving 适配器、独立 medical 示例位于 Harness 外。</desc>
+<desc id="desc">两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。默认上下文在完整 GenerationRequest 构造后的 request 阶段计数，80k token 触发 compact，压缩后总输入目标 24k；raw archive 原文不变，保护最新完整工具反馈及其最近 history 配对；替代 Harness 的持久 session 与会话压缩由原生 DSH 唯一负责，RSISys 保留权限、预算与双 loop 协调。Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。runtime 中的 RunPolicy 可替换；SystemRegistry 管理组件清单的父版本与 current。TrainingOrigin 区分实验父系统与初始权重。具体训练和 serving 适配器、独立 medical 示例位于 Harness 外。监控作为 src/rsisys/monitor 独立读取公开快照，不参与两个 loop 的执行。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -8,7 +8,7 @@
 <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
 <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
 </defs>
-<rect width="2400" height="2540" fill="#F6F8FC"/>
+<rect width="2400" height="2780" fill="#F6F8FC"/>
 <text x="100" y="80" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="42" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 系统流程</text>
 <text x="100" y="126" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="26" font-weight="400" fill="#52637B" text-anchor="start">一个项目 = 一次 RSI 启动 · 项目内自主多轮研究 · 执行实现可替换</text>
 <rect x="100" y="158" width="42" height="26" rx="6" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.5"/>
@@ -236,5 +236,12 @@
 <text x="124" y="2388" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run</text>
 <text x="124" y="2417" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">native.py：数据转换 / 训练证据；Transformers / SGLang / Ascend 推理适配，训练前释放本地资源</text>
 </g>
-<text x="100" y="2490" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。</text>
+<g id="monitor-library">
+<rect x="100" y="2490" width="2200" height="170" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8" stroke-dasharray="8 5"/>
+<text x="124" y="2515" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="15" font-weight="700" fill="#2365CB" text-anchor="start">实现可换</text>
+<text x="124" y="2554" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="29" font-weight="650" fill="#2365CB" text-anchor="start">src/rsisys/monitor/ · 可独立使用的实验可视化</text>
+<text x="124" y="2588" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标</text>
+<text x="124" y="2617" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行</text>
+</g>
+<text x="100" y="2720" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="22" font-weight="400" fill="#52637B" text-anchor="start">实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。</text>
 </svg>

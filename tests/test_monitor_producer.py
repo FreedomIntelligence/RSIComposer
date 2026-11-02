@@ -92,7 +92,7 @@ class MonitorProducerTests(unittest.TestCase):
         self.assertNotIn('step', self.monitor.data['current'])
 
     def test_feedback_metrics_merge_public_numeric_groups_and_project_with_operation(self):
-        from web.server import project_snapshot
+        from rsisys.monitor import project_snapshot
         self.monitor.decision(Decision('invoke', operation=OperationCall('query_experiments', {})), self.context, 0)
         self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)
         self.monitor.advance(RunnerStep('completed', {'feedback': {'status': 'completed',

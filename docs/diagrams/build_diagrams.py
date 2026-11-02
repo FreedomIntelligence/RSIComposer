@@ -102,7 +102,7 @@ def replaceable(s, ident, x, y, w, h, title, lines=(), color=BLUE,
 
 
 def system_flow():
-    s = SVG(2400, 2540, 'RSISys 系统流程图',
+    s = SVG(2400, 2780, 'RSISys 系统流程图',
             '两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。'
             'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
             'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
@@ -254,12 +254,16 @@ def system_flow():
         'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
         'native.py：数据转换 / 训练证据；Transformers / SGLang / Ascend 推理适配，训练前释放本地资源',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    s.text(100, 2490, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
+    replaceable(s, 'monitor-library', 100, 2490, 2200, 170, 'src/rsisys/monitor/ · 可独立使用的实验可视化', (
+        'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
+        '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
+    ), BLUE, '#EFF5FF', title_size=29)
+    s.text(100, 2720, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
     s.save('system-flow.svg')
 
 
 def file_architecture():
-    s = SVG(2400, 2440, 'RSISys 文件架构图',
+    s = SVG(2400, 2660, 'RSISys 文件架构图',
             '两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。'
             'Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。'
             'step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。'
@@ -371,7 +375,11 @@ def file_architecture():
         'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
         'experiment.py：独立 researcher 与 actor 装配；Transformers / SGLang / Ascend：可替换推理',
     ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    s.text(100, 2370, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
+    replaceable(s, 'monitor-library', 100, 2350, 2200, 170, 'src/rsisys/monitor/ · 可独立使用的实验可视化', (
+        'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
+        '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
+    ), BLUE, '#EFF5FF', title_size=29)
+    s.text(100, 2600, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
     s.save('file-architecture.svg')
 
 

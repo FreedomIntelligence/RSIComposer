@@ -1,5 +1,4 @@
 """Standalone stdlib tests for the isolated read-only monitor service."""
-import importlib.util
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -9,9 +8,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-SPEC = importlib.util.spec_from_file_location("rsisys_monitor", Path(__file__).resolve().parents[1] / "web" / "server.py")
-monitor = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(monitor)
+from rsisys.monitor import server as monitor
 
 
 class MonitorProjectionTests(unittest.TestCase):
@@ -381,11 +378,12 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(self.get("/api/runs", headers={"Host": "evil.example"})[0], 403)
         self.assertEqual(self.get("/api/runs", headers={"Sec-Fetch-Site": "cross-site"})[0], 403)
 
-    def test_static_allowlist_head_and_demo(self):
-        for path in ["/", "/style.css", "/i18n.js", "/decisions.js", "/app.js", "/demo.json"]:
+    def test_static_allowlist_head_and_no_development_files(self):
+        for path in ["/", "/style.css", "/i18n.js", "/decisions.js", "/app.js"]:
             self.assertEqual(self.get(path)[0], 200)
         self.assertEqual(self.get("/", method="HEAD")[2], b"")
-        self.assertEqual(json.loads(self.get("/demo.json")[2])["run_id"], "example-dual-loop-001")
+        for path in ("/demo.json", "/project.test.js", "/decisions.test.js", "/i18n.test.js", "/attempts.test.js"):
+            self.assertEqual(self.get(path)[0], 404)
         self.assertEqual(json.loads(self.get("/api/runs")[2])["runs"], [])
 
     def test_run_directory_name_is_authoritative(self):

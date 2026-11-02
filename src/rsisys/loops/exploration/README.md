@@ -1,6 +1,6 @@
 # Exploration loop
 
-接收系统 Directive，并通过 Harness 推进执行、学习、评测或 prompt 配置。构造方式为 `ExplorationLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../docs/ARCHITECTURE.md)。
+接收系统 Directive，并通过 Harness 推进执行、学习、评测或 prompt 配置。构造方式为 `ExplorationLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../README.md#系统架构)。
 
 [loop.py](loop.py) 是薄端点，提供 `accept` / `advance` / `inspect` / `cancel` / `acknowledge`。`advance` 将独立的 Action Space 传给 Harness；指令分派、状态和业务流程由 Harness 实现。
 

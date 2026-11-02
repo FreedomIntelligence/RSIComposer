@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from web.server import MAX_BYTES, RunStore, project_snapshot
+from rsisys.monitor import RunStore, project_snapshot
+from rsisys.monitor.server import MAX_BYTES
 
 
 class ProjectTests(unittest.TestCase):

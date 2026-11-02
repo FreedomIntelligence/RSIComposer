@@ -3,7 +3,7 @@
 Run from RSISys with Python 3.12+::
 
     PYTHONPATH=src python3.12 examples/decision_graph.py --run-dir runs/decision-graph
-    python3 web/server.py --runs-dir runs
+    rsisys-monitor --runs-dir runs
 
 The existing monitor UI can then preview this run. The policy is a scripted
 fixture, not an autonomous researcher. Two actual worker threads overlap; all

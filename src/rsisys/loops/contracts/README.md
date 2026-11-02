@@ -1,6 +1,6 @@
 # 共享协议
 
-两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。可选 ReviewAuthorizingEndpoint 让 Runner 在执行模型取消建议及重试前重新检查当前权限。协同顺序与交付规则见[系统架构](../../../../docs/ARCHITECTURE.md)。
+两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。可选 ReviewAuthorizingEndpoint 让 Runner 在执行模型取消建议及重试前重新检查当前权限。协同顺序与交付规则见[系统架构](../../../../README.md#系统架构)。
 
 ## 实验查询
 
@@ -28,7 +28,7 @@ Decision 使用稳定 `decision_id`，`depends_on_decision_ids` 引用已成功�
 | evaluate | EvaluationSpec(candidate, protocol_ref) | 独立评测指定候选；input_refs 传入 EvaluationRequest.data_refs |
 | configure_prompt | PromptSpec(instructions) | 替换 Actor 指令文本；空字符串清空；绕过 ActorPolicy.act |
 
-可选 `train` 使用 `TrainSpec(recipe_ref, method, base=None, apply_result=False)`，需显式注册 `training_directive()`、`TrainingCommandHandler` 并注入 learner，不属于默认模式。input_refs 作为训练 data_refs，缺省 base 在接收时捕获；整个任务交给一个后端作业，后端可自主采样与训练，默认仅返回候选。默认 `rl` 继续使用本地采样循环。装配见[使用指南](../../../../docs/GUIDE.md#接入整项训练任务)。
+可选 `train` 使用 `TrainSpec(recipe_ref, method, base=None, apply_result=False)`，需显式注册 `training_directive()`、`TrainingCommandHandler` 并注入 learner，不属于默认模式。input_refs 作为训练 data_refs，缺省 base 在接收时捕获；整个任务交给一个后端作业，后端可自主采样与训练，默认仅返回候选。默认 `rl` 继续使用本地采样循环。装配见[使用指南](../../../../README.md#接入整项训练任务)。
 
 具体 [ActorTrainingRequest](../exploration/harness/learner/README.md) 与 [DecisionTrainingRequest](../decision_making/harness/learner/README.md) 是后端中立的请求：校验模型、非空 method / recipe 字符串和引用元组类型，不统一限定算法或要求非空数据。Decision 请求支持外部 data_refs 与自定义 method；mock 的能力限制由各后端负责。
 

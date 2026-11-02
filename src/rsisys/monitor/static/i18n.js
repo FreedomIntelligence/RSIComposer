@@ -511,7 +511,7 @@
     for (const attr of ["aria-label", "title", "placeholder"]) {
       for (const node of doc.querySelectorAll(`[data-i18n-${attr}]`)) node.setAttribute(attr, t(node.getAttribute(`data-i18n-${attr}`)));
     }
-    doc.title = t("RSISys · 实验项目");
+    doc.title = "RSISys Monitor";
   }
   root.RSII18n = Object.freeze({ t, getLanguage: () => language, setLanguage, applyStatic,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

@@ -21,8 +21,7 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
           "/decisions.js": ("decisions.js", "text/javascript; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-          "/style.css": ("style.css", "text/css; charset=utf-8"),
-          "/demo.json": ("demo.json", "application/json; charset=utf-8")}
+          "/style.css": ("style.css", "text/css; charset=utf-8")}
 DETAIL_KEYS = {"job_id", "candidate_id", "model_id", "revision", "base_revision",
                "role", "status", "kind", "step", "iteration", "duration_seconds",
                "metric", "value", "baseline", "candidate", "score",
@@ -364,12 +363,12 @@ class MonitorHandler(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = reject_write
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"), help="Run directories containing monitor.json (default: ./runs)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     server = MonitorServer((args.host, args.port), args.runs_dir)
     print(f"RSISys monitor: http://{args.host}:{server.server_port} (read-only)", flush=True)
     try:

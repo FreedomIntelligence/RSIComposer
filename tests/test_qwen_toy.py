@@ -21,6 +21,7 @@ from examples.qwen_toy.adapters import (
     Deadline, HTTPClient, RevisionBackend, TRAIN_REF, WorkerActivator, WorkerEvaluator, WorkerTrainer,
 )
 from examples.qwen_toy.run import BudgetedModel, OBJECTIVE, ResearchBudget, parse_args, run
+from rsisys.monitor import project_snapshot
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.loops.contracts.jobs import JobStatus
 from rsisys.loops.contracts.model_service import GenerationRequest, GenerationResponse, ModelRef
@@ -460,11 +461,8 @@ class QwenControllerTests(unittest.TestCase):
                 self.assertEqual(monitor['status'], 'completed')
                 self.assertEqual(monitor['candidates'][0]['status'], 'applied' if delta > 0 else 'proposed')
                 self.assertEqual(monitor['models']['actor']['revision'], result['actor_revision'])
-                # The exact web projection must consume the persisted schema.
-                spec = importlib.util.spec_from_file_location('qwen_monitor_server', ROOT / 'web/server.py')
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                projected = module.project_snapshot(monitor, 'qwen-toy')
+                # The public monitor projection must consume the persisted schema.
+                projected = project_snapshot(monitor, 'qwen-toy')
                 self.assertEqual(projected['candidates'][0]['metrics']['delta_nll'], delta)
                 store = SQLiteExperienceStore(root / 'experience.sqlite3')
                 try:

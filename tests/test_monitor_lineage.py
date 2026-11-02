@@ -13,7 +13,7 @@ from rsisys.loops.decision_making.harness.decision import Decision
 from rsisys.loops.decision_making.harness.state import DecisionContext
 from rsisys.loops.decision_making.action_space import OperationCall
 from rsisys.runtime.runner import RunnerStep
-from web.server import project_snapshot
+from rsisys.monitor import project_snapshot
 
 
 class MonitorLineageTests(unittest.TestCase):

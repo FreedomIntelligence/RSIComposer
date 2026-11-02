@@ -1,6 +1,6 @@
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs");
-const {layout,attempts,subpath}=require("./decisions.js");
+const {layout,attempts,subpath}=require("../../src/rsisys/monitor/static/decisions.js");
 // Share the real renderer, DOM, polling and RAF harness, without registering tests.
 const shared=fs.readFileSync(`${__dirname}/project.test.js`,"utf8").split('\ntest("')[0];
 const {harness,setup,seed,run,project,findClass,textOf,descendants,graphState,dragGraphNode,response}=new Function("require","__dirname",`${shared}\nreturn {harness,setup,seed,run,project,findClass,textOf,descendants,graphState,dragGraphNode,response};`)(require,__dirname);

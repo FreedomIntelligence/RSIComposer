@@ -19,7 +19,7 @@ from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.exploration.harness.commands import CommandState
 from rsisys.runtime.files import json_bytes
-from web.server import project_snapshot
+from rsisys.monitor import project_snapshot
 
 
 class DecisionGraphDemoTests(unittest.TestCase):

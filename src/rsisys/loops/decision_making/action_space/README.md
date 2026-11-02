@@ -15,7 +15,7 @@
 
 默认模式为 execute / sft / rl / evaluate / configure_prompt。它们是 decision policy 可发出的系统指令，不是 ActorPolicy.act 的动作；外部系统也可直接向 Exploration 端点提交 Directive。PromptSpec(instructions) 的约定见[共享协议](../../contracts/README.md)。
 
-整项训练通过可选的 `training_directive()` 定义 `train` 模式，解析 recipe_ref、method 与可选 apply_result 为 TrainSpec。它不包含在 builtin_directives() 中；需显式加入 catalog / directive_modes，并在 Exploration Harness 注册 TrainingCommandHandler、注入 learner。后端可独立完成 rollout 与训练；默认 `rl` 仍执行本地采样循环。完整接入见[使用指南](../../../../../docs/GUIDE.md#接入整项训练任务)。
+整项训练通过可选的 `training_directive()` 定义 `train` 模式，解析 recipe_ref、method 与可选 apply_result 为 TrainSpec。它不包含在 builtin_directives() 中；需显式加入 catalog / directive_modes，并在 Exploration Harness 注册 TrainingCommandHandler、注入 learner。后端可独立完成 rollout 与训练；默认 `rl` 仍执行本地采样循环。完整接入见[使用指南](../../../../../README.md#接入整项训练任务)。
 
 训练数据由外层 `input_ids` 选择；`origin` 仅描述实验父版本、初始权重和恢复方式。生成 schema 与 `TrainingOrigin` 校验一致：`restart` 的 checkpoint 只能省略或为 null；`weights_only` 可选权重引用；`full_state` 必须给出 checkpoint。仅暴露后端声明的恢复模式，不支持 restart 时必须显式提供 origin 与 resume_mode。支持 restart 时可省略 origin，具体装配负责确定默认初始化语义；checkpoint 导出能力不决定已有 checkpoint 的消费能力。
 
