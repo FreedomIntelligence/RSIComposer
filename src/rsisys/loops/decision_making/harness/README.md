@@ -42,8 +42,10 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 
 ## 可选的反馈学习与记忆前缀
 
-[feedback_learning_decision_factory](learning_harness.py) 通过现有 decision_factory 接口启用，
-不改变默认 Harness。完整反馈先按原协议接纳；独立 worker 使用接收时捕获的 Decision
+[feedback_learning_decision_factory](learning_harness.py) 可组合默认、DSH 或自定义 decision_factory。
+独立 FeedbackLearningService 通过 FeedbackAdapter 接入，不要求默认 harness 的继承结构；
+内置适配器只读取执行账本并发布工作视图，保留原策略、会话及压缩器。完整反馈先按原协议接纳；
+独立 worker 使用接收时捕获的 Decision
 模型身份整理反馈、相关历史和评测。worker 只返回建议，Runner 所在线程写日志与 memory。
 接线与 CPU fixture 见[使用指南](../../../../../README.md#由-decision-整理实验反馈可选)。
 

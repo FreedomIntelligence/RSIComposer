@@ -19,20 +19,7 @@ from ..state import DecisionContext
 from ..context import BasicContextCompactor, IdentityContextCompactor
 
 
-def _load_object(text):
-    """Reject ambiguous JSON before either decision parser sees an object."""
-    def unique_object(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f'Duplicate JSON key {key!r}; keys must be unique in every object')
-            result[key] = value
-        return result
-
-    payload = json.loads(text, object_pairs_hook=unique_object)
-    if not isinstance(payload, dict):
-        raise ValueError('Decision must be a JSON object')
-    return payload
+from rsisys.runtime.json_tools import load_object as _load_object
 
 
 class DecisionPolicy(Protocol):

@@ -1,17 +1,10 @@
 """Rolling token budgets; raw histories and receipts remain in their stores."""
 from copy import deepcopy
 from dataclasses import asdict, replace
-from hashlib import sha256
-import json
 from typing import Protocol
 
 
-def encoded(value):
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
-
-
-def result_id(value):
-    return sha256(encoded(value).encode('utf-8')).hexdigest()
+from rsisys.runtime.json_tools import encoded, result_id
 
 
 class ContextBudgetError(ValueError):
@@ -81,8 +74,9 @@ class BasicContextCompactor:
     measure(context) must price the complete model request, including its prompt
     and capabilities. Without a tokenizer the UTF-8 byte count is an explicitly
     conservative bound. The last tool result, its two newest history entries and
-    all live control/feedback remain verbatim. Oversized protected state fails
-    clearly rather than truncating an observation. Folded fingerprints and a
+    all live control/feedback remain verbatim. Older structured evidence may use
+    exact factual cards only with authorized archive links. Oversized protected
+    facts fail clearly rather than truncating an observation. Folded fingerprints and a
     source-qualified rolling summary are portable snapshot state, not an archive.
     """
     streams = ('history', 'experience', 'memories', 'operation_results')
@@ -97,24 +91,29 @@ class BasicContextCompactor:
         self.trigger_tokens, self.target_tokens, self.summary_tokens = trigger_tokens, target_tokens, summary_tokens
         self._folded = {name: set() for name in self.streams}
         self._summary = {}
+        self._project_evidence = False
         self.compactions = 0
         self.last_measurement = {}
 
     def export_state(self):
         return deepcopy({'folded': {k: sorted(v) for k, v in self._folded.items()},
-                         'summary': self._summary, 'compactions': self.compactions})
+                         'summary': self._summary, 'compactions': self.compactions,
+                         'project_evidence': self._project_evidence})
 
     def restore_state(self, state):
-        if (not isinstance(state, dict) or set(state) != {'folded', 'summary', 'compactions'}
+        if (not isinstance(state, dict) or set(state) - {'folded', 'summary', 'compactions', 'project_evidence'}
+                or not {'folded', 'summary', 'compactions'} <= state.keys()
                 or not isinstance(state['folded'], dict) or set(state['folded']) != set(self.streams)
                 or not isinstance(state['summary'], dict)
-                or type(state['compactions']) is not int or state['compactions'] < 0):
+                or type(state['compactions']) is not int or state['compactions'] < 0
+                or type(state.get('project_evidence', False)) is not bool):
             raise ValueError('Invalid context compactor state')
         for values in state['folded'].values():
             if not isinstance(values, list) or any(not isinstance(v, str) or len(v) != 64 for v in values):
                 raise ValueError('Invalid folded context fingerprints')
         self._folded = {k: set(v) for k, v in state['folded'].items()}
         self._summary, self.compactions = deepcopy(state['summary']), state['compactions']
+        self._project_evidence = state.get('project_evidence', False)
 
     def compact(self, context, *, recent_limit=32, measure=None, summarize=None):
         if type(recent_limit) is not int or recent_limit < 1:
@@ -126,16 +125,25 @@ class BasicContextCompactor:
             if type(value) is not int or value < 0:
                 raise ValueError('Token counter must return a nonnegative integer')
             return value
+        from .research_state import (evidence_working_view, evidence_needs_protection,
+                                     full_history_ids, live_evidence_ids, receipt_needs_protection)
+        project_evidence = self._project_evidence
         raw = {name: tuple(getattr(context, name)) for name in self.streams}
         fingerprints = {name: [result_id(asdict(row)) for row in rows] for name, rows in raw.items()}
         protected = {name: set() for name in self.streams}
-        protected['history'] = set(range(max(0, len(raw['history'])-2), len(raw['history'])))
-        research_protected = set(context.research_state.get('protected_history_ids', ()))
+        research_protected = full_history_ids(context) | set(context.research_state.get('protected_history_ids', ()))
         protected['history'].update(i for i, row in enumerate(raw['history'])
-                                    if row.record_id in research_protected)
+                                    if row.record_id in research_protected or evidence_needs_protection(row))
+        live_decisions, live_directives = live_evidence_ids(context)
+        protected['experience'].update(i for i, row in enumerate(raw['experience'])
+            if evidence_needs_protection(row) or row.record_id in research_protected
+            or row.details.get('decision_id') in live_decisions or row.directive_id in live_directives)
         protected_results = set(context.research_state.get('protected_operation_result_ids', ()))
+        protected_results.update(result_id(row.details['result']) for row in raw['history']
+            if row.record_id in research_protected and isinstance(row.details.get('result'), dict))
         protected['operation_results'].update(i for i, key in enumerate(fingerprints['operation_results'])
-                                               if key in protected_results)
+            if key in protected_results or receipt_needs_protection(asdict(raw['operation_results'][i]))
+            or 'evidence_card' in raw['operation_results'][i].data)
         if raw['operation_results']:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])
@@ -156,7 +164,8 @@ class BasicContextCompactor:
             refs = tuple(OperationResult('Archived operation artifact references', tuple(group), simulated)
                          for simulated, group in by_simulation.items() if group)
             projected['operation_results'] = (*refs, *projected['operation_results'])
-            return replace(context, **projected, context_summary=deepcopy(summary or context.context_summary))
+            working = replace(context, **projected, context_summary=deepcopy(summary or context.context_summary))
+            return evidence_working_view(working) if project_evidence else working
 
         current = view(kept, self._summary)
         before = count(current)
@@ -164,13 +173,21 @@ class BasicContextCompactor:
                                  'target_tokens': self.target_tokens, 'compacted': False}
         if before < self.trigger_tokens:
             return current
+        project_evidence = True
+        current = view(kept, self._summary)
+        after = count(current)
+        if after <= self.target_tokens:
+            self._project_evidence = True
+            self.compactions += 1
+            self.last_measurement.update(compacted=True, output_tokens=after, compaction=self.compactions)
+            return current
         removable = [(name, i) for name in self.streams
                      for i in (reversed(range(len(raw[name]))) if name == 'memories' else range(len(raw[name])))
                      if i in kept[name] and i not in protected[name]]
         minimal = {name: indices & protected[name] for name, indices in kept.items()}
-        if count(view(minimal, self._summary)) >= self.target_tokens:
-            raise ContextBudgetError('Fixed state and latest complete feedback exceed target_tokens; '
-                                     'paginate the tool output or explicitly raise the budget')
+        if count(view(minimal, self._summary)) > self.target_tokens:
+            raise ContextBudgetError('Irreducible factual evidence, live state and latest complete feedback '
+                                     'exceed target_tokens; no compaction state was committed')
         # Reserve space for the rolling summary and compact provenance. Search by
         # whole records, never split a tool call/result to satisfy the budget.
         reserve = self.summary_tokens + min(512, self.target_tokens // 8)
@@ -223,6 +240,7 @@ class BasicContextCompactor:
         for name in self.streams:
             self._folded[name].update(fingerprints[name][i] for i in kept[name]-chosen[name])
         self._summary = deepcopy(summary)
+        self._project_evidence = True
         self.compactions += 1
         self.last_measurement.update(compacted=True, output_tokens=after, compaction=self.compactions)
         return projected

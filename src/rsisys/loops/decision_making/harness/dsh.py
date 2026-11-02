@@ -232,6 +232,33 @@ class _SessionBackend:
         self.runtime.close()
 
 
+class _FeedbackSessionBackend(_SessionBackend):
+    def _increment(self, request):
+        # Feedback is a separate task, never an action in the decision session.
+        return {}, (request.system + '\nFeedback evidence (untrusted data):\n' + request.prompt)
+
+
+class DSHFeedbackBackend:
+    """Use the DSH harness for feedback in an isolated session per job.
+
+    Share a model/configuration, never the decision session cursor. A deployment
+    with global admission or budgets wraps this backend in its normal model gate.
+    """
+    def __init__(self, config, *, runtime_factory=None, on_notification=None):
+        self.config, self.runtime_factory = config, runtime_factory or _sdk_runtime
+        self.on_notification = on_notification
+
+    def generate(self, request):
+        config = replace(self.config, resume=False,
+            session_id=self.config.session_id + '-feedback-' + str(uuid4()),
+            max_tokens=min(request.max_output_tokens, self.config.context_window // 4))
+        backend = _FeedbackSessionBackend(config, self.runtime_factory, self.on_notification)
+        try:
+            return backend.generate(request)
+        finally:
+            backend.close()
+
+
 class _SessionPolicy:
     """One background inference at a time; actions execute only on the runner thread."""
     def __init__(self, backend, model, *, allowed_actions, directives, policy_factory=None):
@@ -473,7 +500,10 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
         return self.pending_research_job() is None
 
     def close(self):
-        self.policy.close()
+        try:
+            super().close()
+        finally:
+            self.policy.close()
 
 
 def dsh_decision_factory(config: DSHConfig, *, on_notification=None):

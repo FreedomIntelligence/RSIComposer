@@ -201,8 +201,6 @@ class ExperimentSettings:
         object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
         if type(self.feedback_learning) is not bool:
             raise TypeError('feedback_learning must be boolean')
-        if self.feedback_learning and self.decision_harness != 'default':
-            raise ValueError('feedback_learning currently requires the default decision harness')
 
 
 def build_project_context(settings: ExperimentSettings, task, *, target_model: ModelRef,
@@ -319,6 +317,8 @@ class DecisionBackend:
             raise ValueError('response_retries must be an integer in 0..2')
         self.response_retries = response_retries
         self.max_output_tokens = min(max_output_tokens, getattr(serving, 'native_output_tokens', max_output_tokens))
+        from threading import RLock
+        self._generation_lock = RLock()
         self.calls = 0
         self._monitor_owner = get_ident()
         self._monitor_events = SimpleQueue()
@@ -374,7 +374,7 @@ class DecisionBackend:
             self.calls += 1
             write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
                 'count_mode': 'native_turns_and_compaction_reservations', 'token_usage': 'unknown'})
-            self.monitor.event('native_compaction_reserved', call=self.calls, sdk_event=event)
+            self._monitor_event('native_compaction_reserved', call=self.calls, sdk_event=event)
         with (self.root / 'dsh_events.jsonl').open('ab') as stream:
             stream.write(encoded({'method': notification.method, 'payload': notification.payload}) + b'\n')
 
@@ -382,12 +382,16 @@ class DecisionBackend:
     def supports_response_schema(self):
         return getattr(self.serving, 'supports_response_schema', False) is True
 
-    def generate(self, request):
+    def generate(self, request, *, transport=None):
+        with self._generation_lock:
+            return self._generate_serial(request, transport=transport)
+
+    def _generate_serial(self, request, *, transport=None):
         original_request = request
         try:
             for attempt in range(self.response_retries + 1):
                 try:
-                    return self._generate(request, response_attempt=attempt + 1)
+                    return self._generate(request, response_attempt=attempt + 1, transport=transport)
                 except ModelResponseError as exc:
                     if not exc.retryable or attempt == self.response_retries:
                         raise
@@ -408,7 +412,8 @@ class DecisionBackend:
                 raise RuntimeError(str(exc)) from exc
             raise
 
-    def _generate(self, request, *, response_attempt=1):
+    def _generate(self, request, *, response_attempt=1, transport=None):
+        serving = self.serving if transport is None else transport
         self.check_deadline()
         if self.training_active():
             raise RuntimeError('Decision inference prohibited while a training process is active')
@@ -424,9 +429,9 @@ class DecisionBackend:
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
             # Retain schema property order so request logs can reproduce decoding.
             record = {'call': self.calls, 'response_attempt': response_attempt, 'request': asdict(request)}
-            encoder = getattr(self.serving, 'native_response_schema', None)
+            encoder = getattr(serving, 'native_response_schema', None)
             if request.response_schema is not None and callable(encoder):
-                record.update(native_schema_mode=self.serving.native_schema_mode,
+                record.update(native_schema_mode=serving.native_schema_mode,
                               native_response_schema=encoder(request.response_schema))
             stream.write(json.dumps(record,
                 ensure_ascii=False, allow_nan=False).encode() + b'\n')
@@ -434,11 +439,11 @@ class DecisionBackend:
             with (self.root / 'model_wire_responses.jsonl').open('ab') as stream:
                 stream.write(encoded({'call': call_id, 'requested_model': model,
                                       'response_attempt': response_attempt, **record}) + b'\n')
-        observed_generate = (getattr(self.serving, 'generate_with_response_observer')
-            if getattr_static(self.serving, 'generate_with_response_observer', None) is not None else None)
+        observed_generate = (getattr(serving, 'generate_with_response_observer')
+            if getattr_static(serving, 'generate_with_response_observer', None) is not None else None)
         try:
             response = (observed_generate(request, observe_wire) if callable(observed_generate)
-                        else self.serving.generate(request))
+                        else serving.generate(request))
         except ModelResponseError as exc:
             with (self.root / 'model_response_errors.jsonl').open('ab') as stream:
                 stream.write(encoded({'call': call_id, 'requested_model': model,
@@ -454,6 +459,28 @@ class DecisionBackend:
                                   'response': asdict(response)}) + b'\n')
         self.check_deadline()
         return response
+
+
+class FeedbackBackendRoute:
+    """Separate feedback transport, same admission, call budget and response logs."""
+    def __init__(self, manager, transport):
+        self.manager, self.transport = manager, transport
+
+    @property
+    def supports_response_schema(self):
+        return getattr(self.transport, 'supports_response_schema', False) is True
+
+    @property
+    def token_count_mode(self):
+        return getattr(self.transport, 'token_count_mode', 'provider_tokenizer') if callable(
+            getattr(self.transport, 'count_tokens', None)) else 'utf8_conservative_estimate'
+
+    def count_tokens(self, request):
+        counter = getattr(self.transport, 'count_tokens', None)
+        return counter(request) if callable(counter) else len(encoded(asdict(request)))
+
+    def generate(self, request):
+        return self.manager.generate(request, transport=self.transport)
 
 
 class ExperimentRunPolicy:
@@ -1068,6 +1095,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         process_backend=None, identity_factory=model_identity, research_started_callback=None,
         decision_model: ModelRef | None = None, decision_backend: ModelBackend | None = None,
         native_model_kwargs: dict | None = None, decision_harness_factory=None,
+        feedback_backend=None, feedback_model=None, feedback_adapter_factory=None,
         dsh_runtime_factory=None) -> dict:
     """Run with an optional independent researcher backend and model identity.
 
@@ -1081,10 +1109,11 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         raise TypeError('decision_backend must provide generate(request)')
     if settings.decision_harness == 'dsh' and decision_backend is not None:
         raise ValueError('DSH owns its session/provider; configure dsh_config instead of decision_backend')
-    if settings.feedback_learning and decision_harness_factory is not None:
-        raise ValueError('feedback_learning does not yet support custom decision harnesses')
-    if settings.feedback_learning and decision_backend is None:
-        raise ValueError('feedback_learning requires an explicit independent decision_backend')
+    if settings.feedback_learning and decision_harness_factory is not None and feedback_adapter_factory is None:
+        raise ValueError('Custom decision harnesses require an explicit feedback_adapter_factory')
+    if (settings.feedback_learning and decision_backend is None and feedback_backend is None
+            and settings.decision_harness != 'dsh'):
+        raise ValueError('feedback_learning requires an explicit independent decision_backend or feedback_backend')
     dsh_config = DSHConfig.load(settings.dsh_config) if settings.decision_harness == 'dsh' else None
     if dsh_config is not None and dsh_config.resume:
         raise ValueError('Medical experiment never resumes; use a fresh DSH session')
@@ -1225,7 +1254,15 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         assembly.runner.decision_making.harness = decision = replacement
         if settings.feedback_learning:
             from rsisys.loops.decision_making.harness.learning_harness import enable_feedback_learning
-            enable_feedback_learning(assembly.runner.decision_making, path=root / 'feedback_learning.json')
+            learning_transport = feedback_backend
+            if learning_transport is None and dsh_config is not None:
+                from rsisys.loops.decision_making.harness.dsh import DSHFeedbackBackend
+                learning_transport = DSHFeedbackBackend(dsh_config, runtime_factory=dsh_runtime_factory,
+                    on_notification=backend.native_notification)
+            enable_feedback_learning(assembly.runner.decision_making, path=root / 'feedback_learning.json',
+                backend=FeedbackBackendRoute(backend, learning_transport) if learning_transport is not None else None,
+                model=feedback_model,
+                adapter=feedback_adapter_factory(decision) if feedback_adapter_factory else None)
             decision = assembly.runner.decision_making.harness
         policy = decision.policy
         backend.decision_pending = lambda: getattr(policy, 'future', None) is not None

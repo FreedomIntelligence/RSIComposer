@@ -569,10 +569,23 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
     app.run()
 ```
 
+反馈学习位于独立的 `decision_making/feedback/` 包，不导入默认 harness 实现。
+由 `FeedbackLearningService` 管理，`FeedbackAdapter` 只负责模型身份、
+证据快照、发布结果及生命周期接入。默认适配器读取内置执行账本，也可用于 DSH；
+第三方 harness 提供自己的适配器，不需要继承默认 harness 或使用它的 policy/state。
+安装保留原 harness、模型策略和 compactor 实例；普通模型策略可选择 memory-prefix 排序。
+
+`feedback_learning_decision_factory(decision_factory=..., backend=..., model=..., adapter_factory=...)`
+可组合现有 factory。省略 backend 时复用普通 Decision 后端；会话型策略显式提供独立
+反馈后端，例如 `DSHFeedbackBackend(config)`。DSH 反馈采用相同实现与配置，但每份
+反馈创建独立会话，不把整理任务写进 Decision 的会话历史。独立后端必须接入宿主的
+统一准入与预算；医疗示例已提供这层接线，不因替换 harness 重置预算。
+
 该装配先接纳完整反馈，再由接收时的 Decision 模型异步提出 memory、训练样本、harness
 改进或系统改进。建议可兼有多种形式，也可为空；训练样本含未验证的 input/target，
 不会自动训练、修改代码或应用候选。事实指标直接复制回执，解释带来源且保持 unverified。
-`feedback_learning_read` 可分页查看任务或读取某个任务的建议。
+`feedback_learning_read` 可分页查看任务或读取某个任务的建议；指定 `job_id` 和
+`evidence_path`（JSON Pointer）可分页读取原始证据，返回内容指纹与下一页位置。
 
 Attempt 可由反馈整理模型把已观察到的 Decision 和回执增量组织成研究想法；
 Decision 仍说明具体行动、参数与验证计划，不必填写归属。整理沿用反馈学习调用，
@@ -589,14 +602,15 @@ Decision 仍说明具体行动、参数与验证计划，不必填写归属。�
 
 只有原始记录可通过已授权 archive 读取时，才从工作视图移出旧的已完成 Decision
 过程和指纹匹配的重复学习 memory；被修改的 memory 不会被当作旧副本移除。
-此投影不删除反馈或工具回执。容量 compact 继续受 80k/24k 预算约束，并额外保护
-带评测指标的证据、错误回执和未完成任务的依赖历史；保护内容放不下时明确失败。
-原始存储保留完整历史。工具评测使用 `OperationResult.data.quality_metrics` 与
-`data.evidence_refs`，压缩保护完整回执及其历史副本（包括零分）。摘要仍是未验证解释，
-不能把未知结果写成已证实的经验。
+容量 compact 继续受 80k/24k 预算约束。旧的已结束证据在具备授权归档入口时可投影为
+事实卡片：保留指标（包括零分）、状态、身份、来源和原始内容指纹，完整记录仍在原存储。
+最新两条历史、最新工具结果/反馈及未完成任务依赖保持完整；不可再缩减的内容放不下
+仍明确失败。工具评测使用 `OperationResult.data.quality_metrics` 与 `data.evidence_refs`。
+事实卡片由代码提取，不把模型摘要当成已验证证据。
 尚未验证此工作视图比线性历史加 compact 有更好的研究效果或实际 KV cache 命中。
 发起实验和整理反馈的 Decision 版本分别记录；混入模拟证据的学习结果仍标记 simulated。
-后台学习与 Decision 共用串行后端，复用其计数/准入；异步不代表模型推理并行。
+默认共享模型后端时调用串行化；独立反馈后端的并发策略由宿主决定，医疗示例统一串行准入。
+反馈输入以有界证据包进入模型，原始输入另行保留；省略/缩略的内容显式标记，不能声称已阅读。
 学习队列按持久化 `capture_index` 调度和分页，重载后的 JSON 键顺序不影响预算分配；
 旧日志若未记录顺序，仅保留其存储顺序，不能还原原始捕获时间。
 `max_calls` 是额外学习请求的保守预约上限（含 token 预检拒绝），不是整个 run 的调用预算。

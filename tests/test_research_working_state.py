@@ -107,7 +107,7 @@ class ResearchWorkingStateTests(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual([int(r['summary']) for r in a['attempts']], list(range(4, 12)))
 
-    def test_token_compaction_keeps_measured_counterevidence_and_errors_verbatim(self):
+    def test_token_compaction_keeps_small_measured_counterevidence_verbatim(self):
         row, _ = job()
         evidence = HistoryEntry('counterexample', 'feedback', 'old', 'Measured negative', True,
             details={'feedback': {'quality_metrics': {'accuracy': 0.0}, 'status': 'completed'}})
@@ -124,8 +124,8 @@ class ResearchWorkingStateTests(unittest.TestCase):
 
     def test_oversized_protected_evidence_fails_without_committing_compaction(self):
         row, _ = job()
-        evidence = HistoryEntry('huge', 'feedback', None, 'x' * 20000, True,
-                                details={'feedback': {'error': 'important failure'}})
+        evidence = HistoryEntry('huge', 'feedback', None, 'Earlier failure', True,
+                                details={'feedback': {'error': 'important failure ' * 1500}})
         view = research_working_view(replace(context(), history=(evidence, *context().history)), [row], [])
         compactor = BasicContextCompactor(trigger_tokens=10000, target_tokens=5000, summary_tokens=200)
         with self.assertRaises(ContextBudgetError):

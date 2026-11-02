@@ -47,6 +47,7 @@ class DefaultDecisionHarness:
                  model_activator: ModelActivator | None = None, review_tool_limit: int = 4,
                  max_outstanding: int = 1, feedback_selector=None,
                  context_compactor=None, research_agenda=None, attempt_contract=None):
+        self._feedback_listeners, self._context_processors, self._cleanup_callbacks = [], [], []
         self.attempt_contract = attempt_contract if attempt_contract is not None else AttemptContract()
         if not isinstance(self.attempt_contract, AttemptContract):
             raise TypeError('attempt_contract must be an AttemptContract')
@@ -76,6 +77,24 @@ class DefaultDecisionHarness:
         if isinstance(research_tools, ResearchTools):
             research_tools.decision_graph = self._decision_graph
         self.training = JobBook[DecisionTrainingRequest, TrainingResult](learner)
+
+    def add_feedback_listener(self, listener):
+        self._feedback_listeners.append(listener)
+
+    def add_context_processor(self, processor):
+        self._context_processors.append(processor)
+
+    def add_cleanup(self, callback):
+        self._cleanup_callbacks.append(callback)
+
+    def close(self):
+        for callback in reversed(self._cleanup_callbacks):
+            callback()
+
+    def _project_context(self, context):
+        for processor in self._context_processors:
+            context = processor(context)
+        return context
 
     @staticmethod
     def _copy_run_control(context: dict[str, object]) -> dict[str, object]:
@@ -344,7 +363,7 @@ class DefaultDecisionHarness:
             research_agenda=self.research_agenda.context(),
             decision_graph=self._decision_graph(), candidate_origins=deepcopy(self.state.candidate_origins),
         )
-        return context
+        return self._project_context(context)
 
     def review(self, objective: str, progress: ExplorationProgress) -> ReviewDecision:
         return self._review(objective, progress)
@@ -504,7 +523,7 @@ class DefaultDecisionHarness:
     def _call_policy(self, method, context):
         # Reviews can append new tool results to a saved session. Re-project them
         # before every model call; full receipts remain in memory and session state.
-        context = self._refresh_context(context)
+        context = self._project_context(self._refresh_context(context))
         # Model policies budget their final request after adding protocol/schema
         # overhead. Other policies receive the same protected context projection.
         if isinstance(self.policy, ModelDecisionPolicy):
@@ -705,6 +724,8 @@ class DefaultDecisionHarness:
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
         with self._review_scope(directive.directive_id):
             self._receive_feedback(directive, feedback)
+        for listener in self._feedback_listeners:
+            listener(directive, feedback)
 
     def _receive_feedback(self, directive: Directive, feedback: Feedback) -> None:
         """Record the outcome and advance control state; retry the latest delivery safely."""

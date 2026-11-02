@@ -160,7 +160,7 @@ class MedicalProjectContextTests(unittest.TestCase):
 
     def test_feedback_learning_rejects_custom_harness_before_effects(self):
         settings = ExperimentSettings(self.task, self.root / 'blocked', self.root / 'model', feedback_learning=True)
-        with self.assertRaisesRegex(ValueError, 'custom decision harnesses'):
+        with self.assertRaisesRegex(ValueError, 'feedback_adapter_factory'):
             run(settings, decision_backend=SimpleNamespace(generate=lambda request: None),
                 decision_harness_factory=lambda **kwargs: self.fail('Must reject before invoking factory'))
         self.assertFalse(settings.run_dir.exists())
@@ -200,12 +200,12 @@ class MedicalProjectSettingsTests(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     self.settings(resource_allocation=value)
 
-    def test_feedback_learning_defaults_and_unsupported_harness(self):
+    def test_feedback_learning_defaults_and_dsh_configuration(self):
         self.assertFalse(self.settings().feedback_learning)
         with self.assertRaisesRegex(TypeError, 'feedback_learning must be boolean'):
             self.settings(feedback_learning=1)
-        with self.assertRaisesRegex(ValueError, 'default decision harness'):
-            self.settings(feedback_learning=True, decision_harness='dsh', dsh_config=Path('dsh.json'))
+        self.assertTrue(self.settings(feedback_learning=True, decision_harness='dsh',
+                                      dsh_config=Path('dsh.json')).feedback_learning)
         args = ['--task', 'task.json', '--run-dir', 'new-run', '--model-path', 'model']
         self.assertFalse(parser().parse_args(args).feedback_learning)
         parsed = parser().parse_args(args + ['--feedback-learning', '--resource-allocation',

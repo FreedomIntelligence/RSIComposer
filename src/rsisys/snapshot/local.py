@@ -145,6 +145,8 @@ def validate_local_application(app, *, ongoing=False):
         raise RuntimeError('Reconcile interrupted durable recovery before creating a snapshot')
     decision_loop, exploration_loop = app.runner.decision_making, app.runner.exploration
     dm, actor = decision_loop.harness, exploration_loop.harness
+    if getattr(decision_loop, 'feedback_service', None) is not None:
+        raise TypeError('Feedback service requires explicit snapshot/recovery integration')
     from rsisys.runtime.recovery import decision_extension
     extension = ongoing and decision_extension(dm)
     research_configuration(dm)

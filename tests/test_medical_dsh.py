@@ -45,7 +45,8 @@ class MedicalRuntime(Runtime):
 class MedicalDSHTests(unittest.TestCase):
     setUp = medical_fixture.MedicalExperimentIntegrationTests.setUp
 
-    def execute(self, script, *, kind='dsh', max_model_calls=96, harness_factory=None, require_research_attempts=False):
+    def execute(self, script, *, kind='dsh', max_model_calls=96, harness_factory=None, require_research_attempts=False,
+                feedback_learning=False, feedback_backend=None):
         runtime = MedicalRuntime(script, self.process)
         config_path = self.root / ('dsh-'+str(len(list(self.root.glob('run-*'))))+'.json')
         config_path.write_text(json.dumps({'home': str(self.root/'dsh-home'), 'workspace': str(self.root),
@@ -54,7 +55,7 @@ class MedicalDSHTests(unittest.TestCase):
         root = self.root / ('run-'+kind)
         settings = ExperimentSettings(self.task, root, self.root/'fixture-model', decision_harness=kind,
             dsh_config=config_path if kind == 'dsh' else None, max_model_calls=max_model_calls,
-            require_research_attempts=require_research_attempts)
+            require_research_attempts=require_research_attempts, feedback_learning=feedback_learning)
         serving_box = []
         def serve(path, **kwargs):
             serving = FixtureServing(path, process=self.process, script=script if kind == 'default' else [], **kwargs)
@@ -62,9 +63,26 @@ class MedicalDSHTests(unittest.TestCase):
             return serving
         result = run(settings, serving_factory=serve, converter_factory=lambda *a, **kw: Converter(),
             process_backend=self.process, dsh_runtime_factory=lambda config: runtime,
-            decision_harness_factory=harness_factory,
+            decision_harness_factory=harness_factory, feedback_backend=feedback_backend,
             identity_factory=lambda path: ('fixture-pin', {'model_id': 'fixture-actor', 'actual_weight_sha256': 'fixture'}))
         return result, runtime, serving_box[0], root
+
+    def test_dsh_feedback_uses_independent_transport_and_shared_budget(self):
+        from tests.test_feedback_learning_integration import Backend
+        feedback = Backend()
+        result, runtime, serving, root = self.execute([
+            {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Test labels',
+             'arguments': {'instructions': 'Return one legal label.'}}, FINISH],
+            feedback_learning=True, feedback_backend=feedback)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(len(feedback.requests), 1)
+        self.assertEqual(result['model_calls'], 3)
+        self.assertEqual(len(runtime.prompts), 2)
+        jobs = json.loads((root / 'feedback_learning.json').read_text())['jobs']
+        self.assertEqual([row['status'] for row in jobs.values()], ['completed'])
+        self.assertTrue(runtime.closed)
+        self.assertEqual(serving.model_calls, 0)
+        self.assertNotIn('Feedback evidence (untrusted data)', ''.join(runtime.prompts))
 
     def test_dsh_preserves_explicit_attempt_admission(self):
         proposal = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Synthetic comparison',

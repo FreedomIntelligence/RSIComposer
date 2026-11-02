@@ -1,35 +1,56 @@
-"""Opt-in learning from completed experiments with receipt-backed memory views."""
+"""Default-ledger adapter for the independent feedback learning service.
+
+Default and DSH harnesses retain their own policies, scheduling and compaction.
+Other harnesses supply FeedbackAdapter rather than inheriting this implementation.
+"""
 from copy import deepcopy
 from dataclasses import asdict, replace
 
-from rsisys.loops._memory import Memory
+from ..feedback import FeedbackAdapter, FeedbackEvidence, FeedbackLearningService
 from ..action_space import OperationCall, OperationResult, OperationSpec
-from .context import encoded, result_id
+from .context import result_id
 from .engine import DefaultDecisionHarness
 from .feedback_learning import FeedbackLearning, SerializedLearningBackend
-from .learning_policy import MemoryPrefixDecisionPolicy
 from .research_state import research_working_view
 
 
-class FeedbackLearningHarness(DefaultDecisionHarness):
-    def __init__(self, *args, feedback_learning: FeedbackLearning, **kwargs):
-        super().__init__(*args, **kwargs)
-        if (not isinstance(self.policy, MemoryPrefixDecisionPolicy)
-                or self.policy.backend is not feedback_learning.backend):
-            raise ValueError('Decision and learning must share the serialized backend and memory-prefix policy')
-        self.feedback_learning = feedback_learning
-        self.last_working_view = None
+# Compatibility for callers that used the old class's memory conversion helper.
+# Installation no longer constructs a specialized harness subclass.
+FeedbackLearningHarness = FeedbackLearningService
 
-    def receive_feedback(self, directive, feedback):
-        # Existing validation, idempotence, ledger and delivery acknowledgement
-        # semantics remain authoritative. Learning is never the terminal receipt.
-        super().receive_feedback(directive, feedback)
-        self.feedback_learning.capture(directive, feedback, self.policy.model,
-            self.memory.history(),
-            evaluations=tuple(self.state.candidate_evaluations.values()),
-            research_context=self._learning_scope(directive.directive_id),
-            grouping_context=self._grouping_scope(directive.directive_id))
-        self.feedback_learning.poll()
+
+class DefaultFeedbackAdapter:
+    """Translate the built-in execution ledger; the learning service is agnostic."""
+    def __init__(self, harness, model=None):
+        self.harness, self._model = harness, model
+        self.service = None
+
+    def __getattr__(self, name):
+        return getattr(self.harness, name)
+
+    def model(self):
+        return self._model or self.harness.policy.model
+
+    def evidence(self, directive, feedback):
+        return FeedbackEvidence(self.memory.history(), tuple(self.state.candidate_evaluations.values()),
+            self._learning_scope(directive.directive_id), self._grouping_scope(directive.directive_id))
+
+    def publish(self, memory):
+        self.memory.remember(memory)
+
+    def decision_ids(self):
+        return tuple(self.state.decision_records)
+
+    def install(self, service):
+        self.service = service
+        self.harness.add_feedback_listener(service.receive_feedback)
+        self.harness.add_context_processor(self.project_context)
+        self.harness.add_cleanup(service.close)
+        # Read-only compatibility/navigation used by monitor and existing callers.
+        self.harness.feedback_learning = service.learning
+        self.harness.feedback_service = service
+        self.harness.attempt_interpretations = service.attempts
+        self.harness.last_working_view = None
 
     def _grouping_scope(self, directive_id):
         """Bounded evidence window, independent of canonical execution membership."""
@@ -82,7 +103,7 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
                 'truncated': len(decisions) < len(records), 'receipt_decision_id': ident}
 
     def attempt_interpretations(self):
-        return self.feedback_learning.attempts(self.state.decision_records)
+        return self.service.attempts()
 
     def _learning_scope(self, directive_id):
         """Snapshot canonical membership; never infer groups from a proposal/title."""
@@ -104,60 +125,13 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
         provenance = self.state.directive_provenance.get(directive_id)
         scope['issuing_decision_model'] = (asdict(provenance.decision_model)
             if provenance is not None and provenance.decision_model is not None else None)
-        scope['learning_decision_model'] = asdict(self.policy.model)
+        scope['learning_decision_model'] = asdict(self.model())
         return {**scope, 'snapshot_digest': result_id(scope)}
 
-    @staticmethod
-    def _memory(row):
-        proposals = [p for p in row['proposals'] if p['kind'] == 'memory']
-        interpretations = row.get('attempt_revisions', [])
-        if not proposals and not interpretations:
-            return None
-        receipt = row['input']['receipt']
-        feedback, directive = receipt['feedback'], receipt['directive']
-        # These fields are copied from receipts, not rewritten by the model.
-        facts = {key: feedback[key] for key in ('directive_id', 'status', 'quality_metrics',
-            'training_metrics', 'execution_metrics', 'error', 'evidence_refs', 'adopted_candidate_ids')}
-        facts.update(mode=directive['mode'], candidate_ids=[c['candidate_id'] for c in feedback['candidates']])
-        return Memory('feedback-learning:' + row['job_id'], 'episodic',
-            encoded({'receipt_facts': facts, 'interpretations': proposals, 'learned_by': row['model'],
-                     'research_context': row['input'].get('research_context', {}),
-                     'attempt_interpretations': interpretations,
-                     'simulated': row['simulated'], 'authority': 'unverified_interpretations',
-                     'read_operation': 'feedback_learning_read', 'job_id': row['job_id']}),
-            tuple(row['input']['source_refs']),
-            applicability=encoded({'objective': directive['objective'], 'experiment': directive['directive_id'],
-                                   'scope': 'This experiment and its original model/protocol; not current global state'}),
-            status='unverified')
-
-    def _publish(self):
-        for ident, row in list(self.feedback_learning.state['jobs'].items()):
-            if row['status'] != 'completed' or row.get('published'):
-                continue
-            memory = self._memory(row)
-            if memory is not None:
-                self.memory.remember(memory)
-            state = deepcopy(self.feedback_learning.state)
-            state['jobs'][ident].update(published=True,
-                memory_digest=result_id(asdict(memory)) if memory is not None else None)
-            # If persistence fails, retry publishing the same deterministic ID.
-            self.feedback_learning._commit(state)
-
-    def _context(self, objective, action_space=None):
-        self.feedback_learning.poll()
-        self._publish()
-        return self._working_context(super()._context(objective, action_space))
-
-    def _refresh_context(self, context):
-        self.feedback_learning.poll()
-        self._publish()
-        context = super()._refresh_context(context)
-        # Rebuild from the store, never from an already projected review snapshot.
+    def project_context(self, context):
+        self.service.refresh()
         context = replace(context, memories=self.memory.recall(limit=self.memory_limit))
-        return self._working_context(context)
-
-    def _working_context(self, context):
-        jobs = self.feedback_learning.ordered_jobs()
+        jobs = self.service.learning.ordered_jobs()
         navigation = {'read_operation': 'feedback_learning_read',
             'authority': 'unverified_proposals', 'total': len(jobs),
             'recent': [{'job_id': row['job_id'], 'status': row['status'],
@@ -165,24 +139,24 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
                         'kinds': [p['kind'] for p in row['proposals']]} for row in jobs[-6:]]}
         context = replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
         view = research_working_view(context, jobs, self.attempt_interpretations()['items'])
-        self.last_working_view = deepcopy({'research_state': view.research_state,
+        self.harness.last_working_view = deepcopy({'research_state': view.research_state,
             'projection': view.research_agenda['working_projection'],
             'scope': 'last assembled view before token-budget compaction',
             'history_records_before': len(context.history), 'history_records_after': len(view.history),
             'memories_before': len(context.memories), 'memories_after': len(view.memories)})
         return view
 
-    def close(self, *, timeout=30):
-        self.feedback_learning.close(timeout=timeout)
-        self._publish()
-
 
 READ_SPEC = OperationSpec('feedback_learning_read',
     'Read feedback-learning job status or its proposed memory/training material/harness/system changes. '
     'These are unverified proposals, never applied changes or training-ready examples. '
-    'Omit job_id to list jobs; use next_offset for the next page.',
+    'Omit job_id to list jobs; use next_offset for the next page. '
+    'With job_id and evidence_path (JSON pointer, empty for root), read original evidence '
+    'in JSON-text pages; offset counts characters and each limit unit is 128 characters.',
     {'type': 'object', 'properties': {
         'job_id': {'type': 'string', 'minLength': 1},
+        'evidence_path': {'type': 'string', 'maxLength': 1000,
+                          'description': 'JSON pointer into original evidence; requires job_id.'},
         'research_attempt_id': {'type': 'string', 'minLength': 1, 'maxLength': 200,
                                 'description': 'Filter job listings by a recorded attempt ID.'},
         'offset': {'type': 'integer', 'minimum': 0},
@@ -191,10 +165,15 @@ READ_SPEC = OperationSpec('feedback_learning_read',
 
 
 def _read_arguments(arguments):
-    if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit'}:
+    if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit', 'evidence_path'}:
         raise ValueError('Invalid feedback_learning_read arguments')
     if 'job_id' in arguments and (not isinstance(arguments['job_id'], str) or not arguments['job_id'].strip()):
         raise ValueError('job_id must be a nonempty string')
+    if 'evidence_path' in arguments:
+        pointer = arguments['evidence_path']
+        if ('job_id' not in arguments or not isinstance(pointer, str) or len(pointer) > 1000
+                or (pointer and not pointer.startswith('/'))):
+            raise ValueError('evidence_path requires job_id and a bounded JSON pointer')
     if 'research_attempt_id' in arguments:
         ident = arguments['research_attempt_id']
         if not isinstance(ident, str) or not ident.strip() or len(ident) > 200 or 'job_id' in arguments:
@@ -244,63 +223,63 @@ class LearningTools:
                                bool(data.get('simulated', False)), data=data)
 
 
-def feedback_learning_decision_factory(**learning_options):
-    """Return an Application decision_factory; no current run is reconfigured.
-
-    The ordinary assembly supplies tools, permissions and memories. Full snapshot
-    and durable Runner restoration still require an explicit extension contract.
-    The optional learning journal alone persists its own completed/pending jobs.
-    """
+def feedback_learning_decision_factory(*, decision_factory=None, backend=None, model=None,
+                                       adapter_factory=None, **learning_options):
+    """Compose feedback with any decision factory and explicit adapter/model backend."""
     def build(context, exploration):
         from rsisys.assembly import build_default_decision
-        return _build(context, exploration, build_default_decision, learning_options)
+        loop = (decision_factory or build_default_decision)(context, exploration)
+        path = context.data_dir / 'feedback_learning.json' if context.data_dir is not None else None
+        adapter = adapter_factory(loop.harness) if adapter_factory else None
+        enable_feedback_learning(loop, path=path, backend=backend, model=model,
+                                 adapter=adapter, **learning_options)
+        context.add_cleanup(loop.feedback_service.close)
+        return loop
     return build
 
 
-def _build(context, exploration, default_factory, options):
-    base_loop = default_factory(context, exploration)
-    path = context.data_dir / 'feedback_learning.json' if context.data_dir is not None else None
-    enable_feedback_learning(base_loop, path=path, **options)
-    context.add_cleanup(base_loop.harness.close)
-    return base_loop
+def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None, **options):
+    """Attach once before execution, retaining harness and compactor identities.
 
-
-def enable_feedback_learning(base_loop, *, path=None, **options):
-    """Install before running; keep domain policy parsing, budgets and identities.
-
-    This is an assembly operation, not a live-run reconfiguration API. Custom
-    harnesses and nonempty decision state require their own integration contract.
+    An explicit backend may differ from the decision backend. It must enforce its
+    host's shared admission/budget when that deployment has a global call limit.
+    Custom harnesses supply a FeedbackAdapter with lifecycle/context integration.
     """
     from .policy import ModelDecisionPolicy
-    from .state import DecisionState
     base = base_loop.harness
-    if type(base) is not DefaultDecisionHarness:
-        raise TypeError('Feedback learning requires an unstarted default harness')
-    pristine = DecisionState()
-    pristine.operation_results = list(base.state.operation_results)
-    if base.state != pristine:
-        raise ValueError('Install feedback learning before the first decision')
-    if not isinstance(base.policy, MemoryPrefixDecisionPolicy) and type(base.policy) is not ModelDecisionPolicy:
-        raise TypeError('Custom policies must implement MemoryPrefixDecisionPolicy')
-    space = LearningActionSpace(base_loop.action_space)
-    backend = SerializedLearningBackend(base.policy.backend)
-    policy = base.policy
-    if not isinstance(policy, MemoryPrefixDecisionPolicy):
-        policy = MemoryPrefixDecisionPolicy(backend, base.policy.model,
-            directives=base.policy.directives, allowed_actions=base.policy.allowed_actions,
-            max_validation_attempts=base.policy.max_validation_attempts,
-            structured_output=base.policy.structured_output, context_compactor=base.context_compactor,
-            project_context=base.policy.project_context, attempt_contract=base.policy.attempt_contract)
+    if getattr(base_loop, 'feedback_service', None) is not None:
+        raise ValueError('Feedback learning is already installed')
+    if adapter is None:
+        if not isinstance(base, DefaultDecisionHarness):
+            raise TypeError('Custom decision harness requires an explicit FeedbackAdapter')
+        from .state import DecisionState
+        pristine = DecisionState()
+        pristine.operation_results = list(base.state.operation_results)
+        if base.state != pristine:
+            raise ValueError('Install feedback learning before the first decision')
+        adapter = DefaultFeedbackAdapter(base, model=model)
+    for method in ('model', 'evidence', 'publish', 'decision_ids', 'install'):
+        if not callable(getattr(adapter, method, None)):
+            raise TypeError('FeedbackAdapter requires ' + method)
+    policy = getattr(base, 'policy', None)
+    if backend is None or (isinstance(policy, ModelDecisionPolicy) and backend is policy.backend):
+        # Shared stateless backend is a convenience of this adapter, not a service requirement.
+        if not isinstance(policy, ModelDecisionPolicy):
+            raise ValueError('Session/custom policies require an explicit feedback backend')
+        shared = (policy.backend if isinstance(policy.backend, SerializedLearningBackend)
+                  else SerializedLearningBackend(policy.backend))
+        backend = shared
+        policy.backend = shared
+    backend = backend if isinstance(backend, SerializedLearningBackend) else SerializedLearningBackend(backend)
     learning = FeedbackLearning(backend, path=path, **options)
-    policy.backend = backend
-    if hasattr(policy, 'space'):
-        policy.space = space
-    harness = FeedbackLearningHarness(policy, LearningTools(base.tools, learning), base.experience, base.learner,
-        feedback_learning=learning, experience_limit=base.experience_limit, memory=base.memory,
-        memory_limit=base.memory_limit, model_activator=base.model_activator, review_tool_limit=base.review_tool_limit,
-        max_outstanding=base.max_outstanding, feedback_selector=base.feedback_selector,
-        context_compactor=base.context_compactor, research_agenda=base.research_agenda,
-        attempt_contract=base.attempt_contract)
-    harness.state = base.state
-    base_loop.harness, base_loop.action_space = harness, space
-    return harness
+    service = FeedbackLearningService(learning, adapter)
+    if isinstance(adapter, DefaultFeedbackAdapter):
+        space = LearningActionSpace(base_loop.action_space)
+        base.tools = LearningTools(base.tools, learning)
+        parser = getattr(base.policy, 'parser', base.policy)
+        if hasattr(parser, 'space'):
+            parser.space = space
+        base_loop.action_space = space
+    adapter.install(service)
+    base_loop.feedback_service = service
+    return base

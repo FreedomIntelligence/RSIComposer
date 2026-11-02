@@ -171,18 +171,20 @@ objects describing already available services; it grants no training, adapter
 loading, restart or reconfiguration rights. The allocation is copied and bounded
 to 8192 JSON bytes, depth 8 and 512 values; other top-level fields are rejected.
 
-Feedback learning is disabled by default (`feedback_learning=False`). Python
-callers may opt in with `ExperimentSettings(..., feedback_learning=True)` and an
-explicit independent `decision_backend` passed to `run`; `--feedback-learning`
-exposes the setting for launchers supplying that dependency. The standalone CLI
-cannot supply an independent backend and therefore rejects this opt-in. DSH and
-custom decision harnesses are also rejected until their integration is supported.
-This installs `feedback_learning_read` and persists unverified proposals in
-`feedback_learning.json`; it starts no model training or automatic changes.
-Decision and learning requests share serialized admission, logging and the existing
-model-call budget. This does not promise concurrent inference. The actor uses its
-separate serving resource, and learning attempted during training is rejected.
-Worker monitor events are queued for the controller, including shutdown flushing.
+Feedback learning is disabled by default (`feedback_learning=False`). Enable it
+with `ExperimentSettings(..., feedback_learning=True)` or `--feedback-learning`.
+The default harness requires an independent `decision_backend` or `feedback_backend`;
+DSH can use isolated feedback sessions with the same runtime configuration, or an
+explicit `feedback_backend`. Optional `feedback_model` selects its model identity.
+Custom harness factories also supply `feedback_adapter_factory` for their evidence
+and publication contract; they need not subclass the default harness.
+
+The feedback service preserves the chosen harness, policy and compactor. It installs
+`feedback_learning_read` through the built-in ledger adapter and journals unverified
+proposals; it does not train or apply changes. Both decision and feedback transports
+pass through the same serialized admission gate, output recovery and model-call budget.
+Feedback never reuses the DSH decision session cursor. Inference during training is
+rejected; worker monitor events are queued for the controller and flushed at shutdown.
 
 The Transformers backend stops researcher generation after one complete final JSON object (the policy still
 checks the action schema and permissions). Reasoning and incomplete JSON cannot

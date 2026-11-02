@@ -1,13 +1,12 @@
 """Research-oriented working context, derived without another model call.
 
-Interpretations never authorize dropping evidence. Only duplicate, fingerprinted
-learning memories and old completed decision scaffolding leave the working view;
-receipts remain available to the ordinary token-budget compactor and archive.
+Interpretations never authorize dropping evidence. Old receipts may use exact
+factual cards with authorized links to originals; live receipts remain complete.
 """
 from copy import deepcopy
 from dataclasses import asdict, replace
 
-from .context import result_id
+from .context import encoded, result_id
 
 
 def archive_available(context, collection):
@@ -25,22 +24,134 @@ def ordered_jobs(context, jobs):
 
 
 def receipt_needs_protection(receipt):
-    """OperationResult stores business metrics and evidence in data."""
+    """Recognize structured facts, including nested evaluation/training receipts."""
+    if isinstance(receipt, (tuple, list)):
+        return any(receipt_needs_protection(value) for value in receipt)
     if not isinstance(receipt, dict):
         return False
-    if (receipt.get('error') or receipt.get('quality_metrics')
-            or receipt.get('status') in ('failed', 'cancelled', 'rejected')):
-        return True
-    data = receipt.get('data')
-    return isinstance(data, dict) and bool(data.get('quality_metrics'))
+    for key, value in receipt.items():
+        if ((key in ('error', 'validation_error', 'metrics') or key.endswith('_metrics')) and value
+                or key == 'status' and value in ('failed', 'cancelled', 'rejected')
+                or key == 'evidence_card' or receipt_needs_protection(value)):
+            return True
+    return False
 
 
 def evidence_needs_protection(entry):
     """Conservative mechanical rule; never ask prose to classify contradictions."""
-    details = entry.details
-    return bool(details.get('error') or details.get('validation_error')
-        or details.get('quality_metrics')
-        or any(receipt_needs_protection(details.get(key)) for key in ('feedback', 'result')))
+    return receipt_needs_protection(entry.details)
+
+
+def live_evidence_ids(context):
+    """Follow all active dependency/source/adoption edges before any projection."""
+    graph = {r['decision_id']: r for r in context.decision_graph}
+    decisions = {ident for ident, row in graph.items()
+                 if row['status'] not in ('completed', 'failed', 'cancelled')}
+    directives = {d.directive_id for d in context.outstanding}
+    for execution in (context.execution, *context.executions.values()):
+        if execution.progress is not None:
+            directives.add(execution.progress.directive_id)
+    for h in context.history:
+        if h.task_id in directives and h.details.get('decision_id'):
+            decisions.add(h.details['decision_id'])
+    pending = list(decisions)
+    while pending:
+        row = graph.get(pending.pop(), {})
+        for key in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_decision_ids'):
+            for ident in row.get(key, ()):
+                if ident not in decisions:
+                    decisions.add(ident)
+                    pending.append(ident)
+    return decisions, directives
+
+
+def full_history_ids(context):
+    decisions, directives = live_evidence_ids(context)
+    latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
+    latest_result = result_id(asdict(context.operation_results[-1])) if context.operation_results else None
+    return {h.record_id for h in context.history[-2:]} | {
+        h.record_id for h in context.history
+        if h.record_id in decisions or h.details.get('decision_id') in decisions
+        or h.task_id in directives
+        or latest_feedback is not None and h.kind == 'feedback' and h.task_id == latest_feedback
+        or latest_result is not None and isinstance(h.details.get('result'), dict)
+        and result_id(h.details['result']) == latest_result}
+
+
+def factual_fields(value, path=''):
+    """Copy structured fields at exact JSON pointers; never interpret prose.
+
+    Unknown containers are traversed, not copied wholesale. Metric maps, IDs,
+    reference fields and model/artifact identities retain their complete values.
+    Lists retain their original indices in the pointers. Prose and duplicate
+    directives are recoverable through the card's digest-qualified archive link.
+    """
+    facts = {}
+    if isinstance(value, dict):
+        if ({'backend_id', 'model_id', 'revision'} <= value.keys()
+                or {'artifact_id', 'kind', 'uri'} <= value.keys()):
+            return {path: deepcopy(value)}
+        for key, item in value.items():
+            pointer = path + '/' + key.replace('~', '~0').replace('/', '~1')
+            if (key in ('metrics', 'status', 'simulated', 'error', 'validation_error',
+                        'mode', 'base_version', 'parent_system', 'digest')
+                    or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics'))):
+                facts[pointer] = deepcopy(item)
+            else:
+                facts.update(factual_fields(item, pointer))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            facts.update(factual_fields(item, path + '/' + str(index)))
+    return facts
+
+
+def evidence_working_view(context):
+    """Bound old payloads, preserving every structured fact and exact originals.
+
+    Capability checks are per collection. A card is retained as protected state,
+    never fed through a lossy summary. If factual cards plus required live state
+    are still too large, the token compactor must fail without committing.
+    """
+    full = full_history_ids(context)
+    decisions, directives = live_evidence_ids(context)
+    latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
+    live_results = {result_id(h.details['result']) for h in context.history
+                    if h.record_id in full and isinstance(h.details.get('result'), dict)}
+    projected = {}
+    for collection in ('history', 'experience', 'operation_results'):
+        rows = getattr(context, collection)
+        if not archive_available(context, collection):
+            continue
+        output = []
+        for index, row in enumerate(rows):
+            original = asdict(row)
+            if collection == 'operation_results':
+                ident = result_id(original)
+                required = index == len(rows) - 1 or ident in live_results
+                already_card = 'evidence_card' in row.data
+            else:
+                ident = row.record_id
+                required = (ident in full or ident in decisions
+                    or row.details.get('decision_id') in decisions
+                    or getattr(row, 'directive_id', None) in directives
+                    or latest_feedback is not None
+                    and getattr(row, 'directive_id', None) == latest_feedback)
+                already_card = 'evidence_card' in row.details
+            if required or already_card or not receipt_needs_protection(original):
+                output.append(row)
+                continue
+            card = {'evidence_card': {'schema_version': 1, 'authority': 'exact_structured_fields',
+                        'sha256': result_id(original),
+                        'read_path': {'operation': 'research_archive', 'collection': collection,
+                                      'record_id': ident}},
+                    'facts': factual_fields(original)}
+            updates = {'summary': 'Archived evidence; read original for prose and qualifications.'}
+            updates['data' if collection == 'operation_results' else 'details'] = card
+            candidate = replace(row, **updates)
+            # Small receipts stay verbatim; cards must actually reduce the view.
+            output.append(candidate if len(encoded(asdict(candidate))) < len(encoded(original)) else row)
+        projected[collection] = tuple(output)
+    return replace(context, **projected)
 
 
 def research_working_view(context, jobs, attempts, *, recent=8):
@@ -49,16 +160,7 @@ def research_working_view(context, jobs, attempts, *, recent=8):
     active = {r['decision_id'] for r in context.decision_graph
               if r['status'] not in ('completed', 'failed', 'cancelled')}
     graph = {r['decision_id']: r for r in context.decision_graph}
-    live_dependencies = set(active)
-    pending_dependencies = list(active)
-    while pending_dependencies:
-        row = graph.get(pending_dependencies.pop(), {})
-        for key in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_decision_ids'):
-            for ident in row.get(key, ()):
-                if ident not in live_dependencies:
-                    live_dependencies.add(ident)
-                    pending_dependencies.append(ident)
-    outstanding = {d.directive_id for d in context.outstanding}
+    live_dependencies, outstanding = live_evidence_ids(context)
     ranked_attempts = sorted(attempts, key=lambda a: (
         bool(active.intersection(a['member_decision_ids'])), rank.get(a['provenance']['job_id'], -1), a['attempt_id']))
     selected = [a for a in ranked_attempts if active.intersection(a['member_decision_ids'])
@@ -118,7 +220,7 @@ def research_working_view(context, jobs, attempts, *, recent=8):
         'memories': {'omitted_count': len(removed_memories),
                      'sha256': result_id([asdict(m) for m in removed_memories]),
                      'read_path': {'operation': 'research_archive', 'collection': 'memories'}},
-        'evidence_policy': 'No feedback or operation receipt is removed by this projection. '
-                           'Token compaction remains separately budgeted and source-linked.'}
+        'evidence_policy': 'Old evidence may use exact factual cards linked to authorized archives. '
+                           'Latest and live receipts remain complete; factual cards cannot be summarized away.'}
     return replace(context, research_state=state, memories=memories, history=history,
                    research_agenda={**context.research_agenda, 'working_projection': projection})
