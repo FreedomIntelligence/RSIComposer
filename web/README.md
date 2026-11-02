@@ -194,3 +194,5 @@ PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED
 导出只从该 run 的 decision_memory.json、result.json 和原监控事件生成公开字段，并原子更新 monitor.json；不改训练结果、时间戳或模型文件，不启动训练。source=history 表示真实历史记录，缺失的时间与中间步数保持未知。这个导出器属于 toycase；其他 Harness 自行生产同样的轻量监控字段，不需要适配统一训练数据格式。
 
 监控生产端保留系统生成的 `decision_id`。采纳仅从成功 `OperationResult` / `Feedback` 的 `adopted_candidate_ids` 与已成功产出的候选来源对应；评测不会变成候选生产者，失败或未知来源不画采纳边。离线导出沿用历史中的明确身份和回执。参考端到端示例 `PYTHONPATH=src:. python examples/decision_graph.py --run-dir runs/decision-graph-demo`；它使用模拟任务验证并行、组合采纳和后续消费，不代表真实模型训练。
+
+项目管理页按项目内最近一次实验的 `updated_at` 倒序排列；项目内实验同样按更新时间倒序。缺失或无效时间置后，相同时间保留清单原顺序；自动刷新本身不改变更新时间。

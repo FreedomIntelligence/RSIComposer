@@ -679,3 +679,14 @@ test("candidate stages, complete records, folded selection and per-view cameras 
   h.get("lang-en").listeners.click();assert.match(textOf(h.get("project-content")),/All records/);assert.match(textOf(h.get("project-content")),/Original finish 40/);
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"finish-40");
 });
+
+
+test("management orders projects and experiments by real update time, with unknown dates last", () => {
+  const h=harness();
+  setup(h,[project("older",[run("old",{updated_at:"2026-11-01T00:00:00Z"})]),
+    project("active",[run("invalid",{updated_at:"bad"}),run("earlier",{updated_at:"2026-11-01T01:00:00Z"}),run("latest",{updated_at:"2026-11-02T08:00:00+08:00"}),run("tie",{updated_at:"2026-11-02T00:00:00Z"})]),
+    project("unknown",[run("missing",{updated_at:null})])]);
+  assert.deepEqual(h.json("state.projects.map(p=>[p.project_id,p.runs.map(r=>r.run_id)])"),[
+    ["active",["latest","tie","earlier","invalid"]],["older",["old"]],["unknown",["missing"]]
+  ]);
+});

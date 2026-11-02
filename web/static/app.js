@@ -224,7 +224,14 @@ function normalizeProjects(input) {
       seenRuns.add(row.run_id);target.runs.push(row);
     }
   }
-  return [...projects.values()];
+  // Use experiment activity, never catalog fetch time, as project recency.
+  const updated = row => {
+    const time = typeof row.updated_at === "string" ? Date.parse(row.updated_at) : NaN;
+    return Number.isFinite(time) ? time : -Infinity;
+  };
+  const groups = [...projects.values()];
+  for (const group of groups) group.runs.sort((a,b) => updated(b)-updated(a) || 0);
+  return groups.sort((a,b) => updated(b.runs[0] || {})-updated(a.runs[0] || {}) || 0);
 }
 const listStrings = v => Array.isArray(v) ? v.filter(identifier) : [];
 const runRows = project => list(project?.runs).filter(r => identifier(r.run_id));
