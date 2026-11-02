@@ -272,11 +272,16 @@ function graphIssues(model,scope,runID) {
 }
 const changeLabels = {instructions:"提示词内容",method:"训练方法",recipe_ref:"训练方案",protocol_ref:"评测方案",candidate_id:"待验证版本",apply_result:"训练后自动应用",steps:"训练步数",lr:"学习率",seed:"随机种子",weight_decay:"权重衰减",warmup_ratio:"预热比例",updates:"更新次数",components:"改动部分",query:"检索内容",url:"阅读地址",artifact_id:"资料引用",offset:"起始位置",limit:"数量"};
 function changesView(row,s) {
-  const changes=list(row.changes).filter(c=>typeof c.field==="string"&&c.field!=="base_version"&&(typeof c.after==="string"||typeof c.before==="string"));
+  const opaque=value=>typeof value==="string" && /(?:^|:)[a-f\d]{32,}$|^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value.trim());
+  const changes=list(row.changes).filter(c=>typeof c.field==="string"&&!['base_version','artifact_id'].includes(c.field))
+    .map(c=>{
+      if(c.field==="candidate_id"||["instructions","query","url"].includes(c.field))return c;
+      const shown={...c};for(const key of ["before","after"])if(opaque(shown[key]))delete shown[key];return shown;
+    }).filter(c=>typeof c.after==="string"||typeof c.before==="string");
   if(!changes.length)return null;
   const box=el("div","decision-changes");box.append(el("p","flow-label",t("提交内容")));
   for(const change of changes){
-    const item=el("div","change-item");item.append(el("h5","",t(changeLabels[change.field])||change.field));
+    const item=el("div",[change.before,change.after].some(v=>typeof v==="string"&&v.length>120)||["instructions","query","url"].includes(change.field)?"change-item is-text":"change-item");item.append(el("h5","",t(changeLabels[change.field])||change.field));
     const value=text=>{
       if(change.field==="candidate_id"){
         const candidates=list(s.candidates),matches=candidates.filter(c=>c.candidate_id===text);
@@ -309,8 +314,7 @@ function decisionStep(row,s,index) {
   if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
     const component=list(row.changes).find(c=>c.field==="components")?.after;
     const prompt=typeof component==="string"&&/prompt|instructions/.test(component);
-    decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果；评测通过与实际采用是两个独立步骤。"):t("检验待验证版本的效果；评测通过与实际采用是两个独立步骤。")));
-    if(!row.protocol_ref&&!list(row.changes).some(c=>c.field==="protocol_ref"))decision.append(el("p","quiet-note",t("评测方案未记录。")));
+    decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果。"):t("检验待验证版本的效果。")));
   }
   const explicit=concreteFeedback(row),error=object(row.feedback).error||row.error;
   if(explicit||error){feedback.append(el("p","flow-label",t("实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
@@ -350,10 +354,7 @@ function experimentLogs(s,scope,projection) {
       const group=projection.nodes.find(n=>n.members?.some(member=>member.key===record.key));
       const step=decisionStep(record.row,s,records.indexOf(record));
       detail.append(el("li","quiet-note log-membership",group?attemptTitle(group):t("未记录研究尝试")),step);
-      // The public record retains exact relation endpoints, including rejected
-      // raw references and cross-Attempt evidence omitted from a child subgraph.
-      const evidence=el("pre","log-evidence",JSON.stringify(record.row,null,2));
-      step.append(retainedDetails(JSON.stringify([s.run_id,"evidence",record.key]),scope.flowOpen,t("原始决策记录"),evidence));
+
     }
   };
   for(const record of records){
@@ -422,15 +423,7 @@ function executionSequence(s, scope) {
           const info=g.interpretation;
           if(present(info.summary))stages.append(el("p","result-summary attempt-summary",info.summary));
           if(g.missingDecisionIDs?.length)stages.append(el("p","quiet-note",t("部分详情未包含在当前快照中（{p0} 条）。",{p0:g.missingDecisionIDs.length})));
-          const provenance=el("div","attempt-provenance"),source=object(info.provenance),model=object(source.model);
-          for(const value of [model.model_id,model.revision,source.job_id,source.input_digest])if(present(value))provenance.append(el("p","",String(value)));
-          if(present(info.revision))provenance.append(el("p","",t("整理版本 {p0}",{p0:info.revision})));
-          if(info.simulated===true)provenance.append(el("p","",t("模拟整理")));
-          for(const ref of listStrings(info.source_refs))if(typeof ref==="string")provenance.append(el("p","",ref));
-          if(g.missingDecisionIDs?.length)provenance.append(el("pre","",g.missingDecisionIDs.join("\n")));
-          const history=list(s.research_attempts?.revisions).filter(r=>r.attempt_id===info.attempt_id);
-          for(const revision of history)provenance.append(el("p","",`${revision.revision ?? ""} · ${revision.summary || ""}`));
-          stages.append(retainedDetails(JSON.stringify([s.run_id,key,"interpretation"]),scope.flowOpen,t("整理来源与历史"),provenance));
+
         }
         if(!members.length){entries.append(stages);continue;}
         const childHeading=el("div","attempt-heading");childHeading.append(el("p","flow-label",t("尝试内决策")),el("p","quiet-note",t("{p0} 次决策",{p0:members.length})));stages.append(childHeading);

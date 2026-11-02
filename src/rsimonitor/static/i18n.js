@@ -80,8 +80,8 @@
   "原值：{p0}": "Previously: {p0}",
   "实际结果": "Observed result",
   "决策理由": "Reason for the decision",
-  "检验新提示词的效果；评测通过与实际采用是两个独立步骤。": "Test the new prompt. Passing evaluation and applying it are separate steps.",
-  "检验待验证版本的效果；评测通过与实际采用是两个独立步骤。": "Test the proposed version. Passing evaluation and applying it are separate steps.",
+  "检验新提示词的效果。": "Test the new prompt.",
+  "检验待验证版本的效果。": "Test the proposed version.",
   "评测方案未记录。": "Evaluation protocol not recorded.",
 
   "本次运行的决策": "Decisions in this run",

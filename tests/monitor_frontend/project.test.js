@@ -663,3 +663,14 @@ test("management orders projects and experiments by real update time, with unkno
     ["active",["latest","tie","earlier","invalid"]],["older",["old"]],["unknown",["missing"]]
   ]);
 });
+
+
+test("dashboard hides opaque references and raw audit records while retaining useful parameters and original data",()=>{
+  const hash="717a5ac34d36362ba1f610555707f3570ed238cc5b1a0c5030d03043a8892143",h=harness();
+  setup(h,[project("p",[run("a")])]);
+  const changes=[{field:"recipe_ref",after:"medical-native:"+hash},{field:"artifact_id",after:"internal-artifact"},{field:"steps",after:"64"},{field:"lr",after:"0.0001"},{field:"instructions",after:"Return one answer."}];
+  seed(h,"a",attemptRun("a",{decisions:[{decision_id:"d",kind:"directive",mode:"train",reason:"Test a longer training schedule",changes}]}));h.run('selectRun("a")');selectDecision(h,"d");
+  const text=textOf(h.get("project-content"));assert.doesNotMatch(text,/medical-native:|717a5ac|internal-artifact|整理来源与历史|原始决策记录/);assert.match(text,/64/);assert.match(text,/0.0001/);assert.match(text,/Return one answer/);
+  assert.equal(h.run('state.snapshot.decisions[0].changes[0].after'),"medical-native:"+hash);
+  const box=h.run('changesView({changes:[{field:"recipe_ref",after:"medical-native:'+hash+'"}]},state.snapshot)');assert.equal(box,null);
+});

@@ -90,7 +90,7 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .execution-sequence { margin: 24px 0 0; }
 .execution-sequence h4 { margin: 0; font-size: 21px; }
 .flow-steps { list-style: none; padding: 0; margin: 18px 0 0; }
-.flow-step { display: flex; flex-direction: column; gap: 22px; padding: 0; }
+.flow-step { display: flex; flex-direction: column; gap: 16px; padding: 0; }
 .flow-step > * { min-width: 0; }
 .flow-index { display: none; }
 .flow-label { color: var(--muted); font-size: 14px !important; margin-bottom: 7px; }
@@ -139,8 +139,9 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 
-.decision-changes { margin-top: 20px; }
-.change-item { margin-top: 12px; padding: 14px 18px; background: var(--panel); border-radius: 6px; }
+.decision-changes { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,220px),1fr)); gap: 8px; }
+.decision-changes > .flow-label, .change-item.is-text { grid-column: 1 / -1; }
+.change-item { margin-top: 0; padding: 10px 14px; background: var(--panel); border-radius: 6px; }
 .change-item h5 { margin: 0 0 6px; font: 500 14px var(--sans); color: var(--muted); }
 .change-value, .change-before, .result-summary, .result-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 .change-before { color: var(--muted); margin-bottom: 8px; }
@@ -198,4 +199,3 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 .experiment-log-records { display: grid; justify-items: start; gap: 6px; max-height: 240px; overflow-y: auto; }
 .experiment-log-record { text-align: left; font-size: 13px; }
 .experiment-log-record[aria-pressed="true"] { color: var(--orange); }
-.log-evidence { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }

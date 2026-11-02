@@ -68,7 +68,7 @@ test("a valid A1 to B1 to A2 continuation stays Attempt-only and retains cyclic 
   const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,2);assert.equal(child(h),undefined);
   assert.match(textOf(host(h)),/保留研究尝试节点与已记录关系/);assert.doesNotMatch(textOf(host(h)),/已展开全部决策|全部记录/);
   choose(h,a.key);assert.equal(childNodes(h).length,2);chooseChild(h,"a2");assert.match(textOf(host(h)),/reason-a2/);
-  log(h,"a2");assert.match(findClass(host(h),"log-evidence")[0].textContent,/"adopted_decision_ids": \[\s*"b1"/);
+  log(h,"a2");assert.equal(findClass(host(h),"log-evidence").length,0);assert.deepEqual(h.json('state.snapshot.decisions[2].adopted_decision_ids'),["b1"]);
 });
 
 test("raw self references, raw cycles and ambiguous IDs keep existing guards and produce inspectable diagnostics",()=>{
@@ -210,10 +210,10 @@ test("interpretations retain entirely missing members and exclude conflicting me
   const rows=[d("x",null)],view=interpretedView([{attempt_id:"a",title:"A",member_decision_ids:["missing","x"]},{attempt_id:"b",title:"B",member_decision_ids:["x"]}]);
   const model=attempts(rows,view);assert.equal(model.attemptCount,2);assert.equal(model.ungroupedCount,1);assert.deepEqual(attempt(model,"a").missingDecisionIDs,["missing","x"]);assert.equal(links(model).length,0);assertFinite(model);
 });
-test("selected interpretation shows summary, model source, revision, and honest partial details",()=>{
+test("selected interpretation shows research summary and partial details without audit attachments",()=>{
   const view=interpretedView([{attempt_id:"archived",title:"Archived idea",summary:"A model summary, not success",member_decision_ids:["older-decision"],source_refs:["artifact:report"],revision:2,provenance:{job_id:"summary-job",model:{model_id:"organizer",revision:"v1"},input_digest:"digest"},simulated:true}]);
   view.revisions=[{...view.items[0],revision:1,summary:"Earlier summary"}];
   const snapshot=run("a",{decisions:[d("new",null)],research_attempts:view}),h=open(snapshot);
   const main=findClass(findClass(h.get("project-content"),"flow-map")[0],"decision-node");assert.equal(main.length,1);main[0].listeners.click();
-  const content=textOf(h.get("project-content"));assert.match(content,/A model summary, not success/);assert.doesNotMatch(content,/由模型整理，分组不代表成功或采纳|条未分组记录|个研究尝试/);assert.match(content,/部分详情/);assert.match(content,/organizer/);assert.match(content,/artifact:report/);assert.match(content,/Earlier summary/);assert.equal(findClass(h.get("project-content"),"attempt-map").length,0);
+  const content=textOf(h.get("project-content"));assert.match(content,/A model summary, not success/);assert.doesNotMatch(content,/由模型整理，分组不代表成功或采纳|条未分组记录|个研究尝试/);assert.match(content,/部分详情/);assert.doesNotMatch(content,/organizer|artifact:report|Earlier summary|整理来源与历史|summary-job|older-decision/);assert.equal(findClass(h.get("project-content"),"attempt-map").length,0);
 });
