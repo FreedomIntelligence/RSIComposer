@@ -76,7 +76,8 @@ class BasicContextCompactor:
     conservative bound. The last tool result, its two newest history entries and
     all live control/feedback remain present with their required facts. Structured
     evidence may use factual cards only with authorized archive links. Ordinary
-    query cards may fold; measured and failed observations remain protected. Oversized protected
+    query cards and old archived measurements may fold; recent measurements/failures
+    and live observations remain protected. Oversized protected
     facts fail clearly rather than truncating an observation. Folded fingerprints and a
     source-qualified rolling summary are portable snapshot state, not an archive.
     """
@@ -161,26 +162,29 @@ class BasicContextCompactor:
             if type(value) is not int or value < 0:
                 raise ValueError('Token counter must return a nonnegative integer')
             return value
-        from .research_state import (evidence_working_view, evidence_needs_protection,
-                                     full_history_ids, live_evidence_ids, receipt_needs_protection)
+        from .research_state import (evidence_working_view,
+                                     full_history_ids, live_evidence_ids, resident_evidence_indices)
         project_evidence = self._project_evidence
         raw = {name: tuple(getattr(context, name)) for name in self.streams}
         fingerprints = {name: [result_id(asdict(row)) for row in rows] for name, rows in raw.items()}
         protected = {name: set() for name in self.streams}
         research_protected = full_history_ids(context) | set(context.research_state.get('protected_history_ids', ()))
         protected['history'].update(i for i, row in enumerate(raw['history'])
-                                    if row.record_id in research_protected or evidence_needs_protection(row))
+                                    if row.record_id in research_protected)
+        protected['history'].update(resident_evidence_indices(context, 'history'))
         live_decisions, live_directives = live_evidence_ids(context)
         protected['experience'].update(i for i, row in enumerate(raw['experience'])
-            if evidence_needs_protection(row) or row.record_id in research_protected
-            or row.details.get('decision_id') in live_decisions or row.directive_id in live_directives)
+            if row.record_id in research_protected
+            or row.details.get('decision_id') in live_decisions or row.directive_id in live_directives
+            or context.last_feedback is not None and row.directive_id == context.last_feedback.directive_id)
+        protected['experience'].update(resident_evidence_indices(context, 'experience'))
         protected_results = set(context.research_state.get('protected_operation_result_ids', ()))
         protected_results.update(result_id(row.details['result']) for row in raw['history']
             if row.record_id in research_protected and isinstance(row.details.get('result'), dict))
         latest_result_indices = {key: i for i, key in enumerate(fingerprints['operation_results'])}
         protected['operation_results'].update(i for i, key in enumerate(fingerprints['operation_results'])
-            if (key in protected_results and i == latest_result_indices[key])
-            or receipt_needs_protection(asdict(raw['operation_results'][i])))
+            if key in protected_results and i == latest_result_indices[key])
+        protected['operation_results'].update(resident_evidence_indices(context, 'operation_results'))
         if raw['operation_results']:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])
@@ -268,7 +272,9 @@ class BasicContextCompactor:
         if not sources:
             raise ContextBudgetError('No old records can be compacted without losing latest feedback')
         summary = {'kind': 'rolling_context_summary', 'authority': 'unverified_summary',
-                   'note': 'Consult raw research_archive sources for original receipts and qualifications.',
+                   'note': 'Older measurements and failures may be archived. Absence here is not evidence of '
+                           'success or of an unevaluated candidate. Consult raw research_archive sources '
+                           'for original receipts and qualifications.',
                    'text': '', 'sources': sources, 'compaction': self.compactions+1}
         # Fixed facts may leave less than the configured summary allowance.
         # Price provenance too before asking the model to write the summary.

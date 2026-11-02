@@ -225,7 +225,8 @@ class EvidenceProjectionTests(unittest.TestCase):
         raw, _, _, _ = fixture(count=1)
         huge_metrics = {f'metric-{i}': -0.25 for i in range(5000)}
         huge = replace(raw.history[0], details={'feedback': {'quality_metrics': huge_metrics}})
-        context = replace(raw, history=(huge, *raw.history[1:]))
+        context = replace(raw, history=(huge, *raw.history[1:]),
+                          outstanding=(Directive('directive-0', 'objective', 'Live metric dependency'),))
         saved = deepcopy(context)
         compactor = BasicContextCompactor()
         state = compactor.export_state()

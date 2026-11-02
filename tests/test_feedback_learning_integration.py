@@ -51,6 +51,8 @@ class Backend(MockModelBackend):
         proposal = dict(kind='memory', content='Observed fixture result, not a quality claim.',
                         applicability='This fixture only', validation_plan='Replay the receipt',
                         source_refs=['unknown'] if self.bad_source else [packet['source_refs'][0]])
+        if 'candidate_evidence' in packet:
+            proposal['evaluation_claims'] = []
         return GenerationResponse(json.dumps({'proposals': [proposal]}), request.model, simulated=self.simulated)
 
 

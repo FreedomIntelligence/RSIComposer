@@ -52,6 +52,47 @@ def evidence_needs_protection(entry):
     return receipt_needs_protection(entry.details)
 
 
+def resident_evidence_indices(context, collection, *, recent=2):
+    """Keep recent measurements and failures, not every past receipt forever.
+
+    This selects working-context residency only. Raw stores are unchanged. Without
+    a read-only archive for this collection all factual receipts stay resident.
+    Latest/live dependencies are protected separately, regardless of this window.
+    """
+    rows = getattr(context, collection)
+    values = [asdict(row) if collection == 'operation_results' else row.details for row in rows]
+    measured = [i for i, value in enumerate(values) if receipt_needs_protection(value)]
+    if not archive_available(context, collection):
+        return set(measured)
+    def failed(value):
+        if isinstance(value, (list, tuple)):
+            return any(failed(v) for v in value)
+        if not isinstance(value, dict):
+            return False
+        for key, val in value.items():
+            field = key.rsplit('/', 1)[-1]
+            if (field in ('error', 'validation_error') and val
+                    or field == 'status' and val in ('failed', 'cancelled', 'rejected')
+                    or failed(val)):
+                return True
+        return False
+    keep = set(measured[-recent:]) | set([i for i in measured if failed(values[i])][-recent:])
+    if collection == 'operation_results':
+        # The tool archive reconstructs receipts from history. Merely advertising
+        # an archive does not make an unrecorded result recoverable.
+        recorded = {result_id(h.details['result']) for h in context.history
+                    if isinstance(h.details.get('result'), dict)}
+        for i in measured:
+            row = rows[i]
+            card = row.data.get('evidence_card', {})
+            linked = (isinstance(card, dict) and card.get('schema_version') == 1
+                      and isinstance(card.get('read_path'), dict)
+                      and card['read_path'].get('collection') == collection)
+            if result_id(asdict(row)) not in recorded and not linked:
+                keep.add(i)
+    return keep
+
+
 def live_evidence_ids(context):
     """Follow all active dependency/source/adoption edges before any projection."""
     graph = {r['decision_id']: r for r in context.decision_graph}
@@ -188,9 +229,9 @@ def bounded_evidence_view(context):
 def evidence_working_view(context, *, latest=False):
     """Bound old payloads, preserving every structured fact and exact originals.
 
-    Capability checks are per collection. Measured/failed facts remain protected;
-    ordinary query cards may later fold into a source-qualified summary. If facts plus required live state
-    are still too large, the token compactor must fail without committing.
+    Capability checks are per collection. Cards retain exact facts while visible;
+    the token compactor may archive old cards outside its recent/live window.
+    Required live facts that still cannot fit cause an atomic budget failure.
     """
     full = full_history_ids(context)
     decisions, directives = live_evidence_ids(context)
@@ -305,6 +346,7 @@ def research_working_view(context, jobs, attempts, *, recent=8):
                 and any(p['kind'] == 'memory' for p in j['proposals'])]
     unsettled = [j for j in jobs if j['status'] != 'completed' or j.get('grouping_error')]
     pending = [j for j in unsettled if j['status'] in ('queued', 'running') or j in unsettled[-recent:]]
+    resident_history = resident_evidence_indices(context, 'history')
     state = {'schema_version': 1, 'authority': 'host_assembled_working_view',
         'interpretation_authority': 'unverified',
         'attempts': attempt_summaries, 'findings': findings,
@@ -314,9 +356,10 @@ def research_working_view(context, jobs, attempts, *, recent=8):
         'read_path': {'operation': 'feedback_learning_read', 'attempt_filter': 'research_attempt_id'},
         'live_state_fields': ['execution', 'executions', 'outstanding', 'candidate_evaluations',
                              'candidates', 'run_control', 'last_feedback'],
-        'protected_operation_result_ids': [result_id(asdict(r)) for r in context.operation_results
-            if receipt_needs_protection(asdict(r))],
-        'protected_history_ids': [h.record_id for h in context.history if evidence_needs_protection(h)
+        'protected_operation_result_ids': [result_id(asdict(context.operation_results[i]))
+            for i in sorted(resident_evidence_indices(context, 'operation_results'))],
+        'protected_history_ids': [h.record_id for i, h in enumerate(context.history)
+            if i in resident_history
             or h.record_id in live_dependencies or h.details.get('decision_id') in live_dependencies
             or h.task_id in outstanding],
         'note': 'Working view, not a new instruction or proof of success. Missing summaries are not negative '
@@ -345,7 +388,8 @@ def research_working_view(context, jobs, attempts, *, recent=8):
                      'sha256': result_id([asdict(m) for m in removed_memories]),
                      'read_path': {'operation': 'research_archive', 'collection': 'memories'}},
         'evidence_policy': 'Old evidence may use exact factual cards linked to authorized archives. '
-                           'Latest/live receipts and measured or failed facts remain protected; '
-                           'ordinary archived queries may fold into a source-qualified summary.'}
+                           'Latest/live receipts and a bounded window of measured/failed facts stay resident; '
+                           'older receipts remain in the raw archive and may fold into a source-qualified summary. '
+                           'Absence from the working view never means untested, successful or irrelevant.'}
     return replace(context, research_state=state, memories=memories, history=history,
                    research_agenda={**context.research_agenda, 'working_projection': projection})

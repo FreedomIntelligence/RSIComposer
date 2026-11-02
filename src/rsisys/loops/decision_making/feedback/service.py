@@ -10,7 +10,7 @@ from typing import Protocol
 from rsisys.loops._memory import Memory
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.runtime.json_tools import encoded, result_id
-from .learning import feedback_text_preview
+from .learning import feedback_text_preview, validate_publication
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,7 @@ class FeedbackLearningService:
 
     @staticmethod
     def _memory(row):
+        evidence = validate_publication(row)
         proposals = [p for p in row['proposals'] if p['kind'] == 'memory']
         interpretations = row.get('attempt_revisions', [])
         if not proposals and not interpretations:
@@ -69,6 +70,9 @@ class FeedbackLearningService:
                    'attempt_interpretations': interpretations,
                    'simulated': row['simulated'], 'authority': 'unverified_interpretations',
                    'read_operation': 'feedback_learning_read', 'job_id': row['job_id']}
+        if evidence is not None:
+            content['candidate_evidence'] = evidence
+            content['evaluation_validation'] = 'structured_attribution_only; prose_remains_unverified'
         if omission:
             content['receipt_text_omissions'] = [omission]
         return Memory('feedback-learning:' + row['job_id'], 'episodic',
@@ -82,7 +86,17 @@ class FeedbackLearningService:
         for ident, row in list(self.learning.state['jobs'].items()):
             if row['status'] != 'completed' or row.get('published'):
                 continue
-            memory = self._memory(row)
+            try:
+                memory = self._memory(row)
+            except (ValueError, TypeError, KeyError) as exc:
+                # Preserve the original response for audit. Rejected prose must
+                # not leak through proposal/attempt views while publication is
+                # blocked, including restored legacy jobs.
+                state = deepcopy(self.learning.state)
+                state['jobs'][ident].update(status='failed', error='Publication validation failed: ' + str(exc),
+                    publication_error=str(exc), proposals=[], attempt_updates=[], attempt_revisions=[])
+                self.learning._commit(state)
+                continue
             if memory is not None:
                 self.adapter.publish(memory)
             state = deepcopy(self.learning.state)

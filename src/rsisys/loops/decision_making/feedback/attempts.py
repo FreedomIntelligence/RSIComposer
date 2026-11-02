@@ -1,9 +1,10 @@
 """Versioned, evidence-linked interpretations; never an execution ledger."""
 from copy import deepcopy
 from rsisys.runtime.json_tools import result_id
+from .evidence import claim_schema, validate_claims
 
 
-def attempt_schema(context, refs):
+def attempt_schema(context, refs, candidate_evidence=None):
     decisions = [r['decision_id'] for r in context.get('decisions', [])]
     known = [r['attempt_id'] for r in context.get('attempts', [])]
     fields = {
@@ -16,19 +17,23 @@ def attempt_schema(context, refs):
         'source_refs': {'type': 'array', 'minItems': 1, 'maxItems': 32,
                         'items': {'enum': list(refs)}},
     }
+    if candidate_evidence is not None:
+        fields['evaluation_claims'] = claim_schema(candidate_evidence)
     return {'type': 'array', 'maxItems': 4 if decisions else 0, 'items': {
         'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}}
 
 
-def validate_attempt_updates(updates, context, refs):
+def validate_attempt_updates(updates, context, refs, candidate_evidence=None):
     if not isinstance(updates, list) or len(updates) > 4:
         raise ValueError('Expected at most four attempt interpretations')
     decisions = {r['decision_id']: r for r in context.get('decisions', [])}
     known = {r['attempt_id']: r for r in context.get('attempts', [])}
     seen = set()
     for update in updates:
-        if not isinstance(update, dict) or set(update) != {
-                'attempt_id', 'base_revision', 'title', 'summary', 'member_decision_ids', 'source_refs'}:
+        fields = {'attempt_id', 'base_revision', 'title', 'summary', 'member_decision_ids', 'source_refs'}
+        if candidate_evidence is not None:
+            fields.add('evaluation_claims')
+        if not isinstance(update, dict) or set(update) != fields:
             raise ValueError('Invalid attempt interpretation fields')
         ident, revision = update['attempt_id'], update['base_revision']
         if ident is not None and (not isinstance(ident, str) or ident not in known):
@@ -48,6 +53,8 @@ def validate_attempt_updates(updates, context, refs):
                 or len(set(sources)) != len(sources)
                 or any('decision:' + m not in sources for m in members)):
             raise ValueError('Attempt must cite supplied evidence for every member')
+        if candidate_evidence is not None:
+            validate_claims(update, candidate_evidence)
         seen.update(members)
     return deepcopy(updates)
 
@@ -65,6 +72,8 @@ def apply_attempt_updates(row, current):
         if any(m in owners and owners[m] != ident for m in update['member_decision_ids']):
             raise ValueError('Conflicting attempt membership; previous grouping preserved')
         entry = {key: deepcopy(update[key]) for key in ('title', 'summary', 'member_decision_ids', 'source_refs')}
+        if 'evaluation_claims' in update:
+            entry['evaluation_claims'] = deepcopy(update['evaluation_claims'])
         if previous:
             # A bounded update adds observed members; omitted earlier evidence is
             # retained, not erased or required to fit in every future model input.

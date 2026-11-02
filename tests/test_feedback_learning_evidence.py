@@ -69,6 +69,9 @@ class FixtureBackend:
                         'summary': 'No adoption or attempt success established.',
                         'member_decision_ids': [member], 'source_refs': ['decision:' + member]}]
         output = {'proposals': proposals}
+        if 'candidate_evidence' in packet:
+            for item in proposals + updates:
+                item['evaluation_claims'] = []
         if group is not None:
             output['attempt_updates'] = updates
         return GenerationResponse(json.dumps(output), request.model, simulated=False)
@@ -171,7 +174,8 @@ class FeedbackEvidenceTests(unittest.TestCase):
             *('decision:' + r['decision_id'] for r in packet['research_context']['member_decisions']),
             *('decision:' + r['decision_id'] for r in packet['grouping_context']['decisions']),
             *('history:' + r['record_id'] for r in packet['history']),
-            *('history:' + r['record_id'] for r in packet['grouping_context']['observations'])})
+            *('history:' + r['record_id'] for r in packet['grouping_context']['observations']),
+            *(r['source_ref'] for r in packet['candidate_evidence']['evaluations'])})
         self.assertIn('decision:decision-current', packet['source_refs'])
         self.assertTrue(row['simulated'])  # Omitted simulated evidence still taints interpretation.
         self.assertEqual(row['attempt_revisions'][0]['provenance']['input_digest'], result_id(row['input']))

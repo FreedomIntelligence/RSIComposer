@@ -16,11 +16,21 @@ from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.json_tools import encoded, result_id
 from rsisys.runtime.json_tools import load_object as _load_object
 from .attempts import attempt_schema, validate_attempt_updates, apply_attempt_updates, attempt_view
+from .evidence import candidate_evidence, claim_schema, validate_claims, admitted_candidate_evidence
 
 
 KINDS = ('memory', 'training_data', 'harness_change', 'system_change')
 FIELDS = ('kind', 'content', 'applicability', 'source_refs', 'validation_plan')
 _EVIDENCE_PAGE_BYTES = 6000
+_CANDIDATE_INSTRUCTIONS = (
+    'candidate_evidence binds evaluations to full candidate IDs, separately from the current receipt. '
+    'Every proposal/attempt update requires evaluation_claims: [] for hypotheses or observations without metric claims; '
+    'otherwise enumerate every factual candidate metric claim with candidate_id, evaluation_ref, protocol_ref, '
+    'metrics (exact names/values), simulated, and cite evaluation_ref in source_refs. '
+    'Use completed supplied evaluations only. Never transfer metrics between candidates or protocols. '
+    'Training completion, parents, adjacency and prior interpretations prove no candidate quality. '
+    'not_observed_in_snapshot is snapshot-scoped absence; not_supplied is omitted evidence. '
+    'Keep prose consistent with claims; structural validation does not verify prose or claim completeness. ')
 
 # Only prose is excerpted. Numbers, identities, references, receipt facts and
 # provenance are never rounded, rewritten, or inferred from narrative text.
@@ -200,6 +210,10 @@ def _evidence_packet(row, count, text_limit, *, preview_feedback=True):
                 'raw_ref': '/grouping_context/candidate_origins', 'sha256': result_id(origins),
                 'total': len(origins), 'supplied': len(view['candidate_origins']),
                 'omitted': len(origins) - len(view['candidate_origins'])}
+    evidence = candidate_evidence(raw, manifest['streams']['/evaluations']['supplied_indices'])
+    if evidence is not None:
+        packet['candidate_evidence'] = evidence
+        refs.extend(s['source_ref'] for s in evidence['evaluations'])
     packet['source_refs'] = list(dict.fromkeys(refs))
     packet['evidence_packaging'] = manifest
     return packet, coverage
@@ -244,7 +258,7 @@ class SerializedLearningBackend:
             return self.backend.generate(request)
 
 
-def _schema(refs, grouping_context=None):
+def _schema(refs, grouping_context=None, candidate_evidence=None):
     properties = {
         'kind': {'enum': list(KINDS)},
         'content': {'type': 'string', 'minLength': 1, 'maxLength': 2400},
@@ -253,6 +267,8 @@ def _schema(refs, grouping_context=None):
                         'items': {'enum': list(refs)}},
         'validation_plan': {'type': 'string', 'minLength': 1, 'maxLength': 1200},
     }
+    if candidate_evidence is not None:
+        properties['evaluation_claims'] = claim_schema(candidate_evidence)
     branches = []
     for kind in KINDS:
         fields = {**properties, 'kind': {'const': kind}}
@@ -266,11 +282,11 @@ def _schema(refs, grouping_context=None):
                          'additionalProperties': False})
     fields = {'proposals': {'type': 'array', 'maxItems': 6, 'items': {'oneOf': branches}}}
     if grouping_context is not None:
-        fields['attempt_updates'] = attempt_schema(grouping_context, refs)
+        fields['attempt_updates'] = attempt_schema(grouping_context, refs, candidate_evidence)
     return {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}
 
 
-def validate_proposals(text, refs):
+def validate_proposals(text, refs, *, candidate_evidence=None):
     payload = _load_object(text)
     if set(payload) != {'proposals'} or not isinstance(payload['proposals'], list) or len(payload['proposals']) > 6:
         raise ValueError('Expected at most six learning proposals')
@@ -278,6 +294,8 @@ def validate_proposals(text, refs):
         if not isinstance(row, dict) or row.get('kind') not in KINDS:
             raise ValueError('Invalid learning proposal fields or kind')
         fields = set(FIELDS) | ({'training_example'} if row['kind'] == 'training_data' else set())
+        if candidate_evidence is not None:
+            fields.add('evaluation_claims')
         if set(row) != fields:
             raise ValueError('Invalid learning proposal fields')
         if row['kind'] == 'training_data':
@@ -295,7 +313,26 @@ def validate_proposals(text, refs):
                 or any(not isinstance(ref, str) or ref not in refs for ref in sources)
                 or len(set(sources)) != len(sources)):
             raise ValueError('Proposal cites unknown or duplicate evidence')
+        if candidate_evidence is not None:
+            validate_claims(row, candidate_evidence)
     return payload['proposals']
+
+
+def validate_publication(row):
+    """Recheck saved output against admitted raw evidence before exposing it.
+
+    Structured attribution is checked; free text is still an unverified model
+    interpretation. Legacy candidate-related outputs require the new contract.
+    """
+    evidence = admitted_candidate_evidence(row)
+    validate_proposals(encoded({'proposals': row['proposals']}), row['input']['source_refs'],
+                       candidate_evidence=evidence)
+    validate_attempt_updates(row.get('attempt_updates', []), row['input'].get('grouping_context', {}),
+                             row['input']['source_refs'], evidence)
+    if evidence is not None:
+        for revision in row.get('attempt_revisions', ()):
+            validate_claims(revision, evidence)
+    return evidence
 
 
 class FeedbackLearning:
@@ -446,9 +483,11 @@ class FeedbackLearning:
                     'corrections and the checks needed to establish a valid target. '
                     'Harness/system changes are proposals, not executable authorization. '
                     'Do not choose the next research action, stop the run, or assert that proposals are applied. '
-                    'Write concise public conclusions, not hidden chain-of-thought.'),
+                    'Write concise public conclusions, not hidden chain-of-thought. '
+                    + (_CANDIDATE_INSTRUCTIONS if row['input'].get('candidate_evidence') is not None else '')),
             max_output_tokens=self.limits['max_output_tokens'],
-            response_schema=_schema(row['input']['source_refs'], row['input'].get('grouping_context'))
+            response_schema=_schema(row['input']['source_refs'], row['input'].get('grouping_context'),
+                                    row['input'].get('candidate_evidence'))
                 if self.backend.supports_response_schema else None)
 
     def _work(self, row):
@@ -467,11 +506,13 @@ class FeedbackLearning:
             payload = _load_object(response.text)
             grouping = row['input'].get('grouping_context')
             updates = payload.pop('attempt_updates', []) if grouping is not None else []
-            proposals = validate_proposals(json.dumps(payload), row['input']['source_refs'])
+            evidence = admitted_candidate_evidence(row)
+            proposals = validate_proposals(json.dumps(payload), row['input']['source_refs'],
+                                           candidate_evidence=evidence)
             # Grouping failure is isolated from valid feedback and execution.
             grouping_error = None
             try:
-                updates = validate_attempt_updates(updates, grouping or {}, row['input']['source_refs'])
+                updates = validate_attempt_updates(updates, grouping or {}, row['input']['source_refs'], evidence)
             except (ValueError, TypeError, KeyError) as exc:
                 updates, grouping_error = [], str(exc)
         except (ValueError, TypeError, KeyError) as exc:
@@ -505,9 +546,15 @@ class FeedbackLearning:
             row = state['jobs'][ident]
             if row['status'] == 'completed':
                 try:
-                    row['attempt_revisions'] = apply_attempt_updates(row, self.attempts()['items'])
-                except ValueError as exc:
-                    row.update(attempt_revisions=[], grouping_error=str(exc))
+                    validate_publication(row)
+                except (ValueError, TypeError, KeyError) as exc:
+                    row.update(status='failed', proposals=[], attempt_updates=[], attempt_revisions=[],
+                               error='Evidence validation failed: ' + str(exc))
+                else:
+                    try:
+                        row['attempt_revisions'] = apply_attempt_updates(row, self.attempts()['items'])
+                    except ValueError as exc:
+                        row.update(attempt_revisions=[], grouping_error=str(exc))
             self._commit(state)
             del self._futures[ident]
         if not dispatch or self._closed or self._futures:
@@ -632,6 +679,7 @@ class FeedbackLearning:
                 'research_context': row['input'].get('research_context', {}),
                 'attempt_revisions': deepcopy(row.get('attempt_revisions', [])),
                 'grouping_error': row.get('grouping_error'),
+                'publication_error': row.get('publication_error'),
                 'source_refs': row['input']['source_refs'], 'error': row['error'],
                 'evidence_packaging': row['input'].get('evidence_packaging'),
                 'simulated': row['simulated'], 'authority': 'unverified_proposals',
