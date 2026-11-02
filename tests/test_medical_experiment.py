@@ -356,6 +356,8 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
             self.serving = FixtureServing(path, process=self.process, script=script,
                                           actor_response=actor_response, **kwargs)
             return self.serving
+        # Historical fixtures exercise pre-attempt flows; new contract tests opt into the new default explicitly.
+        overrides.setdefault('require_research_attempts', False)
         settings = ExperimentSettings(self.task, self.root/'run', self.root/'fixture-model', **overrides)
         return run(settings, serving_factory=serving_factory, converter_factory=lambda *a, **kw: Converter(),
             process_backend=self.process, research_started_callback=research_started_callback,

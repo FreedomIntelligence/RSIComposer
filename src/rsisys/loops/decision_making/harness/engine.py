@@ -28,7 +28,7 @@ from ..action_space.access import authorized_space
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy, ModelDecisionPolicy
 from .decision import Decision
-from .attempts import attempt_details, requested_attempt
+from .attempts import attempt_details, requested_attempt, AttemptContract
 from .tools import DecisionTools, execute_operation, record_operation
 
 from .state import (DecisionContext, DecisionState, _PendingOperationRecord, _PendingReviewRecord, _ReviewSession,
@@ -46,7 +46,10 @@ class DefaultDecisionHarness:
                  *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32,
                  model_activator: ModelActivator | None = None, review_tool_limit: int = 4,
                  max_outstanding: int = 1, feedback_selector=None,
-                 context_compactor=None, research_agenda=None):
+                 context_compactor=None, research_agenda=None, attempt_contract=None):
+        self.attempt_contract = attempt_contract if attempt_contract is not None else AttemptContract()
+        if not isinstance(self.attempt_contract, AttemptContract):
+            raise TypeError('attempt_contract must be an AttemptContract')
         self.policy, self.tools, self.experience, self.learner = policy, tools, experience, learner
         if type(experience_limit) is not int or experience_limit < 1:
             raise ValueError("experience_limit must be a positive integer")
@@ -210,6 +213,9 @@ class DefaultDecisionHarness:
                     break
             if not row['validation_error']:
                 try:
+                    self.attempt_contract.validate(decision.kind,
+                        decision.operation.name if decision.operation else None,
+                        decision.research_attempt_id, decision.research_attempt_title)
                     title = requested_attempt(decision.research_attempt_id, decision.research_attempt_title,
                                               self.state.decision_records.values())
                     row.update(research_attempt_id=(decision.research_attempt_id or str(uuid4())) if title else None,

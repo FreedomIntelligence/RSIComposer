@@ -17,7 +17,8 @@
  * attempts(rows) contracts ONLY recorded research_attempt_id identities; each
  * node retains every member and each edge retains its original decision edges.
  * Titles are literal metadata, never interpreted as outcomes. Missing IDs remain
- * individual ungrouped records. No attempt metadata means legacy layout fallback.
+ * in experiment logs, never overview nodes. Contraction cycles retain Attempt
+ * nodes and recorded edges with diagnostics; full evidence stays in drilldown.
  * Root stays fixed. This pure layout is independent of the interactive renderer.
  *
  * render({rows, model, selected, onSelect, label, startLabel, edgeLabel, view, onIdle, compact})
@@ -268,12 +269,12 @@
       group.title=group.titles[0]||"";
       if(group.titles.length>1)issues.push({type:"conflicting-title",key:group.key});
     }
-    const contracted=new Map();
+    const contracted=new Map(),attemptKeys=new Set(groups.filter(g=>g.type==="attempt").map(g=>g.key));
     const rawByKey=new Map(records.map(n=>[n.key,n]));
     for(const edge of full.edges){
       if(edge.from==="root")continue;
       const from=owner.get(edge.from),to=owner.get(edge.to);
-      if(from===to)continue;
+      if(from===to||!attemptKeys.has(from)||!attemptKeys.has(to))continue;
       const key=JSON.stringify([from,to]);
       if(!contracted.has(key))contracted.set(key,{from,to,kind:edge.kind,decisions:[],types:[]});
       const link=contracted.get(key),priority={sequence:0,source:1,dependency:2,adoption:3};
@@ -286,15 +287,11 @@
         ...(includes("source_decision_ids")?["source"]:[])];
       for(const kind of types){if(!link.types.includes(kind))link.types.push(kind);link.decisions.push({from:edge.from,to:edge.to,kind});}
     }
-    const edges=[...contracted.values()],connected=new Set(edges.flatMap(e=>[e.from,e.to]));
-    const ungrouped=byID.size?groups.filter(g=>g.type==="ungrouped"&&!connected.has(g.key)):[];
-    const hidden=new Set(ungrouped.map(g=>g.key));
-    const model=arrange(groups.filter(g=>!hidden.has(g.key)),edges,{issues,rootKind:records.some(n=>Object.hasOwn(n.row,"research_attempt_id")||Object.hasOwn(n.row,"research_attempt_title"))?"root":"sequence"});
-    if(model.issues.some(i=>i.type==="cycle"))return {...full,
-      nodes:full.nodes.map(n=>n.row?{...n,rows:[n.row],members:[n]}:n),full,
-      issues:[...full.issues,{type:"contraction-cycle"}],fallback:true,
-      attemptCount:byID.size,ungroupedCount:groups.length-byID.size,ungrouped:[]};
-    return {...model,full,attemptCount:byID.size,ungroupedCount:groups.length-byID.size,ungrouped};
+    // Never route through unassigned records or infer a transitive Attempt edge.
+    const ungrouped=groups.filter(g=>g.type==="ungrouped");
+    const model=arrange(groups.filter(g=>g.type==="attempt"),[...contracted.values()],{issues,rootKind:"root"});
+    if(model.issues.some(i=>i.type==="cycle"))model.issues.push({type:"contraction-cycle"});
+    return {...model,full,attemptCount:byID.size,ungroupedCount:ungrouped.length,ungrouped};
   }
 
   function subpath(projection, key) {

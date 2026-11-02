@@ -8,7 +8,7 @@ const appSource = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/app.
 const html = fs.readFileSync(`${__dirname}/../../src/rsimonitor/static/index.html`, "utf8");
 // Reuse the existing graph/RAF harness without registering its regression tests.
 const shared = fs.readFileSync(`${__dirname}/project.test.js`, "utf8").split('\ntest("')[0];
-const { harness, setup, seed, run, project,graphState,dragGraphNode } = new Function("require", "__dirname", `${shared}\nreturn {harness,setup,seed,run,project,graphState,dragGraphNode};`)(require, __dirname);
+const { harness, setup, seed, run, project,graphState,dragGraphNode,attemptRun,currentGraph,mainNodes } = new Function("require", "__dirname", `${shared}\nreturn {harness,setup,seed,run,project,graphState,dragGraphNode,attemptRun,currentGraph,mainNodes};`)(require, __dirname);
 const nodes = root => [root, ...(root.children || []).flatMap(nodes)];
 const hasClass = (node, name) => (node.className || "").split(" ").includes(name);
 const findClass = (root, name) => nodes(root).filter(n => hasClass(n, name));
@@ -24,7 +24,7 @@ function monitor(options = {}) {
   return Object.assign(h, { calls });
 }
 function fixture(h) {
-  const s = run("a", { objective: "保留目标 objective", status: "running", project: {project_id:"p",name:"研究项目"},
+  const s = attemptRun("a", { objective: "保留目标 objective", status: "running", project: {project_id:"p",name:"研究项目"},
     decisions: [
       {decision_id:"d1",kind:"directive",mode:"train",timestamp:"2026-11-01T00:00:01Z",reason:"训练模型 原文 reason",job_id:"j"},
       {decision_id:"d2",kind:"review",action:"continue",timestamp:"2026-11-01T00:00:02Z",strategy:"继续训练 原文 strategy",job_id:"j",metrics:{loss:.8}},
@@ -66,11 +66,11 @@ test("static translation touches only explicit UI markers and preserves adjacent
   a.setLanguage("zh");a.applyStatic(doc);assert.equal(title.textContent,"指标");assert.equal(input.attrs["aria-label"],"搜索事件");
 });
 
-test("switching language rerenders direct decisions and preserves project, selected step, cache and model prose", () => {
+test("switching language rerenders Attempt drilldown and preserves project, selected step, cache and model prose", () => {
   const h=monitor();fixture(h);
   findClass(h.get("project-content"),"decision-node")[1].listeners.click();
   h.flushFrames();h.run('state.activeScope.graph.zoomBy(1.25)');dragGraphNode(h,"d2");h.flushFrames();
-  const view=h.run("state.activeScope.graphView"),beforeView=graphState(h),old=h.renders.at(-1);
+  const view=h.run("state.activeScope.graphView"),beforeView=graphState(h),old=currentGraph(h);
   assert.deepEqual(findClass(h.get("project-content"),"trajectory-tools")[0].children.map(b=>b.title),["缩小","放大","适应全部节点","重排"]);
   findClass(h.get("project-content"),"flow-map")[0].scrollLeft=123;
   findClass(h.get("project-content"),"flow-map")[0].scrollTop=67;
@@ -93,16 +93,17 @@ test("switching language rerenders direct decisions and preserves project, selec
   assert.doesNotMatch(text(h.get("project-content")),/保留目标 objective/);assert.equal(h.run("state.snapshot.objective"),"保留目标 objective");assert.doesNotMatch(text(h.get("project-content")),/错误 原文 log/);
   assert.doesNotMatch(text(h.get("project-content")),/custom.event/);
   assert.match(text(h.get("project-content")),/Research graph/);assert.match(text(h.get("project-content")),/2 decisions/);
-  const graphNodes=findClass(h.get("project-content"),"decision-node");
+  const graphNodes=mainNodes(h);
   assert.equal(graphNodes.length,2);assert.equal(graphNodes[1].getAttribute("aria-pressed"),"true");
-  assert.match(graphNodes[0].getAttribute("aria-label"),/Train model/);assert.match(text(h.get("project-content")),/Experiment start/);
+  assert.equal(graphNodes[0].getAttribute("aria-label"),"1 · Recorded hypothesis");
+  assert.match(text(h.get("project-content")),/Continue/);assert.match(text(h.get("project-content")),/Experiment start/);
   assert.equal(findClass(h.get("project-content"),"graph-controls").length,0);assert.match(h.run("dateText('2026-11-01T00:00:00Z')"),/,/);
   assert.match(text(h.run('metricStrip({"custom.reward":.7},true)')),/custom.reward/);
   h.flushFrames();h.get("lang-zh").listeners.click();assert.match(text(h.get("project-content")),/复查时指标/);assert.deepEqual(h.calls,[]);assert.deepEqual(graphState(h),beforeView);h.flushFrames();
 });
 
 test("language switches during graph interaction defer its DOM until idle while retaining the view and model prose", () => {
-  const h=monitor();fixture(h);findClass(h.get("project-content"),"decision-node")[0].listeners.click();const record=h.renders.at(-1),before=graphState(h),count=h.renders.length;
+  const h=monitor();fixture(h);findClass(h.get("project-content"),"decision-node")[0].listeners.click();const record=currentGraph(h),before=graphState(h),count=h.renders.length;
   record.svg.listeners.pointerdown({pointerId:2,button:0,clientX:100,clientY:100,target:record.svg});h.get("lang-en").listeners.click();
   assert.equal(h.renders.length,count);assert.equal(record.disposals,0);assert.equal(h.run("state.activeScope.graph"),record.svg);assert.equal(h.run("state.activeScope.renderPending"),true);
   assert.match(text(h.get("project-content")),/研究脉络/);assert.doesNotMatch(text(h.get("project-content")),/Research graph/);

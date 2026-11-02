@@ -215,6 +215,8 @@ def validate_local_application(app, *, ongoing=False):
         raise ValueError('Custom policy retry budgets require an explicit recovery contract')
     if not extension and dm.policy.structured_output:
         raise ValueError('Structured policy backends require an explicit recovery contract')
+    if dm.attempt_contract.required or getattr(getattr(dm.policy, 'attempt_contract', None), 'required', False):
+        raise ValueError('Attempt admission requires an explicit recovery contract; refusing to lose validation')
     if not extension and dm.policy.project_context:
         raise ValueError('Project context requires an explicit recovery contract; refusing to lose project allocation')
     if not extension and dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):

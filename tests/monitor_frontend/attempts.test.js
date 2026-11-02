@@ -20,7 +20,7 @@ const links=model=>model.edges.filter(e=>e.from!=="root");
 const attempt=(model,id)=>model.nodes.find(n=>n.attemptID===id);
 function assertFinite(model){for(const n of model.nodes)assert.ok(Number.isFinite(n.x)&&Number.isFinite(n.y));}
 function open(snapshot=fixture(),fetcher){
-  const h=harness(fetcher,"",{graphMode:null});setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');return h;
+  const h=harness(fetcher);setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');return h;
 }
 const host=h=>h.get("project-content");
 const main=h=>findClass(host(h),"flow-map")[0];
@@ -29,7 +29,8 @@ const mainNodes=h=>findClass(main(h),"decision-node");
 const childNodes=h=>findClass(child(h),"decision-node");
 const choose=(h,key)=>{const node=mainNodes(h).find(n=>n.dataset.key===key);assert.ok(node);node.listeners.click();};
 const chooseChild=(h,key)=>{const node=childNodes(h).find(n=>n.dataset.key===key);assert.ok(node);node.listeners.click();};
-const mode=(h,index)=>findClass(host(h),"trajectory-mode")[0].children[index].listeners.click();
+const log=(h,key)=>{const button=findClass(host(h),"experiment-log-record").find(n=>n.dataset.key===key);assert.ok(button);button.listeners.click();};
+const logs=h=>findClass(host(h),"record-details").find(n=>n.dataset.retainKey===JSON.stringify(["a","experiment-logs"]));
 
 test("only explicit identities form attempts, retain every child and keep same titles and candidates independent",()=>{
   const rows=[d("a1","A",{candidate_id:"same"}),d("b1","B",{candidate_id:"same",research_attempt_title:"Hypothesis A"}),
@@ -55,14 +56,19 @@ test("interleaved parallel attempts and multi-result adoption contract with stro
   assert.equal(child.edges.some(e=>e.kind==="sequence"),false);assertFinite(child);
 });
 
-test("a valid A1 to B1 to A2 continuation falls back to all decisions without erasing dependencies or adoption",()=>{
+test("a valid A1 to B1 to A2 continuation stays Attempt-only and retains cyclic edges and original evidence",()=>{
   const rows=[d("a1","A"),d("b1","B",{second:1,depends_on_decision_ids:["a1"]}),d("a2","A",{second:2,adopted_decision_ids:["b1"]})];
-  const model=attempts(rows);assert.equal(model.fallback,true);assert.equal(model.attemptCount,2);
-  assert.deepEqual(nodes(model).map(n=>n.key),["a1","b1","a2"]);
-  assert.deepEqual(links(model).map(e=>[e.from,e.to,e.kind]),[["a1","b1","dependency"],["b1","a2","adoption"]]);
+  const model=attempts(rows),a=attempt(model,"A"),b=attempt(model,"B");
+  assert.equal(model.fallback,undefined);assert.equal(model.attemptCount,2);
+  assert.deepEqual(nodes(model).map(n=>n.type),["attempt","attempt"]);
+  assert.deepEqual(links(model).map(e=>[e.from,e.to,e.kind]),[[b.key,a.key,"adoption"],[a.key,b.key,"dependency"]]);
+  assert.ok(links(model).every(e=>e.cyclic));
   assert.ok(model.issues.some(i=>i.type==="contraction-cycle"));assertFinite(model);
-  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,3);assert.equal(child(h),undefined);
-  assert.match(textOf(host(h)),/已展开全部决策/);choose(h,"a2");assert.match(textOf(host(h)),/reason-a2/);
+  assert.deepEqual(links(model.full).map(e=>[e.from,e.to,e.kind]),[["a1","b1","dependency"],["b1","a2","adoption"]]);
+  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,2);assert.equal(child(h),undefined);
+  assert.match(textOf(host(h)),/保留研究尝试节点与已记录关系/);assert.doesNotMatch(textOf(host(h)),/已展开全部决策|全部记录/);
+  choose(h,a.key);assert.equal(childNodes(h).length,2);chooseChild(h,"a2");assert.match(textOf(host(h)),/reason-a2/);
+  log(h,"a2");assert.match(findClass(host(h),"log-evidence")[0].textContent,/"adopted_decision_ids": \[\s*"b1"/);
 });
 
 test("raw self references, raw cycles and ambiguous IDs keep existing guards and produce inspectable diagnostics",()=>{
@@ -85,25 +91,31 @@ test("malformed attempt metadata never creates guessed groups or hides records",
   assert.equal(model.full.nodes.length,8);assert.equal(model.edges.some(e=>e.kind==="sequence"),false);
 });
 
-test("detached ungrouped waits fold modestly while all dependency, adoption and source crosslinks stay visible",()=>{
+test("all unassigned records stay in logs, including dependency, adoption and source endpoints; no bridging is inferred",()=>{
   const rows=[d("a","A"),...Array.from({length:30},(_,i)=>d(`wait-${i}`,null,{kind:"wait",operation:undefined})),
-    d("dep",null,{depends_on_decision_ids:["a"]}),d("adopt",null,{adopted_decision_ids:["a"]}),d("ref",null,{source_decision_ids:["a"]})];
-  const model=attempts(rows);assert.equal(nodes(model).length,4);assert.equal(model.ungrouped.length,30);
-  assert.deepEqual(links(model).map(e=>e.kind).sort(),["adoption","dependency","source"]);
-  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,4);assert.equal(findClass(host(h),"ungrouped-record").length,30);
-  assert.equal(mainNodes(h).filter(n=>/未分组/.test(n.getAttribute("aria-label"))).length,3);
-  const disclosure=findClass(host(h),"record-details").find(n=>n.children[0].textContent==="未分组记录 · 30");assert.equal(disclosure.open,false);
-  findClass(host(h),"ungrouped-record")[20].listeners.click();assert.equal(mainNodes(h).length,34);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"wait-20");
+    d("dep",null,{depends_on_decision_ids:["a"]}),d("adopt",null,{adopted_decision_ids:["a"]}),d("ref",null,{source_decision_ids:["a"]}),
+    d("b","B",{depends_on_decision_ids:["dep"],adopted_decision_ids:["adopt"],source_decision_ids:["ref"]})];
+  const model=attempts(rows);assert.equal(nodes(model).length,2);assert.equal(model.ungrouped.length,33);
+  assert.deepEqual(links(model),[]);assert.equal(links(model.full).length,6);
+  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,2);assert.equal(findClass(host(h),"experiment-log-record").length,35);
+  assert.equal(logs(h).open,false);
+  for(const key of ["wait-20","dep","adopt","ref"]){
+    log(h,key);assert.equal(mainNodes(h).length,2);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),null);
+    assert.equal(findClass(host(h),"log-membership")[0].textContent,"未记录研究尝试");
+    assert.match(textOf(findClass(host(h),"experiment-logs")[0]),new RegExp(`reason-${key}`));
+  }
+  assert.equal(findClass(host(h),"trajectory-mode").length,0);
 });
 
-test("historical default is a small attempt empty state; full records retain every legacy decision and never infer candidates",()=>{
+test("historical membership stays explicitly missing and every original decision is inspectable only in logs",()=>{
   const snapshot=run("a",{candidates:[{candidate_id:"same",status:"applied"}],decisions:Array.from({length:40},(_,i)=>d(`old-${i}`,null,{candidate_id:"same",kind:i>2?"finish":"directive",mode:i?"evaluate":"train"}))});
-  const h=open(snapshot);assert.match(textOf(host(h)),/此实验尚未记录研究尝试/);assert.equal(findClass(host(h),"decision-map").length,0);
-  const openAll=descendants(host(h)).find(n=>n.tagName==="button"&&n.textContent==="查看全部决策");assert.ok(openAll);openAll.listeners.click();
-  assert.equal(mainNodes(h).length,40);choose(h,"old-39");assert.match(textOf(host(h)),/reason-old-39/);
-  mode(h,0);assert.equal(findClass(host(h),"decision-map").length,0);
-  h.get("lang-en").listeners.click();assert.match(textOf(host(h)),/No research attempts recorded/);assert.match(textOf(host(h)),/Attempts/);
-  mode(h,1);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"old-39");assert.equal(mainNodes(h).length,40);
+  const model=attempts(snapshot.decisions);assert.equal(nodes(model).length,0);assert.equal(model.ungrouped.length,40);
+  const h=open(snapshot);assert.match(textOf(host(h)),/未记录研究尝试/);assert.equal(findClass(host(h),"decision-map").length,0);
+  assert.equal(findClass(host(h),"trajectory-mode").length,0);assert.equal(findClass(host(h),"experiment-log-record").length,40);
+  log(h,"old-39");assert.match(textOf(host(h)),/reason-old-39/);assert.equal(findClass(host(h),"decision-map").length,0);
+  h.get("lang-en").listeners.click();assert.match(textOf(host(h)),/No research attempts recorded/);assert.match(textOf(host(h)),/Experiment logs · 40/);
+  assert.equal(h.run('state.activeScope.logSelected.get("a")'),"old-39");
+  assert.doesNotMatch(textOf(host(h)),/All records|View all decisions/);
 });
 
 test("grouped child selection exposes all existing rationale, changes, feedback and metrics without raw IDs or inferred attempt status",()=>{
@@ -145,13 +157,13 @@ test("refresh preserves selected attempt, child, both cameras, dragged positions
   const h=open(snapshot,async()=>response(updated)),join=attempt(attempts(snapshot.decisions),"join").key;
   choose(h,join);chooseChild(h,"consume");h.run('state.activeScope.graph.zoomBy(1.25);state.activeScope.attemptGraph.zoomBy(1.4)');dragGraphNode(h,"consume",15,35);h.flushFrames();
   const mainView=graphState(h),childView=h.json('state.activeScope.attemptView.camera'),childPositions=h.json('[...state.activeScope.attemptView.positions]');
-  mode(h,1);choose(h,"data");mode(h,0);assert.equal(h.run('state.activeScope.attemptSteps.get(state.activeScope.flowSelected.get("a"))'),"consume");
-  const disclosure=findClass(host(h),"record-details").find(n=>n.children[0].textContent==="未分组记录 · 1");disclosure.open=true;
+  log(h,"mechanical-wait");assert.equal(h.run('state.activeScope.attemptSteps.get(state.activeScope.flowSelected.get("a"))'),"consume");
+  const disclosure=logs(h);disclosure.open=true;
   assert.deepEqual(graphState(h),mainView);assert.deepEqual(h.json('state.activeScope.attemptView.camera'),childView);
   await h.run('loadRun("a",state.activeScope,true)');
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),join);assert.equal(h.run(`state.activeScope.attemptSteps.get(${JSON.stringify(join)})`),"consume");
   assert.equal(childNodes(h).length,5);assert.match(textOf(host(h)),/New measured result/);assert.deepEqual(graphState(h),mainView);
-  assert.equal(findClass(host(h),"record-details").find(n=>n.children[0].textContent==="未分组记录 · 1").open,true);
+  assert.equal(logs(h).open,true);
   assert.deepEqual(h.json('state.activeScope.attemptView.camera'),childView);
   for(const [key,point] of childPositions)assert.deepEqual(h.json(`state.activeScope.attemptView.positions.get(${JSON.stringify(key)})`),point);
   h.get("lang-en").listeners.click();assert.match(textOf(host(h)),/Decisions within this attempt/);assert.match(textOf(host(h)),/Hypothesis join/);
@@ -174,7 +186,7 @@ test("transition from historical empty state to new recorded attempts preserves 
   const old=d("old"),updated=run("a",{decisions:[old,...fixture().decisions]});
   const h=open(run("a",{decisions:[old]}),async()=>response(updated));assert.equal(findClass(host(h),"decision-map").length,0);
   await h.run('loadRun("a",state.activeScope,true)');assert.equal(mainNodes(h).length,3);assert.equal(h.run('state.runId'),"a");
-  assert.equal(findClass(host(h),"ungrouped-record").length,1);mode(h,1);assert.equal(mainNodes(h).length,7);
+  assert.equal(findClass(host(h),"experiment-log-record").length,7);log(h,"old");assert.equal(mainNodes(h).length,3);assert.match(textOf(host(h)),/reason-old/);
 });
 
 test("supplied projection and input remain unchanged during render and child camera controls",()=>{

@@ -219,7 +219,7 @@ def enable_feedback_learning(base_loop, *, path=None, **options):
             directives=base.policy.directives, allowed_actions=base.policy.allowed_actions,
             max_validation_attempts=base.policy.max_validation_attempts,
             structured_output=base.policy.structured_output, context_compactor=base.context_compactor,
-            project_context=base.policy.project_context)
+            project_context=base.policy.project_context, attempt_contract=base.policy.attempt_contract)
     learning = FeedbackLearning(backend, path=path, **options)
     policy.backend = backend
     if hasattr(policy, 'space'):
@@ -228,7 +228,8 @@ def enable_feedback_learning(base_loop, *, path=None, **options):
         feedback_learning=learning, experience_limit=base.experience_limit, memory=base.memory,
         memory_limit=base.memory_limit, model_activator=base.model_activator, review_tool_limit=base.review_tool_limit,
         max_outstanding=base.max_outstanding, feedback_selector=base.feedback_selector,
-        context_compactor=base.context_compactor, research_agenda=base.research_agenda)
+        context_compactor=base.context_compactor, research_agenda=base.research_agenda,
+        attempt_contract=base.attempt_contract)
     harness.state = base.state
     base_loop.harness, base_loop.action_space = harness, space
     return harness

@@ -6,7 +6,6 @@ const host=h=>h.get("project-content");
 const visibleNodes=node=>[node,...(node.tagName==="details"&&!node.open?node.children.slice(0,1):node.children).flatMap(visibleNodes)];
 const visibleText=node=>visibleNodes(node).map(n=>n.textContent||"").join(" ");
 const history=h=>findClass(host(h),"record-details").find(n=>n.dataset.retainKey===JSON.stringify(["a","unlinked-jobs"]));
-const mode=(h,index)=>findClass(host(h),"trajectory-mode")[0].children[index].listeners.click();
 const mainNodes=h=>findClass(findClass(host(h),"flow-map")[0],"decision-node");
 const chooseAttempt=(h,title)=>{const node=mainNodes(h).find(n=>n.getAttribute("aria-label").includes(title));assert.ok(node);node.listeners.click();};
 function fixture(){return run("a",{status:"running",decisions:[
@@ -22,7 +21,7 @@ function fixture(){return run("a",{status:"running",decisions:[
   {job_id:"cancelling",kind:"execute",status:"cancel_requested"},
 ],candidates:[{candidate_id:"result",status:"accepted",metrics:{accuracy:.81}}]});}
 function open(snapshot=fixture(),fetcher){
-  const h=harness(fetcher,"",{graphMode:null});setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');return h;
+  const h=harness(fetcher);setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);h.run('selectRun("a")');return h;
 }
 
 test("entry leaves both graph views unselected and shows all active linked and parallel jobs compactly",()=>{
@@ -39,7 +38,7 @@ test("entry leaves both graph views unselected and shows all active linked and p
   assert.equal(history(h).open,false);assert.equal(findClass(history(h),"job-record").length,3);
   assert.equal(findClass(host(h),"run-detail")[0].children.some(n=>n.className==="job-record"),false);
   assert.equal(h.renders[0].options.model.edges.filter(e=>e.kind==="dependency").length,1);
-  mode(h,1);assert.equal(mainNodes(h).length,2);assert.equal(findClass(host(h),"flow-step").length,0);
+  assert.equal(findClass(host(h),"trajectory-mode").length,0);
   assert.equal(JSON.stringify(h.run("state.snapshot")),before);
 });
 
@@ -87,10 +86,10 @@ test("polling and language changes never create a selection and removed main sel
   let updated=fixture();const h=open(fixture(),async()=>response(updated));
   updated.updated_at="2026-11-02T01:00:00Z";await h.run('loadRun("a",state.activeScope,true)');h.get("lang-en").listeners.click();
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),null);assert.equal(findClass(host(h),"flow-step").length,0);
-  chooseAttempt(h,"Past hypothesis");mode(h,1);selectDecision(h,"past");mode(h,0);
+  chooseAttempt(h,"Past hypothesis");
   updated={...updated,decisions:updated.decisions.filter(d=>d.decision_id!=="past")};await h.run('loadRun("a",state.activeScope,true)');
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),null);assert.equal(findClass(host(h),"attempt-map").length,0);
-  assert.equal(findClass(host(h),"flow-step").length,0);mode(h,1);
+  assert.equal(findClass(host(h),"flow-step").length,0);
   assert.equal(h.run('state.activeScope.flowSelected.get("a")'),null);assert.equal(mainNodes(h).length,1);
 });
 
@@ -104,15 +103,15 @@ test("removing the selected child keeps the complete surviving attempt graph wit
   children[0].listeners.click();assert.match(textOf(findClass(host(h),"flow-step")[0]),/Second historical rationale/);
 });
 
-test("legacy runs retain active tasks and explicit all-records access with strict job association guards",()=>{
+test("legacy runs retain active tasks and experiment logs with strict job association guards",()=>{
   const snapshot=fixture();for(const d of snapshot.decisions){delete d.research_attempt_id;delete d.research_attempt_title;}
   snapshot.decisions[0].job_id="missing";snapshot.decisions[0].directive_id="shared";
   snapshot.jobs[0].directive_id="shared";
   const h=open(snapshot);assert.equal(findClass(host(h),"active-job").length,3);assert.equal(findClass(host(h),"flow-map").length,0);
-  assert.match(visibleText(host(h)),/此实验尚未记录研究尝试/);
-  const button=visibleNodes(host(h)).find(n=>n.tagName==="button"&&n.textContent==="查看全部决策");assert.ok(button);button.listeners.click();
-  assert.equal(mainNodes(h).length,2);assert.equal(findClass(host(h),"flow-step").length,0);
-  selectDecision(h,"past");assert.match(textOf(findClass(host(h),"flow-step")[0]),/Historical rationale/);
+  assert.match(visibleText(host(h)),/未记录研究尝试/);
+  const logs=findClass(host(h),"record-details").find(n=>n.dataset.retainKey===JSON.stringify(["a","experiment-logs"]));assert.equal(logs.open,false);logs.open=true;
+  const button=findClass(logs,"experiment-log-record").find(n=>n.dataset.key==="past");assert.ok(button);button.listeners.click();
+  assert.equal(findClass(host(h),"flow-map").length,0);assert.match(textOf(findClass(logs,"flow-step")[0]),/Historical rationale/);
   assert.equal(h.run('linkedJob(state.snapshot.decisions[0],state.snapshot)'),undefined);
   assert.equal(findClass(history(h),"job-record").length,4);
 });

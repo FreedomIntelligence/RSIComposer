@@ -45,7 +45,7 @@ class MedicalRuntime(Runtime):
 class MedicalDSHTests(unittest.TestCase):
     setUp = medical_fixture.MedicalExperimentIntegrationTests.setUp
 
-    def execute(self, script, *, kind='dsh', max_model_calls=96, harness_factory=None):
+    def execute(self, script, *, kind='dsh', max_model_calls=96, harness_factory=None, require_research_attempts=False):
         runtime = MedicalRuntime(script, self.process)
         config_path = self.root / ('dsh-'+str(len(list(self.root.glob('run-*'))))+'.json')
         config_path.write_text(json.dumps({'home': str(self.root/'dsh-home'), 'workspace': str(self.root),
@@ -53,7 +53,8 @@ class MedicalDSHTests(unittest.TestCase):
             'provider': 'openai-completions', 'base_url': 'http://127.0.0.1:1/v1'}))
         root = self.root / ('run-'+kind)
         settings = ExperimentSettings(self.task, root, self.root/'fixture-model', decision_harness=kind,
-            dsh_config=config_path if kind == 'dsh' else None, max_model_calls=max_model_calls)
+            dsh_config=config_path if kind == 'dsh' else None, max_model_calls=max_model_calls,
+            require_research_attempts=require_research_attempts)
         serving_box = []
         def serve(path, **kwargs):
             serving = FixtureServing(path, process=self.process, script=script if kind == 'default' else [], **kwargs)
@@ -64,6 +65,17 @@ class MedicalDSHTests(unittest.TestCase):
             decision_harness_factory=harness_factory,
             identity_factory=lambda path: ('fixture-pin', {'model_id': 'fixture-actor', 'actual_weight_sha256': 'fixture'}))
         return result, runtime, serving_box[0], root
+
+    def test_dsh_preserves_explicit_attempt_admission(self):
+        proposal = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Synthetic comparison',
+                    'arguments': {'instructions': 'Return one label.'},
+                    'research_attempt_title': 'Short prompt hypothesis'}
+        result, runtime, serving, root = self.execute([proposal, FINISH], require_research_attempts=True)
+        self.assertEqual(result['status'], 'completed', result)
+        rows = json.loads((root/'monitor.json').read_text())['decisions']
+        research = [r for r in rows if r.get('mode') == 'configure_prompt']
+        self.assertEqual(len(research), 1)
+        self.assertTrue(research[0]['research_attempt_id'])
 
     def test_same_prompt_evaluate_apply_without_required_training(self):
         proposal = {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Synthetic comparison',

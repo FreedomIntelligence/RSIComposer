@@ -35,6 +35,7 @@ from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
 from rsisys.loops.decision_making.harness.dsh import DSHConfig, DeepSeekDecisionHarness
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+from rsisys.loops.decision_making.harness.attempts import AttemptContract
 from rsisys.loops.decision_making.harness.learning_policy import MemoryPrefixDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.exploration.harness.commands import CommandHandler
@@ -147,6 +148,7 @@ class ExperimentSettings:
     feedback_learning: bool = False
     decision_max_output_tokens: int = 8192
     decision_response_retries: int = 2
+    require_research_attempts: bool = True
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -165,6 +167,8 @@ class ExperimentSettings:
         if not isinstance(self.private_exclusions, tuple) or any(
                 not isinstance(path, Path) for path in self.private_exclusions):
             raise TypeError('private_exclusions must be a tuple of Paths')
+        if type(self.require_research_attempts) is not bool:
+            raise TypeError('require_research_attempts must be boolean')
         if type(self.decision_response_retries) is not int or not 0 <= self.decision_response_retries <= 2:
             raise ValueError('decision_response_retries must be an integer in 0..2')
         if type(self.decision_max_output_tokens) is not int or self.decision_max_output_tokens < 1:
@@ -844,9 +848,9 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         'these envelopes are syntax templates, not a required workflow.')
 
     def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher',
-                 project_context: dict | None = None):
+                 project_context: dict | None = None, attempt_contract=None):
         super().__init__(backend, model, directives=catalog, max_validation_attempts=1,
-                         project_context=project_context)
+                         project_context=project_context, attempt_contract=attempt_contract)
         self.space, self.monitor, self.learner = space, monitor, learner
         self.train_ref = train_ref
         self.run_mode = run_mode
@@ -1160,11 +1164,17 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         assembly.runner.decision_making.action_space = space
         project_context = build_project_context(settings, task, target_model=base, decision_model=researcher)
         write_json(root / 'project-context.json', project_context)
+        attempt_contract = AttemptContract(required=settings.require_research_attempts,
+            operations=tuple(spec.name for spec in (definition.spec for definition in operations.definitions)
+                             if not spec.read_only))
+        write_json(root / 'attempt-contract.json', {'required': attempt_contract.required,
+            'all_exploration_directives': True, 'required_operations': attempt_contract.operations,
+            'grouping_owner': 'decision_maker', 'historical_membership_inference': False})
         def policy_factory(native_backend, model):
             if dsh_config is not None:
                 backend.serving = native_backend
             return ResearchPolicy(backend, model, space.directives, space, monitor, learner, operations.train_ref,
-                                  run_mode=settings.run_mode, project_context=project_context)
+                                  run_mode=settings.run_mode, project_context=project_context, attempt_contract=attempt_contract)
         dependencies = dict(tools=tools, experience=decision.experience, memory=decision.memory,
             research_agenda=decision.research_agenda, directives=space.directives, model=researcher,
             policy_factory=policy_factory, backend=backend, config=dsh_config,
@@ -1179,6 +1189,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         else:
             replacement = DefaultDecisionHarness(policy_factory(backend, researcher), tools, decision.experience,
                 memory=decision.memory, research_agenda=decision.research_agenda)
+        replacement.attempt_contract = attempt_contract
         replacement.state.operation_results.extend(decision.state.operation_results)
         assembly.runner.decision_making.harness = decision = replacement
         if settings.feedback_learning:

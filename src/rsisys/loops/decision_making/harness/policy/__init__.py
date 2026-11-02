@@ -13,7 +13,7 @@ from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef, Mo
 from ...action_space.directives import DirectiveDefinitions
 
 from ..decision import Decision
-from ..attempts import requested_attempt
+from ..attempts import requested_attempt, known_attempts, AttemptContract
 from ...action_space import OperationCall
 from ..state import DecisionContext
 from ..context import BasicContextCompactor, IdentityContextCompactor
@@ -44,7 +44,7 @@ class ModelDecisionPolicy:
 
     def __init__(self, backend: ModelBackend, model: ModelRef, *, allowed_actions: tuple[str, ...] = ("echo",),
                  directives: DirectiveDefinitions | None = None, max_validation_attempts: int = 1,
-                 structured_output: bool | None = None, context_compactor=None, project_context=None):
+                 structured_output: bool | None = None, context_compactor=None, project_context=None, attempt_contract=None):
         if type(max_validation_attempts) is not int or not 1 <= max_validation_attempts <= 8:
             raise ValueError('max_validation_attempts must be between 1 and 8')
         if structured_output is not None and type(structured_output) is not bool:
@@ -53,6 +53,9 @@ class ModelDecisionPolicy:
         if structured_output is True and not supports_schema:
             raise ValueError('structured_output=True requires backend.supports_response_schema=True')
         self.structured_output = supports_schema if structured_output is None else structured_output
+        self.attempt_contract = attempt_contract if attempt_contract is not None else AttemptContract()
+        if not isinstance(self.attempt_contract, AttemptContract):
+            raise TypeError('attempt_contract must be an AttemptContract')
         self.max_validation_attempts = max_validation_attempts
         self.backend, self.model = backend, model
         self.allowed_actions = allowed_actions
@@ -177,7 +180,7 @@ class ModelDecisionPolicy:
             }}, ('kind',)),
             self._envelope({'kind': {'const': 'finish'}}, ('kind',)),
         ))
-        return {'oneOf': branches}
+        return {'oneOf': self._attempt_branches(branches, context)}
 
     def review_schema(self, context: DecisionContext) -> dict:
         """Expose permitted review queries and controls, never new directives."""
@@ -187,7 +190,32 @@ class ModelDecisionPolicy:
             'next_review_seconds': {'type': ['number', 'null'], 'exclusiveMinimum': 0},
         }, ('action',)) for action in context.review_actions)
         # An empty union is unsatisfiable; JSON Schema requires nonempty oneOf.
-        return {'oneOf': branches} if branches else {'not': {}}
+        return {'oneOf': self._attempt_branches(branches, context)} if branches else {'not': {}}
+
+    def _attempt_branches(self, branches, context):
+        if not self.attempt_contract.required:
+            return branches
+        result = []
+        known = known_attempts(context.decision_graph)
+        for branch in branches:
+            fields = branch['properties']
+            if not self.attempt_contract.applies(fields.get('kind', {}).get('const'),
+                                                  fields.get('operation', {}).get('const')):
+                result.append(branch)
+                continue
+            # Separate complete envelope branches survive portable schema conversion;
+            # an object-local anyOf/required refinement would be removed on the wire.
+            new = deepcopy(branch)
+            new['properties']['research_attempt_id'] = {'type': 'null'}
+            new['properties']['research_attempt_title'].update(minLength=1, pattern=r'\S')
+            new['required'].append('research_attempt_title')
+            result.append(new)
+            if known:
+                continuation = deepcopy(branch)
+                continuation['properties']['research_attempt_id'] = {'type': 'string', 'enum': list(known)}
+                continuation['required'].append('research_attempt_id')
+                result.append(continuation)
+        return result
 
     @contextmanager
     def track_usage(self, record):
@@ -315,9 +343,15 @@ class ModelDecisionPolicy:
             raise ValueError('reason must be a string')
         return reason
 
-    @staticmethod
-    def _attempt_instructions():
-        return ('Group related research decisions into an attempt for one idea. A top-level research_attempt_title '
+    def _attempt_instructions(self):
+        requirement = ('Every exploration directive and these research operations MUST belong to an Attempt: '
+                       + ', '.join(self.attempt_contract.operations) + '. Missing membership is rejected before execution. '
+                       'An Attempt is a testable research idea and its execution, including prompt, data, training, '
+                       'inference or harness improvements; it need not succeed or train weights. '
+                       'Public queries, waiting, project-wide notes and stopping may omit membership. '
+                       if self.attempt_contract.required else
+                       'Legacy mode permits ungrouped decisions when both attempt fields are omitted. ')
+        return requirement + ('Group related research decisions into an attempt for one idea. A top-level research_attempt_title '
                 '(at most 500 characters) with no research_attempt_id starts a NEW research attempt; the harness '
                 'assigns its UUID. Describe the hypothesis or approach in the title, not an operation name. '
                 'Reuse its known research_attempt_id (at most 200 characters) from decision_graph across decisions '
@@ -326,14 +360,13 @@ class ModelDecisionPolicy:
                 'Alternative competing variants can use separate attempts. '
                 'The title may be omitted on continuation; if supplied it must exactly match the canonical title. '
                 'Never invent an attempt ID or rename an existing attempt. A title alone always starts a new '
-                'attempt, even if another has that title. Both fields remain optional for legacy compatibility; '
-                'omitting both leaves the decision ungrouped. '
+                'attempt, even if another has that title. '
                 'membership is never inferred from dependencies, candidates or history order. ')
 
-    @staticmethod
-    def _parse_attempt(payload, context):
+    def _parse_attempt(self, payload, context):
         ident, title = payload.get('research_attempt_id'), payload.get('research_attempt_title', '')
         requested_attempt(ident, title, context.decision_graph)
+        self.attempt_contract.validate(payload.get('kind'), payload.get('operation'), ident, title)
         return {'research_attempt_id': ident, 'research_attempt_title': title}
 
     @staticmethod

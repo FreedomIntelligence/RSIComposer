@@ -259,7 +259,7 @@ function graphTools(current) {
 }
 function graphIssues(model,scope,runID) {
   const types=new Set(model.issues.map(i=>i.type)),content=el("div");
-  const messages={"invalid-attempt":"部分记录的研究尝试身份无效，已保留为未分组记录。","missing-title":"部分研究尝试未记录标题。","conflicting-title":"同一研究尝试记录了不同标题；节点显示首个标题，各决策的原始标题保持不变。",unresolved:"部分关系引用缺失或不唯一，未推断关联。","raw-cycle":"无效的循环决策关系已忽略，其他关系保留。","self-reference":"无效的决策自引用已忽略。"};
+  const messages={"invalid-attempt":"部分记录的研究尝试身份无效，已保留为未分组记录。","missing-title":"部分研究尝试未记录标题。","conflicting-title":"同一研究尝试记录了不同标题；节点显示首个标题，各决策的原始标题保持不变。",unresolved:"部分关系引用缺失或不唯一，未推断关联。","raw-cycle":"无效的循环决策关系已忽略，其他关系保留。","self-reference":"无效的决策自引用已忽略。","contraction-cycle":"尝试间关系形成循环，保留研究尝试节点与已记录关系；可在尝试详情和实验日志中核对原始决策。"};
   const shown=new Set();
   for(const type of types){const message=messages[type];if(message&&!shown.has(message)){content.append(el("p","quiet-note",t(message)));shown.add(message);}}
   return content.childElementCount?retainedDetails(JSON.stringify([runID,"graph-issues"]),scope.flowOpen,t("分组与关系记录需核对"),content):null;
@@ -291,58 +291,95 @@ function concreteFeedback(row) {
   if(normalized===`${decisionAction(row)} completed`.toLowerCase())return "";
   return /^(?:执行已完成[。.]?|执行完成[。.]?|completed[.!]?|done[.!]?|success[.!]?|configure_prompt completed)$/i.test(summary.trim())?"":summary;
 }
+function decisionStep(row,s,index) {
+  const f=feedbackFor(row,s);
+  const step=el("li","flow-step"),marker=el("span","flow-index",String(index+1).padStart(2,"0"));
+  const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
+  const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
+  const title=decisionTitle(row);decision.append(el("h4","",title),meta);
+  if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
+  if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row)&&asText(row.strategy,"").trim()!==title)decision.append(el("p","decision-reason",row.strategy));
+  const changes=changesView(row,s);if(changes)decision.append(changes);
+  if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
+    const component=list(row.changes).find(c=>c.field==="components")?.after;
+    const prompt=typeof component==="string"&&/prompt|instructions/.test(component);
+    decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果；评测通过与实际采用是两个独立步骤。"):t("检验待验证版本的效果；评测通过与实际采用是两个独立步骤。")));
+    if(!row.protocol_ref&&!list(row.changes).some(c=>c.field==="protocol_ref"))decision.append(el("p","quiet-note",t("评测方案未记录。")));
+  }
+  const explicit=concreteFeedback(row),error=object(row.feedback).error||row.error;
+  if(explicit||error){feedback.append(el("p","flow-label",t("实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
+  else if(!DONE.has(statusKey(f.status))||row.kind==="review"||decisionAction(row)==="finish")feedback.append(el("p","",f.text));
+  if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
+  if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
+  if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
+  if(f.job&&number(f.job.elapsed_seconds))feedback.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(f.job.elapsed_seconds)})));
+  step.append(marker,decision);if(feedback.childElementCount)step.append(feedback);if(metrics.childElementCount)step.append(metrics);
+  const results=el("div","flow-results");
+  if(f.job){
+    const j=f.job,h=historyRows(j),isTraining=/train|sft|finetun/.test(asText(j.kind,""))||h.some(p=>number(metricValue(p.metrics,lossKeys)));
+    if(row.kind==="review")results.append(el("p","quiet-note",t("关联任务当前快照")));
+    if(isTraining){const charts=el("div","charts");charts.append(chartView(j,lossKeys,t("损失")),chartView(j,lrKeys,t("学习率")));results.append(charts);}
+
+  }
+  for(const result of relatedResults(row,s).filter(r=>r.type==="candidate")){
+    const reported=flattenMetrics(result.row.metrics),shown=flattenMetrics(f.metrics);
+    const alreadyShown=Object.keys(reported).length>0&&Object.entries(reported).every(([key,value])=>shown[key]===value);
+    if(alreadyShown){metrics.append(badge(result.row.status));continue;}
+    const card=el("div","candidate-card");card.append(el("h4","",t("版本结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
+  }
+  if(results.childElementCount)step.append(results);return step;
+}
+function experimentLogs(s,scope,projection) {
+  const records=projection.full.nodes.filter(n=>n.row);
+  if(!records.length)return null;
+  const content=el("div","experiment-logs"),buttons=el("div","experiment-log-records"),detail=el("ol","flow-steps");
+  scope.logSelected ||= new Map();
+  if(!records.some(n=>n.key===scope.logSelected.get(s.run_id)))scope.logSelected.set(s.run_id,null);
+  const fill=()=>{
+    detail.replaceChildren();
+    const selected=scope.logSelected.get(s.run_id);
+    for(const button of buttons.children)button.setAttribute("aria-pressed",String(button.dataset.key===selected));
+    const record=records.find(n=>n.key===selected);
+    if(record){
+      const group=projection.nodes.find(n=>n.members?.some(member=>member.key===record.key));
+      const step=decisionStep(record.row,s,records.indexOf(record));
+      detail.append(el("li","quiet-note log-membership",group?attemptTitle(group):t("未记录研究尝试")),step);
+      // The public record retains exact relation endpoints, including rejected
+      // raw references and cross-Attempt evidence omitted from a child subgraph.
+      const evidence=el("pre","log-evidence",JSON.stringify(record.row,null,2));
+      step.append(retainedDetails(JSON.stringify([s.run_id,"evidence",record.key]),scope.flowOpen,t("原始决策记录"),evidence));
+    }
+  };
+  for(const record of records){
+    const button=el("button","experiment-log-record",`${dateText(record.row.timestamp)} · ${decisionTitle(record.row)}`);button.type="button";button.dataset.key=record.key;
+    button.addEventListener("click",()=>{scope.logSelected.set(s.run_id,record.key);fill();});buttons.append(button);
+  }
+  fill();content.append(buttons,detail);
+  return retainedDetails(JSON.stringify([s.run_id,"experiment-logs"]),scope.flowOpen,t("实验日志 · {p0}",{p0:records.length}),content);
+}
 function executionSequence(s, scope) {
   scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
-  const projection=RSIDecisions.attempts(list(s.decisions)),mode=scope.graphMode==="all"?"all":"attempts";
-  const model=mode==="all"?projection.full:projection;
+  const model=RSIDecisions.attempts(list(s.decisions)),projection=model;
   const groups=executionGroups(s,model);
   const section=el("section","execution-sequence");section.id="execution-flow";
-  scope.graphViews ||= {attempts:{},all:{}};
-  scope.graphView=scope.graphViews[mode];scope.modeSelected ||= new Map();
+  scope.graphView ||= {};
   scope.attemptSteps ||= new Map();scope.attemptViews ||= new Map();
-  // A disappearing selection must not silently select another record, even in
-  // an inactive view that the user returns to after polling.
-  for(const [view,projectionModel] of [["attempts",projection],["all",projection.full]]){
-    const keys=new Set(executionGroups(s,projectionModel).map(g=>g.key));
-    if(view==="attempts"&&!projection.attemptCount)keys.clear();
-    if(!keys.has(scope.modeSelected.get(view)))scope.modeSelected.set(view,null);
-    if(view===mode&&!keys.has(scope.flowSelected.get(s.run_id)))scope.flowSelected.set(s.run_id,null);
-  }
+  if(!groups.some(g=>g.key===scope.flowSelected.get(s.run_id)))scope.flowSelected.set(s.run_id,null);
   for(const [key,chosen] of scope.attemptSteps){
-    if(!projection.full.nodes.some(n=>n.key===chosen))scope.attemptSteps.set(key,null);
+    if(!groups.find(g=>g.key===key)?.members.some(n=>n.key===chosen))scope.attemptSteps.set(key,null);
   }
-  const changeMode=(next,selected)=>{
-    disposeGraph(scope);scope.modeSelected.set(mode,scope.flowSelected.get(s.run_id));
-    scope.graphMode=next;scope.graphView=scope.graphViews[next];
-    scope.flowSelected.set(s.run_id,selected??scope.modeSelected.get(next));renderProject();
-  };
-  const toolbar=el("div","trajectory-heading"),switcher=el("div","trajectory-mode");
-  switcher.setAttribute("role","group");switcher.setAttribute("aria-label",t("脉络视图"));
-  for(const [value,title] of [["attempts","研究尝试"],["all","全部记录"]]){
-    const button=el("button","",t(title));button.type="button";button.setAttribute("aria-pressed",String(value===mode));button.addEventListener("click",()=>{if(value!==mode)changeMode(value);});switcher.append(button);
-  }
-  toolbar.append(switcher);
-  if(mode==="all")toolbar.append(el("p","quiet-note",t("{p0} 条原始记录",{p0:list(s.decisions).length})));
-  else if(projection.attemptCount)toolbar.append(el("p","quiet-note",projection.ungroupedCount?t("{p0} 个研究尝试 · {p1} 条未分组记录",{p0:projection.attemptCount,p1:projection.ungroupedCount}):t("{p0} 个研究尝试",{p0:projection.attemptCount})));
+  const toolbar=el("div","trajectory-heading");toolbar.append(el("h4","",t("研究尝试")));
+  if(projection.attemptCount)toolbar.append(el("p","quiet-note",projection.ungroupedCount?t("{p0} 个研究尝试 · {p1} 条未分组记录",{p0:projection.attemptCount,p1:projection.ungroupedCount}):t("{p0} 个研究尝试",{p0:projection.attemptCount})));
   section.append(toolbar);
   const issues=graphIssues(model,scope,s.run_id);if(issues)section.append(issues);
-  if(mode==="attempts"&&projection.ungrouped.length){
-    const records=el("div","ungrouped-records");
-    for(const record of projection.ungrouped){
-      const button=el("button","ungrouped-record",`${dateText(record.row.timestamp)} · ${decisionTitle(record.row)}`);button.type="button";
-      button.addEventListener("click",()=>changeMode("all",record.key));records.append(button);
-    }
-    section.append(retainedDetails(JSON.stringify([s.run_id,"ungrouped"]),scope.flowOpen,t("未分组记录 · {p0}",{p0:projection.ungrouped.length}),records));
-  }
-  if(mode==="attempts"&&!projection.attemptCount){
+  if(!projection.attemptCount){
     disposeGraph(scope);
-    const legacy=el("div","attempt-empty");legacy.append(el("p","",t("此实验尚未记录研究尝试")));
-    if(groups.length){const button=el("button","",t("查看全部决策"));button.type="button";button.addEventListener("click",()=>changeMode("all"));legacy.append(button);}
-    section.append(legacy);return section;
+    section.append(el("p","attempt-empty",t("未记录研究尝试")));
+    const logs=experimentLogs(s,scope,projection);if(logs)section.append(logs);
+    return section;
   }
-  if(mode==="attempts"&&projection.fallback)section.append(el("p","quiet-note attempt-fallback",t("尝试间关系形成循环，已展开全部决策以保留真实依赖。")));
   const shell=el("div","trajectory-shell"),navigation=el("div","flow-map");
-  navigation.setAttribute("aria-label",t(mode==="attempts"&&!projection.fallback?"研究尝试":"本次运行的决策"));shell.append(navigation,graphTools(()=>scope.graph));section.append(shell);
+  navigation.setAttribute("aria-label",t("研究尝试"));shell.append(navigation,graphTools(()=>scope.graph));section.append(shell);
   const entries=el("ol","flow-steps");section.append(entries);
   const onIdle=()=>{if(scope===state.activeScope&&state.page==="experiment"&&scope.renderPending&&!graphBusy(scope)){scope.renderPending=false;renderProject();}};
   const edgeLabel=kind=>t({sequence:"记录顺序，不表示因果",dependency:"依赖已完成决策",adoption:"已确认采纳结果",root:"布局起点，不表示依赖",source:"引用的决策"}[kind]);
@@ -352,14 +389,13 @@ function executionSequence(s, scope) {
     entries.replaceChildren();
     let selected=scope.flowSelected.get(s.run_id);
     if(!groups.some(g=>g.key===selected))selected=null;
-    scope.flowSelected.set(s.run_id,selected);scope.modeSelected.set(mode,selected);
+    scope.flowSelected.set(s.run_id,selected);
     scope.graph?.dispose?.();
     scope.graph=RSIDecisions.render({
-      view:scope.graphView,onIdle,model,rows:list(s.decisions),selected,compact:mode==="attempts",
+      view:scope.graphView,onIdle,model,rows:list(s.decisions),selected,compact:true,
       startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>{
         const group=groups.find(g=>g.index===index);
-        const prefix=group.type==="ungrouped"?t("未分组 · {p0}",{p0:decisionTitle(row)}):attemptTitle(group);
-        return `${groups.indexOf(group)+1} · ${prefix}${group.type!=="attempt"&&FAILED.has(statusKey(feedbackFor(row,s).status))?` · ${statusText(feedbackFor(row,s).status)}`:""}`;
+        return `${groups.indexOf(group)+1} · ${attemptTitle(group)}`;
       },edgeLabel,onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
     });
     navigation.replaceChildren(scope.graph);navigation.scrollLeft=scroll.left;navigation.scrollTop=scroll.top;
@@ -383,48 +419,14 @@ function executionSequence(s, scope) {
         childMap.append(scope.attemptGraph);childShell.append(childMap,graphTools(()=>scope.attemptGraph));stages.append(childShell);entries.append(stages);
         if(!row){stages.append(el("p","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));continue;}
       }
-      const f=feedbackFor(row,s);
-      const step=el("li","flow-step"),index=el("span","flow-index",String(detailIndex+1).padStart(2,"0"));
-      const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
-      const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
-      const title=decisionTitle(row);decision.append(el("h4","",title),meta);
-      if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
-      if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row)&&asText(row.strategy,"").trim()!==title)decision.append(el("p","decision-reason",row.strategy));
-      const changes=changesView(row,s);if(changes)decision.append(changes);
-      if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
-        const component=list(row.changes).find(c=>c.field==="components")?.after;
-        const prompt=typeof component==="string"&&/prompt|instructions/.test(component);
-        decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果；评测通过与实际采用是两个独立步骤。"):t("检验待验证版本的效果；评测通过与实际采用是两个独立步骤。")));
-        if(!row.protocol_ref&&!list(row.changes).some(c=>c.field==="protocol_ref"))decision.append(el("p","quiet-note",t("评测方案未记录。")));
-      }
-      const explicit=concreteFeedback(row),error=object(row.feedback).error||row.error;
-      if(explicit||error){feedback.append(el("p","flow-label",t("实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
-      else if(!DONE.has(statusKey(f.status))||row.kind==="review"||decisionAction(row)==="finish")feedback.append(el("p","",f.text));
-      if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
-      if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
-      if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
-      if(f.job&&number(f.job.elapsed_seconds))feedback.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(f.job.elapsed_seconds)})));
-      step.append(index,decision);if(feedback.childElementCount)step.append(feedback);if(metrics.childElementCount)step.append(metrics);
-      const results=el("div","flow-results");
-      if(f.job){
-        const j=f.job,h=historyRows(j),isTraining=/train|sft|finetun/.test(asText(j.kind,""))||h.some(p=>number(metricValue(p.metrics,lossKeys)));
-        if(row.kind==="review")results.append(el("p","quiet-note",t("关联任务当前快照")));
-        if(isTraining){const charts=el("div","charts");charts.append(chartView(j,lossKeys,t("损失")),chartView(j,lrKeys,t("学习率")));results.append(charts);}
-
-      }
-      for(const result of relatedResults(row,s).filter(r=>r.type==="candidate")){
-        const reported=flattenMetrics(result.row.metrics),shown=flattenMetrics(f.metrics);
-        const alreadyShown=Object.keys(reported).length>0&&Object.entries(reported).every(([key,value])=>shown[key]===value);
-        if(alreadyShown){metrics.append(badge(result.row.status));continue;}
-        const card=el("div","candidate-card");card.append(el("h4","",t("版本结果")),badge(result.row.status),comparisonView(result.row.metrics));results.append(card);
-      }
-      if(results.childElementCount)step.append(results);entries.append(step);
+      entries.append(decisionStep(row,s,detailIndex));
     }
     if(groups.length&&!selected)entries.append(el("li","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));
     if(restoreFocus)navigation.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
     if(childFocus)entries.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
   };
-  fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
+  fill();
+  const logs=experimentLogs(s,scope,projection);if(logs)section.append(logs);
   return section;
 }
 function jobRecord(job, compact=false) {
@@ -503,7 +505,7 @@ function renderProject() {
   const host=$("project-content"),details=scope.details || (scope.details=el("section","project-detail"));
   details.setAttribute("aria-label",t("本次运行的决策"));
   const entry=scope.cache.get(row.run_id);
-  const fingerprint=JSON.stringify([RSII18n.getLanguage(),scope.graphMode||"attempts",row,entry?.snapshot,entry?.status==="pending"&&entry?.snapshot?"ready":entry?.status,entry?.error||"",state.projects.map(p=>[p.project_id,projectName(p)])]);
+  const fingerprint=JSON.stringify([RSII18n.getLanguage(),row,entry?.snapshot,entry?.status==="pending"&&entry?.snapshot?"ready":entry?.status,entry?.error||"",state.projects.map(p=>[p.project_id,projectName(p)])]);
   if(scope.detailFingerprint!==fingerprint){
     const position=typeof window!=="undefined"?{left:window.scrollX,top:window.scrollY}:null;
     for(const d of details.querySelectorAll?.("details[data-retain-key]")||[]){

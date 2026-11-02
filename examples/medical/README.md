@@ -683,3 +683,20 @@ raw responses. Preserve these locally like the other run evidence; they may cont
 research context. Schema-valid decisions can still be scientifically unhelpful or
 finish early; native output constraints do not establish autonomous research or
 training success.
+
+
+New medical research requires explicit Attempt membership for every exploration
+directive (including prompt changes, training, evaluation and application) and
+`define_recipe`, `choose_training_data`, `prepare_data`. The decision-maker starts
+an idea with `research_attempt_title` or continues its known `research_attempt_id`;
+the executor assigns new IDs and rejects missing/unknown/renamed membership before
+side effects. An Attempt is a research idea and its execution, not an operation
+type, successful result, or mandatory training job. Public reads, waits, project
+notes and stopping may remain ungrouped. `attempt-contract.json` records the run's
+admission contract. Canonical and portable schemas require new/continue fields;
+local validation still checks empty titles and known IDs. Legacy callers can
+explicitly set `ExperimentSettings.require_research_attempts=False`; the CLI and
+new settings default to enforcement. Old frozen runs and historical records are
+not backfilled. Feedback learning retains the contract and gathers receipts from
+the recorded attempt. Strict admission is refused by generic local snapshot
+capture until it has an explicit recovery contract, rather than silently lost.
