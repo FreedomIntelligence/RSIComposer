@@ -375,7 +375,6 @@ function executionSequence(s, scope) {
     if(!groups.find(g=>g.key===key)?.members.some(n=>n.key===chosen))scope.attemptSteps.set(key,null);
   }
   const toolbar=el("div","trajectory-heading");toolbar.append(el("h4","",t("研究尝试")));
-  if(projection.attemptCount)toolbar.append(el("p","quiet-note",projection.ungroupedCount?t("{p0} 个研究尝试 · {p1} 条未分组记录",{p0:projection.attemptCount,p1:projection.ungroupedCount}):t("{p0} 个研究尝试",{p0:projection.attemptCount})));
   section.append(toolbar);
   const issues=graphIssues(model,scope,s.run_id);if(issues)section.append(issues);
   if(!projection.attemptCount){
@@ -422,7 +421,6 @@ function executionSequence(s, scope) {
         if(g.interpretation){
           const info=g.interpretation;
           if(present(info.summary))stages.append(el("p","result-summary attempt-summary",info.summary));
-          stages.append(el("p","quiet-note",t("由模型整理，分组不代表成功或采纳。")));
           if(g.missingDecisionIDs?.length)stages.append(el("p","quiet-note",t("部分详情未包含在当前快照中（{p0} 条）。",{p0:g.missingDecisionIDs.length})));
           const provenance=el("div","attempt-provenance"),source=object(info.provenance),model=object(source.model);
           for(const value of [model.model_id,model.revision,source.job_id,source.input_digest])if(present(value))provenance.append(el("p","",String(value)));
@@ -680,7 +678,7 @@ async function refresh() {
     if (!state.projects.length) showEmpty(() => t("等待第一个项目"), () => t("尚无项目或运行快照；有数据后将自动显示。"));
   } catch (error) {
     if (epoch !== state.epoch) return;
-    notice(() => t("保留已读取的项目与快照。{p0}", {p0: controller.signal.aborted ? t("请求超时。") : errorText(error,"无法连接监控服务。")}), true);
+    notice(() => controller.signal.aborted ? t("监控连接超时，正在重试。") : errorText(error,"无法连接监控服务。"), true);
     if (!selectedProject()) showEmpty(() => t("暂时无法读取项目"), () => t("请检查本地监控服务；恢复后将自动重新读取。"));
   } finally {
     clearTimeout(timeout);

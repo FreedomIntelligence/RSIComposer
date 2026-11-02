@@ -4,7 +4,6 @@
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
   "研究尝试": "Attempts",
-  "由模型整理，分组不代表成功或采纳。": "Organized by a model; grouping does not imply success or adoption.",
   "部分详情未包含在当前快照中（{p0} 条）。": "Some details are outside the current snapshot ({p0} records).",
   "整理版本 {p0}": "Interpretation revision {p0}",
   "模拟整理": "Simulated interpretation",
@@ -19,7 +18,6 @@
   "状态未知": "Unknown status",
   "未命名研究尝试": "Untitled attempt",
   "{p0} 个研究尝试": "{p0} attempts",
-  "{p0} 个研究尝试 · {p1} 条未分组记录": "{p0} attempts · {p1} ungrouped records",
   "未分组 · {p0}": "Ungrouped · {p0}",
   "未分组记录 · {p0}": "Ungrouped records · {p0}",
   "未记录研究尝试": "No research attempts recorded",
@@ -439,7 +437,7 @@
   "尚无项目或运行快照；有数据后将自动显示。": "No projects or run snapshots yet; they will appear when available.",
   "连接中断": "Disconnected",
   "无法连接监控服务。": "Unable to connect to the monitoring service.",
-  "保留已读取的项目与快照。{p0}": "Retaining the loaded projects and snapshots. {p0}",
+  "监控连接超时，正在重试。": "Monitor connection timed out. Retrying.",
   "暂时无法读取项目": "Projects temporarily unavailable",
   "请检查本地监控服务；恢复后将自动重新读取。": "Check the local monitoring service; loading will resume automatically.",
   "返回真实运行": "Back to real runs",

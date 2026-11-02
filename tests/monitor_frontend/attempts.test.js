@@ -215,5 +215,5 @@ test("selected interpretation shows summary, model source, revision, and honest 
   view.revisions=[{...view.items[0],revision:1,summary:"Earlier summary"}];
   const snapshot=run("a",{decisions:[d("new",null)],research_attempts:view}),h=open(snapshot);
   const main=findClass(findClass(h.get("project-content"),"flow-map")[0],"decision-node");assert.equal(main.length,1);main[0].listeners.click();
-  const content=textOf(h.get("project-content"));assert.match(content,/A model summary, not success/);assert.match(content,/部分详情/);assert.match(content,/organizer/);assert.match(content,/artifact:report/);assert.match(content,/Earlier summary/);assert.equal(findClass(h.get("project-content"),"attempt-map").length,0);
+  const content=textOf(h.get("project-content"));assert.match(content,/A model summary, not success/);assert.doesNotMatch(content,/由模型整理，分组不代表成功或采纳|条未分组记录|个研究尝试/);assert.match(content,/部分详情/);assert.match(content,/organizer/);assert.match(content,/artifact:report/);assert.match(content,/Earlier summary/);assert.equal(findClass(h.get("project-content"),"attempt-map").length,0);
 });
