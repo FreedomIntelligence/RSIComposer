@@ -2,6 +2,7 @@
 from dataclasses import asdict
 import json
 import os
+from examples.qwen_toy.monitor import enrich_completed_run
 from pathlib import Path
 import subprocess
 import sys
@@ -35,6 +36,21 @@ class DecisionGraphDemoTests(unittest.TestCase):
         self.producers = {row['directive_id']: row for row in self.graph.values()
                           if (row.get('directive_id') or '').startswith('produce-')}
         self.adoption = next(row for row in self.graph.values() if row.get('operation') == 'system_adopt')
+
+    def test_attempt_membership_flows_from_harness_through_live_and_offline_monitor(self):
+        attempts = {row['research_attempt_id'] for row in self.graph.values()}
+        self.assertEqual(len(attempts), 3)
+        producers = list(self.producers.values())
+        self.assertNotEqual(producers[0]['research_attempt_id'], producers[1]['research_attempt_id'])
+        join_attempt = self.adoption['research_attempt_id']
+        other = [r for r in self.graph.values() if r not in producers]
+        self.assertTrue(all(r['research_attempt_id'] == join_attempt for r in other))
+        for snapshot in (self.monitor, enrich_completed_run(self.root)):
+            for row in snapshot['decisions']:
+                actual = self.graph[row['decision_id']]
+                self.assertEqual(row['research_attempt_id'], actual['research_attempt_id'])
+                self.assertEqual(row['research_attempt_title'], actual['research_attempt_title'])
+        self.assertEqual(set(self.adoption['adopted_decision_ids']), {r['decision_id'] for r in producers})
 
     def test_workers_really_overlap_and_produce_independent_same_parent_artifacts(self):
         self.assertEqual(self.report['max_in_flight'], 2)

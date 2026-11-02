@@ -101,6 +101,8 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 同一次 RSI run 内的决策关系记录为 DAG。`Decision` 携带稳定身份、多个前置依赖和信息引用；系统校验前置已完成后执行。多个独立指令可并行产生候选，researcher 再显式选择一个或多个结果；`SystemRegistry.compose/adopt` 合并兼容组件并通过 activator 确认启用，执行回执才记录候选来源的采纳边。后续决策可依赖该汇合决策。冲突组件或不兼容权重不自动合并，运行时消费新清单由装配实现负责。关系记录、结果和监控沿用现有状态、memory、Experience 和 monitor，不另设图数据库或调度服务。
 
+研究尝试是决策记录上的可选关联，不增加执行层级。researcher 用标题发起新尝试，由 Harness 分配稳定 ID；后续决策明确引用该 ID，系统校验并保存归属与标题。一次尝试可含多个修改、训练、评测或采纳操作；并行尝试与结果汇合仍由原始决策依赖及成功采纳回执决定。监控仅将已接受的关联投影成主图节点，节点内保留所有原始决策和反馈。历史记录缺少关联时不推断分组，也不按名称或相邻时间补造研究过程。
+
 
 运行中的 review 保留 continue / cancel。安装 `ExperimentControls` 后，研究者可通过普通获授权工具按 ID inspect / cancel / update / compare。`DirectiveUpdate` 携带 expected_version、幂等键和 changes；原指令不可变，支持更新的 handler/backend 应用控制变更并确认版本，不支持的字段或后端明确拒绝。候选比较要求已知完整训练 base、相同评测协议/输入及有效指标；排序不自动采纳。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
 

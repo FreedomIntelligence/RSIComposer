@@ -13,6 +13,7 @@ from rsisys.loops.contracts.model_service import ModelRef
 
 from ..action_space import OperationCall, OperationResult, OperationSpec
 from .decision import Decision
+from .attempts import known_attempts, validate_attempt_fields
 
 
 @dataclass(frozen=True)
@@ -147,11 +148,26 @@ class DecisionState:
     def __post_init__(self):
         if not isinstance(self.decision_records, dict):
             raise ValueError('Decision records must be indexed by ID')
+        attempt_origins = set()
         for ident, record in self.decision_records.items():
             if (not isinstance(ident, str) or not ident.strip() or not isinstance(record, dict)
                     or record.get('decision_id') != ident
                     or record.get('status') not in ('pending', 'executing', 'completed', 'failed', 'cancelled', 'partial', 'blocked')):
                 raise ValueError('Invalid decision ledger record')
+            attempt_id, title = record.get('research_attempt_id'), record.get('research_attempt_title', '')
+            validate_attempt_fields(attempt_id, title)
+            if (attempt_id is None) != (title == '') or (record.get('validation_error') and attempt_id is not None):
+                raise ValueError('Resolved research attempt membership requires a validated ID/title pair')
+            if attempt_id is not None:
+                proposal = record.get('proposal', {})
+                requested_id, requested_title = proposal.get('research_attempt_id'), proposal.get('research_attempt_title', '')
+                if ((requested_id is not None and requested_id != attempt_id)
+                        or (requested_title and requested_title != title)):
+                    raise ValueError('Research attempt membership differs from its original proposal')
+                if requested_id is None:
+                    if requested_title != title or attempt_id in attempt_origins:
+                        raise ValueError('Research attempt requires one explicit title-only origin')
+                    attempt_origins.add(attempt_id)
             for name in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_candidate_ids', 'adopted_decision_ids',
                          'unresolved_adopted_candidate_ids'):
                 refs = record.get(name, ())
@@ -160,6 +176,8 @@ class DecisionState:
                     raise ValueError(f'Invalid ledger {name}')
             if record.get('adopted_candidate_ids') and record['status'] != 'completed':
                 raise ValueError('Only completed decisions may confirm adoption')
+        if set(known_attempts(self.decision_records.values())) != attempt_origins:
+            raise ValueError('Research attempt must have a validated ledger origin')
         for mapping in (self.directive_decisions, self.candidate_origins):
             if not isinstance(mapping, dict) or any(not isinstance(k, str) or not k.strip()
                     or not isinstance(v, str) or v not in self.decision_records for k, v in mapping.items()):

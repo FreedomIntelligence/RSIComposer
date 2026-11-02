@@ -13,6 +13,7 @@ from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef, Mo
 from ...action_space.directives import DirectiveDefinitions
 
 from ..decision import Decision
+from ..attempts import requested_attempt
 from ...action_space import OperationCall
 from ..state import DecisionContext
 from ..context import BasicContextCompactor, IdentityContextCompactor
@@ -63,6 +64,11 @@ class ModelDecisionPolicy:
     @staticmethod
     def _envelope(properties, required):
         if 'kind' in properties:
+            properties = {**properties,
+                'research_attempt_id': {'type': ['string', 'null'], 'minLength': 1, 'maxLength': 200,
+                    'description': 'Continue a known attempt from decision_graph; never invent an ID.'},
+                'research_attempt_title': {'type': 'string', 'maxLength': 500,
+                    'description': 'Title alone starts a new attempt; with an ID it cannot rename the attempt.'}}
             properties = {**properties, **{name: {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
                                                  'description': 'Distinct decision IDs; checked before execution.'}
                 for name in ('depends_on_decision_ids', 'source_decision_ids')}}
@@ -206,6 +212,7 @@ class ModelDecisionPolicy:
                     "Optional depends_on_decision_ids requires known completed decisions in decision_graph; "
                     "source_decision_ids cites known decisions, including pending or failed work. "
                     "Use candidate_origins to find producers; never infer lineage from history order. "
+                    + self._attempt_instructions() +
                     "Unknown or unfinished dependencies cannot execute; wait and propose again later. "
                     "Decision IDs are system generated. Never claim adopted candidates or confirmed edges; "
                     "only successful executor receipts can confirm adoption. "
@@ -276,6 +283,27 @@ class ModelDecisionPolicy:
         return reason
 
     @staticmethod
+    def _attempt_instructions():
+        return ('Group related research decisions into an attempt for one idea. A top-level research_attempt_title '
+                '(at most 500 characters) with no research_attempt_id starts a NEW research attempt; the harness '
+                'assigns its UUID. Describe the hypothesis or approach in the title, not an operation name. '
+                'Reuse its known research_attempt_id (at most 200 characters) from decision_graph across decisions '
+                'and review invocations within this run, through modification, evaluation, comparison and adoption. '
+                'For example, optimizing a prompt, benchmarking it and deciding adoption belong to one attempt. '
+                'Alternative competing variants can use separate attempts. '
+                'The title may be omitted on continuation; if supplied it must exactly match the canonical title. '
+                'Never invent an attempt ID or rename an existing attempt. A title alone always starts a new '
+                'attempt, even if another has that title. Both fields remain optional for legacy compatibility; '
+                'omitting both leaves the decision ungrouped. '
+                'membership is never inferred from dependencies, candidates or history order. ')
+
+    @staticmethod
+    def _parse_attempt(payload, context):
+        ident, title = payload.get('research_attempt_id'), payload.get('research_attempt_title', '')
+        requested_attempt(ident, title, context.decision_graph)
+        return {'research_attempt_id': ident, 'research_attempt_title': title}
+
+    @staticmethod
     def _parse_lineage(payload, context):
         if any(key in payload for key in ('decision_id', 'adopted_candidate_ids', 'adopted_decision_ids', 'confirmed_edges')):
             raise ValueError('Decision identity and confirmed adoption are system/executor fields')
@@ -299,7 +327,9 @@ class ModelDecisionPolicy:
         kind = payload["kind"]
         reason = self._parse_reason(payload)
         lineage = self._parse_lineage(payload, context)
-        common = {'kind', 'reason', 'depends_on_decision_ids', 'source_decision_ids'}
+        lineage.update(self._parse_attempt(payload, context))
+        common = {'kind', 'reason', 'depends_on_decision_ids', 'source_decision_ids',
+                  'research_attempt_id', 'research_attempt_title'}
         if kind in ('invoke', 'wait', 'finish'):
             allowed = common | {'invoke': {'operation', 'arguments'}, 'wait': {'job'}, 'finish': set()}[kind]
             if set(payload) - allowed:
@@ -313,7 +343,8 @@ class ModelDecisionPolicy:
                 raise ValueError(f'Disallowed exploration mode: {mode}')
             fields = {key: value for key, value in payload.items()
                       if key not in ('kind', 'strategy', 'mode', 'input_ids', 'arguments', 'review_after_seconds', 'reason',
-                                     'depends_on_decision_ids', 'source_decision_ids')}
+                                     'depends_on_decision_ids', 'source_decision_ids',
+                                     'research_attempt_id', 'research_attempt_title')}
             if 'arguments' in payload and fields:
                 raise ValueError('Use either arguments or top-level directive parameters, not both')
             candidates = {c.candidate_id: c for c in context.candidates}
@@ -361,6 +392,8 @@ class ModelDecisionPolicy:
             system=('Review the running execution in context.execution. Return one JSON object, no markdown. '
                     'You may first use any currently permitted context.operations: '
                     '{"kind":"invoke","operation":name,"arguments":{...}}. '
+                    'Attempt fields apply to invoke decisions only, not final review controls. '
+                    + self._attempt_instructions() +
                     'Query results are in context.operation_results, including their data and artifact references. '
                     'If operations is empty, tool use is unavailable or its budget is exhausted; decide now. '
                     'Otherwise return a final decision using only context.review_actions: '
@@ -385,7 +418,9 @@ class ModelDecisionPolicy:
         payload = _load_object(response.text)
         if isinstance(payload, dict) and payload.get('kind') == 'invoke':
             required = {'kind', 'operation', 'arguments'}
-            if not required <= set(payload) or set(payload) - required - {'reason', 'depends_on_decision_ids', 'source_decision_ids'}:
+            if not required <= set(payload) or set(payload) - required - {
+                    'reason', 'depends_on_decision_ids', 'source_decision_ids',
+                    'research_attempt_id', 'research_attempt_title'}:
                 raise ValueError('A review invocation requires kind, operation and arguments, with optional reason')
             allowed = {spec.name for spec in context.operations}
             if (not isinstance(payload['operation'], str) or payload['operation'] not in allowed
@@ -393,7 +428,7 @@ class ModelDecisionPolicy:
                 raise ValueError('Review may invoke only an available operation')
             return Decision('invoke', operation=OperationCall(payload['operation'], payload['arguments']),
                             reason=self._parse_reason(payload), simulated=response.simulated, usage=response.usage,
-                            **self._parse_lineage(payload, context))
+                            **self._parse_lineage(payload, context), **self._parse_attempt(payload, context))
         if (not isinstance(payload, dict) or 'action' not in payload
                 or set(payload) - {'action', 'next_review_seconds', 'reason'}):
             raise ValueError('Expected a review action, optional next_review_seconds and reason')

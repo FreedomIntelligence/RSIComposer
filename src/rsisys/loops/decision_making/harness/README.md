@@ -136,6 +136,31 @@ bindings = {**bindings, **research_tools.bindings}
 
 ## 本地控制与记录
 
+`Decision` 尾部追加 `research_attempt_id: str | None = None` 和
+`research_attempt_title: str = ''`，表示本次运行内围绕同一想法的一组决策，不增加 Idea
+实体或额外 registry。建议标题描述假设或改进方法，例如「缩短提示以减少冗余回答」，
+并在修改、评测、比较和决定采纳期间复用同一 attempt；竞争方案可分别建 attempt。
+
+- 仅提供非空 title：请求新 attempt，Harness 分配稳定 UUID；同名 title 仍创建不同 attempt。
+- 提供本运行 ledger 中已验证的 ID：继续该 attempt；title 可省略，提供时必须完全匹配原始标题，不能改名。
+- 两项省略或使用默认值：保持 ungrouped，兼容旧调用，不根据依赖、候选来源或历史顺序猜测归属。
+
+ID 最长 200 字符，title 最长 500 字符；ID 必须非空，title 提供非空值时不能全为空白。
+这些约束同时用于 `Decision`、普通模型 parser/schema 和 review invoke；最终
+`ReviewDecision` 控制不增加字段。未知 ID 或改名请求在执行前验证失败。验证失败的 ledger
+记录和 history 顶层归属为 `None` / `''`，不能作为新 attempt 的来源。
+
+`decision_records` 的顶层字段保存解析后的 ID 和不可变 canonical title；`proposal` 始终
+保留原始请求，title-only 提案不会被回写成带 ID 的提案。普通 decision、operation 和 feedback
+的 `HistoryEntry.details` 顶层也保存解析后的值，review invoke 的归属记录在其 operation
+history 中。`DecisionContext.decision_graph` 提供同一 ID/title 对，policy 可跨决策和复查继续
+该想法，不依赖被压缩的 history。写账重试与 JSON 恢复复用相同 UUID，不重复执行工具。
+旧 snapshot 的新增 `Decision` 字段使用默认值，旧 ledger/history 保持原样且不猜测历史分组。
+
+归属不改变原始决策 DAG 或 executor 确认的采纳关系；并行、多 parent join 和多结果采纳保持
+原语义。`A1 → B1 → A2` 可以继续原 attempt A；展示层可拆分收缩后出现环的分组，不能因此
+拒绝合法研究决策或删除原始边。
+
 异步 tools 返回 JobRef；外部通过 `loop.harness.resume(job, result)` 回填终态 OperationResult。job 必须匹配当前等待任务，不自动轮询或重做。操作已执行但 history/Experience 写入失败时保留结果与稳定 ID，后续 step 或相同回填只补写，待补写期间拒绝不同结果并禁止快照；单独使用 Harness 时暂存仅在进程内；durable Application 可保存回执并在中断后要求核对。
 
 `loop.harness.submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning` 控制决策者自身训练，不自动执行 Actor 任务或触发周期优化。训练任务与模型应用约束见 learner README。默认训练为 Mock，未实现真实梯度更新。

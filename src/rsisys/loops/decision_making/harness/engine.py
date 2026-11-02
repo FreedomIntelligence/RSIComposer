@@ -28,6 +28,7 @@ from ..action_space.access import authorized_space
 from .learner import DecisionLearner, DecisionTrainingRequest
 from .policy import DecisionPolicy, ModelDecisionPolicy
 from .decision import Decision
+from .attempts import attempt_details, requested_attempt
 from .tools import DecisionTools, execute_operation, record_operation
 
 from .state import (DecisionContext, DecisionState, _PendingOperationRecord, _PendingReviewRecord, _ReviewSession,
@@ -157,6 +158,7 @@ class DefaultDecisionHarness:
         graph = []
         for row in self.state.decision_records.values():
             item = {key: row[key] for key in ('decision_id', 'status')}
+            item.update(attempt_details(row))
             directive = row['proposal'].get('directive')
             if directive:
                 item['mode'] = directive['mode']
@@ -174,7 +176,7 @@ class DefaultDecisionHarness:
         ident = decision.decision_id
         row = self.state.decision_records.get(ident)
         if row is not None:
-            if row['proposal'] != asdict(decision):
+            if {'research_attempt_id': None, 'research_attempt_title': '', **row['proposal']} != asdict(decision):
                 raise ValueError('Decision ID has different content')
             if row['status'] == 'executing':
                 raise RuntimeError('Decision execution outcome is unknown; refusing to execute it again')
@@ -189,6 +191,7 @@ class DefaultDecisionHarness:
                 source_decision_ids=decision.source_decision_ids,
                 adopted_candidate_ids=(), adopted_decision_ids=(), unresolved_adopted_candidate_ids=(),
                 confirmed_edges=(), error=None, validation_error=None,
+                research_attempt_id=None, research_attempt_title='',
                 proposal=deepcopy(asdict(decision)),
                 decision_model=asdict(context.decision_model) if context.decision_model else None,
                 execution_model=asdict(context.execution.model) if context.execution.model else None)
@@ -202,6 +205,15 @@ class DefaultDecisionHarness:
                 if row['validation_error']:
                     break
             if not row['validation_error']:
+                try:
+                    title = requested_attempt(decision.research_attempt_id, decision.research_attempt_title,
+                                              self.state.decision_records.values())
+                    row.update(research_attempt_id=(decision.research_attempt_id or str(uuid4())) if title else None,
+                               research_attempt_title=title)
+                except ValueError as error:
+                    row.update(status='failed', error=str(error), validation_error=str(error),
+                               research_attempt_id=None, research_attempt_title='')
+            if not row['validation_error']:
                 row['confirmed_edges'] = tuple({'from': ref, 'to': ident, 'kind': kind, 'confirmed': True}
                     for kind, refs in (('depends_on', decision.depends_on_decision_ids), ('source', decision.source_decision_ids))
                     for ref in refs)
@@ -210,6 +222,7 @@ class DefaultDecisionHarness:
         if record_history or row['validation_error']:
             self.memory.append(HistoryEntry(ident, 'decision', None, decision.kind, decision.simulated,
                 details=_json_details({**deepcopy(row['proposal']), 'decision_model': row['decision_model'],
+                         **attempt_details(row),
                          'execution_model': row['execution_model'],
                          'status': 'failed' if row['validation_error'] else 'pending',
                          'validation_error': row['validation_error']})))
@@ -233,7 +246,7 @@ class DefaultDecisionHarness:
         row = self.state.decision_records.get(ident, {})
         edges = tuple(edge for edge in row.get('confirmed_edges', ()) if edge['kind'] != 'adopted')
         edges += tuple({'from': source, 'to': ident, 'kind': 'adopted', 'confirmed': True} for source in origins)
-        return dict(decision_id=ident, adopted_candidate_ids=adopted,
+        return dict(decision_id=ident, **attempt_details(row), adopted_candidate_ids=adopted,
                     adopted_decision_ids=tuple(origins), unresolved_adopted_candidate_ids=tuple(unresolved), confirmed_edges=edges)
 
     def _write_operation_record(self, pending, *, experience=True):

@@ -182,6 +182,10 @@ def project_snapshot(raw, run_id):
                     if values:
                         item["changes"].append({"field": change["field"][:100], **values})
             if key == "decisions":
+                attempt_id, title = row.get("research_attempt_id"), row.get("research_attempt_title")
+                if (isinstance(attempt_id, str) and 0 < len(attempt_id) <= 200 and attempt_id.strip()
+                        and isinstance(title, str) and title.strip()):
+                    item.update(research_attempt_id=attempt_id, research_attempt_title=title[:500])
                 for relation in ("depends_on_decision_ids", "adopted_decision_ids", "source_decision_ids", "adopted_candidate_ids"):
                     if isinstance(row.get(relation), list):
                         item[relation] = [v for v in row[relation][:100]

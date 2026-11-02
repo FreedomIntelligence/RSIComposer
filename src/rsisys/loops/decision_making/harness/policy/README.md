@@ -14,6 +14,14 @@
 
 `DecisionContext.decision_graph` 是轻量身份/状态及非空关系投影，不复制 reason、错误文本或完整边列表；`candidate_origins` 映射候选 ID 到其 producer decision。它们不依赖截断后的 history 顺序。执行前，依赖必须指向已知且 completed 的决策；引用可以指向已知的 pending/failed 决策。未知、前向、自指和重复引用会被拒绝，未满足依赖时不调用执行器，失败验证保留在 history。没有隐式队列：模型可以 wait 后重新提出决策。现有并行 Runner 和 max_outstanding 不变。
 
+普通决策和 review invoke 还支持可选顶层 `research_attempt_id` / `research_attempt_title`。
+仅给 title 请求新 attempt，由 Harness 创建 UUID；给 decision_graph 中已知的 ID 继续同一想法，
+省略 title 时仍记录 canonical title，提供时不能改名。ID 最长 200 字符，title 最长 500 字符，
+默认分别为 None / 空字符串；省略两项保留 ungrouped 兼容语义。模型提示建议标题描述假设或
+方法，同一运行内从修改、评测、比较到采纳都复用 ID；竞争方案可独立分组。解析器不分配 ID，
+不把归属字段传入 arguments；Harness 接纳后在 ledger 与 history 顶层记录解析后的归属，
+原始 proposal 不变。新旧 snapshot、重试及并行细节见 [Harness](../README.md)。
+
 `OperationResult` 和 `Feedback` 尾部的 `adopted_candidate_ids` 是执行器回执，必须是去重的非空字符串 tuple，且仅 COMPLETED 回执可以非空。成功 producer feedback 建立 origin；evaluate/apply_candidate 不建立或覆盖 origin。Harness 保留真实成功的采纳回执，并只从已知成功 origin 派生 `adopted_decision_ids` 及 confirmed adopted 边；旧快照或外部候选缺少 origin 时记入 `unresolved_adopted_candidate_ids`，不猜来源，也不把实际成功改成失败。一次决策可以采纳多个来源。
 
 `DecisionState.decision_records` 保存完整 ledger，`directive_decisions` 关联指令，`candidate_origins` 保存 producer 索引，`pending_operation_decision_id` 关联异步操作；`LoopStepResult.decision_id` 将步骤与同一决策关联。普通 decision history 的 record_id 使用 decision_id，operation/feedback history 的 details 显式包含 decision_id 和确认后的关系。操作执行与写账分开，写入重试复用冻结回执，JSON 恢复不改变判等语义；相同身份和内容的决策不重复执行，不同内容复用身份被拒绝。外部 JobRef 复用按 `(job, decision_id)` 区分；resume 的写账重试安全，完成后重复 resume 继续按既有接口报错，不重新执行。复查写操作同样注册身份、验证依赖并保存关联回执。新快照保存这些字段，旧快照只对明确新增字段使用空默认值，不从历史猜测缺失来源。

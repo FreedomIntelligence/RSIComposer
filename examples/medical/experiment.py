@@ -698,7 +698,8 @@ class ResearchPolicy(ModelDecisionPolicy):
         normalized = None
         if name in operations ^ directives:
             if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids',
-                               'review_after_seconds', 'reason', 'depends_on_decision_ids', 'source_decision_ids'}:
+                               'review_after_seconds', 'reason', 'depends_on_decision_ids', 'source_decision_ids',
+                               'research_attempt_id', 'research_attempt_title'}:
                 raise ValueError('Unexpected fields in action envelope')
             if name in operations:
                 if payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None:
@@ -710,7 +711,8 @@ class ResearchPolicy(ModelDecisionPolicy):
                 normalized.update({key: payload[key] for key in ('input_ids', 'review_after_seconds') if key in payload})
             if 'reason' in payload:
                 normalized['reason'] = payload['reason']
-            normalized.update({key: payload[key] for key in ('depends_on_decision_ids', 'source_decision_ids')
+            normalized.update({key: payload[key] for key in ('depends_on_decision_ids', 'source_decision_ids',
+                                                            'research_attempt_id', 'research_attempt_title')
                                if key in payload})
         if normalized is not None and normalized != payload:
             self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
@@ -1028,6 +1030,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             research_started_callback(settings.seconds)
         while True:
             step = assembly.runner.step(objective)
+            monitor.sync_research_attempts(decision.state.decision_records)
             monitor.advance(step)
             if step.event.get('run_control') == 'research_restarted':
                 result['research_rounds'] = step.event['research_round']

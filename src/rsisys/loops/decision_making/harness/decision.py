@@ -9,6 +9,7 @@ from rsisys.loops.contracts.jobs import JobRef
 
 from ..action_space import OperationCall
 from rsisys.loops.contracts.coordination import LoopStepResult
+from .attempts import validate_attempt_fields
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,11 @@ class Decision:
     decision_id: str = field(default_factory=lambda: str(uuid4()))
     depends_on_decision_ids: tuple[str, ...] = ()
     source_decision_ids: tuple[str, ...] = ()
+    research_attempt_id: str | None = None
+    research_attempt_title: str = ''
 
     def __post_init__(self):
+        validate_attempt_fields(self.research_attempt_id, self.research_attempt_title)
         if not isinstance(self.decision_id, str) or not self.decision_id.strip():
             raise ValueError('decision_id must be a nonempty string')
         for name in ('depends_on_decision_ids', 'source_decision_ids'):

@@ -197,6 +197,7 @@ class ScriptedGraphPolicy:
                     f'produce-{component}', context.objective, f'Propose {component} change',
                     mode='propose_component', payload=ComponentRequest(component, self.registry.current.version),
                     simulated=True), simulated=True,
+                    research_attempt_title=f'Improve the {component} component independently',
                     reason=f'Improve {component} independently from the same parent; inspect its artifact feedback.')
                 self.producers[component] = decision.decision_id
                 return decision
@@ -206,6 +207,7 @@ class ScriptedGraphPolicy:
             if self.wait_for_producers is None:
                 self.wait_for_producers = Decision('wait', simulated=True,
                     source_decision_ids=tuple(self.producers.values()),
+                    research_attempt_title='Combine and verify both improvements',
                     reason='Both proposals must finish before joint adoption.')
             return self.wait_for_producers
         if self.adoption is None:
@@ -218,6 +220,8 @@ class ScriptedGraphPolicy:
                 'candidate_ids': list(CANDIDATE_IDS), 'version': VERSION,
                 'idempotency_key': 'simulated-joint-adoption-v1'}), simulated=True,
                 depends_on_decision_ids=origins, source_decision_ids=origins,
+                **({'research_attempt_id': graph[self.wait_for_producers.decision_id]['research_attempt_id']}
+                   if self.wait_for_producers else {'research_attempt_title': 'Combine and verify both improvements'}),
                 reason='Both independent proposals completed; adopt prompt and data together and verify the manifest.')
             self.adoption = decision.decision_id
             return decision
@@ -229,11 +233,13 @@ class ScriptedGraphPolicy:
             decision = Decision('explore', directive=Directive('consume-current', context.objective,
                 'Verify adopted changes', mode='consume_current', simulated=True),
                 simulated=True, depends_on_decision_ids=(self.adoption,), source_decision_ids=(self.adoption,),
+                research_attempt_id=adoption['research_attempt_id'],
                 reason='Joint adoption is confirmed; execute with both live components and check total and count.')
             self.consumption = decision.decision_id
             return decision
         if graph[self.consumption]['status'] == 'completed':
             return Decision('finish', simulated=True, depends_on_decision_ids=(self.consumption,),
+                research_attempt_id=graph[self.consumption]['research_attempt_id'],
                 reason='Simulated execution verified both adopted components; the fork/join chain is complete.')
         return Decision('wait', simulated=True, reason='Wait for the execution receipt before finishing.')
 
@@ -332,6 +338,7 @@ def run_demo(run_dir, *, max_steps=100):
                 if not all(event.is_set() for event in demo.workers.started.values()):
                     raise RuntimeError('Both workers must actually start before releasing their work')
                 demo.workers.release.set()
+            demo.monitor.sync_research_attempts(demo.runner.decision_making.harness.state.decision_records)
             demo.monitor.advance(result)
             publish_candidates(demo)
             if result.kind == 'completed':

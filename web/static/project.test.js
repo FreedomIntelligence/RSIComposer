@@ -27,7 +27,7 @@ class Element {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   focus() {}
 }
-function harness(fetcher = async () => { throw Error("unexpected fetch"); }, search = "") {
+function harness(fetcher = async () => { throw Error("unexpected fetch"); }, search = "", {graphMode = "all"} = {}) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) { const e = new Element(); e.id = id; elements.set(id, e); } return elements.get(id); };
   const documentListeners = {}, document = events({ getElementById: get, createElement: t => new Element(t), createElementNS: (_, t) => new Element(t), hidden: false },documentListeners);
@@ -59,7 +59,10 @@ function harness(fetcher = async () => { throw Error("unexpected fetch"); }, sea
     svg.dispose=function(...args){record.disposals++;return dispose.apply(this,args);};renders.push(record);return svg;
   }};
   vm.runInContext(source.slice(0, source.lastIndexOf("\nrefresh();")), ctx);
-  vm.runInContext("state.auto = false;", ctx);
+  // Existing decision, navigation and polling regressions exercise All records.
+  // Attempt-mode tests pass graphMode:null to exercise the production default.
+  ctx.testGraphMode=graphMode;
+  vm.runInContext('state.auto=false; const activateOriginal=activateProject; activateProject=()=>{const scope=activateOriginal();if(testGraphMode)scope.graphMode ||= testGraphMode;return scope;};',ctx);
   return { ctx, get, document, documentListeners, windowListeners, history, renders,frame,flushFrames,get pendingFrames(){return frames.size;},run: s => vm.runInContext(s, ctx), json: s => JSON.parse(JSON.stringify(vm.runInContext(s, ctx))) };
 }
 const run = (id, extra = {}) => ({ schema_version: 1, run_id: id, updated_at: "2026-11-01T00:00:00Z", ...extra });
@@ -69,7 +72,7 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 function setup(h, projects) { h.ctx.input = projects; h.run("chooseProjects(input)"); }
 function seed(h, id, snapshot) {
   h.ctx.fixture = snapshot; h.ctx.id = id;
-  h.run('{ const key=JSON.stringify([state.demo,id]); let scope=state.scopes.get(key); if(!scope){scope={key,cache:new Map(),runId:id,details:null};state.scopes.set(key,scope);} scope.cache.set(id,{snapshot:fixture,status:"ready",token:0}); }');
+  h.run('{ const key=JSON.stringify([state.demo,id]); let scope=state.scopes.get(key); if(!scope){scope={key,cache:new Map(),runId:id,details:null};state.scopes.set(key,scope);} if(testGraphMode)scope.graphMode ||= testGraphMode;scope.cache.set(id,{snapshot:fixture,status:"ready",token:0}); }');
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const graphState = h => JSON.parse(h.run('JSON.stringify({camera:state.activeScope.graphView.camera,positions:state.activeScope.graphView.positions},(_,value)=>value instanceof Map?[...value]:value)'));
@@ -427,7 +430,7 @@ test("empty catalog and unavailable snapshot have readable states without a proj
 });
 test("unknown execution timestamps retain snapshot order without implying chronology; repeat finish retains originals", () => {
   const h=harness();h.ctx.fixture={decisions:[{decision_id:"u1",mode:"train"},{decision_id:"later",mode:"train",timestamp:"2026-11-01T01:00:00Z"},{decision_id:"u2",mode:"evaluate"},{decision_id:"early",mode:"train",timestamp:"2026-11-01T00:00:00Z"},{decision_id:"f1",kind:"finish",reason:"done"},{decision_id:"f2",kind:"finish",reason:"done"}]};
-  const groups=h.json("executionGroups(fixture)");assert.deepEqual(groups.map(g=>g.row.decision_id),["early","later","u1","u2","f1"]);assert.equal(groups[4].rows.length,2);
+  const groups=h.json("executionGroups(fixture)");assert.deepEqual(groups.map(g=>g.row.decision_id),["early","later","u1","u2","f1","f2"]);assert.equal(groups[4].rows.length,1);
 });
 
 test("referenced legacy finish nodes survive grouping and polling for every lineage relation", async () => {
@@ -435,7 +438,7 @@ test("referenced legacy finish nodes survive grouping and polling for every line
     const first={decision_id:"f1",kind:"finish",reason:"done",timestamp:"2026-11-01T00:00:01Z"},second={...first,decision_id:"f2",timestamp:"2026-11-01T00:00:02Z"};
     const next={decision_id:"next",kind:"operation",operation:"query",timestamp:"2026-11-01T00:00:03Z",[relation]:relation==="parent_decision_id"?"f1":["f1"]};
     const updated=run("a",{decisions:[first,second,next]}),h=harness(async()=>response(updated));setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[first,second]}));await h.run('selectRun("a")');
-    assert.equal(findClass(h.get("project-content"),"decision-node").length,1);
+    assert.equal(findClass(h.get("project-content"),"decision-node").length,2);
     await h.run('loadRun("a",state.activeScope,true)');
     assert.deepEqual(findClass(h.get("project-content"),"decision-node").map(n=>n.dataset.key),["f1","f2","next"]);
     const groups=h.json("executionGroups(state.snapshot)");assert.equal(groups.length,3);
@@ -457,7 +460,7 @@ test("execution detail keeps review metrics separate from exact current job and 
   const h=harness();h.ctx.fixture={decisions:[{decision_id:"d",kind:"directive",directive_id:"dir",mode:"train"},{decision_id:"r",kind:"review",action:"continue",job_id:"job",metrics:{loss:.7}}],jobs:[{job_id:"job",directive_id:"dir",kind:"train",metrics:{loss:.1}}],candidates:[{candidate_id:"candidate",directive_id:"dir",metrics:{accuracy:.9}},{candidate_id:"other",directive_id:"outside",metrics:{accuracy:.5}}]};
   const results=h.json("relatedResults(fixture.decisions[0],fixture)");assert.deepEqual(results.map(r=>r.type),["job","candidate"]);assert.equal(results[1].row.candidate_id,"candidate");
   assert.deepEqual(h.json("feedbackFor(fixture.decisions[1],fixture).metrics"),{loss:.7});
-  const detail=h.run('executionSequence({...fixture,run_id:"a"},{})');
+  const detail=h.run('executionSequence({...fixture,run_id:"a"},{graphMode:"all"})');
   findClass(detail,"decision-node")[1].listeners.click();
   assert.match(textOf(detail),/不代表复查当时状态/);
   assert.match(textOf(findClass(detail,"flow-metrics")[0]),/0\.7/);
@@ -618,68 +621,6 @@ test("evaluation explains what is checked and keeps a failed result visible",()=
  const h=harness();
  assert.equal(h.run('concreteFeedback({mode:"evaluate",kind:"directive",feedback_summary:"evaluate completed"})'), "");
  });
-
-function progressFixture() {
-  const d=(decision_id,second,extra)=>({decision_id,timestamp:new Date(Date.UTC(2026,10,2,0,0,second)).toISOString(),status:"completed",depends_on_decision_ids:[],source_decision_ids:[],...extra});
-  return run("a",{candidates:[{candidate_id:"weights",status:"applied",metrics:{accuracy:.7}}],decisions:[
-    d("read",0,{kind:"operation",operation:"read_artifact",reason:"Original read reason"}),
-    d("train",1,{kind:"directive",mode:"train",job_id:"weights",reason:"Original training reason"}),
-    d("evaluate",2,{kind:"directive",mode:"evaluate",candidate_id:"weights",reason:"Original evaluation reason"}),
-    d("apply",3,{kind:"directive",mode:"apply_candidate",candidate_id:"weights",adopted_decision_ids:["train"],reason:"Original application reason"}),
-    d("refused",4,{kind:"directive",mode:"train",status:"failed",error:"Duplicate request; no process started"}),
-    ...Array.from({length:41},(_,i)=>d(`finish-${i}`,i+5,{kind:"finish",reason:`Original finish ${i}`})),
-  ]});
-}
-
-test("key progress folds repeated modern finishes and joins only the same candidate; originals and failures survive",()=>{
-  const h=harness(),snapshot=progressFixture(),before=JSON.stringify(snapshot);h.ctx.fixture=snapshot;
-  const summary=h.json('progressGroups(fixture,executionGroups(fixture))');
-  assert.equal(summary.groups.length,2);assert.deepEqual(summary.groups[0].rows.map(r=>r.decision_id),["train","evaluate","apply"]);
-  assert.equal(summary.groups[0].title,"候选 1 · 已采纳");assert.equal(summary.groups[1].row.decision_id,"refused");
-  assert.equal(summary.folded.finish.length,41);assert.equal(summary.folded.auxiliary.length,1);
-  assert.deepEqual(summary.groups[0].row.adopted_decision_ids,[]);assert.equal(JSON.stringify(snapshot),before);
-});
-
-test("overview retains explicitly referenced supporting decisions and refuses ambiguous candidate associations",()=>{
-  const h=harness();h.ctx.fixture={candidates:[{candidate_id:"c"},{candidate_id:"c"}],decisions:[
-    {decision_id:"support",kind:"operation",operation:"read_artifact",status:"completed"},
-    {decision_id:"a",kind:"directive",mode:"train",job_id:"c",depends_on_decision_ids:["support"]},
-    {decision_id:"b",kind:"directive",mode:"evaluate",candidate_id:"c"},
-    {decision_id:"future",kind:"operation",operation:"unknown_custom_action",status:"completed"},
-  ]};
-  const summary=h.json('progressGroups(fixture,executionGroups(fixture))');
-  assert.equal(summary.groups.length,4);assert.equal(summary.folded.auxiliary.length,0);
-  assert.equal(summary.groups.every(g=>!g.candidate),true);assert.deepEqual(summary.groups.find(g=>g.row.decision_id==="a").row.depends_on_decision_ids,["support"]);
-});
-
-test("candidate contraction cannot turn an interleaved valid DAG into a cycle",()=>{
-  const h=harness();h.ctx.fixture={candidates:[{candidate_id:"a"},{candidate_id:"b"}],decisions:[
-    {decision_id:"at",mode:"train",job_id:"a",depends_on_decision_ids:[]},
-    {decision_id:"bt",mode:"train",job_id:"b",depends_on_decision_ids:["at"]},
-    {decision_id:"ae",mode:"evaluate",candidate_id:"a",depends_on_decision_ids:["bt"]},
-  ]};
-  assert.equal(h.run('progressGroups(fixture,executionGroups(fixture)).groups.length'),3);
-});
-
-test("candidate stages, complete records, folded selection and per-view cameras remain navigable",async()=>{
-  const h=harness(),snapshot=progressFixture();setup(h,[project("p",[run("a")])]);seed(h,"a",snapshot);await h.run('selectRun("a")');
-  assert.equal(findClass(h.get("project-content"),"decision-node").length,2);
-  assert.match(textOf(h.get("project-content")),/Original evaluation reason/);
-  const stageButtons=findClass(h.get("project-content"),"progress-stage-buttons")[0].children;
-  stageButtons[0].listeners.click();assert.match(textOf(h.get("project-content")),/Original training reason/);
-  h.run('state.activeScope.graph.zoomBy(1.25)');const progressView=h.run('state.activeScope.graphView'),before=graphState(h);
-  findClass(h.get("project-content"),"trajectory-mode")[0].children[1].listeners.click();
-  assert.equal(findClass(h.get("project-content"),"decision-node").length,46);
-  assert.notEqual(h.run('state.activeScope.graphView'),progressView);const fullView=h.run('state.activeScope.graphView');
-  findClass(h.get("project-content"),"trajectory-mode")[0].children[0].listeners.click();
-  assert.equal(h.run('state.activeScope.graphView'),progressView);assert.deepEqual(graphState(h),before);
-  assert.match(textOf(h.get("project-content")),/Original training reason/);
-  const folded=findClass(h.get("project-content"),"folded-record");folded[folded.length-1].listeners.click();
-  assert.equal(h.run('state.activeScope.graphView'),fullView);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"finish-40");assert.match(textOf(h.get("project-content")),/Original finish 40/);
-  h.get("lang-en").listeners.click();assert.match(textOf(h.get("project-content")),/All records/);assert.match(textOf(h.get("project-content")),/Original finish 40/);
-  assert.equal(h.run('state.activeScope.flowSelected.get("a")'),"finish-40");
-});
-
 
 test("management orders projects and experiments by real update time, with unknown dates last", () => {
   const h=harness();

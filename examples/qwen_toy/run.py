@@ -346,6 +346,7 @@ def run(args):
             for _ in range(args.max_steps):
                 deadline.remaining()
                 result = runner.step(OBJECTIVE)
+                monitor.sync_research_attempts(decision.state.decision_records)
                 # A policy stop can wrap the last completed tick as finished and
                 # omit its directive_id. Preserve that feedback in the monitor too.
                 has_feedback = result.event.get('feedback') is not None

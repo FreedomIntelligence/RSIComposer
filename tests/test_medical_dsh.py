@@ -130,6 +130,26 @@ class MedicalDSHTests(unittest.TestCase):
             self.assertEqual(linked['depends_on_decision_ids'], [selected[-1]])
             self.assertEqual(linked['source_decision_ids'], [selected[-1]])
 
+    def test_both_harnesses_record_attempt_membership_through_medical_envelope_and_monitor(self):
+        def continue_attempt(context):
+            first = next(row for row in context['decision_graph'] if row.get('research_attempt_id'))
+            return {'action': 'preview_training_data', 'arguments': {},
+                    'research_attempt_id': first['research_attempt_id'],
+                    'depends_on_decision_ids': [first['decision_id']]}
+        for kind in ('default', 'dsh'):
+            result, runtime, serving, root = self.execute([
+                {'action': 'preview_training_data', 'arguments': {},
+                 'research_attempt_title': 'Inspect training coverage before changing the model'},
+                continue_attempt, FINISH], kind=kind)
+            self.assertEqual(result['status'], 'completed', result)
+            rows = json.loads((root/'monitor.json').read_text())['decisions']
+            grouped = [r for r in rows if r.get('research_attempt_id')]
+            self.assertEqual(len(grouped), 2)
+            self.assertEqual(len({r['research_attempt_id'] for r in grouped}), 1)
+            self.assertTrue(all(r['research_attempt_title'] ==
+                'Inspect training coverage before changing the model' for r in grouped))
+            self.assertEqual(grouped[1]['depends_on_decision_ids'], [grouped[0]['decision_id']])
+
     def test_factory_replaces_harness_and_forces_identity_on_both_layers(self):
         built = []
         runtime = Runtime([json.dumps(FINISH)])

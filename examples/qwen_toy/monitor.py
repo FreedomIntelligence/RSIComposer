@@ -144,6 +144,13 @@ def decision_summary(details, *, ident, round_number, at=None, source='model'):
            'reason': public_text(details.get('reason')), 'changes': planned_changes(details),
            'feedback_summary': '', 'error': '',
            'decision_revision': decision_model.get('revision'), 'actor_revision': actor_model.get('revision')}
+    # History fields are resolved by the harness, not guessed from operation names.
+    attempt_id = details.get('research_attempt_id')
+    attempt_title = details.get('research_attempt_title')
+    if (isinstance(attempt_id, str) and attempt_id.strip()
+            and isinstance(attempt_title, str) and attempt_title.strip()
+            and not details.get('validation_error')):
+        row.update(research_attempt_id=attempt_id, research_attempt_title=public_text(attempt_title))
     for key in ('depends_on_decision_ids', 'source_decision_ids'):
         if isinstance(details.get(key), (list, tuple)):
             row[key] = list(details[key])
@@ -246,6 +253,9 @@ class Monitor:
     def decision(self, decision, context, round_number):
         details = {**asdict(decision), 'decision_model': asdict(context.decision_model) if context.decision_model else {},
                    'execution_model': asdict(context.execution.model) if context.execution.model else {}}
+        # Policy output is a proposal. Membership is public only after acceptance.
+        details.pop('research_attempt_id', None)
+        details.pop('research_attempt_title', None)
         ident = decision.directive.directive_id if decision.directive else str(uuid4())
         row = decision_summary(details, ident=ident, round_number=round_number, at=timestamp())
         # A policy retry may return the same stable decision. Keep its original
@@ -259,6 +269,18 @@ class Monitor:
             self.data['loops']['decision_making'] = {'status': 'waiting', 'summary': '指令已选定，等待探索侧反馈'}
             self.data['loops']['exploration'] = {'status': 'running', 'summary': MODE_NAMES.get(row['mode'], row['mode'])}
         self.write()
+
+    def sync_research_attempts(self, decision_records):
+        """Project accepted harness membership; call after stepping, before advance."""
+        for row in self.data['decisions']:
+            record = decision_records.get(row.get('decision_id'), {})
+            if record.get('validation_error'):
+                row.pop('research_attempt_id', None)
+                row.pop('research_attempt_title', None)
+                continue
+            ident, title = record.get('research_attempt_id'), record.get('research_attempt_title')
+            if isinstance(ident, str) and ident.strip() and isinstance(title, str) and title.strip():
+                row.update(research_attempt_id=ident, research_attempt_title=public_text(title))
 
     def review(self, reviewed, context, round_number):
         row = decision_summary({'review': asdict(reviewed), 'execution': asdict(context.execution),
@@ -378,6 +400,10 @@ def merge_recorded_row(row, old):
             continue
         if key not in merged or merged[key] in (None, '', []):
             merged[key] = deepcopy(value)
+    # Resolved harness history is authoritative for explicit attempt membership.
+    for key in ('research_attempt_id', 'research_attempt_title'):
+        if key in row:
+            merged[key] = deepcopy(row[key])
     # Regenerate only whitelisted submitted fields. Explicit recorded before values
     # survive only for the same field/after; no previous proposal supplies a before.
     changes = deepcopy(row['changes'])

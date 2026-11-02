@@ -167,6 +167,17 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(result['decisions'][1]['source_decision_ids'], ['a', 'c'])
         self.assertNotIn('private', result['decisions'][1])
 
+    def test_attempt_membership_is_public_only_as_valid_paired_metadata(self):
+        valid = {'decision_id': 'd', 'research_attempt_id': 'attempt-1',
+                 'research_attempt_title': 'Compare output constraints'}
+        invalid = [dict(valid, research_attempt_id='x' * 201),
+                   dict(valid, research_attempt_id=42), dict(valid, research_attempt_title=None),
+                   {'decision_id': 'legacy'}]
+        rows = project_snapshot({'schema_version': 1, 'decisions': [valid, *invalid]}, 'run')['decisions']
+        self.assertEqual(rows[0]['research_attempt_id'], 'attempt-1')
+        self.assertEqual(rows[0]['research_attempt_title'], valid['research_attempt_title'])
+        self.assertTrue(all('research_attempt_id' not in row for row in rows[1:]))
+
     def test_cross_project_references_preserve_provenance_without_merging(self):
         self.write('a', project={'project_id': 'p1'})
         self.write('b', project={'project_id': 'p2'}, parent_run_id='a', source_run_ids=['a', 'absent', {}])

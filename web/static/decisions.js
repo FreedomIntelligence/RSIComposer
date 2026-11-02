@@ -12,12 +12,17 @@
  * depends_on_decision_ids and adopted_decision_ids opt the dataset into explicit
  * lineage, even when empty: independent nodes attach to root. Legacy data alone
  * uses chronological sequence fallback. parent_decision_id remains a dependency.
- * Cyclic structural edges are removed; valid outside edges survive. References
- * never affect topology. Longest-path layers center forks and multi-parent joins.
+ * Invalid raw self references and structural cycles are filtered with issues;
+ * valid outside edges survive. References never affect topology.
+ * attempts(rows) contracts ONLY recorded research_attempt_id identities; each
+ * node retains every member and each edge retains its original decision edges.
+ * Titles are literal metadata, never interpreted as outcomes. Missing IDs remain
+ * individual ungrouped records. No attempt metadata means legacy layout fallback.
  * Root stays fixed. This pure layout is independent of the interactive renderer.
  *
- * render({rows, selected, onSelect, label, startLabel, edgeLabel, view, onIdle, compact})
- * returns a responsive 420px SVG with dispose(), fit(), zoomBy(factor), reset().
+ * render({rows, model, selected, onSelect, label, startLabel, edgeLabel, view, onIdle, compact})
+ * returns a responsive SVG (height defaults to 420px) with dispose(), fit(),
+ * zoomBy(factor), reset(). Supplied projections are never mutated by rendering.
  * view is caller-owned per run: positions Map<key,{x,y}>, camera {x,y,scale},
  * pinned Set<key>, interacting/animating booleans. Reuse it across rerenders.
  * compact uses tighter vertical spacing for a summarized view. Dragged nodes
@@ -112,29 +117,64 @@
       ? rank.get(ids.get(id)[0]) : -1;
     // New lineage fields describe a DAG, including an explicitly empty list.
     // Source references remain independent of topology, including on legacy rows.
-    const modern = records.some(({row}) => Object.hasOwn(row, "depends_on_decision_ids") || Object.hasOwn(row, "adopted_decision_ids"));
+    const attemptMetadata = records.some(({row}) => Object.hasOwn(row, "research_attempt_id") || Object.hasOwn(row, "research_attempt_title"));
+    const modern = attemptMetadata || records.some(({row}) => Object.hasOwn(row, "depends_on_decision_ids") || Object.hasOwn(row, "adopted_decision_ids"));
+    const issues = [];
     const parents = records.map(() => new Map());
     records.forEach(({row}, to) => {
       const add = (id, kind) => {
         const from = resolve(id);
-        if (from < 0 || from === to) return;
+        if (from < 0) { if (identifier(id)) issues.push({type:"unresolved", id, to:records[to].key}); return; }
+        if (from === to) { issues.push({type:"self-reference",id,to:records[to].key}); return; }
         if (!parents[to].has(from) || kind === "adoption") parents[to].set(from, kind);
       };
       add(row.parent_decision_id, "dependency");
       for (const id of Array.isArray(row.depends_on_decision_ids) ? row.depends_on_decision_ids : []) add(id, "dependency");
       for (const id of Array.isArray(row.adopted_decision_ids) ? row.adopted_decision_ids : []) add(id, "adoption");
     });
-    const children = records.map(() => []);
-    parents.forEach((incoming, to) => { for (const from of incoming.keys()) children[from].push(to); });
-    // Iterative Kosaraju: remove only edges inside a strongly connected component.
-    // Other parents of a cycle member and its valid descendants remain visible.
+    const reaches = (start, target) => {
+      const seen = new Set(), stack = [start];
+      while (stack.length) {
+        const next = stack.pop();
+        if (next === target) return true;
+        if (seen.has(next)) continue; seen.add(next);
+        stack.push(...parents[next].keys());
+      }
+      return false;
+    };
+    records.forEach(({row}, i) => {
+      if (parents[i].size) return;
+      const declared = Object.hasOwn(row, "parent_decision_id") && row.parent_decision_id != null && row.parent_decision_id !== "";
+      if (!modern && !declared && i > 0 && !reaches(i - 1, i)) parents[i].set(i - 1, "sequence");
+    });
+    const edges = [];
+    records.forEach((record, to) => {
+      for (const [from, kind] of parents[to]) edges.push({from:records[from].key, to:record.key, kind});
+      for (const id of new Set(Array.isArray(record.row.source_decision_ids) ? record.row.source_decision_ids : [])) {
+        const from = resolve(id);
+        if (from >= 0 && from !== to) edges.push({from:records[from].key, to:record.key, kind:"source"});
+        else if (from < 0 && identifier(id)) issues.push({type:"unresolved", id, to:record.key});
+      }
+    });
+    return arrange(records, edges, {issues, rootKind:attemptMetadata ? "root" : "sequence",discardCycles:true});
+  }
+
+  // Use strongly connected components for geometry, retaining every real edge.
+  // This also handles cycles introduced by contracting interleaved attempts.
+  function arrange(records, edges, {issues = [], rootKind = "root",discardCycles=false} = {}) {
+    const rank = new Map(records.map((r,i)=>[r.key,i]));
+    const parents = records.map(()=>new Set()), children = records.map(()=>new Set());
+    for (const edge of edges) if (edge.kind !== "source") {
+      const from=rank.get(edge.from),to=rank.get(edge.to);
+      parents[to].add(from);children[from].add(to);
+    }
     const visited = new Set(), order = [];
     for (let start = 0; start < records.length; start++) {
       if (visited.has(start)) continue;
       visited.add(start);
       const stack = [[start, 0]];
       while (stack.length) {
-        const top = stack[stack.length - 1], next = children[top[0]][top[1]++];
+        const top = stack[stack.length - 1], next = [...children[top[0]]][top[1]++];
         if (next === undefined) { order.push(top[0]); stack.pop(); }
         else if (!visited.has(next)) { visited.add(next); stack.push([next, 0]); }
       }
@@ -150,39 +190,27 @@
       }
       componentID++;
     }
-    parents.forEach((incoming, to) => {
-      for (const from of incoming.keys()) if (component.get(from) === component.get(to)) incoming.delete(from);
-    });
-    const hasBackward = parents.some((incoming, to) => [...incoming.keys()].some(from => from > to));
-    const reaches = (start, target) => {
-      const seen = new Set(), stack = [start];
-      while (stack.length) {
-        const next = stack.pop();
-        if (next === target) return true;
-        if (seen.has(next)) continue; seen.add(next);
-        stack.push(...parents[next].keys());
-      }
-      return false;
-    };
-    records.forEach(({row}, i) => {
-      if (parents[i].size) return;
-      const declared = Object.hasOwn(row, "parent_decision_id") && row.parent_decision_id != null && row.parent_decision_id !== "";
-      const previous = i - 1;
-      if (!modern && !declared && previous >= 0 && (!hasBackward || !reaches(previous, i))) parents[i].set(previous, "sequence");
-    });
-    for (const outgoing of children) outgoing.length = 0;
-    parents.forEach((incoming, to) => { for (const from of incoming.keys()) children[from].push(to); });
-    const degree = parents.map(incoming => incoming.size), depth = records.map(() => 1);
-    const queue = records.map((_, i) => i).filter(i => !degree[i]), topology = [];
+    const members=Array.from({length:componentID},()=>[]),nextComponents=members.map(()=>new Set()),degree=members.map(()=>0),componentDepth=members.map(()=>1);
+    records.forEach((_,i)=>members[component.get(i)].push(i));
+    for (const edge of edges) if (edge.kind !== "source") {
+      const from=component.get(rank.get(edge.from)),to=component.get(rank.get(edge.to));
+      if (from===to) { edge.cyclic=true; issues.push({type:discardCycles?"raw-cycle":"cycle",from:edge.from,to:edge.to}); }
+      else if(!nextComponents[from].has(to)){nextComponents[from].add(to);degree[to]++;}
+    }
+    if(discardCycles&&edges.some(e=>e.cyclic))return arrange(records,edges.filter(e=>!e.cyclic),{issues,rootKind});
+    const roots=new Set(degree.map((n,i)=>n===0?i:-1).filter(i=>i>=0));
+    const queue=[...roots],topology=[];
     for (let cursor = 0; cursor < queue.length; cursor++) {
-      const from = queue[cursor]; topology.push(from);
-      for (const to of children[from]) {
-        depth[to] = Math.max(depth[to], depth[from] + 1);
+      const from = queue[cursor]; topology.push(...members[from]);
+      for (const to of nextComponents[from]) {
+        componentDepth[to] = Math.max(componentDepth[to], componentDepth[from] + 1);
         if (--degree[to] === 0) queue.push(to);
       }
     }
+    const depth=records.map((_,i)=>componentDepth[component.get(i)]);
+    parents.forEach((incoming,to)=>{for(const from of incoming)if(component.get(from)===component.get(to)){incoming.delete(from);children[from].delete(to);}});
     const nodes = [{ key: "root", index: -1, row: null, x: X, y: Y, type: "root" },
-      ...records.map(({key, index, row}, i) => ({key, index, row, x: X + depth[i] * COLUMN, y: Y, type: "decision"}))];
+      ...records.map((record, i) => ({...record, x: X + depth[i] * COLUMN, y: Y, type:record.type||"decision"}))];
     const layers = [];
     for (const i of topology) (layers[depth[i]] ||= []).push(i);
     const average = values => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -197,31 +225,88 @@
     for (let pass = 0; pass < 3; pass++) {
       for (const layer of layers) if (layer) place(layer, i => parents[i].size ? average([...parents[i].keys()].map(p => nodes[p+1].y)) : Y);
       for (let level = layers.length - 1; level > 0; level--) if (layers[level]) {
-        place(layers[level], i => children[i].length ? average(children[i].map(c => nodes[c+1].y)) : nodes[i+1].y);
+        place(layers[level], i => children[i].size ? average([...children[i]].map(c => nodes[c+1].y)) : nodes[i+1].y);
       }
     }
-    const edges = [];
-    records.forEach((record, to) => {
-      if (!parents[to].size) edges.push({from:"root", to:record.key, kind:"sequence"});
-      for (const [from, kind] of parents[to]) edges.push({from:records[from].key, to:record.key, kind});
-      const sources = record.row.source_decision_ids;
-      for (const id of new Set(Array.isArray(sources) ? sources : [])) {
-        const from = resolve(id);
-        if (from >= 0 && from !== to && !parents[to].has(from)) edges.push({from:records[from].key, to:record.key, kind:"source"});
-      }
+    // Root connectors are navigation anchors, never inferred dependencies.
+    const structuralPairs=new Set(edges.filter(e=>e.kind!=="source").map(e=>JSON.stringify([e.from,e.to]))),rooted=[];
+    records.forEach((record,i)=>{
+      if(roots.has(component.get(i)))rooted.push({from:"root",to:record.key,kind:rootKind});
+      rooted.push(...edges.filter(edge=>edge.to===record.key&&(edge.kind!=="source"||!structuralPairs.has(JSON.stringify([edge.from,edge.to])))));
     });
-    separateReferences(nodes,edges);
+    separateReferences(nodes,rooted);
     let width = X + LABEL_WIDTH + 24, height = 240;
     for (const node of nodes) {
       width = Math.max(width, node.x + LABEL_WIDTH + 24);
       height = Math.max(height, node.y + 56);
     }
-    return { nodes, edges, width, height };
+    return { nodes, edges:rooted, width, height, issues };
   }
 
-  function render({ rows = [], selected = null, onSelect, label, startLabel = "Start", edgeLabel,
-    view = {}, onIdle, compact = false } = {}) {
-    const model = layout(rows), HEIGHT = 420, document = root.document;
+  function attempts(rows = []) {
+    const full=layout(rows),records=full.nodes.filter(n=>n.row),groups=[],byID=new Map(),owner=new Map(),issues=[...full.issues];
+    const used=new Set(full.nodes.map(n=>n.key));
+    for(const node of records){
+      const row=node.row,id=row.research_attempt_id;
+      let group;
+      if(identifier(id)){
+        group=byID.get(id);
+        if(!group){
+          let key="attempt:"+JSON.stringify(id);while(used.has(key))key="attempt:"+key;used.add(key);
+          group={key,index:groups.length,row,rows:[],members:[],type:"attempt",attemptID:id,titles:[]};
+          byID.set(id,group);groups.push(group);
+        }
+        if(identifier(row.research_attempt_title)&&!group.titles.includes(row.research_attempt_title))group.titles.push(row.research_attempt_title);
+        if(!identifier(row.research_attempt_title))issues.push({type:"missing-title",key:group.key});
+      }else{
+        group={key:node.key,index:groups.length,row,rows:[],members:[],type:"ungrouped"};groups.push(group);
+        if(Object.hasOwn(row,"research_attempt_id")||Object.hasOwn(row,"research_attempt_title"))issues.push({type:"invalid-attempt",key:group.key});
+      }
+      group.rows.push(row);group.members.push(node);owner.set(node.key,group.key);
+    }
+    for(const group of groups)if(group.type==="attempt"){
+      group.title=group.titles[0]||"";
+      if(group.titles.length>1)issues.push({type:"conflicting-title",key:group.key});
+    }
+    const contracted=new Map();
+    const rawByKey=new Map(records.map(n=>[n.key,n]));
+    for(const edge of full.edges){
+      if(edge.from==="root")continue;
+      const from=owner.get(edge.from),to=owner.get(edge.to);
+      if(from===to)continue;
+      const key=JSON.stringify([from,to]);
+      if(!contracted.has(key))contracted.set(key,{from,to,kind:edge.kind,decisions:[],types:[]});
+      const link=contracted.get(key),priority={sequence:0,source:1,dependency:2,adoption:3};
+      if(priority[edge.kind]>priority[link.kind])link.kind=edge.kind;
+      const target=rawByKey.get(edge.to).row,id=rawByKey.get(edge.from).row.decision_id;
+      const includes=(field)=>Array.isArray(target[field])&&target[field].includes(id);
+      const types=edge.kind==="sequence"?["sequence"]:edge.kind==="source"?["source"]:[
+        ...(target.parent_decision_id===id||includes("depends_on_decision_ids")?["dependency"]:[]),
+        ...(includes("adopted_decision_ids")?["adoption"]:[]),
+        ...(includes("source_decision_ids")?["source"]:[])];
+      for(const kind of types){if(!link.types.includes(kind))link.types.push(kind);link.decisions.push({from:edge.from,to:edge.to,kind});}
+    }
+    const edges=[...contracted.values()],connected=new Set(edges.flatMap(e=>[e.from,e.to]));
+    const ungrouped=byID.size?groups.filter(g=>g.type==="ungrouped"&&!connected.has(g.key)):[];
+    const hidden=new Set(ungrouped.map(g=>g.key));
+    const model=arrange(groups.filter(g=>!hidden.has(g.key)),edges,{issues,rootKind:records.some(n=>Object.hasOwn(n.row,"research_attempt_id")||Object.hasOwn(n.row,"research_attempt_title"))?"root":"sequence"});
+    if(model.issues.some(i=>i.type==="cycle"))return {...full,
+      nodes:full.nodes.map(n=>n.row?{...n,rows:[n.row],members:[n]}:n),full,
+      issues:[...full.issues,{type:"contraction-cycle"}],fallback:true,
+      attemptCount:byID.size,ungroupedCount:groups.length-byID.size,ungrouped:[]};
+    return {...model,full,attemptCount:byID.size,ungroupedCount:groups.length-byID.size,ungrouped};
+  }
+
+  function subpath(projection, key) {
+    const group=projection.nodes.find(n=>n.key===key),members=group?.members||[];
+    const keys=new Set(members.map(n=>n.key));
+    return arrange(members.map(({key,index,row})=>({key,index,row})),
+      projection.full.edges.filter(e=>keys.has(e.from)&&keys.has(e.to)).map(e=>({...e})));
+  }
+
+  function render({ rows = [], model: suppliedModel, selected = null, onSelect, label, startLabel = "Start", edgeLabel,
+    view = {}, onIdle, compact = false, height = 420 } = {}) {
+    const original=suppliedModel||layout(rows),model={...original,nodes:original.nodes.map(n=>({...n})),edges:original.edges.map(e=>({...e}))}, HEIGHT = height, document = root.document;
     const finitePoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
     if (!view.positions?.get || !view.positions?.set) view.positions = new Map();
     if (!view.pinned?.has || !view.pinned?.add) view.pinned = new Set();
@@ -272,11 +357,11 @@
       const attributes = { class: `decision-edge decision-edge-${edge.kind}`, "data-kind": edge.kind,
         stroke: edge.kind === "adoption" ? "var(--orange, #b45b35)" : "var(--muted, #8a7568)",
         "stroke-width": edge.kind === "adoption" ? 1.5 : 1, "vector-effect": "non-scaling-stroke",
-        opacity: edge.kind === "adoption" ? 0.85 : edge.kind === "dependency" ? 0.6 : edge.kind === "sequence" ? 0.25 : 0.45 };
+        opacity: edge.kind === "adoption" ? 0.85 : edge.kind === "dependency" ? 0.6 : ["sequence","root"].includes(edge.kind) ? 0.25 : 0.45 };
       if (edge.kind === "source") attributes["stroke-dasharray"] = "4 4";
       const line = element("line", attributes);
       const defaultTitle = {sequence:"Sequence (not causality)",dependency:"Declared dependency",
-        adoption:"Confirmed adoption",source:"Source reference (not dependency or adoption)"}[edge.kind];
+        root:"Layout anchor (not dependency)",adoption:"Confirmed adoption",source:"Source reference (not dependency or adoption)"}[edge.kind];
       line.append(element("title", {}, typeof edgeLabel === "function" ? edgeLabel(edge.kind) ?? defaultTitle : defaultTitle));
       plane.append(line); lines.push({ line, from, to });
       if (edge.kind !== "source") {
@@ -434,7 +519,7 @@
     }
     for (const node of model.nodes) {
       const isRoot = node.type === "root", active = !isRoot && node.key === selected;
-      const failed = !isRoot && ["failed","failure","error","cancelled","canceled"].includes(node.row.feedback?.status||node.row.status);
+      const failed = !isRoot && node.type!=="attempt" && ["failed","failure","error","cancelled","canceled"].includes(node.row.feedback?.status||node.row.status);
       const fullLabel = String(isRoot ? startLabel : (typeof label === "function"
         ? label(node.row, node.index) : node.row.operation || node.row.action || node.row.mode
           || node.row.kind || node.row.decision_id || `Decision ${node.index + 1}`) ?? "");
@@ -571,7 +656,7 @@
     return svg;
   }
 
-  const api = Object.freeze({ layout, render });
+  const api = Object.freeze({ layout, attempts, subpath, render });
   root.RSIDecisions = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

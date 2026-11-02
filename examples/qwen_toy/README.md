@@ -144,3 +144,5 @@ monitor writes. Core Applications with other ID/directory combinations require
 an aligned integration. Offline `enrich_completed_run` validates recorded ancestry
 and preserves the snapshot's ancestry fields and observation time; it never fills
 missing parent fields or infers parents from history or sibling directories.
+
+监控在策略提出决策时不发布未确认的研究尝试归属；每次 `runner.step()` 后，以 `monitor.sync_research_attempts(harness.state.decision_records)` 读取已接受关联，再调用 `monitor.advance()` 写入快照。历史导出读取 Harness 保存的明确 `research_attempt_id` / `research_attempt_title`，不推断旧实验分组。
