@@ -291,4 +291,3 @@ class EvidenceProjectionTests(unittest.TestCase):
         self.assertEqual(view.history[-2:], raw.history[-2:])
         self.assertEqual(view.last_feedback, raw.last_feedback)
         self.assertEqual(archive.read_bytes(), original_bytes)
-

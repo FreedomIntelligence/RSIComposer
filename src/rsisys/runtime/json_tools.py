@@ -25,5 +25,3 @@ def load_object(text):
     if not isinstance(payload, dict):
         raise ValueError('Decision must be a JSON object')
     return payload
-
-
