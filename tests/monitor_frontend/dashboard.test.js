@@ -100,3 +100,22 @@ test("lost pointer capture and tab hiding cancel unfinished layouts without savi
 test("invalid saved sizes revert to defaults and a full board cannot add beyond its limit",()=>{
   const sample={...fixture,dashboard:{schema_version:1,panels:Array.from({length:24},(_,i)=>panel(`p${i}`,"line",{layout:{w:9,h:90000}}))}},{h}=open(sample);assert.equal(cards(h)[0].style.gridColumn,"span 6");assert.equal(cards(h)[0].style.height,"320px");assert.equal(button(host(h),"添加图表").disabled,true);button(host(h),"添加图表").listeners.click();assert.equal(findClass(host(h),"dashboard-dialog")[0].open,false);
 });
+
+const tooltipGeometry=(card)=>{
+  const plot=findClass(card,"benchmark-plot")[0],tip=findClass(card,"benchmark-tooltip")[0];plot.getBoundingClientRect=()=>({left:100,top:100,width:520,height:180});tip.getBoundingClientRect=()=>({width:210,height:70});
+  for(const dot of findClass(card,"benchmark-point"))dot.getBoundingClientRect=()=>({left:100+Number(dot.getAttribute("cx")),top:100+Number(dot.getAttribute("cy")),width:8,height:8});return tip;
+};
+test("single series has no duplicate footer and hovering reports the precise recorded percentage",()=>{
+  const sample={metric_definitions:{accuracy:{label:"MedQA · 准确率",unit:"percent",direction:"higher"}},metric_points:[{metric:"accuracy",value:.734375,step:15}],dashboard:{schema_version:1,panels:[panel("MedQA","line",{metrics:["accuracy"],group_by:"none"})]}},{h}=open(sample),card=cards(h)[0],before=h.run('JSON.stringify(state.snapshot)');
+  assert.equal(findClass(card,"dashboard-legend").length,0);assert.match(textOf(findClass(card,"benchmark-latest")[0]),/73.44%/);
+  const tip=tooltipGeometry(card),dot=findClass(card,"benchmark-point")[0];assert.equal(tip.hidden,true);dot.listeners.pointerenter();assert.equal(tip.hidden,false);assert.match(textOf(tip),/73.4375%/);assert.match(textOf(tip),/训练步数 · 15/);assert.equal(dot.getAttribute("aria-describedby"),tip.id);assert.equal(dot.getAttribute("tabindex"),"0");
+  assert.ok(parseFloat(tip.style.left)>=4);assert.ok(parseFloat(tip.style.left)<=306);dot.listeners.pointerleave();assert.equal(tip.hidden,true);assert.equal(h.run('JSON.stringify(state.snapshot)'),before);
+});
+test("multiple curves retain their legend; hover and keyboard show the selected curve without inventing units",()=>{
+  const {h}=open(fixture),card=cards(h)[0],tip=tooltipGeometry(card),dots=findClass(card,"benchmark-point");assert.equal(findClass(card,"dashboard-legend").length,1);assert.equal(findClass(card,"benchmark-latest").length,0);
+  dots.at(-1).listeners.focus();assert.equal(tip.hidden,false);assert.match(textOf(tip),/任务 2/);assert.match(textOf(tip),/0.6/);assert.doesNotMatch(textOf(tip),/%/);dots.at(-1).listeners.keydown({key:"Escape"});assert.equal(tip.hidden,true);
+  dots[0].listeners.pointerdown();assert.equal(tip.hidden,false);dots[0].listeners.blur();assert.equal(tip.hidden,true);
+});
+test("point tooltip follows the chosen axis and hides on plot scrolling",()=>{
+  const {h}=open({...fixture,metric_points:[{metric:"loss",value:.123456789,elapsed_seconds:1.25}],dashboard:{schema_version:1,panels:[panel("Loss","line",{x:"elapsed_seconds",group_by:"none"})]}}),card=cards(h)[0],tip=tooltipGeometry(card),dot=findClass(card,"benchmark-point")[0];dot.listeners.pointerenter();assert.match(textOf(tip),/运行时间（秒） · 1.25/);assert.match(textOf(tip),/0.123456789/);findClass(card,"dashboard-chart-body")[0].listeners.scroll();assert.equal(tip.hidden,true);
+});

@@ -268,6 +268,7 @@ function dashboardSeries(panel,data,s) {
   }
   return [...series.values()];
 }
+let dashboardTooltipCount=0;
 function dashboardPanel(panel,data,s) {
   const card=el("article","benchmark-card dashboard-panel"),heading=el("div","detail-heading"),series=dashboardSeries(panel,data,s),content=el("div","dashboard-chart-body");
   heading.append(el("h5","",panel.title||t("未命名面板")));card.append(heading,content);
@@ -301,17 +302,29 @@ function dashboardPanel(panel,data,s) {
     const x=value=>48+(value-xmin)/(xmax-xmin||1)*440,y=value=>142-(value-ymin)/(ymax-ymin)*116;
     const svg=svgEl("svg",{viewBox:"0 0 520 180",role:"img","aria-label":panel.title||t("指标趋势")}),palette=["#a85739","#4f6850","#8b754e","#74617c"];
     for(const value of [ymin,(ymin+ymax)/2,ymax])svg.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},dashboardFormat(value,definition)));
-    const legend=el("div","dashboard-legend");
+    const legend=el("div","dashboard-legend"),plot=el("div","benchmark-plot"),tooltip=el("div","benchmark-tooltip"),tooltipName=el("strong"),tooltipAxis=el("span"),tooltipValue=el("strong","benchmark-tooltip-value");
+    tooltip.id=`metric-tooltip-${++dashboardTooltipCount}`;tooltip.setAttribute("role","tooltip");tooltip.hidden=true;tooltip.append(tooltipName,tooltipAxis,tooltipValue);plot.append(svg,tooltip);
+    const axisLabel=t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x]);
+    const hidePoint=()=>{tooltip.hidden=true;};
+    content.addEventListener("scroll",hidePoint);
+    const showPoint=(dot,item,point)=>{
+      const unit=data.definitions[item.metric]?.unit,value=unit==="percent"?`${Number((point.y*100).toPrecision(12))}%`:unit==="seconds"?t("{p0} 秒",{p0:String(point.y)}):`${String(point.y)}${unit==="tokens_per_second"?" tok/s":""}`;
+      tooltipName.textContent=item.label;tooltipAxis.textContent=`${axisLabel} · ${fmt(point.x)}`;tooltipValue.textContent=value;tooltip.hidden=false;
+      const bounds=plot.getBoundingClientRect(),anchor=dot.getBoundingClientRect(),box=tooltip.getBoundingClientRect(),left=anchor.left-bounds.left+anchor.width/2,top=anchor.top-bounds.top;
+      tooltip.style.left=`${Math.max(4,Math.min(left-box.width/2,bounds.width-box.width-4))}px`;
+      tooltip.style.top=`${Math.max(4,Math.min(top-box.height-10>=4?top-box.height-10:top+anchor.height+10,bounds.height-box.height-4))}px`;
+    };
     rows.forEach((item,index)=>{
       const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;svg.append(line);content.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
       let segment=[];const flush=()=>{if(segment.length>1){const line=svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"});line.style.stroke=color;svg.append(line);}segment=[];};
       item.rows.forEach((point,i)=>{if(panel.x==="evaluation"&&data.evaluationCount&&i&&point.x-item.rows[i-1].x>1)flush();segment.push(`${x(point.x)},${y(point.y)}`);});flush();
-      item.rows.filter((_,index)=>index%Math.max(1,Math.ceil(item.rows.length/160))===0||index===item.rows.length-1).forEach(point=>{const dot=svgEl("circle",{cx:x(point.x),cy:y(point.y),r:4,class:"benchmark-point"});dot.style.fill=color;dot.append(svgEl("title",{},`${item.label} · ${fmt(point.x)} · ${dashboardFormat(point.y,data.definitions[item.metric])}`));svg.append(dot);});
+      item.rows.filter((_,index)=>index%Math.max(1,Math.ceil(item.rows.length/160))===0||index===item.rows.length-1).forEach(point=>{const dot=svgEl("circle",{cx:x(point.x),cy:y(point.y),r:4,class:"benchmark-point",tabindex:0,"aria-label":item.label,"aria-describedby":tooltip.id});dot.style.fill=color;
+        for(const event of ["pointerenter","focus","pointerdown"])dot.addEventListener(event,()=>showPoint(dot,item,point));for(const event of ["pointerleave","blur"])dot.addEventListener(event,hidePoint);dot.addEventListener("keydown",event=>{if(event.key==="Escape")hidePoint();});svg.append(dot);});
       const entry=el("span","",`${item.label} · ${dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])}`);entry.style.color=color;legend.append(entry);
     });
     for(const value of [...new Set([xmin,xmax])])svg.append(svgEl("text",{x:x(value),y:163,"text-anchor":"middle",class:"benchmark-axis"},fmt(value)));
     if(series.length===1){const latest=el("div","benchmark-latest");latest.append(el("span","",t("最近记录")),el("strong","benchmark-value",dashboardFormat(series[0].points.at(-1)?.value,definition)));heading.append(latest);}
-    content.append(svg,el("p","benchmark-axis-label",t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x])),legend);
+    content.append(plot,el("p","benchmark-axis-label",axisLabel));if(series.length>1)content.append(legend);
   }
   if(!series.length)content.append(empty(t("尚无指标数据。")));
   return card;
