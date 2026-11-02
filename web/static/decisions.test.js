@@ -180,6 +180,14 @@ test("reference cycles and references to failed or later nodes do not affect dep
   const geometry=m=>m.nodes.map(n=>[n.key,n.x,n.y]);assert.deepEqual(geometry(model),geometry(layout(base)));valid(model);
 });
 
+test("filtering malformed structural cycles retains their independently recorded source references",()=>{
+  const model=layout([row("a",0,{depends_on_decision_ids:["b"],source_decision_ids:["b"]}),
+    row("b",1,{adopted_decision_ids:["a"],source_decision_ids:["a"]})]);
+  assert.deepEqual(links(model,"dependency"),[]);assert.deepEqual(links(model,"adoption"),[]);
+  assert.deepEqual(links(model,"source"),[["b","a"],["a","b"]]);
+  assert.equal(model.issues.filter(issue=>issue.type==="raw-cycle").length,2);valid(model);
+});
+
 function sourceClear(model,positions=new Map(model.nodes.map(node=>[node.key,node]))) {
   for(const edge of model.edges.filter(e=>e.kind==="source")){
     const a=positions.get(edge.from),b=positions.get(edge.to),dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
