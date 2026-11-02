@@ -74,8 +74,9 @@ class BasicContextCompactor:
     measure(context) must price the complete model request, including its prompt
     and capabilities. Without a tokenizer the UTF-8 byte count is an explicitly
     conservative bound. The last tool result, its two newest history entries and
-    all live control/feedback remain verbatim. Older structured evidence may use
-    exact factual cards only with authorized archive links. Oversized protected
+    all live control/feedback remain present with their required facts. Structured
+    evidence may use factual cards only with authorized archive links. Ordinary
+    query cards may fold; measured and failed observations remain protected. Oversized protected
     facts fail clearly rather than truncating an observation. Folded fingerprints and a
     source-qualified rolling summary are portable snapshot state, not an archive.
     """
@@ -143,9 +144,10 @@ class BasicContextCompactor:
         protected_results = set(context.research_state.get('protected_operation_result_ids', ()))
         protected_results.update(result_id(row.details['result']) for row in raw['history']
             if row.record_id in research_protected and isinstance(row.details.get('result'), dict))
+        latest_result_indices = {key: i for i, key in enumerate(fingerprints['operation_results'])}
         protected['operation_results'].update(i for i, key in enumerate(fingerprints['operation_results'])
-            if key in protected_results or receipt_needs_protection(asdict(raw['operation_results'][i]))
-            or 'evidence_card' in raw['operation_results'][i].data)
+            if (key in protected_results and i == latest_result_indices[key])
+            or receipt_needs_protection(asdict(raw['operation_results'][i])))
         if raw['operation_results']:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])
@@ -183,11 +185,24 @@ class BasicContextCompactor:
             self.compactions += 1
             self.last_measurement.update(compacted=True, output_tokens=after, compaction=self.compactions)
             return current
-        removable = [(name, i) for name in self.streams
-                     for i in (reversed(range(len(raw[name]))) if name == 'memories' else range(len(raw[name])))
-                     if i in kept[name] and i not in protected[name]]
+        # Fold identical receipts together: persisted state is content-addressed,
+        # so retaining half a duplicate group would change the view on restore.
+        groups = {}
+        for name in self.streams:
+            order = reversed(range(len(raw[name]))) if name == 'memories' else range(len(raw[name]))
+            for i in order:
+                if i in kept[name] and i not in protected[name]:
+                    groups.setdefault((name, fingerprints[name][i]), []).append(i)
+        removable = list(groups.items())
         minimal = {name: indices & protected[name] for name, indices in kept.items()}
-        if count(view(minimal, self._summary)) > self.target_tokens:
+        minimal_view = view(minimal, self._summary)
+        minimum_tokens = count(minimal_view)
+        self.last_measurement.update(minimum_input_tokens=minimum_tokens,
+            protected_records={name: len(indices) for name, indices in minimal.items()})
+        if minimum_tokens > self.target_tokens:
+            self.last_measurement['minimum_field_bytes'] = {
+                name: len(encoded(value).encode('utf-8'))
+                for name, value in asdict(minimal_view).items()}
             raise ContextBudgetError('Irreducible factual evidence, live state and latest complete feedback '
                                      'exceed target_tokens; no compaction state was committed')
         # Reserve space for the rolling summary and compact provenance. Search by
@@ -196,8 +211,8 @@ class BasicContextCompactor:
         desired = self.target_tokens - reserve
         def after_removing(n):
             indices = {name: set(values) for name, values in kept.items()}
-            for name, i in removable[:n]:
-                indices[name].remove(i)
+            for (name, _), members in removable[:n]:
+                indices[name].difference_update(members)
             return indices
         lo, hi = 0, len(removable)
         while lo < hi:
@@ -219,8 +234,19 @@ class BasicContextCompactor:
                    for name, rows in removed.items() if rows}
         if not sources:
             raise ContextBudgetError('No old records can be compacted without losing latest feedback')
+        summary = {'kind': 'rolling_context_summary', 'authority': 'unverified_summary',
+                   'note': 'Consult raw research_archive sources for original receipts and qualifications.',
+                   'text': '', 'sources': sources, 'compaction': self.compactions+1}
+        # Fixed facts may leave less than the configured summary allowance.
+        # Price provenance too before asking the model to write the summary.
+        available = self.target_tokens - count(view(chosen, summary))
+        summary_limit = min(self.summary_tokens, available - 64)
+        self.last_measurement['summary_token_limit'] = max(0, summary_limit)
+        if summary_limit < 1:
+            raise ContextBudgetError('Required facts and summary provenance leave no summary budget; '
+                                     'no compaction state was committed')
         if summarize is not None:
-            text = summarize(deepcopy(removed), deepcopy(self._summary), self.summary_tokens)
+            text = summarize(deepcopy(removed), deepcopy(self._summary), summary_limit)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError('Context summarizer must return nonempty text')
         else:
@@ -229,10 +255,8 @@ class BasicContextCompactor:
             excerpts = [{'stream': name, 'source': result_id(row), 'record': row}
                         for name, rows in removed.items() for row in rows[-2:]]
             text = encoded({'previous': self._summary.get('text', ''), 'recent_sources': excerpts})
-            text = text.encode('utf-8')[:self.summary_tokens].decode('utf-8', errors='ignore')
-        summary = {'kind': 'rolling_context_summary', 'authority': 'unverified_summary',
-                   'note': 'Consult raw research_archive sources for original receipts and qualifications.',
-                   'text': text, 'sources': sources, 'compaction': self.compactions+1}
+            text = text.encode('utf-8')[:summary_limit].decode('utf-8', errors='ignore')
+        summary['text'] = text
         projected = view(chosen, summary)
         after = count(projected)
         if after > self.target_tokens:

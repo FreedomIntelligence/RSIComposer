@@ -31,9 +31,18 @@ def receipt_needs_protection(receipt):
     if not isinstance(receipt, dict):
         return False
     for key, value in receipt.items():
-        if ((key in ('error', 'validation_error', 'metrics') or key.endswith('_metrics')) and value
-                or key == 'status' and value in ('failed', 'cancelled', 'rejected')
-                or key == 'evidence_card' or receipt_needs_protection(value)):
+        # A view descriptor is navigation, not a measurement. Inspect its facts
+        # using the original field names (cards store JSON Pointer keys).
+        if key == 'evidence_card':
+            if not (isinstance(value, dict) and value.get('schema_version') == 1
+                    and isinstance(value.get('read_path'), dict)
+                    and isinstance(receipt.get('facts'), dict)):
+                return True  # Unknown/legacy cards remain conservative.
+            continue
+        field = key.rsplit('/', 1)[-1].replace('~1', '/').replace('~0', '~')
+        if ((field in ('error', 'validation_error', 'metrics') or field.endswith('_metrics')) and value
+                or field == 'status' and value in ('failed', 'cancelled', 'rejected')
+                or receipt_needs_protection(value)):
             return True
     return False
 
@@ -70,13 +79,17 @@ def full_history_ids(context):
     decisions, directives = live_evidence_ids(context)
     latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
     latest_result = result_id(asdict(context.operation_results[-1])) if context.operation_results else None
+    # Identical reads can have the same receipt digest. Only the newest matching
+    # occurrence is the latest observation; older occurrences are not live work.
+    latest_result_history = next((h.record_id for h in reversed(context.history)
+        if latest_result is not None and isinstance(h.details.get('result'), dict)
+        and result_id(h.details['result']) == latest_result), None)
     return {h.record_id for h in context.history[-2:]} | {
         h.record_id for h in context.history
         if h.record_id in decisions or h.details.get('decision_id') in decisions
         or h.task_id in directives
         or latest_feedback is not None and h.kind == 'feedback' and h.task_id == latest_feedback
-        or latest_result is not None and isinstance(h.details.get('result'), dict)
-        and result_id(h.details['result']) == latest_result}
+        or h.record_id == latest_result_history}
 
 
 def factual_fields(value, path=''):
@@ -175,8 +188,8 @@ def bounded_evidence_view(context):
 def evidence_working_view(context, *, latest=False):
     """Bound old payloads, preserving every structured fact and exact originals.
 
-    Capability checks are per collection. A card is retained as protected state,
-    never fed through a lossy summary. If factual cards plus required live state
+    Capability checks are per collection. Measured/failed facts remain protected;
+    ordinary query cards may later fold into a source-qualified summary. If facts plus required live state
     are still too large, the token compactor must fail without committing.
     """
     full = full_history_ids(context)
@@ -332,6 +345,7 @@ def research_working_view(context, jobs, attempts, *, recent=8):
                      'sha256': result_id([asdict(m) for m in removed_memories]),
                      'read_path': {'operation': 'research_archive', 'collection': 'memories'}},
         'evidence_policy': 'Old evidence may use exact factual cards linked to authorized archives. '
-                           'Latest and live receipts remain complete; factual cards cannot be summarized away.'}
+                           'Latest/live receipts and measured or failed facts remain protected; '
+                           'ordinary archived queries may fold into a source-qualified summary.'}
     return replace(context, research_state=state, memories=memories, history=history,
                    research_agenda={**context.research_agenda, 'working_projection': projection})

@@ -124,6 +124,8 @@ class ContextCompactionTests(unittest.TestCase):
     def test_model_policy_counts_final_request_and_accounts_summary_calls(self):
         from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
         from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse, TokenUsage
+        from rsisys.loops.contracts.feedback import Feedback
+        from rsisys.loops.contracts.lifecycle import ExecutionStatus
         model = ModelRef('fixture', 'fixture', 'r0')
         class Backend:
             token_count_mode = 'fixture_counter'
@@ -141,11 +143,20 @@ class ContextCompactionTests(unittest.TestCase):
         policy = ModelDecisionPolicy(backend, model, context_compactor=compactor)
         latest = OperationResult('Complete feedback', (), False, data={'content':'latest-body'*100})
         observed = []
+        feedback = Feedback('apply', ExecutionStatus.COMPLETED, 'Candidate was applied', False,
+                            adopted_candidate_ids=('measured-candidate',))
         with policy.track_usage(observed.append):
-            decision = policy.decide(context(history=records(18), operation_results=(latest,)))
+            decision = policy.decide(context(history=records(18), operation_results=(latest,),
+                                             last_feedback=feedback))
         self.assertEqual(decision.kind, 'finish')  # Voluntary stopping remains available.
         self.assertEqual(len(backend.requests), 2)
         self.assertEqual(len(observed), 2)
+        summary_request = backend.requests[0]
+        summary_inputs = json.loads(summary_request.prompt)
+        self.assertEqual(summary_inputs['current_state']['last_feedback']['adopted_candidate_ids'],
+                         ['measured-candidate'])
+        self.assertNotIn('summary', summary_inputs['current_state']['last_feedback'])
+        self.assertIn('not the complete experiment history', summary_request.system)
         final = backend.requests[-1]
         self.assertLessEqual(len(final.prompt)+len(final.system), compactor.target_tokens)
         self.assertIn('latest-body'*100, final.prompt)
