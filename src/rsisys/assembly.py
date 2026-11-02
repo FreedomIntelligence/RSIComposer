@@ -55,6 +55,7 @@ class AssemblyContext:
     # Explicit executable modes/parsers supplied by an exploration factory.
     exploration_directives: DirectiveDefinitions | None = None
     action_permissions: ActionPermissions = field(default_factory=ActionPermissions)
+    project_context: dict = field(default_factory=dict)
     _cleanup: ExitStack = field(default_factory=ExitStack, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
@@ -170,7 +171,7 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
         DefaultDecisionHarness(
             ModelDecisionPolicy(context.backends[model.backend_id], model,
                                 allowed_actions=tuple(spec.name for spec in exploration.action_space.describe()),
-                                directives=directives),
+                                directives=directives, project_context=context.project_context),
             tools, context.experience,
             learner=MockDecisionLearner(context.artifacts) if context.with_learning else None,
             experience_limit=context.experience_limit,

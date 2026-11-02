@@ -148,6 +148,42 @@ decision; `researcher_finish_ends_run` is false in time mode. The default
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.
+
+The medical policy uses `MemoryPrefixDecisionPolicy`: user context starts with the
+objective, versioned `project_context`, live capabilities and memory. Project scope
+covers target/exploration and decision improvement, frozen scientific evaluation,
+data restrictions and budgets; the same context is saved as `project-context.json`
+for review. Live operations/directives and executor permissions
+authorize execution. Harness/system changes and decision-model training remain
+proposals unless an executable capability is installed. Learned memory remains
+untrusted user content.
+
+`ExperimentSettings.resource_allocation` defaults to `None` (unknown). Device type
+and training process count describe configured execution; neither host visibility
+nor environment variables establish allocation or free memory. Supply only an
+operator declaration, for example `resource_allocation={'physical_devices': [13],
+'logical_devices': [0]}` with `training_device_type='npu'`. The CLI equivalent is
+`--resource-allocation '{"physical_devices":[13],"logical_devices":[0]}'`.
+Physical/logical IDs appear only when declared; no physical-to-logical mapping is
+inferred. Optional `memory_availability` is an explicit string/object declaration;
+otherwise it is unknown. Optional `external_read_only_services` is a list of JSON
+objects describing already available services; it grants no training, adapter
+loading, restart or reconfiguration rights. The allocation is copied and bounded
+to 8192 JSON bytes, depth 8 and 512 values; other top-level fields are rejected.
+
+Feedback learning is disabled by default (`feedback_learning=False`). Python
+callers may opt in with `ExperimentSettings(..., feedback_learning=True)` and an
+explicit independent `decision_backend` passed to `run`; `--feedback-learning`
+exposes the setting for launchers supplying that dependency. The standalone CLI
+cannot supply an independent backend and therefore rejects this opt-in. DSH and
+custom decision harnesses are also rejected until their integration is supported.
+This installs `feedback_learning_read` and persists unverified proposals in
+`feedback_learning.json`; it starts no model training or automatic changes.
+Decision and learning requests share serialized admission, logging and the existing
+model-call budget. This does not promise concurrent inference. The actor uses its
+separate serving resource, and learning attempted during training is rejected.
+Worker monitor events are queued for the controller, including shutdown flushing.
+
 The Transformers backend stops researcher generation after one complete final JSON object (the policy still
 checks the action schema and permissions). Reasoning and incomplete JSON cannot
 trigger an action. Actor evaluation has no JSON stopping rule.

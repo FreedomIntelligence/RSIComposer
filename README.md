@@ -543,6 +543,54 @@ tokenize / 进程训练包装与候选路由准备；完整接线见上述 READM
 当作已验证结论。这些能力遵循相同的外部权限设置，组件说明见
 [Decision Harness](src/rsisys/loops/decision_making/harness/README.md)。
 
+### 项目目标与资源输入
+
+`ModelDecisionPolicy(project_context=...)` 和 `AssemblyContext.project_context` 接收有界、
+版本化的宿主项目配置。医疗示例的启动输入明确区分 target/exploration policy、decision
+policy、评测契约和资源声明；可执行能力仍以当轮 operations/directives 与执行权限为准。
+未安装的 Decision 训练、harness 或系统修改只能提出建议。资源未声明时显示 unknown，
+不从设备可见性猜测可用算力；静态配额不等于当前空闲内存。
+
+长期目标与资源配置不由学习 memory 改写。系统指令规定角色与证据规则；项目配置、memory、
+摘要和动态反馈仍是分层的用户上下文。配置改变的默认 snapshot 会显式拒绝无恢复契约的保存，
+防止恢复时静默丢失配额。医疗配置与启用方式见 [医疗示例](examples/medical/README.md)。
+
+完整决策账本留在执行端与前端数据源。模型工作视图保留最近节点、活跃任务、候选来源、
+attempt 代表及它们的依赖/引用/采纳关系；旧节点通过 `research_archive` 的 `decision_graph`
+集合分页或按 ID 读取。只在该只读能力可用时投影，不删除原始节点或推断 attempt 完成。
+过大的活跃状态仍明确报预算错误，不以丢弃最新反馈或扩大预算处理。
+
+### 由 Decision 整理实验反馈（可选）
+
+```python
+from rsisys.loops.decision_making.harness.learning_harness import feedback_learning_decision_factory
+
+with Application(config, decision_factory=feedback_learning_decision_factory(max_calls=64)) as app:
+    app.run()
+```
+
+该装配先接纳完整反馈，再由接收时的 Decision 模型异步提出 memory、训练样本、harness
+改进或系统改进。建议可兼有多种形式，也可为空；训练样本含未验证的 input/target，
+不会自动训练、修改代码或应用候选。事实指标直接复制回执，解释带来源且保持 unverified。
+`feedback_learning_read` 可分页查看任务或读取某个任务的建议。
+
+Attempt 沿用执行端已记录的 decision 集合：学习输入、memory 和监控使用相同的
+`research_attempt_id`。整理时可读取同一 attempt 的已记录决策与相关回执，按反馈时点
+保留快照；同名不同 ID 不合并，单步骤或学习完成不推断整个 attempt 完成。列表查询可
+按 `research_attempt_id` 筛选。建议不会自动变成前端的成功状态或新增研究尝试。
+
+记忆进入下一次决策的前缀；未验证的解释不会仅凭“读过历史”就隐藏原始证据。
+原有 compact 负责带来源的历史归档，保留最新两条历史与完整最新反馈。这只是便于
+比较的可选策略，尚未验证比线性历史加 compact 更好的研究效果或实际 KV cache 命中。
+发起实验和整理反馈的 Decision 版本分别记录；混入模拟证据的学习结果仍标记 simulated。
+后台学习与 Decision 共用串行后端，复用其计数/准入；异步不代表模型推理并行。
+`max_calls` 是额外学习请求的保守预约上限（含 token 预检拒绝），不是整个 run 的调用预算。
+
+学习日志保存到 `feedback_learning.json`，重启不自动重发结果不明的请求；它不等于完整
+Runner 恢复支持，自定义装配的 durable/snapshot 仍需扩展契约。关闭时等待在途学习，
+超时显式报错；后端必须配置有限传输超时，并允许从 worker 线程调用。CPU fixture 示例：
+`PYTHONPATH=src python examples/feedback_learning.py`，不调用真实模型或训练。
+
 ### 使用 DSH Harness
 
 可选依赖固定为测试过的 SDK / runtime 版本，默认安装不引入 Node 或 DSH：

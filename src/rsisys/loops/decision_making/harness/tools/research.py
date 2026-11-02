@@ -40,7 +40,7 @@ def _archive_arguments(arguments, *, experience=True):
     page_limit(args['limit'])
     if args['collection'] == 'experience' and not experience:
         raise ValueError('Experience archive provider is not bound')
-    if args['collection'] not in ('history', 'memories', 'operation_results',
+    if args['collection'] not in ('history', 'memories', 'operation_results', 'decision_graph',
                                   *(['experience'] if experience else []), 'research_items', 'research_revisions'):
         raise ValueError('Invalid archive collection')
     if args['record_id'] is not None and (not isinstance(args['record_id'], str) or not args['record_id']):
@@ -60,6 +60,7 @@ class ResearchTools:
     def __init__(self, agenda: ResearchAgenda, memory, *, experience=None):
         self.agenda, self.memory = agenda, memory
         self.experience = experience
+        self.decision_graph = None  # Bound to the owning harness's live ledger, never a frozen copy.
         text = {'type': 'string', 'minLength': 1, 'maxLength': 128, 'pattern': r'\S'}
         refs = {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512,
                                          'pattern': r'\S'}, 'maxItems': 64}
@@ -92,12 +93,11 @@ class ResearchTools:
             'Read revision before retrying conflicts; summaries are model notes, not validated findings.',
             patch_schema), agenda.validate_patch)
         archive = _Definition(OperationSpec('research_archive',
-            'Read raw history, memories, operation_results, research_items or research_revisions '
-            + ('and experience ' if experience is not None else '') + 'as paginated 1000-character JSON chunks. '
-            'Concatenate chunks for each record_id before parsing; history includes full tool receipts. '
-            'Use exact record_id to retrieve a source; operation_results IDs are content SHA-256 hashes. '
-            'Derived experience may require following its source_refs. Cursor is pinned to the archive digest.',
-            schema({'collection': {'enum': ['history', 'memories', 'operation_results',
+            'Read raw history, memories, operation_results, decision_graph, research_items, research_revisions'
+            + (', experience' if experience is not None else '') + '. Paginated JSON chunks (1000 characters); '
+            'concatenate each record_id before parsing. Exact record_id lookup is supported; operation_results '
+            'IDs are SHA-256. Follow next_cursor (archive-digest pinned) and experience source_refs for receipts.',
+            schema({'collection': {'enum': ['history', 'memories', 'operation_results', 'decision_graph',
                                             'research_items', 'research_revisions',
                                             *(['experience'] if experience is not None else [])]},
                     'record_id': {'type': ['string', 'null'], 'minLength': 1}, 'cursor': {'type': ['string', 'null']},
@@ -120,7 +120,11 @@ class ResearchTools:
     def _archive(self, arguments):
         args = _archive_arguments(arguments, experience=self.experience is not None)
         collection = args['collection']
-        if collection == 'experience':
+        if collection == 'decision_graph':
+            if self.decision_graph is None:
+                raise ValueError('Decision ledger archive provider is not bound')
+            rows, identity = list(self.decision_graph()), 'decision_id'
+        elif collection == 'experience':
             if self.experience is None:
                 raise ValueError('Experience archive provider is not bound')
             rows = [asdict(row) for row in self.experience.retrieve(limit=None)]

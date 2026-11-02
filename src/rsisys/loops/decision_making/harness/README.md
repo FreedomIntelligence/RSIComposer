@@ -40,6 +40,48 @@ summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请�
 `last_measurement` 记录计数方式、压缩前后大小及是否触发；`IdentityContextCompactor()` 供
 DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再被原生会话二次压缩。
 
+## 可选的反馈学习与记忆前缀
+
+[feedback_learning_decision_factory](learning_harness.py) 通过现有 decision_factory 接口启用，
+不改变默认 Harness。完整反馈先按原协议接纳；独立 worker 使用接收时捕获的 Decision
+模型身份整理反馈、相关历史和评测。worker 只返回建议，Runner 所在线程写日志与 memory。
+接线与 CPU fixture 见[使用指南](../../../../../README.md#由-decision-整理实验反馈可选)。
+
+整理输入中的 `research_context` 从已校验的 decision ledger 读取，与监控 API 的
+`research_attempt_id` / `research_attempt_title` 同源。它包含触发反馈的 decision、
+当时同一 attempt 的成员、真实依赖/引用/采纳关系和快照指纹；相关操作回执也可进入
+有界学习输入。不同 ID 即使同名也不合并，旧记录不补造归属。学习读取完整 ledger，
+不把前端最多 300 条的公开快照当成完整档案。
+
+一次学习完成只表示这份反馈已被整理，不表示 attempt 完成或假设成立。后续反馈可以
+继续同一 attempt，各次输入快照与建议分别保留。`feedback_learning_read` 的列表查询
+支持 `research_attempt_id` 筛选；memory 与四类建议通过所属 job 保留相同归属。
+这些记录目前供 Decision 查询，不自动在监控主图增加学习节点或展示为已采纳改进。
+
+一次反馈可提出零到六条 memory、training_data、harness_change 或 system_change。
+训练建议要求明确的 input/target 和 unverified 标记；所有建议包含适用范围、已提供来源
+和验证计划。仅 memory 建议写入现有 Memory store；其指标/状态直接复制原回执，解释
+仍未验证。训练与代码/系统变更不自动执行，`feedback_learning_read` 提供只读查询。
+
+后台任务与 Decision 共享串行后端及其原有调用准入；不保证两者推理并行。学习有独立的
+排队、输入、输出和请求预约上限；预约包括 token 预检拒绝，不等于实际生成次数。
+同一回执不重复提交，失败保留原响应且不自动重试。日志重载将结果不明的 running 请求
+标记为 interrupted；学习日志不替代完整 Runner durable/snapshot 扩展契约。
+关闭会停止提交并等待在途请求，超时显式失败；传输必须有有限 timeout。
+
+[MemoryPrefixDecisionPolicy](learning_policy.py) 将目标/能力、memory、滚动摘要放在
+动态观察之前。记忆更新会改变该位置后的前缀；字节稳定测试不能证明服务实际命中 KV
+cache，也不能证明研究质量提升。memory 仍是非可信用户上下文，不提升为 system 指令。
+学习输入的 coverage 只证明模型看过哪些记录，不证明解释保留了其含义。因此未验证的
+memory 不直接隐藏任何历史；原 compact 负责带来源的归档，并保护最新两条历史与完整
+最新反馈。摘要语义仍需独立核验。发起实验和整理反馈的模型版本分别记录，混合模拟
+历史或评测的学习输出保留 simulated 标记。
+
+`project_context` 是宿主配置的稳定项目/资源前缀，默认 policy 深拷贝并限制为 32KB JSON。
+它与 learned memory 分离；未知资源不推测，动态配额来自 run_control。项目描述不授予
+新操作权限。旧决策图通过 research_archive/decision_graph 读取；工作视图保留最近、活跃、
+候选来源、attempt 代表和依赖闭包。执行校验与监控仍使用完整账本。
+
 ## 模型自管的议程、待办和阶段总结
 
 [ResearchAgenda](research.py) 保存模型选择的稳定 ID；kind 为 `agenda`、`todo` 或

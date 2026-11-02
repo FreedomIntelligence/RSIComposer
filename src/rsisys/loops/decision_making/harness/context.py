@@ -28,6 +28,53 @@ class IdentityContextCompactor:
         return deepcopy(context)
 
 
+def working_decision_graph(graph, candidate_origins, *, recent=32):
+    """Bound the working ledger view; original identities/relations are archived.
+
+    Keep every active decision, candidate producer, one representative per attempt,
+    and the transitive dependencies/sources/adoptions of retained nodes. Large live
+    graphs still fail the budget explicitly; no active dependency is truncated.
+    """
+    if len(graph) <= recent * 2:
+        return tuple(deepcopy(graph))
+    indexed = {row['decision_id']: row for row in graph}
+    keep = {row['decision_id'] for row in graph[-recent:]} | set(candidate_origins.values())
+    attempts = {}
+    for row in graph:
+        if row['status'] not in ('completed', 'failed', 'cancelled'):
+            keep.add(row['decision_id'])
+        if row.get('research_attempt_id'):
+            attempts[row['research_attempt_id']] = row['decision_id']
+    keep.update(attempts.values())
+    pending = list(keep)
+    while pending:
+        row = indexed.get(pending.pop(), {})
+        for name in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_decision_ids'):
+            for ident in row.get(name, ()):
+                if ident not in keep:
+                    keep.add(ident)
+                    pending.append(ident)
+    return tuple(deepcopy(row) for row in graph if row['decision_id'] in keep)
+
+
+def with_working_decision_graph(context):
+    # Only project when the advertised read capability can recover exact IDs.
+    archives = [spec for spec in context.operations if spec.name == 'research_archive' and spec.read_only]
+    if not any('decision_graph' in spec.input_schema.get('properties', {}).get(
+            'collection', {}).get('enum', ()) for spec in archives):
+        return context
+    graph = working_decision_graph(context.decision_graph, context.candidate_origins)
+    if len(graph) == len(context.decision_graph):
+        return context
+    navigation = {'collection': 'decision_graph', 'operation': 'research_archive',
+        'total': len(context.decision_graph), 'visible': len(graph),
+        'sha256': result_id(context.decision_graph),
+        'note': 'Working view only. Read archived decision_id or paginated ledger for older decisions. '
+                'Missing from this view does not mean nonexistent or failed.'}
+    return replace(context, decision_graph=graph,
+                   research_agenda={**context.research_agenda, 'decision_graph_archive': navigation})
+
+
 class BasicContextCompactor:
     """Keep full context below 80k, then fold old records toward a 24k request.
 
@@ -72,6 +119,7 @@ class BasicContextCompactor:
     def compact(self, context, *, recent_limit=32, measure=None, summarize=None):
         if type(recent_limit) is not int or recent_limit < 1:
             raise ValueError('recent_limit must be positive')
+        context = with_working_decision_graph(context)
         meter = measure or (lambda c: len(encoded(asdict(c)).encode('utf-8')))
         def count(view):
             value = meter(view)

@@ -15,7 +15,9 @@ from inspect import getattr_static
 import json
 import math
 from pathlib import Path
+from queue import Empty, SimpleQueue
 import signal
+from threading import get_ident
 import time
 import traceback
 from types import MappingProxyType
@@ -33,7 +35,7 @@ from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
 from rsisys.loops.decision_making.harness.dsh import DSHConfig, DeepSeekDecisionHarness
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
-from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+from rsisys.loops.decision_making.harness.learning_policy import MemoryPrefixDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.exploration.harness.commands import CommandHandler
 from rsisys.runtime.artifacts import FileArtifactStore
@@ -44,7 +46,7 @@ from examples.qwen_toy.monitor import ACTIVE, Monitor
 from .evaluation import MedicalEvaluator
 from .native import MedicalTrainingBackend
 from .run import build
-from .task import DataRef, Sample, encoded, prepare, samples, validate_training
+from .task import LABELS, DataRef, Sample, encoded, prepare, samples, validate_training
 
 
 class BudgetExhausted(BaseException):
@@ -65,6 +67,55 @@ def row_json(row: Sample) -> dict:
 
 def jsonl(rows) -> bytes:
     return b''.join(encoded(row_json(row)) + b'\n' for row in rows)
+
+
+def copy_resource_allocation(value: dict | None) -> dict | None:
+    """Copy a small operator declaration; never discover allocation from the host."""
+    if value is None:
+        return None
+    if type(value) is not dict:
+        raise TypeError('resource_allocation must be a JSON object or None')
+    remaining = 512
+    def check(node, depth=0):
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > 8:
+            raise ValueError('resource_allocation exceeds JSON depth/node bounds')
+        if type(node) is dict:
+            if any(type(key) is not str for key in node):
+                raise TypeError('resource_allocation requires string JSON keys')
+            for child in node.values():
+                check(child, depth + 1)
+        elif type(node) is list:
+            for child in node:
+                check(child, depth + 1)
+        elif node is not None and type(node) not in (str, bool, int, float):
+            raise TypeError('resource_allocation requires JSON values')
+    check(value)
+    content = json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True)
+    if len(content.encode('utf-8')) > 8192:
+        raise ValueError('resource_allocation exceeds 8192 bytes')
+    copied = json.loads(content)
+    allowed = {'physical_devices', 'logical_devices', 'memory_availability', 'external_read_only_services'}
+    if set(copied) - allowed:
+        raise ValueError('Unknown resource_allocation fields')
+    for name in ('physical_devices', 'logical_devices'):
+        if name not in copied:
+            continue
+        devices = copied[name]
+        if (type(devices) is not list or len(devices) > 32 or any(
+                not ((type(device) is int and device >= 0)
+                     or (type(device) is str and device.strip() and len(device) <= 128))
+                for device in devices) or len(set(devices)) != len(devices)):
+            raise ValueError(f'{name} must list distinct explicit device IDs (at most 32)')
+    if ('memory_availability' in copied
+            and not isinstance(copied['memory_availability'], (str, dict))
+            and copied['memory_availability'] is not None):
+        raise ValueError('memory_availability must be an explicit description, JSON object, or null')
+    services = copied.get('external_read_only_services', [])
+    if type(services) is not list or any(type(service) is not dict for service in services):
+        raise ValueError('external_read_only_services must be a list of JSON service declarations')
+    return copied
 
 
 @dataclass(frozen=True)
@@ -91,6 +142,8 @@ class ExperimentSettings:
     dsh_config: Path | None = None
     run_mode: str = 'researcher'
     restart_delay_seconds: float = 10.0
+    resource_allocation: dict | None = None
+    feedback_learning: bool = False
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -134,6 +187,82 @@ class ExperimentSettings:
             raise ValueError('dsh requires an explicit dsh_config JSON file')
         if self.decision_harness == 'default' and self.dsh_config is not None:
             raise ValueError('dsh_config requires decision_harness=dsh')
+        object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
+        if type(self.feedback_learning) is not bool:
+            raise TypeError('feedback_learning must be boolean')
+        if self.feedback_learning and self.decision_harness != 'default':
+            raise ValueError('feedback_learning currently requires the default decision harness')
+
+
+def build_project_context(settings: ExperimentSettings, task, *, target_model: ModelRef,
+                          decision_model: ModelRef) -> dict:
+    """Stable project facts in user context, separate from learned interpretations."""
+    declaration = copy_resource_allocation(settings.resource_allocation)
+    resources = {
+        'device_type': settings.training_device_type,
+        'process_count': settings.training_processes,
+        'allocation_status': 'unknown' if declaration is None else 'operator_declared',
+        'memory_availability': 'unknown',
+        'external_read_only_services': [],
+        'scope': ('Device type and process count are configured execution settings, not capacity evidence. '
+                  'Only explicitly declared device IDs are allocated. Host visibility and environment variables '
+                  'do not grant device access; allocation does not guarantee current free memory. '
+                  'External read-only services grant no training, adapter loading, restart or reconfiguration rights.'),
+    }
+    resources.update(declaration or {})
+    return {
+        'schema_version': 1,
+        'project': {'project_id': settings.project_id, 'name': settings.project_name,
+                    'experiment_name': settings.experiment_name or settings.run_dir.name},
+        'scope': {
+            'target_exploration': {
+                'model': asdict(target_model),
+                'goal': 'Improve medical benchmark accuracy through evidence-driven data, SFT and inference hypotheses.',
+            },
+            'decision_improvement': {
+                'model': asdict(decision_model),
+                'goal': ('Improve hypotheses, experiment design, evidence use, memory and decision quality; '
+                         'keep original receipts separate from interpretations and proposed training examples.'),
+                'feedback_learning_enabled': settings.feedback_learning,
+            },
+        },
+        'capabilities': {
+            'authority': ('Live context.operations, context.directive_modes, their schemas and executor permissions '
+                          'are authoritative. This project description installs no executable capability.'),
+            'proposal_only_unless_installed': ['harness_changes', 'system_changes', 'decision_model_training'],
+            'training': 'Only installed SFT with restart from the fixed initializer; no real RL is installed.',
+            'feedback_learning': ('When enabled, feedback learning produces unverified proposals and a read-only '
+                                  'operation; it does not install changes or train either model.'),
+        },
+        'resources': resources,
+        'scientific_evaluation': {
+            'protocol_ref': task.protocol_ref,
+            'development': [{'benchmark_id': benchmark.benchmark_id, 'role': benchmark.role,
+                             'legal_labels': list(LABELS[benchmark.benchmark_id])}
+                            for benchmark in task.development],
+            'selection_rule': task.selection_rule,
+            'guardrails': task.guardrails,
+            'max_guardrail_drop': task.max_guardrail_drop,
+            'max_output_tokens': task.max_output_tokens,
+            'requirements': ('Use the frozen development protocol and exact legal-label grading. '
+                             'Pareto application requires at least one improvement and no decreases against the '
+                             'current incumbent; legacy primary_guardrail uses the fixed initial anchor. '
+                             'Separate raw measurements, interpretation and acceptance. Repeated development '
+                             'selection is not a fresh holdout or clinical efficacy result. Cross-runtime '
+                             'comparisons cannot isolate training quality; negative trials do not exhaust a search.'),
+        },
+        'data_restrictions': (
+            'Train only on validated training_data artifacts. Never train on development, held-out or protected '
+            'examples, including operator-private exclusions. Preserve source versions, licenses and provenance; '
+            'do not seek private examples through tools or external services. Exact ID/question overlap checks '
+            'do not establish semantic deduplication, contamination freedom or medical correctness.'),
+        'budgets': {
+            'trainings': settings.max_trainings, 'decision_calls': settings.max_model_calls,
+            'research_seconds': settings.seconds, 'max_train_steps': settings.max_train_steps,
+            'max_seq_length': settings.max_seq_length,
+            'current_remaining': 'Use live run_control; the static limits do not reset between research cycles.',
+        },
+    }
 
 
 class JournalMonitor(Monitor):
@@ -171,9 +300,29 @@ class DecisionBackend:
         self.decision_thinking = (getattr(serving, 'decision_thinking', False)
                                   if decision_thinking is None else decision_thinking)
         self.calls = 0
+        self._monitor_owner = get_ident()
+        self._monitor_events = SimpleQueue()
         self.check_deadline: Callable[[], None] = lambda: None
         self.training_active: Callable[[], bool] = lambda: False
         self.decision_pending: Callable[[], bool] = lambda: False
+
+    def flush_monitor_events(self):
+        """Only the controller may mutate the monitor or its atomic output file."""
+        if get_ident() != self._monitor_owner:
+            raise RuntimeError('Monitor events must be flushed by the controller thread')
+        while True:
+            try:
+                event, details = self._monitor_events.get_nowait()
+            except Empty:
+                return
+            self.monitor.event(event, **details)
+
+    def _monitor_event(self, event, **details):
+        if get_ident() == self._monitor_owner:
+            self.flush_monitor_events()
+            self.monitor.event(event, **details)
+        else:
+            self._monitor_events.put((event, details))
 
     def count_tokens(self, request):
         counter = (getattr(self.serving, 'count_tokens', None)
@@ -214,6 +363,16 @@ class DecisionBackend:
         return getattr(self.serving, 'supports_response_schema', False) is True
 
     def generate(self, request):
+        try:
+            return self._generate(request)
+        except BudgetExhausted as exc:
+            if get_ident() != self._monitor_owner:
+                # Learning records Exception failures; controller stops still
+                # bypass ordinary operation/evaluator recovery as before.
+                raise RuntimeError(str(exc)) from exc
+            raise
+
+    def _generate(self, request):
         self.check_deadline()
         if self.training_active():
             raise RuntimeError('Decision inference prohibited while a training process is active')
@@ -224,7 +383,7 @@ class DecisionBackend:
         model = asdict(request.model)
         write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
                                                   'requested_model': model})
-        self.monitor.event('model_decision_requested', call=self.calls, requested_model=model)
+        self._monitor_event('model_decision_requested', call=self.calls, requested_model=model)
         cap = getattr(self.serving, 'native_output_tokens', 8192 if self.decision_thinking else 1024)
         request = replace(request, max_output_tokens=min(cap, request.max_output_tokens))
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
@@ -621,7 +780,7 @@ class ExperimentOperations:
             data={'content': content[:12000], 'total_characters': len(content), 'truncated': len(content) > 12000})
 
 
-class ResearchPolicy(ModelDecisionPolicy):
+class ResearchPolicy(MemoryPrefixDecisionPolicy):
     ENVELOPE_GUIDANCE = (
         'Return one JSON object with unique keys in every object, including nested objects. '
         'Canonical outer envelopes are '
@@ -638,8 +797,10 @@ class ResearchPolicy(ModelDecisionPolicy):
         'Choose your own available action and research steps, or finish with a nonempty reason; '
         'these envelopes are syntax templates, not a required workflow.')
 
-    def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher'):
-        super().__init__(backend, model, directives=catalog, max_validation_attempts=1)
+    def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher',
+                 project_context: dict | None = None):
+        super().__init__(backend, model, directives=catalog, max_validation_attempts=1,
+                         project_context=project_context)
         self.space, self.monitor, self.learner = space, monitor, learner
         self.train_ref = train_ref
         self.run_mode = run_mode
@@ -842,6 +1003,10 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         raise TypeError('decision_backend must provide generate(request)')
     if settings.decision_harness == 'dsh' and decision_backend is not None:
         raise ValueError('DSH owns its session/provider; configure dsh_config instead of decision_backend')
+    if settings.feedback_learning and decision_harness_factory is not None:
+        raise ValueError('feedback_learning does not yet support custom decision harnesses')
+    if settings.feedback_learning and decision_backend is None:
+        raise ValueError('feedback_learning requires an explicit independent decision_backend')
     dsh_config = DSHConfig.load(settings.dsh_config) if settings.decision_harness == 'dsh' else None
     if dsh_config is not None and dsh_config.resume:
         raise ValueError('Medical experiment never resumes; use a fresh DSH session')
@@ -947,11 +1112,13 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         space = ModularDecisionActionSpace((*research_tools.definitions, *operations.definitions),
             directives=assembly.runner.decision_making.action_space.directives, permissions=permissions)
         assembly.runner.decision_making.action_space = space
+        project_context = build_project_context(settings, task, target_model=base, decision_model=researcher)
+        write_json(root / 'project-context.json', project_context)
         def policy_factory(native_backend, model):
             if dsh_config is not None:
                 backend.serving = native_backend
             return ResearchPolicy(backend, model, space.directives, space, monitor, learner, operations.train_ref,
-                                  run_mode=settings.run_mode)
+                                  run_mode=settings.run_mode, project_context=project_context)
         dependencies = dict(tools=tools, experience=decision.experience, memory=decision.memory,
             research_agenda=decision.research_agenda, directives=space.directives, model=researcher,
             policy_factory=policy_factory, backend=backend, config=dsh_config,
@@ -968,6 +1135,10 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 memory=decision.memory, research_agenda=decision.research_agenda)
         replacement.state.operation_results.extend(decision.state.operation_results)
         assembly.runner.decision_making.harness = decision = replacement
+        if settings.feedback_learning:
+            from rsisys.loops.decision_making.harness.learning_harness import enable_feedback_learning
+            enable_feedback_learning(assembly.runner.decision_making, path=root / 'feedback_learning.json')
+            decision = assembly.runner.decision_making.harness
         policy = decision.policy
         backend.decision_pending = lambda: getattr(policy, 'future', None) is not None
         commands = assembly.runner.exploration.harness.commands
@@ -1031,6 +1202,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         while True:
             step = assembly.runner.step(objective)
             monitor.sync_research_attempts(decision.state.decision_records)
+            backend.flush_monitor_events()
             monitor.advance(step)
             if step.event.get('run_control') == 'research_restarted':
                 result['research_rounds'] = step.event['research_round']
@@ -1070,6 +1242,11 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                     close()
         except Exception as exc:
             cleanup_errors.append(f'decision harness close: {type(exc).__name__}: {exc}')
+        try:
+            if backend is not None:
+                backend.flush_monitor_events()
+        except Exception as exc:
+            cleanup_errors.append(f'monitor event flush: {type(exc).__name__}: {exc}')
         try:
             if learner is not None:
                 result['cleanup'] = learner.cleanup()
@@ -1130,6 +1307,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--training-device-type', choices=('cuda', 'npu'), default='cuda')
     result.add_argument('--serving-backend', choices=('transformers', 'sglang'), default='transformers')
     result.add_argument('--tensor-parallel-size', type=int, default=1)
+    result.add_argument('--resource-allocation', type=json.loads,
+                        help='Explicit bounded JSON allocation declaration; omitted means unknown')
+    result.add_argument('--feedback-learning', action='store_true',
+                        help='Opt in to proposal-only feedback learning with the default decision harness')
     return result
 
 

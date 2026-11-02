@@ -68,6 +68,10 @@ class DefaultDecisionHarness:
         self.experience_limit = experience_limit
         self.model_activator = model_activator
         self.state = DecisionState()
+        from .tools.research import ResearchTools
+        research_tools = getattr(tools, 'research_tools', None)
+        if isinstance(research_tools, ResearchTools):
+            research_tools.decision_graph = self._decision_graph
         self.training = JobBook[DecisionTrainingRequest, TrainingResult](learner)
 
     @staticmethod
