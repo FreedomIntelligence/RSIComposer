@@ -18,6 +18,9 @@ Python 3.12+，在仓库根目录安装：
 ```sh
 python -m pip install -e .
 rsisys demo --config configs/demo.json
+
+# 监控单独安装，也可只安装这一项。
+python -m pip install -e ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
@@ -36,6 +39,8 @@ pixi run test
 默认模型、训练和评测为 Mock；版本变化不证明能力提升。真实模型服务、训练作业和部署通过显式适配器接入。CPU 标量训练示例验证作业链路；Qwen、医学领域装配与真实后端要求见下方示例。
 
 ## 实验监控
+
+`rsisys` 与 `rsimonitor` 是两个独立 distribution，互不声明安装依赖。只需监控时，在仓库根目录运行 `python -m pip install ./src/rsimonitor`；也可安装独立构建的 `rsimonitor` wheel，无需安装 RSI 核心。
 
 监控以实验过程为中心，直接读取 `runs/<run-id>/monitor.json`，无需启动两个 loop，也不要求安装训练框架或 Node。它负责实验可视化分析，项目的功能介绍与使用说明由本 README 承载。
 

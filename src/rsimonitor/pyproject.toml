@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rsimonitor"
+version = "0.1.0"
+description = "Read-only experiment monitoring and research visualization"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+rsimonitor = "rsimonitor.server:main"
+
+[tool.setuptools]
+packages = ["rsimonitor"]
+package-dir = {rsimonitor = "."}
+
+[tool.setuptools.package-data]
+rsimonitor = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js"]

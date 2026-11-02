@@ -12,10 +12,10 @@ dependencies = []
 
 [project.scripts]
 rsisys = "rsisys.cli:main"
-rsimonitor = "rsimonitor.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["rsisys", "rsisys.*"]
 
 [project.optional-dependencies]
 dsh = ["deepseek-harness-sdk==0.2.1rc2"]
@@ -23,4 +23,3 @@ test = ["jsonschema>=4,<5"]
 
 [tool.setuptools.package-data]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
-"rsimonitor" = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js"]

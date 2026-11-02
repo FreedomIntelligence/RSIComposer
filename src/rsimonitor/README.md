@@ -1,14 +1,14 @@
 # RSISys 实验监控库
 
-Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端依赖、构建或发布站点；不启动训练、不修改运行文件。源码位于 `src/rsimonitor/`，作为独立顶层 Python 包，随 `rsisys` distribution 安装，要求 Python 3.12+；HTTP 服务运行仅依赖 Python 标准库。
+Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端依赖、构建或发布站点；不启动训练、不修改运行文件。源码位于 `src/rsimonitor/`，拥有独立的 `pyproject.toml` 和 `rsimonitor` distribution，不依赖 `rsisys`，要求 Python 3.12+；HTTP 服务运行仅依赖 Python 标准库。
 
 ## 启动
 
-在 RSISys 项目目录安装后运行（也可安装构建好的 wheel）：
+在仓库根目录单独安装监控（不安装 RSI 核心）：
 
 ```sh
 cd RSISys
-python3.12 -m pip install .
+python3.12 -m pip install ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
@@ -19,6 +19,38 @@ rsimonitor --runs-dir /path/to/runs --port 8765
 ```
 
 源码环境也可使用 `PYTHONPATH=src python3.12 -m rsimonitor.server --runs-dir runs`。
+
+## 独立分发与数据协议
+
+```sh
+python3.12 -m pip wheel --no-deps ./src/rsimonitor --wheel-dir dist
+# 在另一台机器或干净环境中，仅安装监控：
+python3.12 -m pip install /path/to/rsimonitor-0.1.0-py3-none-any.whl
+rsimonitor --runs-dir /path/to/runs
+```
+
+源码可编辑安装使用 `python3.12 -m pip install -e ./src/rsimonitor`。命令以仓库根目录为起点；进入
+`src/rsimonitor/` 后也可直接 `pip install .`。目前提供本地源码和 wheel 安装，尚未发布到 PyPI。
+根目录安装仅包含 `rsisys`，不会安装监控；监控安装仅包含 `rsimonitor` 和静态资源，无运行时依赖。
+
+双方只通过 `schema_version: 1` 的 `monitor.json` 对接。RSISys 或其他实验框架负责生成公开快照，
+监控独立读取、校验和投影；不导入 RSI 的 Decision、Experience、Harness 或训练后端类型。
+目录名是 `run_id`，生产端以临时文件加原子替换发布；可在任意框架中写入以下最小快照：
+
+```json
+{
+  "schema_version": 1,
+  "project": {"project_id": "my-research", "name": "我的研究"},
+  "experiment_name": "第一次实验",
+  "status": "running",
+  "updated_at": "2026-11-02T00:00:00Z",
+  "decisions": []
+}
+```
+
+保存为 `/path/to/runs/experiment-001/monitor.json` 即可显示。决策、尝试、依赖、采纳和训练指标
+使用下述可选协议字段；协议外字段不会自动显示。不支持的版本明确拒绝，不猜测转换；
+同版本新增可选字段保持旧快照可读。共享目录的挂载或远程快照传输由使用者负责。
 
 ## Python 库 API
 
@@ -69,7 +101,7 @@ Use **中 / EN** to switch the interface. The preference persists locally. Switc
 modelmate 部署使用安装 wheel 的包目录 `RSISys/monitor-ui/package`，数据目录是 `RSISys/runs/`。
 前端与服务端源码均以本仓库 `src/rsimonitor/` 为准；发布时构建并安装 wheel 到该目录，
 使用其中的 `rsimonitor.server:main`，参数为 `--runs-dir /path/to/RSISys/runs --port 8877`。
-例如 `python3.12 -m pip install --upgrade --target /path/to/RSISys/monitor-ui/package /path/to/rsisys.whl`
+例如 `python3.12 -m pip install --upgrade --target /path/to/RSISys/monitor-ui/package /path/to/rsimonitor-0.1.0-py3-none-any.whl`
 （wheel 文件名使用实际构建产物），然后从已安装目录启动：
 
 ```sh
