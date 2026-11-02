@@ -84,6 +84,12 @@ function dragGraphNode(h,key,dx=60,dy=40,release=true) {
   return node;
 }
 
+function selectDecision(h,key) {
+  const nodes=findClass(h.get("project-content"),"decision-node");
+  const node=key===undefined?nodes[0]:nodes.find(n=>n.dataset.key===key);
+  assert.ok(node,`missing decision ${key ?? "first"}`);node.listeners.click();
+}
+
 test("catalog preserves two real project groups with multiple experiments without merging equal project names", () => {
   const input = [
     project("p",[run("old",{experiment_name:"Baseline"}),run("current",{experiment_name:"Improved",parent_run_id:"old"})],{name:"Same project name"}),
@@ -126,6 +132,7 @@ test("management home loads only the catalog until an experiment card is opened"
   assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"a");
   assert.equal(h.get("project-name").textContent,"Named experiment");assert.equal(h.get("project-description").textContent,"Parent project");assert.equal(h.get("project-description").hidden,false);
   assert.doesNotMatch(textOf(h.get("project-content")),/Hidden research objective/);
+  selectDecision(h,"d");
   assert.equal(h.run("state.snapshot.run_id"),"a");assert.match(textOf(h.get("project-content")),/Plan training.*Training result/);
   assert.deepEqual(calls,["/api/projects","/api/runs/a"]);
 });
@@ -149,7 +156,7 @@ test("experiments within one project isolate cached histories, selected graph no
   findClass(h.get("project-list"),"experiment-card")[1].listeners.click();await settle();
   assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"b");
   assert.equal(h.get("project-name").textContent,"b");assert.equal(h.get("project-description").textContent,"p");assert.equal(h.get("project-description").hidden,false);
-  assert.match(textOf(h.get("project-content")),/Only B/);assert.doesNotMatch(textOf(h.get("project-content")),/history-34-end/);
+  selectDecision(h,"same");assert.match(textOf(h.get("project-content")),/Only B/);assert.doesNotMatch(textOf(h.get("project-content")),/history-34-end/);
   assert.notEqual(h.run("state.activeScope"),aScope);assert.notEqual(h.run("state.activeScope.cache"),aCache);
   assert.equal(h.run("state.activeScope.key"),JSON.stringify([false,"b"]));assert.equal(aScope.key,JSON.stringify([false,"a"]));
   assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["b"]);
@@ -179,7 +186,7 @@ test("run deep links open a non-first experiment and its real owner overrides a 
     assert.equal(h.run("state.page"),"experiment");assert.equal(h.get("management").hidden,true);assert.equal(h.get("projects").hidden,false);
     assert.equal(h.run("state.projectId"),owner);assert.equal(h.run("state.runId"),expected);
     assert.equal(h.get("project-name").textContent,name);assert.equal(h.get("project-description").textContent,owner==="p"?"Project P":"Project Q");assert.equal(h.get("project-description").hidden,false);
-    assert.match(textOf(h.get("project-content")),new RegExp(`opened ${expected}`));
+    selectDecision(h,"d");assert.match(textOf(h.get("project-content")),new RegExp(`opened ${expected}`));
     assert.deepEqual(calls,["/api/projects",`/api/runs/${expected}`]);
     assert.equal(new URL(h.ctx.savedURL).searchParams.get("project"),owner);
     assert.equal(new URL(h.ctx.savedURL).searchParams.get("run"),expected);
@@ -199,13 +206,13 @@ test("project-only deep links keep management open without reading a first exper
 test("selectProject keeps the legacy run-ID entry point without opening a multi-run project", async () => {
   const calls=[],h=harness(async url=>{calls.push(url);return response(run("single",{decisions:[{reason:"Legacy detail"}]}));});setup(h,[project("p",[run("a"),run("b")]),project("single")]);
   await h.run('selectProject("p")');assert.equal(h.run("state.page"),"management");assert.deepEqual(calls,[]);
-  await h.run('selectProject("single")');assert.equal(h.run("state.projectId"),"single");assert.equal(h.run("state.runId"),"single");assert.match(textOf(h.get("project-content")),/Legacy detail/);assert.deepEqual(calls,["/api/runs/single"]);
+  await h.run('selectProject("single")');selectDecision(h);assert.equal(h.run("state.projectId"),"single");assert.equal(h.run("state.runId"),"single");assert.match(textOf(h.get("project-content")),/Legacy detail/);assert.deepEqual(calls,["/api/runs/single"]);
 });
 
 test("back button returns to management, keeps cached detail and polls only the catalog", async () => {
   const calls=[],snapshot=run("a",{decisions:[{decision_id:"d",reason:"Cached A"}]});
   const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:[project("a")]}:snapshot);});
-  await h.run("refresh()");await h.run('selectRun("a")');
+  await h.run("refresh()");await h.run('selectRun("a")');selectDecision(h,"d");
   const scope=h.run("state.activeScope"),entry=h.run('state.activeScope.cache.get("a")'),detail=h.get("project-content").firstElementChild;
   h.get("back-projects").listeners.click();
   assert.equal(h.run("state.page"),"management");assert.equal(h.get("management").hidden,false);assert.equal(h.get("projects").hidden,true);
@@ -223,7 +230,7 @@ test("browser back and forward restore management and experiments without adding
   const calls=[],h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:run(url.endsWith("/b")?"b":"d",{decisions:[{decision_id:"shared",reason:url.endsWith("/b")?"History B":"History D"}]}));});
   await h.run("refresh()");await h.run('selectRun("b")');
   const bDetail=h.get("project-content").firstElementChild;
-  await h.run('selectRun("d")');const dDetail=h.get("project-content").firstElementChild;
+  await h.run('selectRun("d")');selectDecision(h,"shared");const dDetail=h.get("project-content").firstElementChild;
   const length=h.history.length;assert.equal(length,3);
   h.history.back();await settle();
   assert.equal(h.run("state.page"),"experiment");assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.runId"),"b");assert.equal(h.get("project-content").firstElementChild,bDetail);
@@ -264,7 +271,7 @@ test("same record IDs keep decisions, feedback, jobs and candidates isolated wit
     const h=harness();setup(h,catalog);
     for(const [id,loss] of [["a",1],["b",2]])seed(h,id,run(id,{decisions:[{decision_id:"same",kind:"directive",directive_id:"shared",mode:"train",feedback:{summary:`feedback-${id}`}}],jobs:[{job_id:"same",directive_id:"shared",metrics:{loss}}],candidates:[{candidate_id:"same",directive_id:"shared",metrics:{accuracy:loss/10}}]}));
     for(const [id,other,loss] of [["a","b",1],["b","a",2],["a","b",1]]){
-      await h.run(`selectRun("${id}")`);assert.match(textOf(h.get("project-content")),new RegExp(`feedback-${id}`));
+      await h.run(`selectRun("${id}")`);selectDecision(h,"same");assert.match(textOf(h.get("project-content")),new RegExp(`feedback-${id}`));
       assert.doesNotMatch(textOf(h.get("project-content")),new RegExp(`feedback-${other}`));assert.equal(h.run("state.snapshot.jobs[0].metrics.loss"),loss);
     }
   }
@@ -275,7 +282,7 @@ test("switching experiments within or across projects aborts pending reads and r
     const old=deferred(),fresh=deferred(),signals=[],h=harness((url,options)=>{signals.push(options.signal);return signals.length===1?old.promise:fresh.promise;});
     setup(h,catalog);seed(h,"b",run("b",{decisions:[{reason:"B history"}]}));
     const pending=h.run('selectRun("a")');await h.run('selectRun("b")');assert.equal(signals[0].aborted,true);
-    const current=h.run('selectRun("a")');fresh.resolve(response(run("a",{decisions:[{reason:"Fresh A"}]})));await current;
+    const current=h.run('selectRun("a")');fresh.resolve(response(run("a",{decisions:[{reason:"Fresh A"}]})));await current;selectDecision(h);
     old.resolve(response(run("a",{decisions:[{reason:"Stale A"}]})));await pending;
     assert.match(textOf(h.get("project-content")),/Fresh A/);assert.doesNotMatch(textOf(h.get("project-content")),/Stale A|B history/);
   }
@@ -285,7 +292,7 @@ test("repeated selection reuses pending requests and cached decisions", async ()
   const next=deferred(),calls=[],h=harness(url=>{calls.push(url);return next.promise;});setup(h,[project("a")]);
   const first=h.run('selectRun("a")');h.run('selectRun("a")');
   assert.deepEqual(calls,["/api/runs/a"]);assert.match(textOf(h.get("project-content")),/正在读取/);
-  next.resolve(response(run("a",{decisions:[{reason:"Loaded"}]})));await first;await h.run('selectRun("a")');
+  next.resolve(response(run("a",{decisions:[{reason:"Loaded"}]})));await first;await h.run('selectRun("a")');selectDecision(h);
   assert.deepEqual(calls,["/api/runs/a"]);assert.match(textOf(h.get("project-content")),/Loaded/);
 });
 
@@ -303,7 +310,7 @@ test("refresh reloads only the selected experiment and preserves another experim
   assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollLeft,456);assert.equal(findClass(h.get("project-content"),"flow-map")[0].scrollTop,78);
   assert.match(textOf(h.get("project-content")),/New result/);
   assert.equal(h.run("state.projectId"),"p");assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["a"]);
-  await h.run('selectRun("b")');assert.match(textOf(h.get("project-content")),/B remains/);assert.equal(calls.length,2);
+  await h.run('selectRun("b")');selectDecision(h);assert.match(textOf(h.get("project-content")),/B remains/);assert.equal(calls.length,2);
   assert.equal(h.run("state.projectId"),"p");assert.equal(h.run("state.activeScope"),bScope);assert.equal(h.run('state.activeScope.cache.get("b")'),bEntry);assert.equal(h.get("project-content").firstElementChild,bDetail);assert.deepEqual(h.json('[...state.activeScope.cache.keys()]'),["b"]);
 });
 
@@ -329,7 +336,7 @@ test("polling while graph interaction or animation is busy keeps its DOM until o
   for(const busy of ["interacting","animating"]){
     let version=0;const calls=[],catalog=[project("p",[run("a"),run("b")])];
     const h=harness(async url=>{calls.push(url);return response(url==="/api/projects"?{projects:catalog}:run("a",{decisions:[{decision_id:"d",mode:"train",feedback:{summary:`Outcome ${++version}`}}]}));});
-    setup(h,catalog);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train",feedback:{summary:"Initial outcome"}}]}));await h.run('selectRun("a")');h.flushFrames();
+    setup(h,catalog);seed(h,"a",run("a",{decisions:[{decision_id:"d",mode:"train",feedback:{summary:"Initial outcome"}}]}));await h.run('selectRun("a")');selectDecision(h,"d");h.flushFrames();
     const record=h.renders.at(-1),detail=h.get("project-content").firstElementChild,runDOM=findClass(detail,"run-detail")[0],count=h.renders.length;
     if(busy==="interacting")record.svg.listeners.pointerdown({pointerId:2,button:0,clientX:100,clientY:100,target:record.svg});
     else dragGraphNode(h,"d");
@@ -353,7 +360,7 @@ test("leaving an experiment disposes its graph and restores isolated views witho
   await h.run('selectRun("a")');h.flushFrames();h.run('state.activeScope.graph.zoomBy(1.25)');h.flushFrames();
   dragGraphNode(h,"shared");assert.ok(h.pendingFrames>0);
   const aScope=h.run("state.activeScope"),aView=aScope.graphView,aState=graphState(h),aGraph=h.renders.at(-1);
-  await h.run('selectRun("b")');h.flushFrames();
+  await h.run('selectRun("b")');selectDecision(h,"shared");h.flushFrames();
   assert.ok(aGraph.disposals>0);assert.equal(aScope.graph,null);assert.equal(aScope.detailFingerprint,null);assert.equal(aScope.graphView,aView);assert.equal(h.pendingFrames,0);assert.equal(aView.animating,false);assert.equal(aView.interacting,false);
   const bScope=h.run("state.activeScope"),bGraph=h.renders.at(-1);assert.notEqual(bScope.graphView,aView);assert.notEqual(bScope.graphView.positions,aView.positions);assert.notEqual(bScope.graphView.camera,aView.camera);
   const count=h.renders.length;aScope.renderPending=true;aGraph.options.onIdle();
@@ -392,15 +399,15 @@ test("trajectory toolbar invokes zoom, fit and rearrange on the current graph", 
 
 test("failed reads retain decisions and a retry restores the current project", async () => {
   let fail=true;const h=harness(async()=>{if(fail)throw Error("offline");return response(run("a",{decisions:[{reason:"Recovered"}]}));});
-  setup(h,[project("a")]);seed(h,"a",run("a",{decisions:[{reason:"Cached decision"}]}));await h.run('selectRun("a")');
+  setup(h,[project("a")]);seed(h,"a",run("a",{decisions:[{reason:"Cached decision"}]}));await h.run('selectRun("a")');selectDecision(h);
   await h.run('loadRun("a",state.activeScope,true)');assert.match(textOf(h.get("project-content")),/offline.*Cached decision/);
-  fail=false;findClass(h.get("project-content"),"run-detail")[0].children.find(n=>n.tagName==="button").listeners.click();await settle();
+  fail=false;findClass(h.get("project-content"),"run-detail")[0].children.find(n=>n.tagName==="button").listeners.click();await settle();selectDecision(h);
   assert.match(textOf(h.get("project-content")),/Recovered/);assert.equal(h.run('state.activeScope.cache.get("a").status'),"ready");
 });
 
 test("demo groups two experiments in one project, loads their decisions and keeps live caches and links", async () => {
   const demo=JSON.parse(fs.readFileSync(`${__dirname}/demo.json`,"utf8")),h=harness(async()=>response(demo));
-  setup(h,[project("live")]);seed(h,"live",run("live",{decisions:[{reason:"Live history"}]}));await h.run('selectRun("live")');
+  setup(h,[project("live")]);seed(h,"live",run("live",{decisions:[{reason:"Live history"}]}));await h.run('selectRun("live")');selectDecision(h);
   const liveURL=h.ctx.savedURL;h.run('state.demo=true;state.projectId=""');await h.run("refresh()");
   assert.equal(h.run("state.projects.length"),1);assert.equal(h.run("state.projects[0].project_id"),"example-reasoning");
   assert.equal(findClass(h.get("project-list"),"project-group").length,1);assert.equal(findClass(h.get("project-list"),"experiment-card").length,2);
@@ -484,6 +491,7 @@ test("known research actions have distinct names and custom operations retain th
 
 test("wait decisions render a friendly translated node and detail title",async()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",run("a",{decisions:[{decision_id:"wait",kind:"wait",reason:"Waiting for a worker"}]}));await h.run('selectRun("a")');
+  selectDecision(h,"wait");
   for(const [language,title] of [["zh","等待"],["en","Wait"]]){
     h.run(`RSII18n.setLanguage("${language}")`);
     assert.equal(findClass(h.get("project-content"),"decision-node")[0].getAttribute("aria-label"),`1 · ${title}`);
@@ -508,6 +516,7 @@ test("unknown actions use short readable strategy titles verbatim while known ac
   ];
   for(const [i,entry] of cases.entries()){
     seed(h,"a",run("a",{decisions:[{decision_id:`d${i}`,kind:"directive",mode:entry.mode,strategy:entry.strategy}]}));await h.run('selectRun("a")');
+    selectDecision(h,`d${i}`);
     for(const language of ["zh","en"]){
       h.run(`RSII18n.setLanguage("${language}")`);const title=typeof entry.title==="string"?entry.title:entry.title[language];
       assert.equal(findClass(h.get("project-content"),"decision-node")[0].getAttribute("aria-label"),`1 · ${title}`);
@@ -537,6 +546,7 @@ test("unchanged polling reuses run detail DOM without a refreshing message",asyn
 test("new feedback preserves native disclosures and selected step with a stable decision identity",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{candidates:[{candidate_id:"unlinked",status:"accepted",metrics:{score:.8}}],decisions:[{decision_id:"d",kind:"operation",operation:"define_recipe",timestamp:"2026-11-01T00:00:02Z"}]}));h.run('selectRun("a")');
+  selectDecision(h,"d");
   const detail=findClass(h.get("project-content"),"project-detail")[0];
   // Real DOM selectors, represented by the existing fake-DOM tree for this test.
   detail.querySelectorAll=()=>findClass(detail,"record-details").filter(d=>d.dataset.retainKey);
@@ -575,7 +585,7 @@ test("duplicate decision IDs select one graph record and retain it when earlier 
 test("execution view shows decisions and results without internal identifiers or event dumps",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{decisions:[{decision_id:"private-decision-id",directive_id:"private-directive-id",timestamp:"2026-11-01T00:00:01Z",kind:"directive",source:"model",mode:"configure_prompt",strategy:"configure_prompt",reason:"Try a shorter instruction",feedback:{summary:"Instruction updated"},decision_revision:"local-sha256:internal"}],events:[{kind:"internal-event",summary:"event-debug-text"}]}));
-  h.run('selectRun("a")');
+  h.run('selectRun("a")');selectDecision(h,"private-decision-id");
   const text=textOf(findClass(h.get("project-content"),"run-detail")[0]);
   assert.match(text,/调整提示词/);assert.match(text,/Try a shorter instruction/);assert.match(text,/Instruction updated/);
   assert.doesNotMatch(text,/记录详情|运行详情|运行事件|private-decision-id|private-directive-id|local-sha256|configure_prompt|event-debug-text/);
@@ -586,6 +596,7 @@ test("execution view shows decisions and results without internal identifiers or
 test("candidate metrics already shown for a decision are not duplicated",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"evaluate",candidate_id:"c",metrics:{base_nll:1,candidate_nll:.8,eval_samples:10}}],candidates:[{candidate_id:"c",status:"accepted",metrics:{base_nll:1,candidate_nll:.8,eval_samples:10}}]}));h.run('selectRun("a")');
+  selectDecision(h,"d");
   const detail=findClass(h.get("project-content"),"run-detail")[0];
   assert.equal(findClass(detail,"metric-table").length,1);
   assert.equal(findClass(detail,"candidate-card").length,0);
@@ -596,6 +607,7 @@ test("candidate metrics already shown for a decision are not duplicated",()=>{
 test("decision detail shows rationale, submitted content and observed outcome without claiming application",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{objective:"Autonomous medical research",decisions:[{decision_id:"d",kind:"directive",mode:"configure_prompt",status:"completed",reason:"Responses need a consistent format",changes:[{field:"instructions",after:"Use short answers.\nDo not include a preamble."}],feedback_summary:"Prompt proposed; evaluate before application"}]}));h.run('selectRun("a")');
+  selectDecision(h,"d");
   const detail=findClass(h.get("project-content"),"run-detail")[0],text=textOf(detail);
   assert.match(text,/Responses need a consistent format/);assert.match(text,/Use short answers/);assert.match(text,/Prompt proposed; evaluate before application/);
   assert.doesNotMatch(text,/执行已完成|Autonomous medical research/);
@@ -606,6 +618,7 @@ test("decision detail shows rationale, submitted content and observed outcome wi
 test("generic completed feedback does not create an empty result section",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"configure_prompt",status:"completed",feedback_summary:"执行已完成。"}]}));h.run('selectRun("a")');
+  selectDecision(h,"d");assert.equal(findClass(h.get("project-content"),"flow-step").length,1);
   assert.equal(findClass(h.get("project-content"),"flow-feedback").length,0);
 });
 
@@ -613,6 +626,7 @@ test("generic completed feedback does not create an empty result section",()=>{
 test("evaluation explains what is checked and keeps a failed result visible",()=>{
   const h=harness();setup(h,[project("p",[run("a")])]);
   seed(h,"a",run("a",{decisions:[{decision_id:"d",kind:"directive",mode:"evaluate",status:"failed",changes:[{field:"components",after:"instructions"},{field:"protocol_ref",after:"development"}],error:"No eligible examples"}]}));h.run('selectRun("a")');
+  selectDecision(h,"d");
   const text=textOf(findClass(h.get("project-content"),"run-detail")[0]);
   assert.match(text,/验证改动效果/);assert.match(text,/检验新提示词的效果/);assert.match(text,/development/);assert.match(text,/No eligible examples/);
 });

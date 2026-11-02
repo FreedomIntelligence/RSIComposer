@@ -15,7 +15,7 @@ const REJECTED = new Set(["rejected", "discarded", "failed"]);
 const labels = {
   running: "运行中", active: "进行中", training: "训练中", evaluating: "评测中", queued: "排队中", pending: "等待中", starting: "启动中", submitted: "已提交", in_progress: "进行中",
   completed: "已完成", complete: "已完成", succeeded: "已完成", success: "已完成", done: "已完成", finished: "已完成",
-  failed: "失败", failure: "失败", error: "错误", cancelled: "已取消", canceled: "已取消", idle: "空闲", waiting: "等待中", paused: "已暂停", stopped: "已停止",
+  failed: "失败", failure: "失败", error: "错误", cancelled: "已取消", canceled: "已取消", unknown: "状态未知", idle: "空闲", waiting: "等待中", paused: "已暂停", stopped: "已停止",
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
@@ -36,7 +36,7 @@ const object = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 const number = (v) => typeof v === "number" && Number.isFinite(v);
 const present = (v) => v !== undefined && v !== null && v !== "";
 const statusKey = (v) => asText(v, "unknown").toLowerCase();
-const statusText = (v) => t(labels[statusKey(v)]) || t("状态未报告或未归类");
+const statusText = (v) => (present(v) ? t(labels[statusKey(v)]) : "") || t("状态未报告或未归类");
 const actionText = (v) => t(actionLabels[asText(v, "")]) || asText(v, "").trim() || t("未命名决策");
 const metricText = (v) => t(metricLabels[v]) || asText(v, t("其他指标"));
 function el(tag, className = "", text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = asText(text); return e; }
@@ -300,6 +300,17 @@ function executionSequence(s, scope) {
   scope.graphViews ||= {attempts:{},all:{}};
   scope.graphView=scope.graphViews[mode];scope.modeSelected ||= new Map();
   scope.attemptSteps ||= new Map();scope.attemptViews ||= new Map();
+  // A disappearing selection must not silently select another record, even in
+  // an inactive view that the user returns to after polling.
+  for(const [view,projectionModel] of [["attempts",projection],["all",projection.full]]){
+    const keys=new Set(executionGroups(s,projectionModel).map(g=>g.key));
+    if(view==="attempts"&&!projection.attemptCount)keys.clear();
+    if(!keys.has(scope.modeSelected.get(view)))scope.modeSelected.set(view,null);
+    if(view===mode&&!keys.has(scope.flowSelected.get(s.run_id)))scope.flowSelected.set(s.run_id,null);
+  }
+  for(const [key,chosen] of scope.attemptSteps){
+    if(!projection.full.nodes.some(n=>n.key===chosen))scope.attemptSteps.set(key,null);
+  }
   const changeMode=(next,selected)=>{
     disposeGraph(scope);scope.modeSelected.set(mode,scope.flowSelected.get(s.run_id));
     scope.graphMode=next;scope.graphView=scope.graphViews[next];
@@ -340,8 +351,8 @@ function executionSequence(s, scope) {
     scope.attemptGraph?.dispose?.();scope.attemptGraph=null;scope.attemptView=null;
     entries.replaceChildren();
     let selected=scope.flowSelected.get(s.run_id);
-    if(!groups.some(g=>g.key===selected))selected=groups[0]?.key||null;
-    scope.flowSelected.set(s.run_id,selected);
+    if(!groups.some(g=>g.key===selected))selected=null;
+    scope.flowSelected.set(s.run_id,selected);scope.modeSelected.set(mode,selected);
     scope.graph?.dispose?.();
     scope.graph=RSIDecisions.render({
       view:scope.graphView,onIdle,model,rows:list(s.decisions),selected,compact:mode==="attempts",
@@ -357,8 +368,9 @@ function executionSequence(s, scope) {
       let row=g.row,detailIndex=i;
       if(g.type==="attempt"){
         const child=RSIDecisions.subpath(projection,key),members=child.nodes.filter(n=>n.row);
-        let chosen=scope.attemptSteps.get(key);if(!members.some(n=>n.key===chosen))chosen=members[0]?.key;
-        scope.attemptSteps.set(key,chosen);row=members.find(n=>n.key===chosen)?.row||g.row;
+        let chosen=scope.attemptSteps.has(key)?scope.attemptSteps.get(key):members[0]?.key;
+        if(!members.some(n=>n.key===chosen))chosen=null;
+        scope.attemptSteps.set(key,chosen);row=members.find(n=>n.key===chosen)?.row;
         detailIndex=members.findIndex(n=>n.key===chosen);
         const stages=el("li","attempt-stages");stages.append(el("h4","attempt-title",attemptTitle(g)));
         const childHeading=el("div","attempt-heading");childHeading.append(el("p","flow-label",t("尝试内决策")),el("p","quiet-note",t("{p0} 次决策",{p0:members.length})));stages.append(childHeading);
@@ -369,6 +381,7 @@ function executionSequence(s, scope) {
           startLabel:t("尝试内决策"),label:(record,index)=>`${members.findIndex(n=>n.index===index)+1} · ${decisionTitle(record)}`,
           edgeLabel,onIdle,onSelect:childKey=>{scope.attemptSteps.set(key,childKey);fill(false,true);}});
         childMap.append(scope.attemptGraph);childShell.append(childMap,graphTools(()=>scope.attemptGraph));stages.append(childShell);entries.append(stages);
+        if(!row){stages.append(el("p","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));continue;}
       }
       const f=feedbackFor(row,s);
       const step=el("li","flow-step"),index=el("span","flow-index",String(detailIndex+1).padStart(2,"0"));
@@ -407,38 +420,52 @@ function executionSequence(s, scope) {
       }
       if(results.childElementCount)step.append(results);entries.append(step);
     }
+    if(groups.length&&!selected)entries.append(el("li","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));
     if(restoreFocus)navigation.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
     if(childFocus)entries.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
   };
   fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
   return section;
 }
+function jobRecord(job, compact=false) {
+  const card=el("article",compact?"job-record active-job":"job-record"),heading=el("div","detail-heading");
+  heading.append(el("h4","",actionText(job.kind)),badge(job.status));card.append(heading);
+  if(present(job.step))card.append(progressView(job.step,job.total_steps));
+  if(number(job.elapsed_seconds))card.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(job.elapsed_seconds)})));
+  if(!compact&&present(job.error))card.append(el("p","result-error",job.error));
+  if(!compact)card.append(metricsDetail(job.metrics));
+  return card;
+}
 function runDetail(node, scope) {
   const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail"); scope.flowOpen ||= new Set();
   const heading=el("div","detail-heading"),identity=el("div");
   identity.append(el("h3","",t("研究脉络")),el("p","quiet-note",t("{p0} 次决策",{p0:list(s?.decisions).length})));
   heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
+  if(present(s?.error))box.append(el("p","result-error",s.error));
   if(entry?.status==="pending"&&!s)box.append(el("p","load-message",t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
     box.append(el("p","load-message error",t("{p0}读取失败：{p1}", {p0: s?t("保留上次快照。"):"", p1: errorText(entry.errorInfo || {error:entry.error})})));
     const retry=el("button","",t("重试读取"));retry.addEventListener("click",()=>loadRun(node.runId,scope,true));box.append(retry);
   }
   if(s){
+    const jobs=list(s.jobs),runStatus=statusKey(s.status||node.row.status),terminal=DONE.has(runStatus)||FAILED.has(runStatus)||runStatus==="stopped";
+    const active=terminal?[]:jobs.filter(j=>ACTIVE.has(statusKey(j.status)));
+    if(active.length){
+      const overview=el("section","active-jobs");overview.setAttribute("aria-label",t("当前任务"));
+      overview.append(el("h4","",t("当前任务 · {p0}",{p0:active.length})));
+      const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true));overview.append(cards);box.append(overview);
+    }
+    if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或未关联任务历史。")));
     box.append(executionSequence(s,scope));
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){
       const candidates=el("div");
       unlinkedCandidates.forEach((c,i)=>{const card=el("article","candidate-card");card.append(el("h4","",t("待验证版本 {p0}", {p0: i+1})),badge(c.status),comparisonView(c.metrics));candidates.append(card);});box.append(retainedDetails(JSON.stringify([node.runId,"candidates"]),scope.flowOpen,t("版本结果 · {p0}",{p0:unlinkedCandidates.length}),candidates));
     }
-
-  }
-  if(s){
-    const unlinked=list(s.jobs).filter(j=>!list(s.decisions).some(d=>linkedJob(d,s)===j));
-    for(const job of unlinked){
-      const card=el("article","job-record"),heading=el("div","detail-heading");
-      heading.append(el("h4","",actionText(job.kind)),badge(job.status));card.append(heading);
-      if(present(job.step))card.append(progressView(job.step,job.total_steps));
-      card.append(metricsDetail(job.metrics));box.append(card);
+    const unlinked=jobs.filter(j=>!active.includes(j)&&!list(s.decisions).some(d=>linkedJob(d,s)===j));
+    if(unlinked.length){
+      const history=el("div","unlinked-job-history");for(const job of unlinked)history.append(jobRecord(job));
+      box.append(retainedDetails(JSON.stringify([node.runId,"unlinked-jobs"]),scope.flowOpen,t("未关联任务历史 · {p0}",{p0:unlinked.length}),history));
     }
   }
   const record=s || node.row, sources=[...new Set([record.parent_run_id, ...listStrings(record.source_run_ids)].filter(identifier))];

@@ -4,6 +4,12 @@
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
   "研究尝试": "Attempts",
+  "当前任务": "Active tasks",
+  "当前任务 · {p0}": "Active tasks · {p0}",
+  "运行已结束；部分任务仍报告活动状态，请查看关联节点或未关联任务历史。": "The run has ended; some tasks still report active statuses. Inspect the linked nodes or unlinked task history.",
+  "未关联任务历史 · {p0}": "Unlinked task history · {p0}",
+  "选择节点查看决策、任务与结果。": "Select a node to inspect decisions, tasks and results.",
+  "状态未知": "Unknown status",
   "未命名研究尝试": "Untitled attempt",
   "{p0} 个研究尝试": "{p0} attempts",
   "{p0} 个研究尝试 · {p1} 条未分组记录": "{p0} attempts · {p1} ungrouped records",

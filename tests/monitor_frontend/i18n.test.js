@@ -102,7 +102,7 @@ test("switching language rerenders direct decisions and preserves project, selec
 });
 
 test("language switches during graph interaction defer its DOM until idle while retaining the view and model prose", () => {
-  const h=monitor();fixture(h);const record=h.renders.at(-1),before=graphState(h),count=h.renders.length;
+  const h=monitor();fixture(h);findClass(h.get("project-content"),"decision-node")[0].listeners.click();const record=h.renders.at(-1),before=graphState(h),count=h.renders.length;
   record.svg.listeners.pointerdown({pointerId:2,button:0,clientX:100,clientY:100,target:record.svg});h.get("lang-en").listeners.click();
   assert.equal(h.renders.length,count);assert.equal(record.disposals,0);assert.equal(h.run("state.activeScope.graph"),record.svg);assert.equal(h.run("state.activeScope.renderPending"),true);
   assert.match(text(h.get("project-content")),/研究脉络/);assert.doesNotMatch(text(h.get("project-content")),/Research graph/);

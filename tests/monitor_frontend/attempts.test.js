@@ -131,7 +131,7 @@ test("a hypothesis attempt contains configure prompt, benchmark, compare and con
     d("compare","hypothesis",{research_attempt_title:title,second:2,operation:"query_metrics",depends_on_decision_ids:["benchmark"],feedback:{summary:"Compared with the baseline"}}),
     d("adoption","hypothesis",{research_attempt_title:title,second:3,operation:"system_adopt",depends_on_decision_ids:["compare"],adopted_decision_ids:["optimize"],feedback:{summary:"Confirmed prompt adoption"}}),
   ];
-  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,1);assert.equal(childNodes(h).length,4);
+  const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,1);choose(h,mainNodes(h)[0].dataset.key);assert.equal(childNodes(h).length,4);
   assert.equal(mainNodes(h)[0].getAttribute("aria-label"),`1 · ${title}`);
   for(const id of ["optimize","benchmark","compare","adoption"]){chooseChild(h,id);assert.match(textOf(findClass(host(h),"flow-step")[0]),new RegExp(`reason-${id}`));}
   assert.match(textOf(host(h)),/Confirmed prompt adoption/);chooseChild(h,"benchmark");assert.match(textOf(host(h)),/0.82/);
@@ -160,7 +160,8 @@ test("refresh preserves selected attempt, child, both cameras, dragged positions
 
 test("polling during child interaction waits for idle; leaving a run disposes both graphs",async()=>{
   const snapshot=fixture(),updated=structuredClone(snapshot);updated.decisions[0].reason="Changed while dragging";
-  const h=open(snapshot,async()=>response(updated)),original=h.run('state.activeScope.attemptGraph'),graph=h.run('state.activeScope.graph'),renderCount=h.renders.length;
+  const h=open(snapshot,async()=>response(updated));choose(h,mainNodes(h)[0].dataset.key);
+  const original=h.run('state.activeScope.attemptGraph'),graph=h.run('state.activeScope.graph'),renderCount=h.renders.length;
   original.listeners.pointerdown({pointerId:9,button:0,clientX:10,clientY:10,target:original});
   await h.run('loadRun("a",state.activeScope,true)');assert.equal(h.renders.length,renderCount);assert.equal(h.run('state.activeScope.renderPending'),true);
   original.listeners.pointerup({pointerId:9,type:"pointerup"});assert.ok(h.renders.length>renderCount);assert.match(textOf(host(h)),/Changed while dragging/);
