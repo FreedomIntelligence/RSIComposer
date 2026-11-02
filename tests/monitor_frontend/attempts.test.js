@@ -101,7 +101,7 @@ test("all unassigned records stay in logs, including dependency, adoption and so
   assert.equal(logs(h).open,false);
   for(const key of ["wait-20","dep","adopt","ref"]){
     log(h,key);assert.equal(mainNodes(h).length,2);assert.equal(h.run('state.activeScope.flowSelected.get("a")'),null);
-    assert.equal(findClass(host(h),"log-membership")[0].textContent,"未记录研究尝试");
+    assert.equal(findClass(host(h),"log-membership").length,0);
     assert.match(textOf(findClass(host(h),"experiment-logs")[0]),new RegExp(`reason-${key}`));
   }
   assert.equal(findClass(host(h),"trajectory-mode").length,0);
@@ -146,7 +146,7 @@ test("a hypothesis attempt contains configure prompt, benchmark, compare and con
   const h=open(run("a",{decisions:rows}));assert.equal(mainNodes(h).length,1);choose(h,mainNodes(h)[0].dataset.key);assert.equal(childNodes(h).length,4);
   assert.equal(mainNodes(h)[0].getAttribute("aria-label"),`1 · ${title}`);
   for(const id of ["optimize","benchmark","compare","adoption"]){chooseChild(h,id);assert.match(textOf(findClass(host(h),"flow-step")[0]),new RegExp(`reason-${id}`));}
-  assert.match(textOf(host(h)),/Confirmed prompt adoption/);chooseChild(h,"benchmark");assert.match(textOf(host(h)),/0.82/);
+  assert.match(textOf(host(h)),/Confirmed prompt adoption/);chooseChild(h,"benchmark");assert.match(textOf(host(h)),/82%/);
   chooseChild(h,"optimize");assert.match(textOf(host(h)),/Explain concisely/);h.get("lang-en").listeners.click();assert.equal(mainNodes(h)[0].getAttribute("aria-label"),`1 · ${title}`);
 });
 

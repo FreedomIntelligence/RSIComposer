@@ -38,7 +38,13 @@ const present = (v) => v !== undefined && v !== null && v !== "";
 const statusKey = (v) => asText(v, "unknown").toLowerCase();
 const statusText = (v) => (present(v) ? t(labels[statusKey(v)]) : "") || t("状态未报告或未归类");
 const actionText = (v) => t(actionLabels[asText(v, "")]) || asText(v, "").trim() || t("未命名决策");
-const metricText = (v) => t(metricLabels[v]) || asText(v, t("其他指标"));
+const metricText = (v) => {
+  const match=/^(.+)[./](accuracy|macro_f1|f1|invalid_format)$/.exec(v);
+  if(match){const names={medqa:"MedQA",medxpertqa:"MedXpertQA"},labels={accuracy:"准确率",macro_f1:"Macro F1",f1:"F1",invalid_format:"格式错误数"};return `${names[match[1]]||match[1]} · ${t(labels[match[2]])||labels[match[2]]}`;}
+  return t(metricLabels[v]) || asText(v, t("其他指标"));
+};
+const ratioMetric=(key,value)=>/(?:^|[./])(?:accuracy|macro_f1|f1)$/.test(key)&&number(value)&&value>=0&&value<=1;
+const metricNumber=(key,value)=>ratioMetric(key,value)?`${Number((value*100).toFixed(2))}%`:fmt(value);
 function el(tag, className = "", text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = asText(text); return e; }
 function badge(v) { const k = statusKey(v); return el("span", `badge ${FAILED.has(k) || REJECTED.has(k) ? "failure" : DONE.has(k) || ACCEPTED.has(k) ? "success" : ACTIVE.has(k) ? "active" : ""}`, statusText(v)); }
 function empty(text) { return el("p", "subtle-empty", text); }
@@ -63,7 +69,7 @@ function flattenMetrics(source, prefix = "", output = {}, depth = 0) {
 }
 function metricStrip(metrics, raw = false) {
   const dl = el("dl", "metric-strip");
-  for (const [key, value] of Object.entries(flattenMetrics(metrics))) { const item = el("div", "metric-chip"); const label=el("dt", "", metricText(key));label.title=key;item.append(label, el("dd", "", fmt(value))); dl.append(item); } return dl;
+  for (const [key, value] of Object.entries(flattenMetrics(metrics))) { const item = el("div", "metric-chip"); const label=el("dt", "", metricText(key));label.title=key;item.append(label, el("dd", "", metricNumber(key,value))); dl.append(item); } return dl;
 }
 function metricsDetail(metrics) { const m = metricStrip(metrics, true); return m.childElementCount ? m : empty(t("尚无指标。")); }
 function progressView(step, total) {
@@ -199,7 +205,31 @@ function comparisonView(metrics) {
   if (!pairs.length) { const strip=metricStrip(metrics); wrap.append(strip.childElementCount ? strip : empty(t("评测指标未报告。"))); return wrap; }
   const table=el("table","metric-table"), head=el("thead"), hr=el("tr"), body=el("tbody");
   for (const name of [t("指标"),t("基线"),t("新版本"),t("新版本 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
-  for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",fmt(m.base)),el("td","",fmt(m.next)),el("td","",number(delta)?`${delta>0?"+":""}${fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
+  for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",metricNumber(m.name,m.base)),el("td","",metricNumber(m.name,m.next)),el("td","",number(delta)?`${delta>0?"+":""}${ratioMetric(m.name,m.base)&&ratioMetric(m.name,m.next)?`${Number((delta*100).toFixed(2))} pp`:fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
+}
+function benchmarkOverview(s){
+  const measurements=RSIDecisions.layout(list(s.decisions)).nodes.filter(n=>n.row).map(n=>n.row).filter(row=>row.kind!=="review"&&["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row)))
+    .map(row=>({row,metrics:flattenMetrics({...object(row.metrics),...object(object(row.feedback).metrics)})}))
+    .filter(item=>Object.keys(item.metrics).some(key=>/(?:^|[./])accuracy$/.test(key)&&ratioMetric(key,item.metrics[key])));
+  const keys=[...new Set(measurements.flatMap(item=>Object.keys(item.metrics).filter(key=>/(?:^|[./])accuracy$/.test(key)&&ratioMetric(key,item.metrics[key]))))];
+  if(!keys.length)return null;
+  const section=el("section","benchmark-overview");section.append(el("h4","",t("Benchmark 表现")));
+  const grid=el("div","benchmark-grid");
+  const baselineJobs=list(s.jobs).filter(job=>job.role==="baseline"||(job.job_id==="evaluation:initial"&&!present(job.directive_id)));
+  for(const key of keys){
+    const values=measurements.map(item=>ratioMetric(key,item.metrics[key])?item.metrics[key]:null),available=values.filter(number),latest=available.at(-1);
+    const card=el("article","benchmark-card"),heading=el("div","detail-heading");const latestValue=el("div","benchmark-latest");latestValue.append(el("span","",t("最近评测")),el("strong","benchmark-value",metricNumber(key,latest)));heading.append(el("h5","",metricText(key)),latestValue);card.append(heading);
+    const chart=svgEl("svg",{viewBox:"0 0 520 180",role:"img","aria-label":metricText(key)}),x=i=>48+i*(440/Math.max(1,measurements.length-1)),y=v=>142-v*116;
+    for(const value of [0,.5,1]){chart.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},`${value*100}%`));}
+    const bases=baselineJobs.map(job=>flattenMetrics(job.metrics)[key]).filter(v=>ratioMetric(key,v));
+    if(bases.length===1){chart.append(svgEl("line",{x1:44,x2:496,y1:y(bases[0]),y2:y(bases[0]),class:"benchmark-baseline"}));card.append(el("p","quiet-note",t("基线 {p0}",{p0:metricNumber(key,bases[0])})));}
+    let segment=[];const flush=()=>{if(segment.length>1)chart.append(svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"}));segment=[];};
+    values.forEach((value,index)=>{if(value===null){flush();return;}segment.push(`${x(index)},${y(value)}`);});flush();
+    values.forEach((value,index)=>{if(value===null)return;const dot=svgEl("circle",{cx:x(index),cy:y(value),r:4,class:"benchmark-point"});dot.append(svgEl("title",{},t("第 {p0} 次评测：{p1}",{p0:index+1,p1:metricNumber(key,value)})));chart.append(dot,svgEl("text",{x:x(index),y:163,"text-anchor":"middle",class:"benchmark-axis"},String(index+1)));});
+    card.append(chart,el("p","benchmark-axis-label",t("评测顺序")));
+    const results=el("div","benchmark-results");values.forEach((value,index)=>{if(value===null)return;results.append(el("span","",`${index+1} · ${metricNumber(key,value)}`));});card.append(results);grid.append(card);
+  }
+  section.append(grid);return section;
 }
 function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true;  }
 function clearRun() { state.snapshot = null; }
@@ -342,28 +372,28 @@ function decisionStep(row,s,index) {
 function experimentLogs(s,scope,projection) {
   const records=projection.full.nodes.filter(n=>n.row);
   if(!records.length)return null;
-  const content=el("div","experiment-logs"),buttons=el("div","experiment-log-records"),detail=el("ol","flow-steps");
+  const content=el("div","experiment-logs"),buttons=el("div","experiment-log-records"),items=[];
   scope.logSelected ||= new Map();
   if(!records.some(n=>n.key===scope.logSelected.get(s.run_id)))scope.logSelected.set(s.run_id,null);
   const fill=()=>{
-    detail.replaceChildren();
-    const selected=scope.logSelected.get(s.run_id);
-    for(const button of buttons.children)button.setAttribute("aria-pressed",String(button.dataset.key===selected));
-    const record=records.find(n=>n.key===selected);
-    if(record){
-      const group=projection.nodes.find(n=>n.members?.some(member=>member.key===record.key));
-      const step=decisionStep(record.row,s,records.indexOf(record));
-      detail.append(el("li","quiet-note log-membership",group?attemptTitle(group):t("未记录研究尝试")),step);
-
+    const position={left:window.scrollX,top:window.scrollY},height=content.getBoundingClientRect?.().height;
+    if(height)content.style.minHeight=`${height}px`;
+    for(const {record,button,body} of items){
+      const selected=record.key===scope.logSelected.get(s.run_id);button.setAttribute("aria-pressed",String(selected));button.setAttribute("aria-expanded",String(selected));body.replaceChildren();
+      if(selected){const group=projection.nodes.find(n=>n.members?.some(member=>member.key===record.key));if(group)body.append(el("li","quiet-note log-membership",attemptTitle(group)));body.append(decisionStep(record.row,s,records.indexOf(record)));}
     }
+    content.style.minHeight="";
+    if(window.scrollX!==position.left||window.scrollY!==position.top)window.scrollTo({...position,behavior:"instant"});
   };
-  for(const record of records){
-    const button=el("button","experiment-log-record",`${dateText(record.row.timestamp)} · ${decisionTitle(record.row)}`);button.type="button";button.dataset.key=record.key;
-    button.addEventListener("click",()=>{scope.logSelected.set(s.run_id,record.key);fill();});buttons.append(button);
+  for(const [index,record] of records.entries()){
+    const item=el("article","experiment-log-item"),button=el("button","experiment-log-record"),body=el("ol","flow-steps log-record-body");button.type="button";button.dataset.key=record.key;
+    button.append(el("span","log-number",String(index+1).padStart(2,"0")),el("time","log-time",dateText(record.row.timestamp)),el("span","log-title",decisionTitle(record.row)));if(present(record.row.status))button.append(badge(record.row.status));
+    button.addEventListener("click",()=>{scope.logSelected.set(s.run_id,scope.logSelected.get(s.run_id)===record.key?null:record.key);fill();});item.append(button,body);buttons.append(item);items.push({record,button,body});
   }
-  fill();content.append(buttons,detail);
+  fill();content.append(buttons);
   return retainedDetails(JSON.stringify([s.run_id,"experiment-logs"]),scope.flowOpen,t("实验日志 · {p0}",{p0:records.length}),content);
 }
+
 function executionSequence(s, scope) {
   scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
   const model=RSIDecisions.attempts(list(s.decisions),s.research_attempts),projection=model;
@@ -477,6 +507,7 @@ function runDetail(node, scope) {
       const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true));overview.append(cards);box.append(overview);
     }
     if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或关联诊断。")));
+    const benchmarks=benchmarkOverview(s);if(benchmarks)box.append(benchmarks);
     box.append(executionSequence(s,scope));
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){

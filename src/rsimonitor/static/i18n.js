@@ -4,6 +4,12 @@
   const STORAGE_KEY = "rsisys-language";
   const english = Object.freeze({
   "研究尝试": "Attempts",
+  "Benchmark 表现": "Benchmark performance",
+  "最近评测": "Latest evaluation",
+  "基线 {p0}": "Baseline {p0}",
+  "第 {p0} 次评测：{p1}": "Evaluation {p0}: {p1}",
+  "评测顺序": "Evaluation order",
+  "格式错误数": "Format errors",
   "部分详情未包含在当前快照中（{p0} 条）。": "Some details are outside the current snapshot ({p0} records).",
   "整理版本 {p0}": "Interpretation revision {p0}",
   "模拟整理": "Simulated interpretation",

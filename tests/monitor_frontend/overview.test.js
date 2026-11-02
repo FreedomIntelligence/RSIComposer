@@ -45,7 +45,7 @@ test("entry leaves both graph views unselected and shows all active linked and p
 test("explicit historical selection exposes exact completed job and candidate results",()=>{
   const h=open();chooseAttempt(h,"Past hypothesis");
   assert.equal(findClass(host(h),"attempt-map").length,1);assert.equal(findClass(host(h),"flow-step").length,1);
-  const step=findClass(host(h),"flow-step")[0];assert.match(textOf(step),/Historical rationale/);assert.match(textOf(step),/0\.81/);assert.match(textOf(step),/已采纳/);
+  const step=findClass(host(h),"flow-step")[0];assert.match(textOf(step),/Historical rationale/);assert.match(textOf(step),/81%/);assert.match(textOf(step),/已采纳/);
   assert.equal(findClass(host(h),"active-job").length,3);assert.equal(history(h).open,false);
 });
 

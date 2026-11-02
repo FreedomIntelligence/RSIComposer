@@ -674,3 +674,27 @@ test("dashboard hides opaque references and raw audit records while retaining us
   assert.equal(h.run('state.snapshot.decisions[0].changes[0].after'),"medical-native:"+hash);
   const box=h.run('changesView({changes:[{field:"recipe_ref",after:"medical-native:'+hash+'"}]},state.snapshot)');assert.equal(box,null);
 });
+
+
+test("benchmark charts show measured accuracy percentages, real baselines and gaps without rewriting data",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);
+  const snapshot=attemptRun("a",{jobs:[{job_id:"evaluation:initial",kind:"evaluate",metrics:{"medqa.accuracy":.65}}],decisions:[
+    {decision_id:"a",kind:"directive",mode:"evaluate",metrics:{"medqa.accuracy":.7,"medxpertqa.accuracy":.2}},
+    {decision_id:"b",kind:"directive",mode:"evaluate",metrics:{"medxpertqa.accuracy":.3}},
+    {decision_id:"c",kind:"directive",mode:"evaluate",metrics:{"medqa.accuracy":.8,"medxpertqa.accuracy":.4}},
+  ]}),before=JSON.stringify(snapshot);seed(h,"a",snapshot);h.run('selectRun("a")');
+  const cards=findClass(h.get("project-content"),"benchmark-card");assert.equal(cards.length,2);
+  assert.match(textOf(cards[0]),/MedQA/);assert.match(textOf(cards[0]),/80%/);assert.match(textOf(cards[0]),/基线 65%/);
+  assert.equal(findClass(cards[0],"benchmark-line").length,0);assert.equal(findClass(cards[1],"benchmark-line").length,1);assert.equal(findClass(cards[1],"benchmark-baseline").length,0);
+  assert.equal(JSON.stringify(snapshot),before);
+  const metrics=h.run('metricStrip({"medqa.macro_f1":.721,"invalid_format":2,"score":75,"accuracy":75})');
+  assert.match(textOf(metrics),/72.1%/);assert.doesNotMatch(textOf(metrics),/7500%|200%/);
+  const comparison=h.run('comparisonView({before:{accuracy:.7},after:{accuracy:.75}})');assert.match(textOf(comparison),/70%/);assert.match(textOf(comparison),/75%/);assert.match(textOf(comparison),/\+5 pp/);
+});
+test("experiment log expands one entry in place and collapses on repeat selection",()=>{
+  const h=harness();setup(h,[project("p",[run("a")])]);seed(h,"a",attemptRun("a",{decisions:[{decision_id:"a",kind:"operation",operation:"define_recipe",reason:"First reason",status:"completed"},{decision_id:"b",kind:"directive",mode:"train",reason:"Second reason",status:"running"}]}));h.run('selectRun("a")');
+  const items=findClass(h.get("project-content"),"experiment-log-item"),buttons=items.map(item=>findClass(item,"experiment-log-record")[0]);assert.equal(items.length,2);
+  buttons[1].listeners.click();assert.equal(findClass(items[0],"flow-step").length,0);assert.match(textOf(items[1]),/Second reason/);assert.equal(buttons[1].getAttribute("aria-expanded"),"true");
+  buttons[0].listeners.click();assert.equal(findClass(items[1],"flow-step").length,0);assert.match(textOf(items[0]),/First reason/);
+  buttons[0].listeners.click();assert.equal(findClass(items[0],"flow-step").length,0);assert.equal(buttons[0].getAttribute("aria-expanded"),"false");
+});
