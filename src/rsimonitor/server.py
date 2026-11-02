@@ -16,6 +16,10 @@ RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 MAX_BYTES = 4 * 1024 * 1024
 MAX_ROWS = 300
 MAX_METRIC_HISTORY = 1000
+MAX_DASHBOARD_PANELS = 24
+MAX_PANEL_METRICS = 12
+MAX_METRIC_DEFINITIONS = 100
+MAX_METRIC_POINTS = 10000
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
@@ -112,6 +116,86 @@ def metric_history_only(value):
     return result
 
 
+def metric_text(value, limit=200):
+    """Validate public metric text without truncating names or identities."""
+    return isinstance(value, str) and 0 < len(value) <= limit and bool(value.strip())
+
+
+def metric_definitions_only(value):
+    """Project bounded display metadata; definitions never contain raw data."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for name, row in list(value.items())[:MAX_METRIC_DEFINITIONS]:
+        if (not metric_text(name, 100) or not isinstance(row, dict)
+                or not metric_text(row.get('label'))
+                or row.get('unit') not in ('number', 'percent', 'seconds', 'tokens_per_second')
+                or row.get('direction') not in ('higher', 'lower', 'neutral')):
+            continue
+        result[name] = {key: row[key] for key in ('label', 'unit', 'direction')}
+    return result
+
+
+def metric_point_only(row, metric_definitions=None):
+    """Reject an invalid observation as a whole; never coerce failures to zero."""
+    if not isinstance(row, dict) or not metric_text(row.get('metric'), 100):
+        return None
+    value = row.get('value')
+    if type(value) not in (int, float) or scalar(value) is None:
+        return None
+    definition = (metric_definitions or {}).get(row['metric'], {})
+    if definition.get('unit') == 'percent' and not 0 <= value <= 1:
+        return None
+    result = {'metric': row['metric'], 'value': value}
+    for key in ('step', 'elapsed_seconds'):
+        if key not in row:
+            continue
+        number = row[key]
+        if (type(number) not in ((int,) if key == 'step' else (int, float))
+                or scalar(number) is None or number < 0):
+            return None
+        result[key] = number
+    for key in ('timestamp', 'task_id', 'decision_id', 'attempt_id'):
+        if key in row:
+            if not metric_text(row[key], 100 if key == 'timestamp' else 200):
+                return None
+            result[key] = row[key]
+    return result
+
+
+def metric_points_only(value, metric_definitions=None):
+    """Retain recent reported points, without inferring coordinates or units."""
+    if not isinstance(value, list):
+        return []
+    return [point for row in value[-MAX_METRIC_POINTS:]
+            if (point := metric_point_only(row, metric_definitions)) is not None]
+
+
+def dashboard_only(value):
+    """Project a lightweight layout. Unsupported dashboard versions are omitted."""
+    if (not isinstance(value, dict) or type(value.get('schema_version')) is not int
+            or value['schema_version'] != 1 or not isinstance(value.get('panels'), list)):
+        return None
+    panels, seen_ids = [], set()
+    for row in value['panels'][:MAX_DASHBOARD_PANELS]:
+        if (not isinstance(row, dict) or not metric_text(row.get('id'))
+                or not metric_text(row.get('title'))
+                or row.get('type') not in ('line', 'scalar', 'table')
+                or row.get('x') not in ('step', 'elapsed_seconds', 'evaluation')
+                or row.get('group_by') not in ('task', 'attempt', 'none')
+                or not isinstance(row.get('metrics'), list)):
+            continue
+        metrics = row['metrics'][:MAX_PANEL_METRICS]
+        if not all(metric_text(name, 100) for name in metrics):
+            continue
+        if row['id'] in seen_ids:
+            continue
+        seen_ids.add(row['id'])
+        panels.append({**{key: row[key] for key in ('id', 'title', 'type', 'x', 'group_by')},
+                       'metrics': list(dict.fromkeys(metrics))})
+    return {'schema_version': 1, 'panels': panels}
+
+
 def run_project(raw, run_id):
     """Only a valid snapshot project ID establishes membership, never run identity."""
     project = raw.get("project")
@@ -177,6 +261,14 @@ def project_snapshot(raw, run_id):
     interpreted = attempt_interpretations(raw.get("research_attempts"))
     if interpreted is not None:
         result["research_attempts"] = interpreted
+    definitions = metric_definitions_only(raw.get('metric_definitions'))
+    if 'metric_definitions' in raw:
+        result['metric_definitions'] = definitions
+    if 'metric_points' in raw:
+        result['metric_points'] = metric_points_only(raw['metric_points'], definitions)
+    dashboard = dashboard_only(raw.get('dashboard'))
+    if dashboard is not None:
+        result['dashboard'] = dashboard
     result["project"] = run_project(raw, run_id)
     result["loops"] = {key: pick(raw.get("loops", {}).get(key), ("status", "summary"))
                        for key in ("decision_making", "exploration")} if isinstance(raw.get("loops"), dict) else {}

@@ -156,6 +156,92 @@ lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记�
 
 身份由生产端记录，前端只读取这些字段，不生成新尝试实体或写回历史。相同 ID 的全部决策属于一次尝试；不同 ID 即使同名也分别显示。缺少两字段表示旧的未分组记录。仅标题没有有效非空字符串 ID 时仍未分组，并提示无效身份；有效 ID 缺标题时显示「未命名研究尝试」。同 ID 标题冲突时采用按记录时间排序后的首个非空标题，保留各条原始值并提示核对，不据此拆分身份。技术 ID 保留在载荷、测试及实验日志的折叠原始证据中，不作为主图或常规详情字段显示。生产端应导出全部成员的明确归属与关系；前端无法恢复 API 截断之外的历史。
 
+### 可配置指标看板协议
+
+`monitor.json` 的顶层可增加以下三个可选字段；外层 `schema_version` 仍为 `1`。
+没有这些字段的旧快照继续使用已有任务和决策指标，生产端无需迁移历史文件。
+
+```json
+{
+  "metric_definitions": {
+    "accuracy": {"label": "准确率", "unit": "percent", "direction": "higher"},
+    "loss": {"label": "训练损失", "unit": "number", "direction": "lower"}
+  },
+  "metric_points": [
+    {"metric": "loss", "value": 0.3, "step": 2, "elapsed_seconds": 1.5, "task_id": "train-1"},
+    {"metric": "accuracy", "value": 0.75, "decision_id": "evaluate-1", "attempt_id": "attempt-1"}
+  ],
+  "dashboard": {
+    "schema_version": 1,
+    "panels": [
+      {"id": "training", "title": "训练损失", "type": "line", "metrics": ["loss"], "x": "step", "group_by": "task"},
+      {"id": "quality", "title": "准确率", "type": "scalar", "metrics": ["accuracy"], "x": "evaluation", "group_by": "attempt"}
+    ]
+  }
+}
+```
+
+- `metric_definitions`：最多 **100** 项，以指标名为键；每项仅包含 `label`、`unit`、`direction`。
+  `unit` 为 `number`、`percent`、`seconds` 或 `tokens_per_second`；`direction` 为
+  `higher`、`lower` 或 `neutral`，仅表达显式的比较方向。
+- `metric_points`：最多保留最近 **10000** 个上报点。必需字段为 `metric` 和有限数值 `value`；
+  可选 `step` 为非负整数，`elapsed_seconds` 为非负有限数值，`timestamp`、`task_id`、
+  `decision_id`、`attempt_id` 为字符串。布尔值不算数值；负指标值允许，负坐标不允许。
+  时间戳只作为已报告字符串传递，不推断时间或身份；缺失坐标保持缺失，重复上报点保持原顺序。
+- `dashboard`：独立的 `schema_version: 1`，`panels` 最多 **24** 项；每项必需字段为
+  `id`、`title`、`type`、`metrics`、`x`、`group_by`。`type` 为 `line`、`scalar` 或 `table`；
+  `metrics` 最多 **12** 个指标名；`x` 为 `step`、`elapsed_seconds` 或 `evaluation`；
+  `group_by` 为 `task`、`attempt` 或 `none`。空面板列表、空指标列表均允许。
+  面板 ID 必须唯一：生产端拒绝重复 ID，主机投影仅保留同 ID 的首个有效面板。
+  两端均在校验及数量限制后对面板内指标名去重，保留首次出现的顺序，不修改调用方输入。
+- 指标名限 100 字符，标签、面板 ID/标题及关联 ID 限 200 字符，时间戳限 100 字符；
+  字符串必须非空且不能全为空白。超长身份不截断，避免合并不同实体。
+- **只有显式 `unit: "percent"` 表示比例**：值必须在 **0–1**，如 `0.75` 显示为 `75%`。
+  `75` 不是合法比例；未定义的 `score: 75` 仍是原始数值 `75`，不自动缩放或推断单位。
+  指标无需先定义即可上报，面板也可引用尚未上报的指标。
+
+主机通过 `GET /api/runs/<id>` 输出这三个可选字段；列表 API 继续返回简短运行摘要。
+投影只输出上述白名单字段，移除配置、凭据、任意嵌套对象等附件；无效定义或面板被丢弃，
+一个点的必需或已提供可选字段无效时丢弃整个点，不把 NaN、Infinity、null、字符串或布尔值
+转换成零或缺失坐标。未知看板版本或无效看板容器被省略；无效定义/点容器投影为空字典/数组。
+超限输入取前 100 个定义、前 24 个面板和各面板前 12 个指标，点取最近 10000 个后再校验；
+整个快照仍受 4 MiB 文件上限约束。读取和投影不修改原文件，也不补造任务、决策或历史点。
+
+独立库的公共投影函数位于 `rsimonitor.server`：`metric_definitions_only(value)`、
+`metric_point_only(row, metric_definitions=None)`、`metric_points_only(value, metric_definitions=None)`、
+`dashboard_only(value)`。单点无效返回 `None`，无效看板返回 `None`；百分比校验使用已投影的定义。
+这些函数和 `project_snapshot` 仅依赖标准库，不导入 `rsisys`。
+
+Qwen 示例的生产端提供两个暂存 API，均不立即写文件：
+
+```python
+from pathlib import Path
+from examples.qwen_toy.monitor import Monitor
+from rsisys.loops.contracts.model_service import ModelRef
+
+run_dir = Path("runs/dashboard-example")
+run_dir.mkdir(parents=True, exist_ok=True)
+monitor = Monitor(run_dir, ModelRef("toy", "model", "v1"), "研究目标")
+monitor.configure_dashboard(
+    [{"id": "quality", "title": "准确率", "type": "line", "metrics": ["accuracy"],
+      "x": "evaluation", "group_by": "attempt"}],
+    metric_definitions={
+        "accuracy": {"label": "准确率", "unit": "percent", "direction": "higher"},
+    },
+)
+monitor.log_metric("accuracy", 0.75, step=0, elapsed_seconds=1.5,
+                   timestamp="2026-11-02T00:00:00Z", task_id="evaluation-1",
+                   decision_id="evaluate-1", attempt_id="attempt-1")
+monitor.write()  # 下一次显式 write 或已有事件触发的 write 原子发布暂存内容
+```
+
+`Monitor.configure_dashboard(panels, *, metric_definitions=None)` 深拷贝已校验的轻量配置。
+省略定义时保留已有定义，显式传入字典时替换；`{}` 清空定义。配置不得把已记录值重新定义成
+不合法的百分比。生产端对超限配置、未知字段和无效输入抛出 `ValueError`，失败不改暂存状态；
+`log_metric(name, value, *, step=None, elapsed_seconds=None, timestamp=None, task_id=None,
+decision_id=None, attempt_id=None)` 将 `None` 可选参数省略，保留最近 10000 点。
+生产端不导入可选的 `rsimonitor` 包，两端只共享 JSON 协议；配置编辑、本地存储和面板渲染由界面负责。
+
 ### 训练历史协议
 
 `jobs[].metric_history` 是可选数组，每项为 `{step, elapsed_seconds, metrics: {数值指标}}`，快照最多保留最近 **1000 点**。当前 toy worker 的实际训练日志配置为 **logging_steps=2**，因此日志并非每一步都产生一个点。完整 worker `<job_id>.metrics.jsonl` 可供离线分析；UI 只读取公开快照，不直接读取 JSONL。
@@ -261,6 +347,10 @@ node --test tests/monitor_frontend/*.test.js
 
 服务测试覆盖显式项目归属与多实验分组、同名不同 ID 隔离、实验名称优先级、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。`attempts.test.js` 额外覆盖显式尝试身份、假设标题下调整提示词 / 评测 / 比较 / 采用的逐步选择、并行尝试与多结果汇合、关系优先级和原始证据、收缩成环时保持尝试主图、原始坏数据校验、历史空态与实验日志、双画布交互及刷新保留。`overview.test.js` 覆盖默认不展开详情、并行活动任务、终态运行与陈旧任务冲突、未关联历史及不确定状态、显式历史结果、刷新与双语保留选择和折叠状态、节点移除清空选择、旧实验日志入口及严格任务关联。Node 只用于检查与测试，服务运行不依赖 Node。
 
+指标协议测试另覆盖生产端写入至主机投影的往返、配置深拷贝与延迟发布、四项集合上限、
+附件白名单、无效输入及非有限数值整点拒绝、显式百分比、旧快照兼容、原文件不变，
+以及生产端缺少 `rsimonitor`、主机缺少 `rsisys` 时各自可独立运行。
+
 界面采用独立的实验管理页与实验详情页，使用暖白纸面、深棕文字与低饱和陶土橙选择态；标题使用 Georgia／本机宋体，正文使用本机系统无衬线字体，无外部字体请求或品牌 logo。
 
 浏览器 QA 截图放在临时目录 `/tmp/rsisys-*`，不写入 runs、不作为源码入库。
@@ -299,3 +389,5 @@ PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED
 看板只展示研究语义：隐藏无可读名称的哈希引用、内部资料编号、原始决策 JSON 和整理审计附件；短训练参数使用自适应多列排列，提示词等长正文单独占行。模型理由和实际反馈不通过哈希规则改写，监控 API 与底层运行文件保持完整。
 
 实验日志按时间顺序使用整行条目，列出序号、时间、动作和状态；选中条目在原位置展开理由、改动和反馈，可再次点击收起，刷新保留选择。Benchmark 概览按已记录评测顺序绘制各 benchmark 准确率趋势，纵轴固定为 0–100%，详情中的准确率/F1 使用百分比，比较差值使用百分点（pp）。仅明确标记且包含相应指标的唯一基线任务可产生基线虚线；没有基线不推断，缺失指标不连线，最新评测不等于已采纳结果。训练损失等非比例指标保持原单位。
+
+指标看板的「配置看板」支持选择指标、折线图／数值卡／对比表、横轴和任务／研究尝试分组，以及增删、排序面板。横轴按真实训练步数、耗时或记录顺序显示；不同单位分开绘制。配置按实验保存在当前浏览器，优先于生产端默认布局；「恢复默认」恢复生产端布局或自动生成的布局，不修改实验记录。编辑期间继续采集刷新数据，关闭或保存后再更新视图，避免打断输入。

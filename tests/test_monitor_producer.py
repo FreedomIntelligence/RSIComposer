@@ -1,10 +1,13 @@
 """Monitor projections use explicit decisions and observed progress, not raw prompts."""
+from copy import deepcopy
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from examples.qwen_toy.monitor import Monitor, decision_summary, enrich_completed_run
@@ -30,6 +33,189 @@ class MonitorProducerTests(unittest.TestCase):
         self.directive = Directive('d1', 'PRIVATE_MODEL_PROMPT', 'Improve formatting with SFT', mode='train',
                                    payload=TrainSpec('recipe', 'sft'), review_after_seconds=2)
         self.monitor = Monitor(self.root, self.model, 'Public run goal', rounds=2)
+
+    def panel(self, **fields):
+        return {'id': 'loss', 'title': 'Training loss', 'type': 'line', 'metrics': ['loss'],
+                'x': 'step', 'group_by': 'task', **fields}
+
+    def test_dashboard_and_points_publish_on_next_write_and_roundtrip_through_host(self):
+        from rsimonitor.server import project_snapshot
+        panels = [self.panel(), self.panel(id='quality', type='scalar', metrics=['accuracy'],
+                                          x='evaluation', group_by='attempt')]
+        definitions = {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}}
+        original_panels, original_definitions = deepcopy(panels), deepcopy(definitions)
+        before = deepcopy(self.monitor.data)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        with patch.object(self.monitor, 'write') as write:
+            self.monitor.configure_dashboard(panels, metric_definitions=definitions)
+            self.monitor.log_metric('loss', -.5, step=0, elapsed_seconds=0.0,
+                                    timestamp='2026-11-02T00:00:00Z', task_id='t',
+                                    decision_id='d', attempt_id='a')
+            self.monitor.log_metric('accuracy', .75)
+            self.monitor.log_metric('unknown_score', 75)
+            write.assert_not_called()
+        panels[0]['metrics'].append('PRIVATE')
+        panels[0]['title'] = 'Changed'
+        definitions['accuracy']['unit'] = 'number'
+        self.assertEqual(self.monitor.data['dashboard']['panels'], original_panels)
+        self.assertEqual(self.monitor.data['metric_definitions'], original_definitions)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+        for key, value in before.items():
+            self.assertEqual(self.monitor.data[key], value)
+        self.monitor.write()
+        snapshot = json.loads((self.root / 'monitor.json').read_text())
+        public = project_snapshot(snapshot, self.root.name)
+        for key in ('dashboard', 'metric_definitions', 'metric_points'):
+            self.assertEqual(public[key], self.monitor.data[key])
+        self.assertEqual(public['metric_points'][0], {
+            'metric': 'loss', 'value': -.5, 'step': 0, 'elapsed_seconds': 0.0,
+            'timestamp': '2026-11-02T00:00:00Z', 'task_id': 't', 'decision_id': 'd', 'attempt_id': 'a'})
+        self.assertEqual(public['metric_points'][1:], [{'metric': 'accuracy', 'value': .75},
+                                                     {'metric': 'unknown_score', 'value': 75}])
+        json.dumps(public, allow_nan=False)
+
+    def test_invalid_metric_inputs_raise_without_appending_or_writing(self):
+        before = deepcopy(self.monitor.data)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        invalid = [None, True, '1', [], {}, float('nan'), float('inf'), -float('inf'), 10 ** 1000]
+        for value in invalid:
+            with self.subTest(value=type(value).__name__), self.assertRaises(ValueError):
+                self.monitor.log_metric('loss', value)
+        for key in ('step', 'elapsed_seconds'):
+            values = [True, '1', [], {}, -1, float('nan'), float('inf'), 10 ** 1000]
+            if key == 'step':
+                values += [0.0, .5]
+            for value in values:
+                with self.subTest(key=key, value=type(value).__name__), self.assertRaises(ValueError):
+                    self.monitor.log_metric('loss', 1, **{key: value})
+        for name in ('', ' ', 'x' * 101, None, 1, {}):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.monitor.log_metric(name, 1)
+        for key in ('timestamp', 'task_id', 'decision_id', 'attempt_id'):
+            for value in (True, 1, [], {}, '', ' ', 'x' * 201):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    self.monitor.log_metric('loss', 1, **{key: value})
+        with self.assertRaises(TypeError):
+            self.monitor.log_metric('loss', 1, payload={'secret': 'PRIVATE'})
+        self.assertEqual(self.monitor.data, before)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+
+    def test_metric_log_is_bounded_without_deduplicating_real_observations(self):
+        file_before = (self.root / 'monitor.json').read_bytes()
+        for step in range(10005):
+            self.monitor.log_metric('loss', 1, step=step)
+        points = self.monitor.data['metric_points']
+        self.assertEqual(len(points), 10000)
+        self.assertEqual((points[0]['step'], points[-1]['step']), (5, 10004))
+        self.monitor.log_metric('loss', 1, step=10004)
+        self.assertEqual(points[-1], points[-2])
+        self.assertEqual(len(points), 10000)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+
+    def test_invalid_dashboard_configuration_is_atomic_and_forbids_payloads(self):
+        self.monitor.configure_dashboard([self.panel()])
+        before = deepcopy(self.monitor.data)
+        definitions = {'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}}
+        bad_panels = [None, {}, (), [None], [{}], [self.panel()] * 25]
+        for key, values in {'id': ('', None, 'x' * 201), 'title': ([], ' '),
+                            'type': ('bar', []), 'x': ('index', {}), 'group_by': ('job', []),
+                            'metrics': ('loss', None, [None], ['x' * 101], ['loss'] * 13)}.items():
+            bad_panels += [[self.panel(**{key: value})] for value in values]
+        bad_panels += [[self.panel(payload={'secret': 'PRIVATE'})],
+                       [{key: value for key, value in self.panel().items() if key != 'x'}]]
+        for panels in bad_panels:
+            with self.subTest(panels=panels), self.assertRaises(ValueError):
+                self.monitor.configure_dashboard(panels, metric_definitions=definitions)
+            self.assertEqual(self.monitor.data, before)
+        bad_definitions = [[], False, 'loss', {str(i): definitions['loss'] for i in range(101)},
+                           {'': definitions['loss']}, {'x' * 101: definitions['loss']}, {'loss': None}]
+        for key, values in {'label': (None, [], '', 'x' * 201), 'unit': ('percentage', []),
+                            'direction': ('up', {}), 'payload': ({'secret': 'PRIVATE'},)}.items():
+            bad_definitions += [{'loss': {**definitions['loss'], key: value}} for value in values]
+        bad_definitions += [{'loss': {'label': 'Loss', 'unit': 'number'}}]
+        for metadata in bad_definitions:
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                self.monitor.configure_dashboard([], metric_definitions=metadata)
+            self.assertEqual(self.monitor.data, before)
+
+    def test_configuration_accepts_limits_and_keeps_metadata_when_omitted(self):
+        definitions = {f'm{i}': {'label': str(i), 'unit': 'number', 'direction': 'neutral'} for i in range(100)}
+        panels = [self.panel(id=str(i), metrics=list(definitions)[:12]) for i in range(24)]
+        self.monitor.configure_dashboard(panels, metric_definitions=definitions)
+        self.monitor.configure_dashboard([])
+        self.assertEqual(self.monitor.data['metric_definitions'], definitions)
+        self.assertEqual(self.monitor.data['dashboard']['panels'], [])
+        self.monitor.configure_dashboard([], metric_definitions={})
+        self.assertEqual(self.monitor.data['metric_definitions'], {})
+
+    def test_duplicate_panel_ids_are_rejected_without_changing_state_or_file(self):
+        self.monitor.configure_dashboard([self.panel()])
+        before = deepcopy(self.monitor.data)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        panels = [self.panel(id='duplicate'), self.panel(id='duplicate', title='Different title')]
+        original = deepcopy(panels)
+        with self.assertRaisesRegex(ValueError, 'panel IDs must be unique'):
+            self.monitor.configure_dashboard(panels, metric_definitions={
+                'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}})
+        self.assertEqual(self.monitor.data, before)
+        self.assertEqual(panels, original)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+
+    def test_panel_metrics_deduplicate_in_order_and_roundtrip_without_mutating_input(self):
+        from rsimonitor.server import dashboard_only
+        panels = [self.panel(metrics=['loss', 'accuracy', 'loss', 'accuracy']),
+                  self.panel(id='other', metrics=['accuracy'] * 11 + ['loss'])]
+        original = deepcopy(panels)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        self.monitor.configure_dashboard(panels)
+        dashboard = self.monitor.data['dashboard']
+        self.assertEqual(dashboard['panels'], [
+            self.panel(metrics=['loss', 'accuracy']),
+            self.panel(id='other', metrics=['accuracy', 'loss'])])
+        self.assertEqual(dashboard_only(dashboard), dashboard)
+        self.assertEqual(panels, original)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+
+    def test_percent_validation_never_rescales_scores_and_reconfiguration_is_atomic(self):
+        definitions = {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}}
+        self.monitor.configure_dashboard([], metric_definitions=definitions)
+        for value in (0, .75, 1):
+            self.monitor.log_metric('accuracy', value)
+        for value in (-.01, 75):
+            with self.assertRaises(ValueError):
+                self.monitor.log_metric('accuracy', value)
+        self.monitor.log_metric('score', 75)
+        self.monitor.log_metric('accuracy', .75)  # Repeated reported observations remain real points.
+        before = deepcopy(self.monitor.data)
+        with self.assertRaises(ValueError):
+            self.monitor.configure_dashboard([], metric_definitions={
+                **definitions, 'score': {'label': 'Score', 'unit': 'percent', 'direction': 'higher'}})
+        self.assertEqual(self.monitor.data, before)
+        self.assertEqual(self.monitor.data['metric_points'][-2], {'metric': 'score', 'value': 75})
+
+    def test_producer_works_without_rsimonitor_installed(self):
+        code = '''
+import importlib.abc
+from pathlib import Path
+import sys
+import tempfile
+sys.path[:0] = [sys.argv[1], str(Path(sys.argv[1]) / 'src')]
+class BlockMonitor(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == 'rsimonitor':
+            raise ImportError('rsimonitor is not installed')
+sys.meta_path.insert(0, BlockMonitor())
+from examples.qwen_toy.monitor import Monitor
+from rsisys.loops.contracts.model_service import ModelRef
+with tempfile.TemporaryDirectory() as directory:
+    monitor = Monitor(Path(directory), ModelRef('toy', 'model', 'v1'), 'goal')
+    monitor.configure_dashboard([])
+    monitor.log_metric('score', 75)
+    monitor.write()
+'''
+        result = subprocess.run([sys.executable, '-I', '-c', code, str(Path(__file__).resolve().parents[1])],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_validated_decision_has_public_intent_and_version_but_no_prompt(self):
         self.monitor.decision(Decision('explore', directive=self.directive), self.context, 1)

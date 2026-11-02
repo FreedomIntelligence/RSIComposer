@@ -22,6 +22,76 @@ MODE_NAMES = {'train': '训练', 'sft': '训练', 'evaluate': '评测',
               'apply_candidate': '应用候选', 'execute': 'Actor 执行'}
 TEXT_LIMIT = 4000
 RECIPE_FIELDS = ('steps', 'lr', 'seed', 'weight_decay', 'warmup_ratio')
+MAX_METRIC_POINTS = 10000
+
+
+# Keep producer validation local: rsimonitor is an optional, independent package.
+# The host's public projectors enforce the same wire contract on untrusted JSON.
+def _metric_text(value, field, limit=200):
+    if not isinstance(value, str) or not 0 < len(value) <= limit or not value.strip():
+        raise ValueError(f'{field} must be a nonblank string of at most {limit} characters')
+
+
+def _metric_number(value, field, *, nonnegative=False, integer=False):
+    try:
+        valid = type(value) in ((int,) if integer else (int, float)) and math.isfinite(value)
+    except OverflowError:
+        valid = False
+    if not valid or (nonnegative and value < 0):
+        raise ValueError(f'{field} must be a finite {"nonnegative " if nonnegative else ""}'
+                         f'{"integer" if integer else "number"}')
+
+
+def _metric_point(name, value, definitions, **coordinates):
+    _metric_text(name, 'metric', 100)
+    _metric_number(value, 'value')
+    if definitions.get(name, {}).get('unit') == 'percent' and not 0 <= value <= 1:
+        raise ValueError('percent metric values must be ratios in [0, 1]')
+    point = {'metric': name, 'value': value}
+    for key, item in coordinates.items():
+        if item is None:
+            continue
+        if key in ('step', 'elapsed_seconds'):
+            _metric_number(item, key, nonnegative=True, integer=key == 'step')
+        else:
+            _metric_text(item, key, 100 if key == 'timestamp' else 200)
+        point[key] = item
+    return point
+
+
+def _dashboard_config(panels, definitions):
+    if not isinstance(panels, list) or len(panels) > 24:
+        raise ValueError('panels must be a list of at most 24 panels')
+    if not isinstance(definitions, dict) or len(definitions) > 100:
+        raise ValueError('metric_definitions must be a dictionary of at most 100 definitions')
+    for name, row in definitions.items():
+        _metric_text(name, 'metric', 100)
+        if not isinstance(row, dict) or set(row) != {'label', 'unit', 'direction'}:
+            raise ValueError('metric definitions require only label, unit and direction')
+        _metric_text(row['label'], 'label')
+        if (row['unit'] not in ('number', 'percent', 'seconds', 'tokens_per_second')
+                or row['direction'] not in ('higher', 'lower', 'neutral')):
+            raise ValueError('invalid metric unit or direction')
+    seen_ids, clean_panels = set(), []
+    for row in panels:
+        if not isinstance(row, dict) or set(row) != {'id', 'title', 'type', 'metrics', 'x', 'group_by'}:
+            raise ValueError('panels require only id, title, type, metrics, x and group_by')
+        for key in ('id', 'title'):
+            _metric_text(row[key], key)
+        if row['id'] in seen_ids:
+            raise ValueError('panel IDs must be unique')
+        if (row['type'] not in ('line', 'scalar', 'table')
+                or row['x'] not in ('step', 'elapsed_seconds', 'evaluation')
+                or row['group_by'] not in ('task', 'attempt', 'none')):
+            raise ValueError('invalid panel type, x or group_by')
+        if not isinstance(row['metrics'], list) or len(row['metrics']) > 12:
+            raise ValueError('panel metrics must be a list of at most 12 names')
+        for name in row['metrics']:
+            _metric_text(name, 'metric', 100)
+        seen_ids.add(row['id'])
+        clean_panels.append({**row, 'metrics': list(dict.fromkeys(row['metrics']))})
+    return deepcopy({'dashboard': {'schema_version': 1, 'panels': clean_panels},
+                     'metric_definitions': definitions})
 
 
 def public_text(value):
@@ -207,6 +277,28 @@ class Monitor:
                      'models': {role: {'model_id': base.model_id, 'revision': base.revision}
                                 for role in ('decision_maker', 'actor')}, 'events': []}
         self.write()
+
+    def configure_dashboard(self, panels, *, metric_definitions=None):
+        """Stage validated layout/metadata for the next write; copy caller input.
+
+        Omitted definitions preserve existing metadata; an explicit dict replaces it.
+        Reject changes that would make already recorded percentage points invalid.
+        """
+        definitions = self.data.get('metric_definitions', {}) if metric_definitions is None else metric_definitions
+        config = _dashboard_config(panels, definitions)
+        for point in self.data.get('metric_points', ()):
+            _metric_point(point['metric'], point['value'], config['metric_definitions'])
+        self.data.update(config)
+
+    def log_metric(self, name, value, *, step=None, elapsed_seconds=None, timestamp=None,
+                   task_id=None, decision_id=None, attempt_id=None):
+        """Stage one finite public observation; the next write publishes it."""
+        point = _metric_point(name, value, self.data.get('metric_definitions', {}),
+                              step=step, elapsed_seconds=elapsed_seconds, timestamp=timestamp,
+                              task_id=task_id, decision_id=decision_id, attempt_id=attempt_id)
+        points = self.data.setdefault('metric_points', [])
+        points.append(point)
+        del points[:-MAX_METRIC_POINTS]
 
     def write(self):
         self.data['workflow']['elapsed_seconds'] = round(time.monotonic() - self.started, 3)

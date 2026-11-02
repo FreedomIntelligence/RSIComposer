@@ -207,30 +207,144 @@ function comparisonView(metrics) {
   for (const name of [t("指标"),t("基线"),t("新版本"),t("新版本 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",metricNumber(m.name,m.base)),el("td","",metricNumber(m.name,m.next)),el("td","",number(delta)?`${delta>0?"+":""}${ratioMetric(m.name,m.base)&&ratioMetric(m.name,m.next)?`${Number((delta*100).toFixed(2))} pp`:fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
-function benchmarkOverview(s){
-  const measurements=RSIDecisions.layout(list(s.decisions)).nodes.filter(n=>n.row).map(n=>n.row).filter(row=>row.kind!=="review"&&["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row)))
-    .map(row=>({row,metrics:flattenMetrics({...object(row.metrics),...object(object(row.feedback).metrics)})}))
-    .filter(item=>Object.keys(item.metrics).some(key=>/(?:^|[./])accuracy$/.test(key)&&ratioMetric(key,item.metrics[key])));
-  const keys=[...new Set(measurements.flatMap(item=>Object.keys(item.metrics).filter(key=>/(?:^|[./])accuracy$/.test(key)&&ratioMetric(key,item.metrics[key]))))];
-  if(!keys.length)return null;
-  const section=el("section","benchmark-overview");section.append(el("h4","",t("Benchmark 表现")));
-  const grid=el("div","benchmark-grid");
-  const baselineJobs=list(s.jobs).filter(job=>job.role==="baseline"||(job.job_id==="evaluation:initial"&&!present(job.directive_id)));
-  for(const key of keys){
-    const values=measurements.map(item=>ratioMetric(key,item.metrics[key])?item.metrics[key]:null),available=values.filter(number),latest=available.at(-1);
-    const card=el("article","benchmark-card"),heading=el("div","detail-heading");const latestValue=el("div","benchmark-latest");latestValue.append(el("span","",t("最近评测")),el("strong","benchmark-value",metricNumber(key,latest)));heading.append(el("h5","",metricText(key)),latestValue);card.append(heading);
-    const chart=svgEl("svg",{viewBox:"0 0 520 180",role:"img","aria-label":metricText(key)}),x=i=>48+i*(440/Math.max(1,measurements.length-1)),y=v=>142-v*116;
-    for(const value of [0,.5,1]){chart.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},`${value*100}%`));}
-    const bases=baselineJobs.map(job=>flattenMetrics(job.metrics)[key]).filter(v=>ratioMetric(key,v));
-    if(bases.length===1){chart.append(svgEl("line",{x1:44,x2:496,y1:y(bases[0]),y2:y(bases[0]),class:"benchmark-baseline"}));card.append(el("p","quiet-note",t("基线 {p0}",{p0:metricNumber(key,bases[0])})));}
-    let segment=[];const flush=()=>{if(segment.length>1)chart.append(svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"}));segment=[];};
-    values.forEach((value,index)=>{if(value===null){flush();return;}segment.push(`${x(index)},${y(value)}`);});flush();
-    values.forEach((value,index)=>{if(value===null)return;const dot=svgEl("circle",{cx:x(index),cy:y(value),r:4,class:"benchmark-point"});dot.append(svgEl("title",{},t("第 {p0} 次评测：{p1}",{p0:index+1,p1:metricNumber(key,value)})));chart.append(dot,svgEl("text",{x:x(index),y:163,"text-anchor":"middle",class:"benchmark-axis"},String(index+1)));});
-    card.append(chart,el("p","benchmark-axis-label",t("评测顺序")));
-    const results=el("div","benchmark-results");values.forEach((value,index)=>{if(value===null)return;results.append(el("span","",`${index+1} · ${metricNumber(key,value)}`));});card.append(results);grid.append(card);
+function dashboardData(s) {
+  const definitions={...object(s.metric_definitions)},points=[];
+  const evaluations=RSIDecisions.layout(list(s.decisions)).nodes.filter(n=>n.row&&n.row.kind!=="review"&&["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(n.row))).map(n=>n.row);
+  const explicit=Array.isArray(s.metric_points);
+  if(explicit){
+    for(const point of list(s.metric_points))if(identifier(point.metric)&&number(point.value))points.push({...point});
+  }else{
+    evaluations.forEach((row,index)=>{
+      const metrics=flattenMetrics({...object(row.metrics),...object(object(row.feedback).metrics)});
+      for(const [metric,value] of Object.entries(metrics))points.push({metric,value,evaluation:index+1,decision_id:row.decision_id,attempt_id:row.research_attempt_id});
+    });
+    for(const job of list(s.jobs).filter(job=>job.role!=="baseline"&&job.job_id!=="evaluation:initial")){
+      for(const point of historyRows(job))for(const [metric,value] of Object.entries(flattenMetrics(point.metrics)))points.push({metric,value,step:point.step,elapsed_seconds:point.elapsed_seconds,task_id:job.job_id});
+      for(const [metric,value] of Object.entries(flattenMetrics(job.metrics)))if(!points.some(point=>point.metric===metric&&number(point.evaluation)))points.push({metric,value,step:job.step,elapsed_seconds:job.elapsed_seconds,task_id:job.job_id});
+    }
   }
-  section.append(grid);return section;
+  const keys=[...new Set([...Object.keys(definitions),...points.map(p=>p.metric)])];
+  for(const key of keys)if(!definitions[key])definitions[key]={label:metricText(key),unit:!explicit&&/(?:^|[./])(?:accuracy|macro_f1|f1)$/.test(key)?"percent":"number",direction:"neutral"};
+  return {definitions,points,keys,evaluationCount:explicit?0:evaluations.length};
 }
+function dashboardConfig(value) {
+  if(value?.schema_version!==1||!Array.isArray(value.panels))return null;
+  const ids=new Set(),panels=[];
+  for(const panel of value.panels.slice(0,24)){
+    if(!identifier(panel?.id)||ids.has(panel.id)||!["line","scalar","table"].includes(panel.type)||!Array.isArray(panel.metrics))return null;
+    ids.add(panel.id);panels.push({id:panel.id,title:typeof panel.title==="string"?panel.title.slice(0,200):"",type:panel.type,metrics:[...new Set(panel.metrics.filter(identifier))].slice(0,12),x:["step","elapsed_seconds","evaluation"].includes(panel.x)?panel.x:"step",group_by:["task","attempt","none"].includes(panel.group_by)?panel.group_by:"none"});
+  }
+  return {schema_version:1,panels};
+}
+function defaultDashboard(data) {
+  const benchmark=data.keys.filter(key=>/(?:^|[./])accuracy$/.test(key));
+  const training=data.keys.filter(key=>lossKeys.includes(key)||lrKeys.includes(key));
+  const preferred=[...benchmark,...training].slice(0,8);
+  return {schema_version:1,panels:(preferred.length?preferred:data.keys.slice(0,4)).map((key,index)=>({id:`default-${index}`,title:data.definitions[key]?.label||key,type:benchmark.includes(key)||training.includes(key)?"line":"scalar",metrics:[key],x:benchmark.includes(key)?"evaluation":"step",group_by:training.includes(key)?"task":"none"}))};
+}
+function dashboardFormat(value,definition) {
+  if(!number(value))return "—";
+  if(definition?.unit==="percent")return `${Number((value*100).toFixed(2))}%`;
+  if(definition?.unit==="seconds")return secondsText(value);
+  return fmt(value)+(definition?.unit==="tokens_per_second"?" tok/s":"");
+}
+function dashboardSeries(panel,data,s) {
+  const series=new Map(),tasks=new Map(),attempts=new Map();
+  for(const job of list(s.jobs))if(identifier(job.job_id)&&!tasks.has(job.job_id))tasks.set(job.job_id,tasks.size+1);
+  for(const point of data.points){
+    if(!panel.metrics.includes(point.metric))continue;
+    const group=panel.group_by==="task"?point.task_id:panel.group_by==="attempt"?point.attempt_id:null;
+    // A declared grouping never pools unassigned points into an invented task.
+    const identity=JSON.stringify([point.metric,group||null]);
+    if(!series.has(identity)){
+      let label=data.definitions[point.metric]?.label||point.metric;
+      if(group&&panel.group_by==="task"){if(!tasks.has(group))tasks.set(group,tasks.size+1);label+=` · ${t("任务 {p0}",{p0:tasks.get(group)})}`;}
+      if(group&&panel.group_by==="attempt"){if(!attempts.has(group))attempts.set(group,attempts.size+1);const item=list(s.research_attempts?.items).find(item=>item.attempt_id===group);label+=` · ${item?.title||t("尝试 {p0}",{p0:attempts.get(group)})}`;}
+      if(!group&&panel.group_by!=="none")label+=` · ${t("未分组")}`;
+      series.set(identity,{metric:point.metric,label,points:[]});
+    }
+    series.get(identity).points.push(point);
+  }
+  return [...series.values()];
+}
+function dashboardPanel(panel,data,s) {
+  const card=el("article","benchmark-card dashboard-panel"),heading=el("div","detail-heading"),series=dashboardSeries(panel,data,s);
+  heading.append(el("h5","",panel.title||t("未命名面板")));card.append(heading);
+  const baseline=metric=>{
+    const matches=list(s.jobs).filter(j=>j.role==="baseline"||(j.job_id==="evaluation:initial"&&!present(j.directive_id))).map(j=>flattenMetrics(j.metrics)[metric]).filter(number);
+    return matches.length===1?matches[0]:undefined;
+  };
+  if(panel.type==="scalar"){
+    const values=el("dl","dashboard-values");
+    for(const item of series){const cell=el("div");cell.append(el("dt","",item.label),el("dd","benchmark-value",dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])));values.append(cell);}card.append(values);
+  }else if(panel.type==="table"){
+    const table=el("table","metric-table"),head=el("thead"),tr=el("tr"),body=el("tbody");
+    for(const label of ["指标","当前值","基线","变化"]){const th=el("th","",t(label));th.scope="col";tr.append(th);}head.append(tr);
+    for(const item of series){const current=item.points.at(-1)?.value,base=baseline(item.metric),definition=data.definitions[item.metric],delta=number(base)?current-base:null,row=el("tr");
+      const deltaText=number(delta)?`${delta>0?"+":""}${definition?.unit==="percent"?`${Number((delta*100).toFixed(2))} pp`:fmt(delta)}`:"—";
+      const cell=el("td","",deltaText);if(number(delta)&&delta!==0&&["higher","lower"].includes(definition?.direction))cell.className=(definition.direction==="higher"?delta>0:delta<0)?"metric-better":"metric-worse";
+      row.append(el("td","",item.label),el("td","",dashboardFormat(current,definition)),el("td","",dashboardFormat(base,definition)),cell);body.append(row);
+    }table.append(head,body);card.append(table);
+  }else{
+    const units=new Set(series.map(item=>data.definitions[item.metric]?.unit||"number"));
+    if(units.size>1){card.append(empty(t("请选择相同单位的指标绘制折线图。")));return card;}
+    const definition=data.definitions[series[0]?.metric],percent=definition?.unit==="percent";
+    const rows=series.map(item=>{
+      const points=item.points.map((point,index)=>({x:panel.x==="evaluation"?(point.evaluation??index+1):point[panel.x],y:point.value})).filter(point=>number(point.x));
+      const unique=new Map();for(const point of points)unique.set(point.x,point);return {...item,rows:[...unique.values()].sort((a,b)=>a.x-b.x)};
+    });
+    const plotted=rows.flatMap(item=>item.rows);if(!plotted.length){card.append(empty(t("当前横轴暂无数据。")));return card;}
+    if(percent&&plotted.some(point=>point.y<0||point.y>1)){card.append(empty(t("百分比指标应记录为 0 到 1。")));return card;}
+    const bases=rows.map(item=>baseline(item.metric)).filter(number),ys=[...plotted.map(p=>p.y),...bases],lo=percent?0:Math.min(...ys),hi=percent?1:Math.max(...ys),padding=hi===lo?Math.max(Math.abs(hi)*.05,1e-6):(hi-lo)*.08;
+    const ymin=percent?0:lo-padding,ymax=percent?1:hi+padding,xmin=Math.min(...plotted.map(p=>p.x)),xmax=Math.max(...plotted.map(p=>p.x));
+    const x=value=>48+(value-xmin)/(xmax-xmin||1)*440,y=value=>142-(value-ymin)/(ymax-ymin)*116;
+    const svg=svgEl("svg",{viewBox:"0 0 520 180",role:"img","aria-label":panel.title||t("指标趋势")}),palette=["#a85739","#4f6850","#8b754e","#74617c"];
+    for(const value of [ymin,(ymin+ymax)/2,ymax])svg.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},dashboardFormat(value,definition)));
+    const legend=el("div","dashboard-legend");
+    rows.forEach((item,index)=>{
+      const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;svg.append(line);card.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
+      let segment=[];const flush=()=>{if(segment.length>1){const line=svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"});line.style.stroke=color;svg.append(line);}segment=[];};
+      item.rows.forEach((point,i)=>{if(panel.x==="evaluation"&&data.evaluationCount&&i&&point.x-item.rows[i-1].x>1)flush();segment.push(`${x(point.x)},${y(point.y)}`);});flush();
+      item.rows.filter((_,index)=>index%Math.max(1,Math.ceil(item.rows.length/160))===0||index===item.rows.length-1).forEach(point=>{const dot=svgEl("circle",{cx:x(point.x),cy:y(point.y),r:4,class:"benchmark-point"});dot.style.fill=color;dot.append(svgEl("title",{},`${item.label} · ${fmt(point.x)} · ${dashboardFormat(point.y,data.definitions[item.metric])}`));svg.append(dot);});
+      const entry=el("span","",`${item.label} · ${dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])}`);entry.style.color=color;legend.append(entry);
+    });
+    for(const value of [...new Set([xmin,xmax])])svg.append(svgEl("text",{x:x(value),y:163,"text-anchor":"middle",class:"benchmark-axis"},fmt(value)));
+    if(series.length===1){const latest=el("div","benchmark-latest");latest.append(el("span","",t("最近记录")),el("strong","benchmark-value",dashboardFormat(series[0].points.at(-1)?.value,definition)));heading.append(latest);}
+    card.append(svg,el("p","benchmark-axis-label",t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x])),legend);
+  }
+  if(!series.length)card.append(empty(t("尚无指标数据。")));
+  return card;
+}
+function metricDashboard(s,scope) {
+  const data=dashboardData(s),storageKey=`rsimonitor-dashboard:v1:${s.run_id}`;
+  let override=null;try{override=dashboardConfig(JSON.parse(localStorage.getItem(storageKey)));}catch{}
+  const config=scope.dashboardOverride||override||dashboardConfig(s.dashboard)||defaultDashboard(data);
+  const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),title=el("h4","",t("指标看板"));heading.append(title);section.append(heading);
+  const grid=el("div","benchmark-grid");for(const panel of config.panels)grid.append(dashboardPanel(panel,data,s));section.append(grid);
+  const editor=el("details","dashboard-editor"),summary=el("summary","",t("配置看板")),form=el("div","dashboard-editor-body");editor.append(summary,form);section.append(editor);
+  const repaint=()=>{scope.detailFingerprint=null;renderProject();};
+  const draft=()=>scope.dashboardDraft||=JSON.parse(JSON.stringify(config));
+  const field=(label,node)=>{const wrapper=el("label","dashboard-field");wrapper.append(el("span","",t(label)),node);return wrapper;};
+  const select=(values,current,onChange)=>{const node=el("select");for(const [value,label] of values){const option=el("option","",t(label));option.value=value;node.append(option);}node.value=current;node.addEventListener("change",()=>onChange(node.value));return node;};
+  const renderEditor=()=>{
+    form.replaceChildren();
+    for(const [index,panel] of draft().panels.entries()){
+      const row=el("div","dashboard-editor-panel"),title=el("input");title.value=panel.title;title.maxLength=200;title.addEventListener("input",()=>panel.title=title.value);
+      row.append(field("面板标题",title),field("图表类型",select([["line","折线图"],["scalar","数值卡"],["table","对比表"]],panel.type,value=>{panel.type=value;renderEditor();})),...(panel.type==="line"?[field("横轴",select([["step","训练步数"],["elapsed_seconds","运行时间（秒）"],["evaluation","记录顺序"]],panel.x,value=>panel.x=value))]:[]),field("分组",select([["none","不分组"],["task","按任务"],["attempt","按研究尝试"]],panel.group_by,value=>panel.group_by=value)));
+      const choices=el("fieldset","dashboard-metric-options");choices.append(el("legend","",t("指标")));
+      for(const key of [...new Set([...data.keys,...panel.metrics])]){const checkbox=el("input");checkbox.type="checkbox";checkbox.checked=panel.metrics.includes(key);checkbox.disabled=!checkbox.checked&&panel.metrics.length>=12;checkbox.addEventListener("change",()=>{panel.metrics=checkbox.checked?[...new Set([...panel.metrics,key])].slice(0,12):panel.metrics.filter(metric=>metric!==key);renderEditor();});const label=el("label");label.title=key;label.append(checkbox,el("span","",data.definitions[key]?.label||key));choices.append(label);}row.append(choices);
+      const controls=el("div","dashboard-order");for(const [label,delta] of [["上移",-1],["下移",1]]){const button=el("button","",t(label));button.type="button";button.disabled=index+delta<0||index+delta>=draft().panels.length;button.addEventListener("click",()=>{const target=index+delta;[draft().panels[index],draft().panels[target]]=[draft().panels[target],draft().panels[index]];renderEditor();});controls.append(button);}
+      const remove=el("button","",t("删除面板"));remove.type="button";remove.addEventListener("click",()=>{draft().panels.splice(index,1);renderEditor();});controls.append(remove);row.append(controls);form.append(row);
+    }
+    const actions=el("div","dashboard-actions"),add=el("button","",t("添加面板")),save=el("button","",t("保存布局")),reset=el("button","",t("恢复默认"));
+    add.disabled=draft().panels.length>=24;add.addEventListener("click",()=>{const ids=new Set(draft().panels.map(p=>p.id));let index=1;while(ids.has(`custom-${index}`))index++;draft().panels.push({id:`custom-${index}`,title:t("新面板"),type:"line",metrics:data.keys.slice(0,1),x:"step",group_by:"none"});renderEditor();});
+    save.addEventListener("click",()=>{const next=dashboardConfig(draft());if(!next)return;scope.dashboardOverride=next;try{localStorage.setItem(storageKey,JSON.stringify(next));}catch{}scope.dashboardDraft=null;scope.dashboardEditing=false;repaint();});
+    reset.addEventListener("click",()=>{try{localStorage.removeItem(storageKey);}catch{}scope.dashboardOverride=null;scope.dashboardDraft=null;scope.dashboardEditing=false;repaint();});actions.append(add,save,reset);form.append(actions);
+  };
+  editor.addEventListener("toggle",()=>{scope.dashboardEditing=editor.open;if(editor.open)renderEditor();else{scope.dashboardDraft=null;if(scope.renderPending){scope.renderPending=false;repaint();}}});
+  return section;
+}
+
 function renderSnapshot(s) { state.snapshot=s; $("empty").hidden=true;  }
 function clearRun() { state.snapshot = null; }
 // Membership comes from the catalog's explicit project IDs, never a run name.
@@ -265,6 +379,7 @@ function abortEntry(entry) {
 }
 function disposeGraph(scope) {
   if(!scope)return;
+  scope.dashboardEditing=false;
   scope.graph?.dispose?.();scope.graph=null;scope.attemptGraph?.dispose?.();scope.attemptGraph=null;scope.attemptView=null;scope.detailFingerprint=null;scope.renderPending=false;
 }
 function activateProject() {
@@ -284,7 +399,7 @@ function attemptTitle(group) {
   return group.type==="attempt" ? group.title || t("未命名研究尝试") : decisionTitle(group.row);
 }
 function graphBusy(scope) {
-  return [scope.graphView,scope.attemptView].some(view=>view?.interacting||view?.animating);
+  return scope?.dashboardEditing || [scope.graphView,scope.attemptView].some(view=>view?.interacting||view?.animating);
 }
 function graphTools(current) {
   const controls=el("div","trajectory-tools");
@@ -507,7 +622,7 @@ function runDetail(node, scope) {
       const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true));overview.append(cards);box.append(overview);
     }
     if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或关联诊断。")));
-    const benchmarks=benchmarkOverview(s);if(benchmarks)box.append(benchmarks);
+    const benchmarks=metricDashboard(s,scope);if(benchmarks)box.append(benchmarks);
     box.append(executionSequence(s,scope));
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
     if(unlinkedCandidates.length){

@@ -2,6 +2,8 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -200,6 +202,159 @@ class MonitorProjectionTests(unittest.TestCase):
             self.assertEqual(store.list()[0]['counts'], {'decisions': 1, 'jobs': 0, 'candidates': 0, 'events': 0})
 
 
+class DashboardProjectionTests(unittest.TestCase):
+    def panel(self, **fields):
+        return {'id': 'quality', 'title': 'Quality', 'type': 'line', 'metrics': ['accuracy'],
+                'x': 'evaluation', 'group_by': 'attempt', **fields}
+
+    def project(self, **fields):
+        return monitor.project_snapshot({'schema_version': 1, **fields}, 'run-1')
+
+    def test_dashboard_roundtrip_is_whitelisted_independent_and_does_not_mutate_input(self):
+        fields = {
+            'metric_definitions': {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}},
+            'metric_points': [{'metric': 'accuracy', 'value': .75, 'step': 0, 'elapsed_seconds': 0,
+                               'timestamp': '2026-11-02T00:00:00Z', 'task_id': 't',
+                               'decision_id': 'd', 'attempt_id': 'a'},
+                              {'metric': 'unknown_score', 'value': 85}],
+            'dashboard': {'schema_version': 1, 'panels': [self.panel()]},
+        }
+        original = deepcopy(fields)
+        projected = self.project(**fields)
+        for key, value in fields.items():
+            self.assertEqual(projected[key], value)
+        roundtrip = monitor.project_snapshot(json.loads(json.dumps(projected, allow_nan=False)), 'run-1')
+        for key in fields:
+            self.assertEqual(roundtrip[key], projected[key])
+        projected['dashboard']['panels'][0]['metrics'].append('loss')
+        projected['metric_definitions']['accuracy']['label'] = 'Changed'
+        projected['metric_points'][0]['value'] = 0
+        self.assertEqual(fields, original)
+
+    def test_forbidden_payloads_are_stripped_at_every_new_protocol_level(self):
+        private = {'payload': {'secret': 'PRIVATE'}, 'config': ['PRIVATE'], 'credentials': 'PRIVATE'}
+        projected = self.project(
+            metric_definitions={'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower', **private}},
+            metric_points=[{'metric': 'loss', 'value': .5, **private},
+                           {'metric': 'loss', 'value': {'payload': 'PRIVATE'}},
+                           {'metric': 'loss', 'value': 1, 'task_id': {'payload': 'PRIVATE'}}],
+            dashboard={'schema_version': 1, 'panels': [self.panel(**private)], **private}, **private)
+        self.assertEqual(projected['metric_definitions'], {
+            'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}})
+        self.assertEqual(projected['metric_points'], [{'metric': 'loss', 'value': .5}])
+        self.assertEqual(projected['dashboard'], {'schema_version': 1, 'panels': [self.panel()]})
+        self.assertNotIn('PRIVATE', json.dumps(projected, allow_nan=False))
+
+    def test_collections_are_bounded_and_points_keep_recent_observations(self):
+        definitions = {f'm{i}': {'label': str(i), 'unit': 'number', 'direction': 'neutral'} for i in range(105)}
+        points = [{'metric': 'loss', 'value': i} for i in range(10005)]
+        panels = [self.panel(id=f'p{i}', metrics=list(definitions)[:15]) for i in range(30)]
+        projected = self.project(metric_definitions=definitions, metric_points=points,
+                                 dashboard={'schema_version': 1, 'panels': panels})
+        self.assertEqual(list(projected['metric_definitions']), list(definitions)[:100])
+        self.assertEqual(projected['metric_points'], points[-10000:])
+        self.assertEqual(len(projected['dashboard']['panels']), 24)
+        self.assertEqual(projected['dashboard']['panels'][-1]['id'], 'p23')
+        self.assertEqual(projected['dashboard']['panels'][0]['metrics'], list(definitions)[:12])
+
+    def test_duplicate_panel_ids_keep_first_valid_and_metrics_keep_first_occurrence(self):
+        first = self.panel(metrics=['accuracy', 'loss', 'accuracy', 'loss'])
+        second = self.panel(id='other', metrics=['loss'] * 11 + ['accuracy', 'beyond-limit'])
+        dashboard = {'schema_version': 1, 'panels': [
+            self.panel(title=None), self.panel(metrics=[None]), first,
+            self.panel(title='Duplicate', metrics=['ignored']), second]}
+        original = deepcopy(dashboard)
+        expected = {'schema_version': 1, 'panels': [
+            {**first, 'metrics': ['accuracy', 'loss']}, {**second, 'metrics': ['loss', 'accuracy']}]}
+        self.assertEqual(self.project(dashboard=dashboard)['dashboard'], expected)
+        self.assertEqual(monitor.dashboard_only(expected), expected)
+        self.assertEqual(dashboard, original)
+
+    def test_invalid_numeric_and_coordinate_fields_reject_whole_points(self):
+        invalid = [None, True, False, '0.5', [], {}, float('nan'), float('inf'), -float('inf'), 10 ** 1000]
+        base = {'metric': 'score', 'value': .5}
+        rows = [None, {}, {'value': 1}, {'metric': 'score'}]
+        rows += [{**base, 'value': value} for value in invalid]
+        rows += [{**base, 'step': value} for value in invalid + [-1, 1.5, 0.0]]
+        rows += [{**base, 'elapsed_seconds': value} for value in invalid + [-.1]]
+        for key in ('metric', 'timestamp', 'task_id', 'decision_id', 'attempt_id'):
+            rows += [{**base, key: value} for value in (None, 0, {}, [], '', ' ', 'x' * 201)]
+        valid = [base, {**base, 'value': -42, 'step': 0, 'elapsed_seconds': 0.0}]
+        self.assertEqual(self.project(metric_points=rows + valid)['metric_points'], valid)
+
+    def test_percent_is_an_explicit_ratio_and_unknown_scores_stay_unscaled(self):
+        definitions = {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}}
+        points = [{'metric': name, 'value': value} for name in ('accuracy', 'score')
+                  for value in (-1, 0, .75, 1, 75)]
+        projected = self.project(metric_definitions=definitions, metric_points=points)
+        self.assertEqual(projected['metric_points'], [point for point in points
+                         if point['metric'] == 'score' or 0 <= point['value'] <= 1])
+
+    def test_optional_old_schema_and_malformed_containers(self):
+        for key in ('dashboard', 'metric_definitions', 'metric_points'):
+            self.assertNotIn(key, self.project())
+        for value in (None, False, 1, 'broken', {}):
+            with self.subTest(value=value):
+                projected = self.project(dashboard=value, metric_definitions=value, metric_points=value)
+                self.assertNotIn('dashboard', projected)
+                self.assertEqual(projected['metric_definitions'], {})
+                self.assertEqual(projected['metric_points'], [])
+        for version in (None, True, 1.0, 2):
+            self.assertIsNone(monitor.dashboard_only({'schema_version': version, 'panels': []}))
+        self.assertEqual(monitor.dashboard_only({'schema_version': 1, 'panels': []}),
+                         {'schema_version': 1, 'panels': []})
+
+    def test_invalid_definitions_and_panels_are_omitted_without_losing_valid_siblings(self):
+        good = {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}
+        definitions = {'loss': good, '': good, 'x' * 101: good, 'wrong_type': [],
+                       'missing': {'unit': 'number', 'direction': 'lower'}}
+        for key, values in {'label': (None, [], '', 'x' * 201),
+                            'unit': (None, [], 'percentage'), 'direction': (None, {}, 'up')}.items():
+            for index, value in enumerate(values):
+                definitions[f'{key}{index}'] = {**good, key: value}
+        panels = [None, {}, self.panel()]
+        for key, values in {'id': ('', None, 'x' * 201), 'title': ([], ''),
+                            'type': ('bar', []), 'x': ('index', {}), 'group_by': ('job', []),
+                            'metrics': ('loss', None, [None], ['x' * 101])}.items():
+            panels += [self.panel(**{key: value}) for value in values]
+        projected = self.project(metric_definitions=definitions, dashboard={'schema_version': 1, 'panels': panels})
+        self.assertEqual(projected['metric_definitions'], {'loss': good})
+        self.assertEqual(projected['dashboard']['panels'], [self.panel()])
+
+    def test_all_supported_panel_modes_and_definition_units_survive(self):
+        panels = [self.panel(id=str(i), type=kind, x=x, group_by=group)
+                  for i, (kind, x, group) in enumerate(zip(
+                      ('line', 'scalar', 'table'), ('step', 'elapsed_seconds', 'evaluation'),
+                      ('task', 'attempt', 'none')))]
+        definitions = {unit: {'label': unit, 'unit': unit, 'direction': direction}
+                       for unit, direction in zip(('number', 'percent', 'seconds', 'tokens_per_second'),
+                                                  ('neutral', 'higher', 'lower', 'higher'))}
+        self.assertEqual(monitor.metric_definitions_only(definitions), definitions)
+        self.assertEqual(monitor.dashboard_only({'schema_version': 1, 'panels': panels})['panels'], panels)
+
+    def test_host_metrics_protocol_works_without_rsisys_installed(self):
+        code = '''
+import importlib.abc
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+class BlockRSISys(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == 'rsisys':
+            raise ImportError('rsisys is not installed')
+sys.meta_path.insert(0, BlockRSISys())
+from rsimonitor.server import project_snapshot
+snapshot = project_snapshot({'schema_version': 1, 'metric_points': [{'metric': 'score', 'value': 75}],
+                             'dashboard': {'schema_version': 1, 'panels': []}}, 'run')
+assert snapshot['metric_points'] == [{'metric': 'score', 'value': 75}]
+json.dumps(snapshot, allow_nan=False)
+'''
+        result = subprocess.run([sys.executable, '-I', '-c', code,
+                                 str(Path(__file__).resolve().parents[1] / 'src')],
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class MonitorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -240,6 +395,32 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(json.loads(self.get("/api/runs")[2])["runs"], [])
         self.assertEqual(json.loads(self.get("/api/projects")[2])["projects"], [])
         self.assertFalse(self.root.exists())
+
+    def test_dashboard_api_rejects_nonfinite_points_without_rewriting_snapshot(self):
+        directory = self.write()
+        path = directory / 'monitor.json'
+        contents = ('{"schema_version":1,"metric_definitions":{"accuracy":{"label":"Accuracy",'
+                    '"unit":"percent","direction":"higher"}},"metric_points":['
+                    '{"metric":"loss","value":NaN},{"metric":"loss","value":Infinity},'
+                    '{"metric":"loss","value":-Infinity},{"metric":"loss","value":1e999},'
+                    '{"metric":"loss","value":1,"step":NaN},'
+                    '{"metric":"loss","value":1,"elapsed_seconds":Infinity},'
+                    '{"metric":"accuracy","value":75},{"metric":"accuracy","value":0.75},'
+                    '{"metric":"score","value":75,"payload":"PRIVATE"}],'
+                    '"dashboard":{"schema_version":1,"panels":[]}}')
+        path.write_text(contents)
+        status, _, body = self.get('/api/runs/run-1')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['metric_points'], [{'metric': 'accuracy', 'value': .75},
+                                                {'metric': 'score', 'value': 75}])
+        self.assertEqual(data['dashboard'], {'schema_version': 1, 'panels': []})
+        json.dumps(data, allow_nan=False)
+        self.assertNotIn('PRIVATE', body.decode())
+        self.assertEqual(path.read_text(), contents)
+        summary = json.loads(self.get('/api/runs')[2])['runs'][0]
+        for key in ('dashboard', 'metric_definitions', 'metric_points'):
+            self.assertNotIn(key, summary)
 
     def test_projects_api_groups_explicit_membership_and_preserves_experiment_names_and_provenance(self):
         legacy = {'project_id': 'shared', 'name': 'Research', 'group': 'qwen'}
