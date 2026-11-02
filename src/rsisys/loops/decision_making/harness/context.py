@@ -133,6 +133,9 @@ class BasicContextCompactor:
         research_protected = set(context.research_state.get('protected_history_ids', ()))
         protected['history'].update(i for i, row in enumerate(raw['history'])
                                     if row.record_id in research_protected)
+        protected_results = set(context.research_state.get('protected_operation_result_ids', ()))
+        protected['operation_results'].update(i for i, key in enumerate(fingerprints['operation_results'])
+                                               if key in protected_results)
         if raw['operation_results']:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])

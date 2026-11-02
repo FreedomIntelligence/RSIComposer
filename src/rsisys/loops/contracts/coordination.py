@@ -15,6 +15,11 @@ from .model_service import ModelRef, TokenUsage
 
 @dataclass(frozen=True)
 class OperationResult:
+    """Tool receipt; evaluation data uses data.quality_metrics/evidence_refs.
+
+    Keep measured values and their source references together in data. Research
+    compaction preserves the complete receipt when quality_metrics is nonempty.
+    """
     summary: str
     artifacts: tuple[ArtifactRef, ...]
     simulated: bool

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+import math
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
@@ -71,10 +72,30 @@ class EvaluationExecution:
         return self.jobs.submit(request, idempotency_key=idempotency_key)
 
     def poll(self, job: JobRef) -> JobOutcome[EvaluationResult]:
-        return self._record(self.jobs.poll(job))
+        return self._record(self.jobs.poll(job, normalize=self._validate_metrics))
 
     def cancel(self, job: JobRef) -> JobOutcome[EvaluationResult]:
-        return self._record(self.jobs.cancel(job))
+        return self._record(self.jobs.cancel(job, normalize=self._validate_metrics))
+
+    def _validate_metrics(self, outcome):
+        request = self.jobs.request(outcome.job)
+        result = outcome.result
+        # Identity violations retain the strict InvalidJobResult path below.
+        if (outcome.status != JobStatus.SUCCEEDED or not isinstance(result, EvaluationResult)
+                or result.candidate_id != request.candidate.candidate_id
+                or result.protocol_ref != request.protocol_ref):
+            return outcome
+        try:
+            valid = isinstance(result.metrics, dict) and all(
+                isinstance(key, str) and key.strip() and type(value) in (int, float)
+                and math.isfinite(value) for key, value in result.metrics.items())
+        except (ValueError, OverflowError):
+            valid = False
+        if valid:
+            return outcome
+        return replace(outcome, status=JobStatus.FAILED, result=None,
+            simulated=outcome.simulated or result.simulated,
+            error='Invalid evaluation metrics: expected nonempty names and finite numeric values')
 
     def _record(self, outcome: JobOutcome[EvaluationResult]) -> JobOutcome[EvaluationResult]:
         request = self.jobs.request(outcome.job)

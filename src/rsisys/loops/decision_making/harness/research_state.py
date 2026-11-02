@@ -24,17 +24,23 @@ def ordered_jobs(context, jobs):
         j['input']['receipt']['directive']['directive_id'], -1)), j['job_id']))
 
 
+def receipt_needs_protection(receipt):
+    """OperationResult stores business metrics and evidence in data."""
+    if not isinstance(receipt, dict):
+        return False
+    if (receipt.get('error') or receipt.get('quality_metrics')
+            or receipt.get('status') in ('failed', 'cancelled', 'rejected')):
+        return True
+    data = receipt.get('data')
+    return isinstance(data, dict) and bool(data.get('quality_metrics'))
+
+
 def evidence_needs_protection(entry):
     """Conservative mechanical rule; never ask prose to classify contradictions."""
     details = entry.details
-    if details.get('error') or details.get('validation_error'):
-        return True
-    for key in ('feedback', 'result'):
-        receipt = details.get(key)
-        if isinstance(receipt, dict) and (receipt.get('error') or receipt.get('quality_metrics')
-                or receipt.get('status') in ('failed', 'cancelled', 'rejected')):
-            return True
-    return bool(details.get('quality_metrics'))
+    return bool(details.get('error') or details.get('validation_error')
+        or details.get('quality_metrics')
+        or any(receipt_needs_protection(details.get(key)) for key in ('feedback', 'result')))
 
 
 def research_working_view(context, jobs, attempts, *, recent=8):
@@ -82,6 +88,8 @@ def research_working_view(context, jobs, attempts, *, recent=8):
         'read_path': {'operation': 'feedback_learning_read', 'attempt_filter': 'research_attempt_id'},
         'live_state_fields': ['execution', 'executions', 'outstanding', 'candidate_evaluations',
                              'candidates', 'run_control', 'last_feedback'],
+        'protected_operation_result_ids': [result_id(asdict(r)) for r in context.operation_results
+            if receipt_needs_protection(asdict(r))],
         'protected_history_ids': [h.record_id for h in context.history if evidence_needs_protection(h)
             or h.record_id in live_dependencies or h.details.get('decision_id') in live_dependencies
             or h.task_id in outstanding],

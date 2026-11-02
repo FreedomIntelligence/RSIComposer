@@ -295,6 +295,16 @@ class FeedbackLearning:
                 'attempt_updates': updates, 'grouping_error': grouping_error,
                 'response': receipt, 'simulated': row['simulated'] or response.simulated}
 
+    def ordered_jobs(self):
+        """Use persisted capture order; legacy rows retain their stored order.
+
+        Pre-index journals cannot reconstruct capture chronology after JSON key
+        sorting. Do not infer it from hashes or replay an uncertain model call.
+        """
+        rows = list(self.state['jobs'].values())
+        return [row for _, row in sorted(enumerate(rows),
+            key=lambda pair: (pair[1].get('capture_index', -1), pair[0]))]
+
     def poll(self, *, dispatch=True):
         """Commit ready results without waiting, then admit at most one request."""
         self._assert_owner()
@@ -317,7 +327,7 @@ class FeedbackLearning:
             del self._futures[ident]
         if not dispatch or self._closed or self._futures:
             return
-        queued = next((r for r in self.state['jobs'].values() if r['status'] == 'queued'), None)
+        queued = next((r for r in self.ordered_jobs() if r['status'] == 'queued'), None)
         if queued is None:
             return
         state = deepcopy(self.state)
@@ -370,7 +380,7 @@ class FeedbackLearning:
                 'source_refs': row['input']['source_refs'], 'error': row['error'],
                 'simulated': row['simulated'], 'authority': 'unverified_proposals',
                 'training_ready': False, 'applied': False})
-        rows = list(self.state['jobs'].values())
+        rows = self.ordered_jobs()
         if research_attempt_id is not None:
             rows = [row for row in rows if row['input'].get('research_context', {}).get('research_attempt_id') == research_attempt_id
                     or any(r['attempt_id'] == research_attempt_id for r in row.get('attempt_revisions', []))]

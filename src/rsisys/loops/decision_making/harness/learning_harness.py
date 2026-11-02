@@ -157,7 +157,7 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
         return self._working_context(context)
 
     def _working_context(self, context):
-        jobs = list(self.feedback_learning.state['jobs'].values())
+        jobs = self.feedback_learning.ordered_jobs()
         navigation = {'read_operation': 'feedback_learning_read',
             'authority': 'unverified_proposals', 'total': len(jobs),
             'recent': [{'job_id': row['job_id'], 'status': row['status'],

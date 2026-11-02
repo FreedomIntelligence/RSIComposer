@@ -39,7 +39,7 @@ class JobHandle(Generic[T]):
         self.outcome: JobOutcome[T] | None = None
         self.cancel_requested = False
 
-    def poll(self) -> JobOutcome[T]:
+    def poll(self, *, normalize=None) -> JobOutcome[T]:
         if self.outcome is not None and self.outcome.terminal:
             return deepcopy(self.outcome)
         outcome = self._poll(self.job)
@@ -49,16 +49,20 @@ class JobHandle(Generic[T]):
         # last observation. Never synthesize steps or advance its sample time.
         if outcome.progress is None and self.outcome is not None:
             outcome = replace(outcome, progress=self.outcome.progress)
+        if normalize is not None:
+            outcome = normalize(outcome)
+            if outcome.job != self.job:
+                raise ValueError('Normalized outcome does not match the requested job')
         self.outcome = deepcopy(outcome)
         return deepcopy(outcome)
 
-    def cancel(self) -> JobOutcome[T]:
+    def cancel(self, *, normalize=None) -> JobOutcome[T]:
         if self.outcome is not None and self.outcome.terminal:
             return deepcopy(self.outcome)
         if not self.cancel_requested:
             self._cancel(self.job)
             self.cancel_requested = True
-        return self.poll()
+        return self.poll(normalize=normalize)
 
 
 @dataclass
@@ -176,10 +180,11 @@ class JobBook(Generic[R, T]):
             raise ValueError('Job is not owned by this loop component')
         return deepcopy(self._requests[job])
 
-    def poll(self, job: JobRef) -> JobOutcome[T]:
+    def poll(self, job: JobRef, *, normalize=None) -> JobOutcome[T]:
+        """Normalize domain results before caching; persistence remains retryable."""
         self.request(job)
-        return self._handles[job].poll()
+        return self._handles[job].poll(normalize=normalize)
 
-    def cancel(self, job: JobRef) -> JobOutcome[T]:
+    def cancel(self, job: JobRef, *, normalize=None) -> JobOutcome[T]:
         self.request(job)
-        return self._handles[job].cancel()
+        return self._handles[job].cancel(normalize=normalize)
