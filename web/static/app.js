@@ -19,7 +19,7 @@ const labels = {
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
-  system_adopt: "合并采用改动", configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案",
+  system_adopt: "合并采用改动", configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案", read_artifact: "查阅资料", preview_training_data: "预览训练数据",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
   evaluate: "验证改动效果", evaluation: "验证改动效果", candidate_evaluation: "验证改动效果", select: "选择版本", apply_candidate: "采用改动", execute: "执行任务",
   finish: "结束本轮研究", finished: "结束本轮研究", continue: "继续执行", continue_training: "继续训练", cancel: "请求取消", cancel_training: "请求取消训练", stop: "停止训练", wait: "等待", review: "复查执行", prepare: "准备", queued: "排队", starting: "准备运行", collecting_result: "收集结果", accepted: "指令已接收", completed: "已完成",
@@ -258,6 +258,62 @@ function executionGroups(s) {
     return (Number.isFinite(at)?at:Infinity)-(Number.isFinite(bt)?bt:Infinity) || 0;
   });
 }
+// A reading projection only: the snapshot and the complete decision DAG remain
+// unchanged. Candidate membership requires a unique reported identity.
+function progressGroups(s, groups) {
+  const auxiliary=new Set(["read_artifact","preview_training_data","define_recipe","define_protocol","query_jobs","query_candidates","query_metrics","inspect_job","inspect_candidate","list_jobs","list_candidates","research_search","research_read","research_archive","research_patch","research_write","research_memory","research_experience","research_history","wait"]);
+  const refs=row=>[row.parent_decision_id,...listStrings(row.depends_on_decision_ids),...listStrings(row.adopted_decision_ids),...listStrings(row.source_decision_ids)].filter(identifier);
+  const protectedIDs=new Set(groups.flatMap(g=>g.rows.flatMap(refs)));
+  const folded={auxiliary:[],finish:[]},visible=[];
+  for(const g of groups){
+    const row=g.row,action=decisionAction(row),feedback=feedbackFor(row,s);
+    const quiet=DONE.has(statusKey(feedback.status))&&!row.error&&!object(row.feedback).error&&!g.rows.some(r=>protectedIDs.has(r.decision_id));
+    if(quiet&&(action==="finish"||auxiliary.has(action)))folded[action==="finish"?"finish":"auxiliary"].push(g);
+    else visible.push(g);
+  }
+  const candidates=list(s.candidates),byCandidate=new Map(),result=[];
+  const candidateFor=row=>{
+    if(row.kind==="review"||FAILED.has(statusKey(feedbackFor(row,s).status))||row.error||object(row.feedback).error)return null;
+    const related=relatedResults(row,s).filter(r=>r.type==="candidate").map(r=>r.row);
+    if(!present(row.candidate_id)&&present(row.job_id))related.push(...candidates.filter(c=>sameId(c.candidate_id,row.job_id)));
+    const matches=[...new Set(related)];
+    return matches.length===1&&candidates.filter(c=>c.candidate_id===matches[0].candidate_id).length===1?matches[0]:null;
+  };
+  for(const g of visible){
+    const candidate=candidateFor(g.row),id=candidate?.candidate_id;
+    if(id&&byCandidate.has(id))byCandidate.get(id).rows.push(...g.rows);
+    else {const next={...g,rows:[...g.rows],candidate};result.push(next);if(id)byCandidate.set(id,next);}
+  }
+  // Remap only explicit relationships between retained groups. Internal edges
+  // disappear inside a candidate; no chronological or inferred adoption is added.
+  const ids=new Map();
+  for(const g of groups)for(const row of g.rows)if(identifier(row.decision_id))ids.set(row.decision_id,(ids.get(row.decision_id)||0)+1);
+  const remap=new Map();
+  for(const g of result)for(const row of g.rows)if(ids.get(row.decision_id)===1)remap.set(row.decision_id,g.row.decision_id);
+  // Contracting interleaved candidate steps can introduce a cycle even when
+  // the raw DAG is valid. Keep its individual steps in that case.
+  const owners=new Map(result.map((g,i)=>[g.row.decision_id,i])),degree=result.map(()=>0),children=result.map(()=>new Set());
+  result.forEach((g,to)=>g.rows.forEach(row=>{
+    for(const id of [row.parent_decision_id,...listStrings(row.depends_on_decision_ids),...listStrings(row.adopted_decision_ids)]){
+      const from=ids.get(id)===1?owners.get(remap.get(id)):undefined;
+      if(from!==undefined&&from!==to&&!children[from].has(to)){children[from].add(to);degree[to]++;}
+    }
+  }));
+  const queue=degree.map((n,i)=>n===0?i:-1).filter(i=>i>=0);
+  for(let i=0;i<queue.length;i++)for(const next of children[queue[i]])if(--degree[next]===0)queue.push(next);
+  if(queue.length!==result.length)return {groups:visible,folded};
+  for(const g of result){
+    const original=g.row,relations=["depends_on_decision_ids","adopted_decision_ids","source_decision_ids"];
+    g.row={...original};
+    for(const field of relations){
+      const values=g.rows.flatMap(row=>[...listStrings(row[field]),...(field==="depends_on_decision_ids"&&identifier(row.parent_decision_id)?[row.parent_decision_id]:[])]);
+      if(values.length||g.rows.some(row=>Object.hasOwn(row,field)))g.row[field]=[...new Set(values.map(id=>remap.get(id)||id).filter(id=>id!==original.decision_id))];
+    }
+    if(identifier(original.parent_decision_id))delete g.row.parent_decision_id;
+    if(g.candidate)g.title=t("候选 {p0} · {p1}",{p0:candidates.indexOf(g.candidate)+1,p1:g.rows.some(row=>decisionAction(row)==="apply_candidate"&&DONE.has(statusKey(row.status)))?t("已采纳"):g.rows.some(row=>["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))&&DONE.has(statusKey(row.status)))?t("已评测"):actionText(decisionAction(original))});
+  }
+  return {groups:result,folded};
+}
 const changeLabels = {instructions:"提示词内容",method:"训练方法",recipe_ref:"训练方案",protocol_ref:"评测方案",candidate_id:"待验证版本",apply_result:"训练后自动应用",steps:"训练步数",lr:"学习率",seed:"随机种子",weight_decay:"权重衰减",warmup_ratio:"预热比例",updates:"更新次数",components:"改动部分",query:"检索内容",url:"阅读地址",artifact_id:"资料引用",offset:"起始位置",limit:"数量"};
 function changesView(row,s) {
   const changes=list(row.changes).filter(c=>typeof c.field==="string"&&c.field!=="base_version"&&(typeof c.after==="string"||typeof c.before==="string"));
@@ -287,11 +343,26 @@ function concreteFeedback(row) {
 }
 function executionSequence(s, scope) {
   scope.flowOpen ||= new Set(); scope.flowSelected ||= new Map();
-  const section=el("section","execution-sequence"),groups=executionGroups(s);
+  const allGroups=executionGroups(s),progress=progressGroups(s,allGroups),mode=scope.graphMode||"progress";
+  const section=el("section","execution-sequence"),groups=mode==="all"?allGroups:progress.groups;
   const graphRows=groups.map(g=>g.row),graphKeys=new Map(RSIDecisions.layout(graphRows).nodes.filter(n=>n.row).map(n=>[groups[n.index],n.key]));
   section.id="execution-flow";
 
-  scope.graphView ||= {};
+  scope.graphViews ||= {progress:scope.graphView||{},all:{}};
+  scope.graphView=scope.graphViews[mode];scope.modeSelected ||= new Map();scope.progressSteps ||= new Map();
+  const changeMode=(next,selected)=>{
+    scope.graph?.dispose?.();scope.modeSelected.set(mode,scope.flowSelected.get(s.run_id));
+    scope.graphMode=next;scope.graphView=scope.graphViews[next];
+    scope.flowSelected.set(s.run_id,selected??scope.modeSelected.get(next));
+    scope.detailFingerprint=null;renderProject();
+  };
+  const toolbar=el("div","trajectory-heading"),switcher=el("div","trajectory-mode");
+  switcher.setAttribute("role","group");switcher.setAttribute("aria-label",t("脉络视图"));
+  for(const [value,title] of [["progress","关键进展"],["all","全部记录"]]){
+    const button=el("button","",t(title));button.type="button";button.setAttribute("aria-pressed",String(value===mode));button.addEventListener("click",()=>{if(value!==mode)changeMode(value);});switcher.append(button);
+  }
+  const foldedCount=Object.values(progress.folded).flatMap(gs=>gs.flatMap(g=>g.rows)).length;
+  toolbar.append(switcher,el("p","quiet-note",mode==="all"?t("{p0} 条原始记录",{p0:list(s.decisions).length}):t("{p0} 个进展节点 · 折叠 {p1} 条辅助与收尾记录",{p0:groups.length,p1:foldedCount})));section.append(toolbar);
   const shell=el("div","trajectory-shell"),navigation=el("div","flow-map");
   navigation.setAttribute("aria-label",t("本次运行的决策"));shell.append(navigation);
   const controls=el("div","trajectory-tools");
@@ -305,27 +376,43 @@ function executionSequence(s, scope) {
     entries.replaceChildren();
     const keyOf=g=>graphKeys.get(g);
     let selected=scope.flowSelected.get(s.run_id);
-    if(!groups.some(g=>keyOf(g)===selected))selected=groups.length?keyOf(groups[0]):null;
+    if(!groups.some(g=>keyOf(g)===selected)){
+      const preferred=mode==="progress"?[...groups].reverse().find(g=>g.candidate&&g.rows.some(r=>decisionAction(r)==="apply_candidate"&&DONE.has(statusKey(r.status)))):null;
+      selected=groups.length?keyOf(preferred||groups[0]):null;
+    }
     scope.flowSelected.set(s.run_id,selected);
     scope.graph?.dispose?.();
     scope.graph=RSIDecisions.render({
       view:scope.graphView,
       onIdle:()=>{if(scope===state.activeScope&&state.page==="experiment"&&scope.renderPending){scope.renderPending=false;renderProject();}},
-      rows:graphRows,selected,
-      startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>`${index+1} · ${decisionTitle(row)}`,
+      rows:graphRows,selected,compact:mode==="progress",
+      startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>`${index+1} · ${groups[index].title||decisionTitle(row)}${FAILED.has(statusKey(feedbackFor(row,s).status))?` · ${statusText(feedbackFor(row,s).status)}`:""}`,
       edgeLabel:kind=>t({sequence:"记录顺序，不表示因果",parent:"明确的父决策",dependency:"依赖已完成决策",adoption:"已确认采纳结果",root:"实验起点",source:"引用的决策"}[kind]),
       onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
     });
     navigation.replaceChildren(scope.graph);
     navigation.scrollLeft=scroll.left;navigation.scrollTop=scroll.top;
     for(const [i,g] of groups.entries()){
-      const row=g.row,f=feedbackFor(row,s),key=keyOf(g);
+      const key=keyOf(g);
       if(key!==selected)continue;
+      let row=g.row;
+      if(g.candidate){
+        const chosen=scope.progressSteps.get(key);
+        row=g.rows.find(r=>decisionKey(r)===chosen)||[...g.rows].reverse().find(r=>["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(r)))||g.rows[g.rows.length-1];
+        const stages=el("li","progress-stages");stages.append(el("h4","",g.title));
+        const buttons=el("div","progress-stage-buttons");
+        for(const record of g.rows){
+          const button=el("button","",decisionTitle(record));button.type="button";button.setAttribute("aria-pressed",String(record===row));
+          button.addEventListener("click",()=>{scope.progressSteps.set(key,decisionKey(record));fill();});buttons.append(button);
+        }
+        stages.append(buttons);entries.append(stages);
+      }
+      const f=feedbackFor(row,s);
       const step=el("li","flow-step"),index=el("span","flow-index",String(i+1).padStart(2,"0"));
       const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
       const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
       const title=decisionTitle(row);decision.append(el("h4","",title),meta);
-      if(g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
+      if(!g.candidate&&g.rows.length>1)decision.append(el("p","repeat-count",t("重复报告 {p0} 次", {p0: g.rows.length})));
       if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
       if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row)&&asText(row.strategy,"").trim()!==title)decision.append(el("p","decision-reason",row.strategy));
       const changes=changesView(row,s);if(changes)decision.append(changes);
@@ -360,7 +447,16 @@ function executionSequence(s, scope) {
     }
     if(restoreFocus)navigation.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
   };
-  fill();if(!groups.length)section.append(empty(t("尚无决策记录，不能重建执行流程。")));
+  fill();if(!groups.length)section.append(empty(t(allGroups.length?"暂无关键进展，可展开下方记录或切换全部记录。":"尚无决策记录，不能重建执行流程。")));
+  if(mode==="progress"){
+    const keys=new Map(RSIDecisions.layout(allGroups.map(g=>g.row)).nodes.filter(n=>n.row).map(n=>[allGroups[n.index],n.key]));
+    for(const [kind,title] of [["auxiliary","辅助操作"],["finish","本轮收尾"]]){
+      const folded=progress.folded[kind];if(!folded.length)continue;
+      const content=el("div","folded-records");
+      for(const g of folded){const button=el("button","folded-record",`${dateText(g.row.timestamp)} · ${decisionTitle(g.row)}${g.rows.length>1?` × ${g.rows.length}`:""}`);button.type="button";button.addEventListener("click",()=>changeMode("all",keys.get(g)));content.append(button);}
+      section.append(retainedDetails(JSON.stringify([s.run_id,"folded",kind]),scope.flowOpen,t("{p0} · {p1} 条",{p0:t(title),p1:folded.reduce((n,g)=>n+g.rows.length,0)}),content));
+    }
+  }
   return section;
 }
 function runDetail(node, scope) {
@@ -426,7 +522,7 @@ function renderProject() {
   const host=$("project-content"),details=scope.details || (scope.details=el("section","project-detail"));
   details.setAttribute("aria-label",t("本次运行的决策"));
   const entry=scope.cache.get(row.run_id);
-  const fingerprint=JSON.stringify([RSII18n.getLanguage(),row,entry?.snapshot,entry?.status==="pending"&&entry?.snapshot?"ready":entry?.status,entry?.error||"",state.projects.map(p=>[p.project_id,projectName(p)])]);
+  const fingerprint=JSON.stringify([RSII18n.getLanguage(),scope.graphMode||"progress",row,entry?.snapshot,entry?.status==="pending"&&entry?.snapshot?"ready":entry?.status,entry?.error||"",state.projects.map(p=>[p.project_id,projectName(p)])]);
   if(scope.detailFingerprint!==fingerprint){
     const position=typeof window!=="undefined"?{left:window.scrollX,top:window.scrollY}:null;
     for(const d of details.querySelectorAll?.("details[data-retain-key]")||[]){

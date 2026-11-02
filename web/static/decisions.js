@@ -16,11 +16,12 @@
  * never affect topology. Longest-path layers center forks and multi-parent joins.
  * Root stays fixed. This pure layout is independent of the interactive renderer.
  *
- * render({rows, selected, onSelect, label, startLabel, edgeLabel, view, onIdle})
+ * render({rows, selected, onSelect, label, startLabel, edgeLabel, view, onIdle, compact})
  * returns a responsive 420px SVG with dispose(), fit(), zoomBy(factor), reset().
  * view is caller-owned per run: positions Map<key,{x,y}>, camera {x,y,scale},
  * pinned Set<key>, interacting/animating booleans. Reuse it across rerenders.
- * Dragged nodes stay pinned until reset. Only layout edges are ever drawn.
+ * compact uses tighter vertical spacing for a summarized view. Dragged nodes
+ * stay pinned until reset. Only layout edges are ever drawn.
  * onIdle() follows interaction/settling; dispose() NEVER calls it.
  * No idle RAF/timer: a drag starts at most 24 frames, release at most 18 frames.
  * selected is a node key; label(row, originalIndex) returns its full label.
@@ -219,7 +220,7 @@
   }
 
   function render({ rows = [], selected = null, onSelect, label, startLabel = "Start", edgeLabel,
-    view = {}, onIdle } = {}) {
+    view = {}, onIdle, compact = false } = {}) {
     const model = layout(rows), HEIGHT = 420, document = root.document;
     const finitePoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
     if (!view.positions?.get || !view.positions?.set) view.positions = new Map();
@@ -258,7 +259,7 @@
     for (const node of model.nodes) {
       const depth = Math.round((node.x - X) / COLUMN);
       node.home = { x: node.x, y: node.type === "root" ? Y
-        : Y + (node.y - Y) * 1.8 + (depth % 2 ? -64 : 64) + hash(node.key) * 20 - 10 };
+        : Y + (node.y - Y) * (compact ? 1 : 1.8) + (compact ? 0 : depth % 2 ? -64 : 64) + hash(node.key) * 20 - 10 };
       const saved = positions.get(node.key);
       const point = node.type !== "root" && finitePoint(saved) ? saved : node.home;
       node.x = point.x; node.y = point.y;
@@ -433,6 +434,7 @@
     }
     for (const node of model.nodes) {
       const isRoot = node.type === "root", active = !isRoot && node.key === selected;
+      const failed = !isRoot && ["failed","failure","error","cancelled","canceled"].includes(node.row.feedback?.status||node.row.status);
       const fullLabel = String(isRoot ? startLabel : (typeof label === "function"
         ? label(node.row, node.index) : node.row.operation || node.row.action || node.row.mode
           || node.row.kind || node.row.decision_id || `Decision ${node.index + 1}`) ?? "");
@@ -461,7 +463,7 @@
       if (active) group.append(element("circle", { class: "decision-halo", r: 13,
         fill: "var(--orange, #b45b35)", opacity: 0.18, "pointer-events": "none" }));
       group.append(element("circle", { class: "decision-dot", r: active ? 8 : 6,
-        fill: active ? "var(--orange, #b45b35)" : "var(--muted, #8a7568)" }));
+        fill: active ? "var(--orange, #b45b35)" : failed ? "var(--red, #9a4d42)" : "var(--muted, #8a7568)" }));
       // Preserve natural glyph proportions; wrap words instead of squeezing text.
       const measure = value => Array.from(value).reduce((sum, char) => sum +
         (char.codePointAt(0) > 255 ? 16 : /[MW@#]/.test(char) ? 14 : /[il.,:;!| ]/.test(char) ? 5 : 9), 0);
