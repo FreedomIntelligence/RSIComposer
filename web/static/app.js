@@ -694,8 +694,8 @@ function switchDemo() {
   $("projects").hidden = true;
   clearRun();
   state.snapshot = null;
-  $("demo").textContent = state.demo ? t("返回") : t("示例");
-  $("demo").setAttribute("aria-pressed", String(state.demo));
+  if ($("demo")) $("demo").textContent = state.demo ? t("返回") : t("示例");
+  $("demo")?.setAttribute("aria-pressed", String(state.demo));
   $("empty").hidden = false;
   refresh();
 }
@@ -705,8 +705,8 @@ if(typeof window!=="undefined")window.addEventListener("popstate",()=>{
   if(id&&ownerOfRun(id))selectRun(id,false);
   else showManagement(false);
 });
-$("demo").addEventListener("click", switchDemo);
-$("empty-demo").addEventListener("click", () => {
+$("demo")?.addEventListener("click", switchDemo);
+$("empty-demo")?.addEventListener("click", () => {
   if (!state.demo) switchDemo();
   else refresh();
 });
@@ -718,7 +718,7 @@ document.addEventListener("visibilitychange", () => {
 function renderLanguage() {
   RSII18n.applyStatic(document);
   for(const lang of ["zh","en"])$("lang-"+lang)?.setAttribute("aria-pressed",String(RSII18n.getLanguage()===lang));
-  $("demo").textContent=state.demo?t("返回"):t("示例");
+  if ($("demo")) $("demo").textContent=state.demo?t("返回"):t("示例");
   notice(chrome.notice,chrome.noticeError);
   $("empty-title").textContent=copy(chrome.emptyTitle);$("empty-description").textContent=copy(chrome.emptyDescription);
   $("footer-source").textContent=state.demo?t("示例数据 · 静态快照"):t("本地监控 · 只读");
