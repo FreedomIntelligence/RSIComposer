@@ -25,6 +25,8 @@ class Element {
   releasePointerCapture(id) { if(this.capturedPointer===id)delete this.capturedPointer; }
   querySelectorAll(selector) { return descendants(this).filter(n => selector.startsWith(".") ? (n.className || "").split(" ").includes(selector.slice(1)) : selector === "details[data-retain-key]" && n.tagName === "details" && n.dataset.retainKey); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  showModal() { this.open=true; }
+  close() { if(!this.open)return;this.open=false;this.listeners.close?.(); }
   focus() {}
 }
 function harness(fetcher = async () => { throw Error("unexpected fetch"); }, search = "") {

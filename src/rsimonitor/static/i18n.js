@@ -532,6 +532,8 @@
   "轮次结果": "Round results",
   "事件": "Events",
   "RSISys · 研究脉络": "RSISys · Research graph",
+  "关闭": "Close",
+  "取消": "Cancel",
   "只读": "Read only"
 } );
   const chinese = Object.freeze(Object.fromEntries(Object.keys(english).map(key => [key, key])));

@@ -28,18 +28,18 @@ test("line charts reject mixed units and missing x values without inventing data
   const missing=h.run('dashboardPanel({id:"m",type:"line",title:"Time",metrics:["loss"],x:"elapsed_seconds",group_by:"none"},dashboardData(sample),sample)');assert.match(textOf(missing),/当前横轴暂无数据/);
 });
 test("saved user layout overrides producer defaults, persists and remains isolated per experiment",()=>{
-  const {h,storage}=open(fixture),editor=findClass(host(h),"dashboard-editor")[0];editor.open=true;editor.listeners.toggle();
+  const {h,storage}=open(fixture),editor=findClass(host(h),"dashboard-dialog")[0];button(host(h),"配置看板").listeners.click();
   assert.equal(h.run('state.activeScope.dashboardEditing'),true);
   const row=findClass(editor,"dashboard-editor-panel")[0],input=descendants(row).find(n=>n.tagName==="input"&&n.type!=="checkbox"),select=descendants(row).find(n=>n.tagName==="select");input.value="My loss";input.listeners.input();select.value="scalar";select.listeners.change();
   const previous=host(h).firstElementChild;h.run('state.activeScope.cache.get("a").snapshot={...state.snapshot,updated_at:"2026-11-03"};renderProject()');assert.equal(host(h).firstElementChild,previous);assert.equal(h.run('state.activeScope.renderPending'),true);
   button(editor,"保存布局").listeners.click();assert.match(textOf(host(h)),/My loss/);assert.equal(findClass(host(h),"benchmark-line").length,0);assert.equal(JSON.parse(storage.get("rsimonitor-dashboard:v1:a")).panels[0].type,"scalar");
   h.run('selectRun("b")');assert.doesNotMatch(textOf(host(h)),/My loss/);h.run('selectRun("a")');assert.match(textOf(host(h)),/My loss/);
-  const next=findClass(host(h),"dashboard-editor")[0];next.open=true;next.listeners.toggle();button(next,"恢复默认").listeners.click();assert.equal(storage.has("rsimonitor-dashboard:v1:a"),false);assert.match(textOf(host(h)),/Training loss|Loss/);
+  const next=findClass(host(h),"dashboard-dialog")[0];button(host(h),"配置看板").listeners.click();button(next,"恢复默认").listeners.click();button(next,"保存布局").listeners.click();assert.equal(storage.has("rsimonitor-dashboard:v1:a"),false);assert.match(textOf(host(h)),/Training loss|Loss/);
 });
 test("add remove and reorder panel controls preserve a deliberately empty layout",()=>{
-  const {h}=open(fixture),editor=findClass(host(h),"dashboard-editor")[0];editor.open=true;editor.listeners.toggle();button(editor,"添加面板").listeners.click();assert.equal(findClass(editor,"dashboard-editor-panel").length,2);
+  const {h}=open(fixture),editor=findClass(host(h),"dashboard-dialog")[0];button(host(h),"配置看板").listeners.click();button(editor,"添加面板").listeners.click();assert.equal(findClass(editor,"dashboard-editor-panel").length,2);
   const rows=findClass(editor,"dashboard-editor-panel");button(rows[1],"上移").listeners.click();assert.equal(h.run('state.activeScope.dashboardDraft.panels[0].id'),"custom-1");
-  button(editor,"删除面板").listeners.click();button(editor,"删除面板").listeners.click();button(editor,"保存布局").listeners.click();assert.equal(findClass(host(h),"dashboard-panel").length,0);assert.ok(findClass(host(h),"dashboard-editor").length);
+  button(editor,"删除面板").listeners.click();button(editor,"删除面板").listeners.click();button(editor,"保存布局").listeners.click();assert.equal(findClass(host(h),"dashboard-panel").length,0);assert.ok(findClass(host(h),"dashboard-dialog").length);
 });
 test("line marker budget is bounded while full curve samples and scalar latest value survive",()=>{
   const sample={...fixture,metric_points:Array.from({length:1000},(_,i)=>({metric:"loss",value:i===501?100:i/1000,step:i,task_id:"first"}))},{h}=open(sample);
@@ -47,7 +47,26 @@ test("line marker budget is bounded while full curve samples and scalar latest v
 });
 
 test("editor hides irrelevant axes and enforces the metric selection limit",()=>{
-  const keys=Array.from({length:13},(_,i)=>`m${i}`),sample={metric_definitions:Object.fromEntries(keys.map(key=>[key,{label:key,unit:"number",direction:"neutral"}])),metric_points:[],dashboard:{schema_version:1,panels:[panel("Many","line",{metrics:keys.slice(0,12)})]}},{h}=open(sample),editor=findClass(host(h),"dashboard-editor")[0];editor.open=true;editor.listeners.toggle();
+  const keys=Array.from({length:13},(_,i)=>`m${i}`),sample={metric_definitions:Object.fromEntries(keys.map(key=>[key,{label:key,unit:"number",direction:"neutral"}])),metric_points:[],dashboard:{schema_version:1,panels:[panel("Many","line",{metrics:keys.slice(0,12)})]}},{h}=open(sample),editor=findClass(host(h),"dashboard-dialog")[0];button(host(h),"配置看板").listeners.click();
   const checkboxes=()=>descendants(editor).filter(n=>n.type==="checkbox");assert.equal(checkboxes().filter(n=>n.disabled).length,1);checkboxes()[0].checked=false;checkboxes()[0].listeners.change();assert.equal(checkboxes().filter(n=>n.disabled).length,0);
   const type=descendants(editor).find(n=>n.tagName==="select");type.value="scalar";type.listeners.change();assert.equal(descendants(editor).filter(n=>n.tagName==="select").length,2);
+});
+
+test("dashboard configuration is a labelled modal and cancel discards all staged edits",()=>{
+  const {h,storage}=open(fixture),editor=findClass(host(h),"dashboard-dialog")[0],trigger=button(host(h),"配置看板");
+  assert.equal(editor.tagName,"dialog");assert.equal(editor.open,false);assert.equal(trigger.getAttribute("aria-haspopup"),"dialog");assert.equal(editor.getAttribute("aria-labelledby"),"dashboard-config-title");
+  trigger.listeners.click();assert.equal(editor.open,true);button(editor,"删除面板").listeners.click();button(editor,"取消").listeners.click();
+  assert.equal(editor.open,false);assert.equal(storage.size,0);assert.equal(h.run('state.activeScope.dashboardDraft'),null);assert.equal(findClass(host(h),"dashboard-panel").length,1);
+  trigger.listeners.click();assert.equal(findClass(editor,"dashboard-editor-panel").length,1);let prevented=false;editor.listeners.cancel({preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(editor.open,false);
+});
+test("modal backdrop closes only outside the dialog and tab hiding preserves its draft",()=>{
+  const {h}=open(fixture),editor=findClass(host(h),"dashboard-dialog")[0];button(host(h),"配置看板").listeners.click();editor.getBoundingClientRect=()=>({left:20,right:900,top:40,bottom:700});
+  editor.listeners.click({target:editor,clientX:30,clientY:50});assert.equal(editor.open,true);
+  h.document.hidden=true;h.documentListeners.visibilitychange();assert.equal(h.run('state.activeScope.dashboardEditing'),true);assert.equal(editor.open,true);
+  editor.listeners.click({target:editor,clientX:0,clientY:0});assert.equal(editor.open,false);assert.equal(h.run('state.activeScope.dashboardEditing'),false);
+});
+test("cancel applies queued metrics without saving the draft or moving page scroll",()=>{
+  const {h,storage}=open(fixture),editor=findClass(host(h),"dashboard-dialog")[0];h.ctx.window.scrollY=720;button(host(h),"配置看板").listeners.click();button(editor,"删除面板").listeners.click();
+  h.run('state.activeScope.cache.get("a").snapshot={...state.snapshot,metric_points:[...state.snapshot.metric_points,{metric:"loss",value:.2,step:3,task_id:"first"}]};renderProject()');assert.equal(h.run('state.activeScope.renderPending'),true);
+  button(editor,"取消").listeners.click();assert.equal(storage.size,0);assert.equal(findClass(host(h),"dashboard-panel").length,1);assert.match(textOf(findClass(host(h),"metric-dashboard")[0]),/0.2/);assert.equal(h.ctx.window.scrollY,720);
 });

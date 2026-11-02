@@ -318,10 +318,13 @@ function dashboardPanel(panel,data,s) {
 function metricDashboard(s,scope) {
   const data=dashboardData(s),storageKey=`rsimonitor-dashboard:v1:${s.run_id}`;
   let override=null;try{override=dashboardConfig(JSON.parse(localStorage.getItem(storageKey)));}catch{}
-  const config=scope.dashboardOverride||override||dashboardConfig(s.dashboard)||defaultDashboard(data);
+  const defaults=dashboardConfig(s.dashboard)||defaultDashboard(data);
+  const config=scope.dashboardOverride||override||defaults;
   const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),title=el("h4","",t("指标看板"));heading.append(title);section.append(heading);
   const grid=el("div","benchmark-grid");for(const panel of config.panels)grid.append(dashboardPanel(panel,data,s));section.append(grid);
-  const editor=el("details","dashboard-editor"),summary=el("summary","",t("配置看板")),form=el("div","dashboard-editor-body");editor.append(summary,form);section.append(editor);
+  const trigger=el("button","dashboard-configure",t("配置看板"));trigger.type="button";trigger.setAttribute("aria-haspopup","dialog");heading.append(trigger);
+  const editor=el("dialog","dashboard-dialog"),dialogHeading=el("header","dashboard-dialog-heading"),dialogTitle=el("h3","",t("配置看板")),close=el("button","dashboard-close","×"),form=el("div","dashboard-editor-body"),footer=el("footer","dashboard-dialog-footer");
+  dialogTitle.id="dashboard-config-title";editor.setAttribute("aria-labelledby",dialogTitle.id);close.type="button";close.autofocus=true;close.setAttribute("aria-label",t("关闭"));dialogHeading.append(dialogTitle,close);editor.append(dialogHeading,form,footer);section.append(editor);
   const repaint=()=>{scope.detailFingerprint=null;renderProject();};
   const draft=()=>scope.dashboardDraft||=JSON.parse(JSON.stringify(config));
   const field=(label,node)=>{const wrapper=el("label","dashboard-field");wrapper.append(el("span","",t(label)),node);return wrapper;};
@@ -336,12 +339,19 @@ function metricDashboard(s,scope) {
       const controls=el("div","dashboard-order");for(const [label,delta] of [["上移",-1],["下移",1]]){const button=el("button","",t(label));button.type="button";button.disabled=index+delta<0||index+delta>=draft().panels.length;button.addEventListener("click",()=>{const target=index+delta;[draft().panels[index],draft().panels[target]]=[draft().panels[target],draft().panels[index]];renderEditor();});controls.append(button);}
       const remove=el("button","",t("删除面板"));remove.type="button";remove.addEventListener("click",()=>{draft().panels.splice(index,1);renderEditor();});controls.append(remove);row.append(controls);form.append(row);
     }
-    const actions=el("div","dashboard-actions"),add=el("button","",t("添加面板")),save=el("button","",t("保存布局")),reset=el("button","",t("恢复默认"));
+    footer.replaceChildren();
+    const actions=el("div","dashboard-actions"),add=el("button","",t("添加面板")),save=el("button","dashboard-save",t("保存布局")),reset=el("button","",t("恢复默认")),cancel=el("button","",t("取消"));
+    for(const button of [add,save,reset,cancel])button.type="button";
     add.disabled=draft().panels.length>=24;add.addEventListener("click",()=>{const ids=new Set(draft().panels.map(p=>p.id));let index=1;while(ids.has(`custom-${index}`))index++;draft().panels.push({id:`custom-${index}`,title:t("新面板"),type:"line",metrics:data.keys.slice(0,1),x:"step",group_by:"none"});renderEditor();});
-    save.addEventListener("click",()=>{const next=dashboardConfig(draft());if(!next)return;scope.dashboardOverride=next;try{localStorage.setItem(storageKey,JSON.stringify(next));}catch{}scope.dashboardDraft=null;scope.dashboardEditing=false;repaint();});
-    reset.addEventListener("click",()=>{try{localStorage.removeItem(storageKey);}catch{}scope.dashboardOverride=null;scope.dashboardDraft=null;scope.dashboardEditing=false;repaint();});actions.append(add,save,reset);form.append(actions);
+    save.addEventListener("click",()=>{const next=dashboardConfig(draft());if(!next)return;const isDefault=JSON.stringify(next)===JSON.stringify(defaults);scope.dashboardOverride=isDefault?null:next;try{if(isDefault)localStorage.removeItem(storageKey);else localStorage.setItem(storageKey,JSON.stringify(next));}catch{}scope.renderPending=true;editor.close();});
+    reset.addEventListener("click",()=>{scope.dashboardDraft=JSON.parse(JSON.stringify(defaults));renderEditor();});
+    cancel.addEventListener("click",()=>editor.close());actions.append(cancel,save);footer.append(reset,actions);form.append(add);
   };
-  editor.addEventListener("toggle",()=>{scope.dashboardEditing=editor.open;if(editor.open)renderEditor();else{scope.dashboardDraft=null;if(scope.renderPending){scope.renderPending=false;repaint();}}});
+  trigger.addEventListener("click",()=>{scope.dashboardDraft=JSON.parse(JSON.stringify(config));renderEditor();editor.showModal();scope.dashboardEditing=true;scope.dashboardDialog=editor;});
+  close.addEventListener("click",()=>editor.close());
+  editor.addEventListener("cancel",event=>{event.preventDefault();editor.close();});
+  editor.addEventListener("click",event=>{if(event.target!==editor)return;const rect=editor.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)editor.close();});
+  editor.addEventListener("close",()=>{scope.dashboardDraft=null;scope.dashboardEditing=false;scope.dashboardDialog=null;if(scope===state.activeScope&&state.page==="experiment"){if(scope.renderPending){scope.renderPending=false;repaint();}scope.details?.querySelector(".dashboard-configure")?.focus({preventScroll:true});}});
   return section;
 }
 
@@ -379,7 +389,8 @@ function abortEntry(entry) {
 }
 function disposeGraph(scope) {
   if(!scope)return;
-  scope.dashboardEditing=false;
+  scope.dashboardEditing=false;scope.dashboardDraft=null;scope.renderPending=false;
+  if(scope.dashboardDialog?.open)scope.dashboardDialog.close();scope.dashboardDialog=null;
   scope.graph?.dispose?.();scope.graph=null;scope.attemptGraph?.dispose?.();scope.attemptGraph=null;scope.attemptView=null;scope.detailFingerprint=null;scope.renderPending=false;
 }
 function activateProject() {
@@ -857,7 +868,7 @@ $("empty-demo")?.addEventListener("click", () => {
   else refresh();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { clearTimeout(state.timer); disposeGraph(state.activeScope); }
+  if (document.hidden) { clearTimeout(state.timer); if(!state.activeScope?.dashboardEditing)disposeGraph(state.activeScope); }
   else if(state.demo)renderProject();
   else if (state.auto) refresh();
 });

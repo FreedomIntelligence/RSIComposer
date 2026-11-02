@@ -234,9 +234,22 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 
 /* Configurable metrics use the same warm paper, thin rules and muted accents. */
 .metric-dashboard > .detail-heading { align-items: baseline; }
-.dashboard-editor { margin-top: 12px; }
-.dashboard-editor > summary { width: fit-content; color: var(--muted); font-size: 14px; }
-.dashboard-editor-body { margin-top: 16px; display: grid; gap: 16px; }
+.dashboard-configure { color: var(--muted); font-size: 14px; }
+.dashboard-dialog { width: min(940px, calc(100vw - 40px)); max-width: none; max-height: min(820px, calc(100dvh - 48px)); padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--paper); box-shadow: 0 24px 90px #302b2526; overflow: hidden; }
+.dashboard-dialog[open] { display: flex; flex-direction: column; }
+.dashboard-dialog::backdrop { background: #302b2566; }
+body:has(.dashboard-dialog[open]) { overflow: hidden; }
+.dashboard-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 26px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.dashboard-dialog-heading h3 { font-size: 26px; }
+.dashboard-close { border: 0; color: var(--muted); font-size: 26px; line-height: 1; min-width: 36px; }
+.dashboard-editor-body { display: grid; gap: 16px; padding: 24px 26px; overflow-y: auto; overscroll-behavior: contain; }
+.dashboard-editor-body > button { justify-self: start; font-size: 14px; }
+.dashboard-dialog-footer { width: 100%; color: var(--ink); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 26px; margin: 0; border-top: 1px solid var(--line); flex-shrink: 0; }
+.dashboard-dialog-footer button { font-size: 14px; }
+.dashboard-dialog-footer .dashboard-actions { padding: 0; }
+.dashboard-dialog-footer .dashboard-save { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.dashboard-dialog-footer .dashboard-save:hover { background: #4a4137; }
+@media(max-width:440px) { .dashboard-dialog-heading, .dashboard-editor-body, .dashboard-dialog-footer { padding: 16px; } }
 .dashboard-editor-panel { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; padding: 18px; background: var(--panel); border-radius: 7px; }
 .dashboard-field { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
 .dashboard-field > span { color: var(--muted); }
