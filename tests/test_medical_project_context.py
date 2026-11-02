@@ -57,8 +57,10 @@ class MedicalProjectContextTests(unittest.TestCase):
         self.assertEqual(project['scientific_evaluation']['development'],
                          [{'benchmark_id': 'medqa', 'role': 'primary', 'legal_labels': list('ABCD')}])
         self.assertIn('operator-private exclusions', project['data_restrictions'])
-        self.assertEqual(project['budgets']['trainings'], 3)
-        self.assertIn('Train budget=3, decision calls=96', context['objective'])
+        self.assertNotIn('budgets', project)
+        self.assertEqual(project['control_ownership']['budget_manager'], 'host')
+        self.assertEqual(project['execution_constraints']['max_train_steps'], 64)
+        self.assertNotIn('Train budget=', context['objective'])
         self.assertNotIn(resources['scope'], request['system'])
         self.assertFalse(self.process.requests)
 
@@ -233,6 +235,29 @@ class MedicalProjectSettingsTests(unittest.TestCase):
         changed = policy._decision_request(replace(context, run_control={'remaining': 1}))
         original = policy._decision_request(context)
         self.assertEqual(original.prompt.split(',"experience":')[0], changed.prompt.split(',"experience":')[0])
+
+    def test_time_contract_hides_live_budgets_from_decision_review_and_summary(self):
+        model = ModelRef('fixture', 'researcher', 'pinned')
+        backend = SimpleNamespace(serving=SimpleNamespace(), decision_thinking=False, max_output_tokens=8192)
+        policy = ResearchPolicy(backend, model, DirectiveDefinitions(), None, None, None,
+            ArtifactRef('train', 'training_data', 'artifact://train'), run_mode='time')
+        control = {'remaining_seconds': 1234, 'research_round': 19,
+                   'training_budget': {'remaining': 1}, 'model_call_budget': {'remaining': 400}}
+        context = DecisionContext('Research', (), (), (), directive_modes=(), run_control=deepcopy(control))
+        for request in (policy._decision_request(context), policy._review_request(context)):
+            visible = json.loads(request.prompt)['run_control']
+            self.assertEqual(set(visible), {'stopping_owner', 'initial_training_data'})
+            self.assertEqual(visible['stopping_owner'], 'host')
+        summary = policy._summary_current_state(context)
+        self.assertEqual(summary['run_control'], visible)
+        self.assertEqual(context.run_control, control)
+        request = policy._decision_request(context)
+        self.assertNotIn('Use {"kind":"finish"} when done.', request.system)
+        self.assertIn('The host owns stopping', request.system)
+        branches = policy.decision_schema(context)['oneOf']
+        self.assertEqual([b['properties']['kind']['const'] for b in branches], ['wait'])
+        self.assertIn('reason', branches[0]['required'])
+        self.assertEqual(branches[0]['properties']['job'], {'type': 'null'})
 
 
 class MedicalMonitorThreadTests(unittest.TestCase):

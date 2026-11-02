@@ -46,7 +46,7 @@ class MedicalDSHTests(unittest.TestCase):
     setUp = medical_fixture.MedicalExperimentIntegrationTests.setUp
 
     def execute(self, script, *, kind='dsh', max_model_calls=96, harness_factory=None, require_research_attempts=False,
-                feedback_learning=False, feedback_backend=None):
+                feedback_learning=False, feedback_backend=None, run_mode='researcher'):
         runtime = MedicalRuntime(script, self.process)
         config_path = self.root / ('dsh-'+str(len(list(self.root.glob('run-*'))))+'.json')
         config_path.write_text(json.dumps({'home': str(self.root/'dsh-home'), 'workspace': str(self.root),
@@ -55,7 +55,8 @@ class MedicalDSHTests(unittest.TestCase):
         root = self.root / ('run-'+kind)
         settings = ExperimentSettings(self.task, root, self.root/'fixture-model', decision_harness=kind,
             dsh_config=config_path if kind == 'dsh' else None, max_model_calls=max_model_calls,
-            require_research_attempts=require_research_attempts, feedback_learning=feedback_learning)
+            require_research_attempts=require_research_attempts, feedback_learning=feedback_learning,
+            run_mode=run_mode, restart_delay_seconds=.001)
         serving_box = []
         def serve(path, **kwargs):
             serving = FixtureServing(path, process=self.process, script=script if kind == 'default' else [], **kwargs)
@@ -66,6 +67,16 @@ class MedicalDSHTests(unittest.TestCase):
             decision_harness_factory=harness_factory, feedback_backend=feedback_backend,
             identity_factory=lambda path: ('fixture-pin', {'model_id': 'fixture-actor', 'actual_weight_sha256': 'fixture'}))
         return result, runtime, serving_box[0], root
+
+    def test_dsh_time_mode_keeps_host_limits_out_of_native_session(self):
+        result, runtime, serving, root = self.execute(
+            [{'kind': 'wait', 'reason': 'No supported next hypothesis'}], run_mode='time', max_model_calls=1)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'), result)
+        self.assertEqual(result['research_rounds'], 1)
+        self.assertEqual(set(runtime.contexts[0]['run_control']), {'stopping_owner', 'initial_training_data'})
+        self.assertNotIn('budgets', runtime.contexts[0]['project_context'])
+        self.assertIn('The host owns stopping', runtime.prompts[0])
+        self.assertNotIn('Use {"kind":"finish"} when done.', runtime.prompts[0])
 
     def test_dsh_feedback_uses_independent_transport_and_shared_budget(self):
         from tests.test_feedback_learning_integration import Backend

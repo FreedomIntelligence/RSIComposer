@@ -136,15 +136,19 @@ Use `--seconds 1800` for a 30-minute research limit. The CLI arms its hard deadl
 after baseline evaluation, excluding initial model preparation; the job launcher
 must also bound startup time and guarantee resource cleanup.
 Add `--run-mode time --seconds 1800 --max-model-calls 10000` for continuous
-30-minute research. This selects the existing `TimeRunPolicy`: researcher finish
-ends a cycle, then restarts after `--restart-delay-seconds` (default 10), retaining
-history, candidates, incumbent, training reservations and model-call counts.
-It does not require a particular experiment. Time mode has the same hard deadline;
-model-call and training caps remain cumulative, so choose a sufficiently high
-call allowance when the clock should be the effective stop condition.
-`run_control` reports live remaining time, training slots and model calls each
-decision; `researcher_finish_ends_run` is false in time mode. The default
-`--run-mode researcher` still allows an early finish.
+30-minute research. The host owns stopping, time and cumulative call/training caps.
+The decision model sees current capabilities, evidence and per-action validity
+constraints, but no training slots, remaining time or call allowance. It chooses
+the next useful hypothesis/action. In time mode, `finish` is absent from the action
+schema and rejected before execution. If no useful next action is supported, the
+model can `wait` with a concrete blocker or unresolved question; this preserves
+state and does not create another research cycle or replenish resources. The host
+paces such idle waits using `--restart-delay-seconds` (default 10). It does not
+require a particular experiment or a positive result. The generic `TimeRunPolicy`
+still supports legacy harnesses that finish/restart; the medical model contract
+no longer uses that path. The default `--run-mode researcher` still allows early
+finish. Limits remain enforced and recorded by the executor even though they
+are omitted from decision and summary live-state inputs.
 Optional repeated `--private-exclusions /operator/excluded.jsonl` supplies domain
 JSONL rows solely for trusted overlap checks; their contents stay out of public
 research context.
@@ -152,7 +156,7 @@ research context.
 The medical policy uses `MemoryPrefixDecisionPolicy`: user context starts with the
 objective, versioned `project_context`, live capabilities and memory. Project scope
 covers target/exploration and decision improvement, frozen scientific evaluation,
-data restrictions and budgets; the same context is saved as `project-context.json`
+data restrictions, resource allocation and control ownership; the same context is saved as `project-context.json`
 for review. Live operations/directives and executor permissions
 authorize execution. Harness/system changes and decision-model training remain
 proposals unless an executable capability is installed. Learned memory remains

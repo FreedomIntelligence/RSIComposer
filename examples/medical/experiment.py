@@ -280,13 +280,17 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
             'examples, including operator-private exclusions. Preserve source versions, licenses and provenance; '
             'do not seek private examples through tools or external services. Exact ID/question overlap checks '
             'do not establish semantic deduplication, contamination freedom or medical correctness.'),
-        'budgets': {
-            'trainings': settings.max_trainings, 'decision_calls': settings.max_model_calls,
-            'research_seconds': settings.seconds, 'max_train_steps': settings.max_train_steps,
+        'execution_constraints': {
+            'max_train_steps': settings.max_train_steps,
             'max_seq_length': settings.max_seq_length,
-            'decision_max_output_tokens': settings.decision_max_output_tokens,
-            'decision_response_retries': settings.decision_response_retries,
-            'current_remaining': 'Use live run_control; the static limits do not reset between research cycles.',
+            'authority': 'Executor-owned per-action validity limits; not a research allocation to manage.',
+        },
+        'control_ownership': {
+            'budget_manager': 'host',
+            'stopping_owner': 'host' if settings.run_mode == 'time' else 'researcher_or_host',
+            'decision_responsibility': ('Choose the next evidence-grounded hypothesis and concrete action from live '
+                'capabilities. Do not reserve resources for an imagined future cycle. Capability availability '
+                'is maintained by the executor; unavailable training does not prohibit other research.'),
         },
     }
 
@@ -496,18 +500,19 @@ class FeedbackBackendRoute:
 
 
 class ExperimentRunPolicy:
-    """Deadline and researcher finish both stop; neither restarts research."""
-    def __init__(self, seconds: float, backend: DecisionBackend):
+    """Host admission gates shared by synchronous and native-session policies."""
+    def __init__(self, seconds: float, backend: DecisionBackend, *, run_mode='researcher', restart_delay_seconds=10):
         self.max_seconds, self.backend = seconds, backend
+        self.continuation = TimeRunPolicy(seconds, restart_delay_seconds) if run_mode == 'time' else None
 
     def evaluate(self, context: RunContext) -> RunDecision:
         if context.elapsed_seconds >= self.max_seconds:
             return RunDecision('stop', 'deadline', 'cancel')
-        if context.researcher_finished:
+        if context.researcher_finished and self.continuation is None:
             return RunDecision('stop', 'researcher_finished', 'cancel')
         if self.backend.calls >= self.backend.limit and not self.backend.decision_pending():
             return RunDecision('stop', 'model_call_budget_exhausted', 'cancel')
-        return RunDecision()
+        return self.continuation.evaluate(context) if self.continuation else RunDecision()
 
 
 class RecipeLearner:
@@ -886,7 +891,7 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         'Omit arguments.origin: initialization is host-owned and origin is not an accepted model argument. '
         'The executor binds the current experimental parent and fixed initial model automatically, '
         'using restart without a checkpoint. Training data belongs only in input_ids. '
-        'Choose your own available action and research steps, or finish with a nonempty reason; '
+        'Choose your own available action and research steps according to the control contract; '
         'these envelopes are syntax templates, not a required workflow.')
 
     def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher',
@@ -898,6 +903,26 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         self.run_mode = run_mode
         self.finish_reason: str | None = None
 
+    def _model_context(self, context):
+        # Project scheduling metadata, never rewrite evidence or the runner's state.
+        return replace(context, run_control={
+            'stopping_owner': 'host' if self.run_mode == 'time' else 'researcher_or_host',
+            'initial_training_data': asdict(self.train_ref)})
+
+    def _context_inputs(self, context):
+        return super()._context_inputs(self._model_context(context))
+
+    def _summary_current_state(self, context):
+        return super()._summary_current_state(self._model_context(context))
+
+    def _control_instructions(self, context):
+        if self.run_mode != 'time':
+            return super()._control_instructions(context)
+        return ('The host owns stopping. Choose the next useful research action. '
+            'Use {"kind":"wait","reason":"concrete blocker or lack of a supported next hypothesis"} '
+            'only when there is no useful executable next step. Waiting preserves the same research state; '
+            'it does not replenish resources, create a future experiment or establish optimality. ')
+
     def _decision_request(self, context):
         request = super()._decision_request(context)
         return replace(request, max_output_tokens=self.backend.max_output_tokens)
@@ -906,12 +931,14 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         schema = super().decision_schema(context)
         # Match this example's existing serial execution rules, without choosing an action.
         schema['oneOf'] = [branch for branch in schema['oneOf']
-                           if branch['properties']['kind']['const'] != 'wait']
+                           if branch['properties']['kind']['const'] != ('finish' if self.run_mode == 'time' else 'wait')]
         for branch in schema['oneOf']:
             fields = branch['properties']
-            if fields['kind']['const'] == 'finish':
+            if fields['kind']['const'] in ('finish', 'wait'):
                 fields['reason']['minLength'] = 1
                 branch['required'].append('reason')
+                if fields['kind']['const'] == 'wait':
+                    fields['job'] = {'type': 'null'}
             if fields.get('mode', {}).get('const') == 'train':
                 fields.pop('review_after_seconds', None)
                 fields['input_ids']['minItems'] = 1
@@ -984,14 +1011,7 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         hint = '\n' + self.ENVELOPE_GUIDANCE
         for attempt in range(3):
             # Transport/model identity/external failures are deliberately outside retry.
-            current = replace(context, objective=context.objective + hint,
-                run_control={**context.run_control, 'mode': self.run_mode,
-                    'researcher_finish_ends_run': self.run_mode == 'researcher',
-                    'training_budget': {'limit': self.learner.max_trainings,
-                        'reserved': len(self.learner.ledger), 'remaining': self.learner.remaining},
-                    'model_call_budget': {'limit': self.backend.limit,
-                        'used': self.backend.calls, 'remaining': self.backend.limit - self.backend.calls},
-                    'initial_training_data': asdict(self.train_ref)})
+            current = self._model_context(replace(context, objective=context.objective + hint))
             response = self._generate_decision(current)
             try:
                 decision = self._parse_decision(response, current)
@@ -1006,7 +1026,10 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
                         if not decision.directive.input_refs or any(ref.kind != 'training_data' for ref in decision.directive.input_refs):
                             raise ValueError('train requires explicit input_ids containing training_data artifacts only')
                 elif decision.kind == 'wait':
-                    raise ValueError('Serial research has no outstanding job here; choose an operation, directive, or finish')
+                    if self.run_mode != 'time' or decision.job is not None or not decision.reason.strip():
+                        raise ValueError('Host-controlled serial research permits wait with a reason and no job only')
+                elif decision.kind == 'finish' and self.run_mode == 'time':
+                    raise ValueError('Host owns stopping; choose a useful action, or wait with a concrete blocker')
                 elif not decision.reason.strip():
                     raise ValueError('finish requires a nonempty reason')
             except (ValueError, TypeError, KeyError, PermissionError) as exc:
@@ -1222,8 +1245,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         assembly = build(task, artifacts=artifacts, decision_backend=backend, decision_model=researcher, initial_model=base,
             inference=serving, system_activator=serving, prepare_inference=serving.prepare_inference,
             learner=learner, bind_training_inputs=learner.bind_inputs, trusted_exclusions=private,
-            run_policy=(TimeRunPolicy(settings.seconds, settings.restart_delay_seconds)
-                        if settings.run_mode == 'time' else ExperimentRunPolicy(settings.seconds, backend)),
+            run_policy=ExperimentRunPolicy(settings.seconds, backend, run_mode=settings.run_mode,
+                                           restart_delay_seconds=settings.restart_delay_seconds),
             action_permissions=permissions,
             evaluator_factory=evaluator_factory(monitor, root))
         decision = assembly.runner.decision_making.harness
@@ -1291,7 +1314,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         write_json(root / 'baseline.json', {'result': asdict(anchor), 'seconds': result['baseline_seconds']})
         persist(assembly, root)
         objective = ('Autonomously research and improve this model to increase both '
-            'MedXpertQA and MedQA accuracy within the available resource budget. '
+            'MedXpertQA and MedQA accuracy through evidence-grounded research. '
             'MedXpertQA has ten answer labels A-J; MedQA has four A-D. Grading requires exactly '
             'one legal label, with no period, prefix or explanation. Prompt changes apply to both benchmarks. '
             'The initial baseline has ALREADY been measured; its results and evidence IDs are below. '
@@ -1305,8 +1328,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'define recipes, and read or update research notes, according to the available capabilities. '
             'An empty candidate list does not mean that research is blocked. '
             'Use returned candidate IDs after creation; do not invent IDs or repeat baseline measurement. '
-            'You choose the research steps and may conduct multiple rounds, change training data/recipe or prompt, '
-            'evaluate, apply an accepted candidate, or finish with your reason at any time. '
+            'You choose the research steps: change training data/recipe or prompt, '
+            'evaluate and apply an accepted candidate. '
             'Choose data construction, SFT recipes, inference prompts or combinations according to your hypotheses. '
             'No particular method or training submission is required. Compare candidates using frozen development evidence. '
             'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
@@ -1321,17 +1344,20 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'For train explicitly select input_ids of training_data only, apply_result=false, '
             'and omit review_after_seconds: training owns the allocated GPUs until the processes exit. '
             'configure_prompt/evaluate/apply_candidate require input_ids=[]. '
-            f'Train budget={settings.max_trainings}, decision calls={settings.max_model_calls}, '
-            f'research seconds={settings.seconds}; exhausting train budget removes train capability only. '
             f'Default recipe_ref={learner.default_recipe}; default steps={min(32, settings.max_train_steps)}, lr=0.0001. '
             f'Frozen train artifact_id={operations.train_ref.artifact_id}. '
             f'Evaluation protocol_ref={task.protocol_ref}. '
             'Fixed initial anchor: '+json.dumps(asdict(anchor)))
         if settings.run_mode == 'time':
-            objective += (' Fixed-time research: finish ends only the current research cycle, not this run. '
-                'While time remains, the host starts another cycle with the same history, candidates, '
-                'incumbent and cumulative budgets. Use run_control for current remaining time and budgets. '
-                'You still choose the hypotheses and actions; no particular experiment is required.')
+            objective += (' Continuous research: the host owns budgets and stopping. Choose the next useful '
+                'hypothesis and executable action using current evidence and capabilities. A completed or '
+                'rejected attempt is not the end of research. Do not save an action for a future cycle; '
+                'there is no model-controlled cycle or resource reset. A few negative results do not establish '
+                'a local optimum or prove overfitting. If no useful next step is supported, wait with a concrete '
+                'blocker or unresolved question; do not repeat completed queries without new information. '
+                'No particular experiment or positive outcome is required.')
+        else:
+            objective += ' You may finish with a nonempty reason when research is done; the host also enforces limits.'
         monitor.stage('researching')
         research_started = time.monotonic()
         write_json(root / 'research-started.json', {'started_at': time.time(),
@@ -1365,7 +1391,9 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 break
             if step.kind == 'waiting':
                 remaining = max(0.0, settings.seconds - (time.monotonic() - research_started))
-                time.sleep(min(.5, step.event.get('retry_after_seconds', .5), remaining))
+                record = decision.state.decision_records.get(step.event.get('decision_id'), {})
+                delay = settings.restart_delay_seconds if record.get('kind') == 'wait' else .5
+                time.sleep(min(delay, step.event.get('retry_after_seconds', delay), remaining))
         result['model_calls'] = backend.calls
     except BudgetExhausted as exc:
         result.update(status='stopped', reason=str(exc))

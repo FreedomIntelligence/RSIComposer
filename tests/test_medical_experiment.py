@@ -393,7 +393,7 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(result['researcher_finish_reason'], FINISH['reason'])
         self.assertEqual(result['trainings_reserved'], 0)
         context = self.serving.contexts[0]
-        self.assertTrue(context['run_control']['researcher_finish_ends_run'])
+        self.assertEqual(context['run_control']['stopping_owner'], 'researcher_or_host')
         names = [spec['name'] for spec in context['operations']]
         self.assertEqual(len(names), len(set(names)))
         self.assertTrue({'define_recipe', 'preview_training_data', 'choose_training_data', 'read_artifact'} <= set(names))
@@ -680,28 +680,42 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(observed, [(1800, True, 0)])
 
-    def test_time_mode_restarts_finish_without_resetting_calls_or_state(self):
-        result = self.execute(repeat(FINISH), run_mode='time', seconds=2,
-                              restart_delay_seconds=.001, max_model_calls=1000)
+    def test_time_mode_waits_without_new_cycles_or_exposing_budgets(self):
+        result = self.execute(repeat({'kind': 'wait', 'reason': 'No evidence-supported next hypothesis yet'}),
+                              run_mode='time', seconds=2, restart_delay_seconds=.001, max_model_calls=1000)
         self.assertEqual(result['status'], 'stopped', result)
         self.assertIn(result['reason'], ('deadline', 'budget_exhausted'))
-        self.assertGreaterEqual(result['research_rounds'], 2)
+        self.assertEqual(result['research_rounds'], 1)
         self.assertGreaterEqual(result['model_calls'], 2)
         self.assertEqual(result['model_calls'], self.serving.model_calls)
         self.assertFalse(self.process.requests)
-        self.assertFalse(self.read('research-started.json')['researcher_finish_ends_run'])
-        controls = [c['run_control'] for c in self.serving.contexts]
-        self.assertTrue(all(c['mode'] == 'time' and not c['researcher_finish_ends_run'] for c in controls))
-        self.assertGreaterEqual(controls[-1]['research_round'], 2)
+        self.assertIsNone(result['researcher_finish_reason'])
         self.assertTrue(any(c['history'] for c in self.serving.contexts[1:]))
-        self.assertEqual([c['model_call_budget']['used'] for c in controls], list(range(len(controls))))
-        self.assertTrue(all(c['training_budget']['remaining'] == 3 for c in controls))
+        for context in self.serving.contexts:
+            self.assertEqual(set(context['run_control']), {'stopping_owner', 'initial_training_data'})
+            self.assertEqual(context['run_control']['stopping_owner'], 'host')
+            self.assertNotIn('budgets', context['project_context'])
+            self.assertNotIn('Train budget=', context['objective'])
+            self.assertNotIn('research seconds=', context['objective'])
+        self.assertFalse(any(row['kind'] == 'finish' for row in self.read('monitor.json')['decisions']))
 
-    def test_training_budget_is_live_after_a_submission(self):
-        result = self.execute([train, FINISH])
+    def test_time_mode_rejects_finish_and_host_still_enforces_call_limit(self):
+        result = self.execute([FINISH, {'kind': 'wait', 'reason': 'Need an actionable hypothesis'}],
+                              run_mode='time', seconds=10, restart_delay_seconds=.001, max_model_calls=2)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'))
+        self.assertEqual(result['model_calls'], 2)
+        self.assertIsNone(result['researcher_finish_reason'])
+        self.assertEqual(result['research_rounds'], 1)
+        self.assertFalse(any(row['kind'] == 'finish' for row in self.read('monitor.json')['decisions']))
+
+    def test_training_limit_stays_host_owned_after_a_submission(self):
+        result = self.execute([train, FINISH], max_trainings=1)
         self.assertEqual(result['status'], 'completed', result)
-        budget = self.serving.contexts[-1]['run_control']['training_budget']
-        self.assertEqual(budget, {'limit': 3, 'reserved': 1, 'remaining': 2})
+        self.assertEqual(result['trainings_reserved'], 1)
+        context = self.serving.contexts[-1]
+        self.assertNotIn('training_budget', context['run_control'])
+        self.assertNotIn('train', context['directive_modes'])
+        self.assertIn('evaluate', context['directive_modes'])
 
     def test_time_mode_is_an_explicit_setting(self):
         args = parser().parse_args(['--task', str(self.task), '--run-dir', 'timer', '--model-path', 'model',
