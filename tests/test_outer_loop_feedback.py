@@ -38,10 +38,12 @@ class EvidenceFixture(MockModelBackend):
             payload = {'proposals': [{'kind': 'memory', 'content': 'Fixture receipt: wrong output format.',
                 'applicability': 'This simulated format task only.', 'source_refs': [packet['source_refs'][0]],
                 'validation_plan': 'Check corrected format on a fresh simulated task.'}]}
-        elif packet['memories']:
-            content = json.loads(packet['memories'][0]['content'])
-            assert content['receipt_facts']['quality_metrics']['accuracy'] == 0
-            assert content['authority'] == 'unverified_interpretations'
+        elif packet['research_state']['findings']:
+            content = packet['research_state']['findings'][0]
+            assert packet['last_feedback']['quality_metrics']['accuracy'] == 0
+            assert content['authority'] == 'unverified_interpretation'
+            assert content['proposals'][0]['content'] == 'Fixture receipt: wrong output format.'
+            assert content['source_refs']
             self.used_memory = True
             scope = content['research_context']
             payload = {'kind': 'invoke', 'operation': 'prepare_data',
@@ -82,6 +84,8 @@ class OuterLoopFeedbackTests(unittest.TestCase):
                                  'candidate correction: one legal label')
                 self.assertEqual(loop.harness.state.last_feedback, feedback)
                 self.assertEqual(loop.harness.feedback_learning.state['attempted'], 1)
-                self.assertTrue(loop.harness._context(directive.objective).memories[0].status == 'unverified')
+                self.assertEqual(loop.harness.memory.recall()[0].status, 'unverified')
+                archived = json.loads(loop.harness.memory.recall()[0].content)
+                self.assertEqual(archived['receipt_facts']['quality_metrics']['accuracy'], 0)
             finally:
                 assembly.close()

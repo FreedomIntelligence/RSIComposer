@@ -13,15 +13,14 @@ class MemoryPrefixDecisionPolicy(ModelDecisionPolicy):
     hits. Memory stays untrusted user content in the prompt; the inherited system
     instructions, schemas and generation settings retain their authority.
 
-    Only request serialization changes. Inherited compaction and token counting
-    call these builders, so they measure the complete reordered request, including
-    capabilities and feedback. No context is truncated here and no model calls
-    are added; any summary calls remain owned by the inherited compactor.
+    The learning harness assembles research_state before these builders. They
+    only order the request; inherited compaction prices the complete request,
+    including research state, capabilities and feedback. No model call is added.
     """
 
     _prefix_fields = (
-        'objective', 'project_context', 'directives', 'operations', 'directive_modes', 'memories',
-        'context_summary',
+        'objective', 'project_context', 'directives', 'operations', 'directive_modes',
+        'research_state', 'memories', 'context_summary',
     )
 
     @classmethod

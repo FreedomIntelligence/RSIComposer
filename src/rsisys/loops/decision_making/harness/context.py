@@ -130,6 +130,9 @@ class BasicContextCompactor:
         fingerprints = {name: [result_id(asdict(row)) for row in rows] for name, rows in raw.items()}
         protected = {name: set() for name in self.streams}
         protected['history'] = set(range(max(0, len(raw['history'])-2), len(raw['history'])))
+        research_protected = set(context.research_state.get('protected_history_ids', ()))
+        protected['history'].update(i for i, row in enumerate(raw['history'])
+                                    if row.record_id in research_protected)
         if raw['operation_results']:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])

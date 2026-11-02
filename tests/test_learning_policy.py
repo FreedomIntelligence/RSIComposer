@@ -33,7 +33,7 @@ from rsisys.loops.decision_making.harness.state import (
 
 
 MODEL = ModelRef('fixture', 'decision', 'v1')
-PREFIX = ['objective', 'directives', 'operations', 'directive_modes', 'memories',
+PREFIX = ['objective', 'directives', 'operations', 'directive_modes', 'research_state', 'memories',
           'context_summary']
 
 

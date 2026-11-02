@@ -495,12 +495,16 @@ class DefaultDecisionHarness:
             operation_results=(*session.context.operation_results, deepcopy(pending.result)))
         session.pending_record = None
 
+    def _refresh_context(self, context):
+        """Refresh canonical observations; extensions may add derived work views."""
+        return replace(context, history=self.memory.history(),
+            research_agenda=self.research_agenda.context(), decision_graph=self._decision_graph(),
+            candidate_origins=deepcopy(self.state.candidate_origins))
+
     def _call_policy(self, method, context):
         # Reviews can append new tool results to a saved session. Re-project them
         # before every model call; full receipts remain in memory and session state.
-        context = replace(context, history=self.memory.history(),
-            research_agenda=self.research_agenda.context(), decision_graph=self._decision_graph(),
-            candidate_origins=deepcopy(self.state.candidate_origins))
+        context = self._refresh_context(context)
         # Model policies budget their final request after adding protocol/schema
         # overhead. Other policies receive the same protected context projection.
         if isinstance(self.policy, ModelDecisionPolicy):

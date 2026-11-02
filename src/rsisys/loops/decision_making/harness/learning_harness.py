@@ -8,6 +8,7 @@ from .context import encoded, result_id
 from .engine import DefaultDecisionHarness
 from .feedback_learning import FeedbackLearning, SerializedLearningBackend
 from .learning_policy import MemoryPrefixDecisionPolicy
+from .research_state import research_working_view
 
 
 class FeedbackLearningHarness(DefaultDecisionHarness):
@@ -17,6 +18,7 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
                 or self.policy.backend is not feedback_learning.backend):
             raise ValueError('Decision and learning must share the serialized backend and memory-prefix policy')
         self.feedback_learning = feedback_learning
+        self.last_working_view = None
 
     def receive_feedback(self, directive, feedback):
         # Existing validation, idempotence, ledger and delivery acknowledgement
@@ -144,22 +146,31 @@ class FeedbackLearningHarness(DefaultDecisionHarness):
     def _context(self, objective, action_space=None):
         self.feedback_learning.poll()
         self._publish()
-        context = super()._context(objective, action_space)
-        # Input coverage proves what the model saw, not what its prose retained.
-        # Unverified memory must not suppress contradictory/uncited receipts. The
-        # normal budget compactor owns archival, with source navigation and the
-        # latest feedback/history protection; learning alone never deletes a view.
+        return self._working_context(super()._context(objective, action_space))
+
+    def _refresh_context(self, context):
+        self.feedback_learning.poll()
+        self._publish()
+        context = super()._refresh_context(context)
+        # Rebuild from the store, never from an already projected review snapshot.
+        context = replace(context, memories=self.memory.recall(limit=self.memory_limit))
+        return self._working_context(context)
+
+    def _working_context(self, context):
         jobs = list(self.feedback_learning.state['jobs'].values())
         navigation = {'read_operation': 'feedback_learning_read',
             'authority': 'unverified_proposals', 'total': len(jobs),
             'recent': [{'job_id': row['job_id'], 'status': row['status'],
                         'research_attempt_id': row['input'].get('research_context', {}).get('research_attempt_id'),
                         'kinds': [p['kind'] for p in row['proposals']]} for row in jobs[-6:]]}
-        attempts = self.attempt_interpretations()
-        return replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation,
-            'attempt_interpretations': {'authority': attempts['authority'], 'total': len(attempts['items']),
-                'recent': attempts['items'][-8:], 'read_operation': 'feedback_learning_read',
-                'note': 'Retrospective model interpretations; not execution membership or proof of success.'}})
+        context = replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
+        view = research_working_view(context, jobs, self.attempt_interpretations()['items'])
+        self.last_working_view = deepcopy({'research_state': view.research_state,
+            'projection': view.research_agenda['working_projection'],
+            'scope': 'last assembled view before token-budget compaction',
+            'history_records_before': len(context.history), 'history_records_after': len(view.history),
+            'memories_before': len(context.memories), 'memories_after': len(view.memories)})
+        return view
 
     def close(self, *, timeout=30):
         self.feedback_learning.close(timeout=timeout)

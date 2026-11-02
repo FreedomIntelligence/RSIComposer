@@ -707,3 +707,9 @@ model call is added solely for grouping, and all learning calls retain the exist
 shared run budget and separate learning limits.
 
 评测监控进度沿用 `MedicalEvaluator` 返回的真实任务编号，与 Decision 回执一致；同步初始评测独立标记为基线。测量完成后仍等待评测解释，最终成功或失败状态以 evaluator 的 JobOutcome 为准。
+
+启用反馈学习时，模型请求含统一的 `research_state` 工作前缀。最近解释按持久化的
+学习任务顺序选取，原始评测指标、错误和活跃依赖在容量 compact 中受到额外保护。
+`research_working_state.json` 保存最近一次装配的工作视图与投影数量（位于 token
+compact 之前）；实际发出的请求仍以 `model_requests.jsonl` 为准。没有已授权的
+原始 history/memories archive 能力时保留原视图，不静默移除上下文。

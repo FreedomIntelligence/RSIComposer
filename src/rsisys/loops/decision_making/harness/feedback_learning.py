@@ -209,7 +209,8 @@ class FeedbackLearning:
         refs = list(dict.fromkeys(refs))
         # Artifact IDs alone do not imply that their contents were supplied.
         packet['source_refs'] = refs
-        row = {'job_id': ident, 'receipt_digest': digest, 'model': asdict(model), 'input': packet,
+        row = {'job_id': ident, 'capture_index': len(self.state['jobs']),
+               'receipt_digest': digest, 'model': asdict(model), 'input': packet,
                'status': 'queued', 'proposals': [], 'error': None,
                'coverage': {item['record_id']: result_id(item) for item in packet['history']},
                'simulated': bool(directive.simulated or feedback.simulated

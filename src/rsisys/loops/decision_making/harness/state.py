@@ -64,6 +64,7 @@ class DecisionContext:
     research_agenda: dict[str, object] = field(default_factory=dict)
     decision_graph: tuple[dict, ...] = ()
     candidate_origins: dict[str, str] = field(default_factory=dict)
+    research_state: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

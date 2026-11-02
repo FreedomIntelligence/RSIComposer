@@ -1051,6 +1051,9 @@ def model_identity(path: Path) -> tuple[str, dict]:
 
 def persist(assembly, root):
     assembly.runner.decision_making.harness.memory.backup(root / 'decision_memory.json')
+    working = getattr(assembly.runner.decision_making.harness, 'last_working_view', None)
+    if working is not None:
+        write_json(root / 'research_working_state.json', working)
     assembly.runner.exploration.harness.memory.backup(root / 'exploration_memory.json')
     write_json(root / 'experience.json', [asdict(record) for record in assembly.experience_store.records()])
     write_json(root / 'candidates.json', {key: asdict(value) for key, value in assembly.candidates.items()})
