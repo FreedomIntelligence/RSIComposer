@@ -92,6 +92,8 @@ class DefaultDecisionHarness:
             callback()
 
     def _project_context(self, context):
+        from .research_state import bounded_evidence_view
+        context = bounded_evidence_view(context)
         for processor in self._context_processors:
             context = processor(context)
         return context

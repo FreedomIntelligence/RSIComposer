@@ -1,7 +1,8 @@
 """Research-oriented working context, derived without another model call.
 
 Interpretations never authorize dropping evidence. Old receipts may use exact
-factual cards with authorized links to originals; live receipts remain complete.
+factual cards with authorized links to originals; oversized live payloads use
+bounded previews without changing the execution ledger.
 """
 from copy import deepcopy
 from dataclasses import asdict, replace
@@ -94,7 +95,7 @@ def factual_fields(value, path=''):
         for key, item in value.items():
             pointer = path + '/' + key.replace('~', '~0').replace('/', '~1')
             if (key in ('metrics', 'status', 'simulated', 'error', 'validation_error',
-                        'mode', 'base_version', 'parent_system', 'digest')
+                        'mode', 'base_version', 'parent_system', 'digest', 'error_type', 'exception_type', 'exit_code')
                     or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics'))):
                 facts[pointer] = deepcopy(item)
             else:
@@ -105,7 +106,73 @@ def factual_fields(value, path=''):
     return facts
 
 
-def evidence_working_view(context):
+
+MAX_EVIDENCE_BYTES = 8192
+
+
+def _preview(text, limit=512):
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half] + '\n[omitted; read original evidence]\n' + text[-half:]
+
+
+def _bounded_facts(value):
+    """Keep aggregate metrics/identities exact; explicitly omit large row tables.
+
+    Per-item metrics in an omitted table are not aggregate measurements. Nothing
+    computes, guesses or replaces them with an average. Their exact source and
+    count are disclosed for a subsequent archive read.
+    """
+    omitted = []
+    def essential(key):
+        return (key in ('metrics', 'status', 'simulated', 'mode', 'base_version', 'parent_system',
+                        'digest', 'error', 'error_type', 'exception_type', 'exit_code', 'model', 'provenance')
+                or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics')))
+    def visit(item, path='', key=''):
+        if key in ('error', 'validation_error') and isinstance(item, str):
+            preview = _preview(item)
+            if preview != item:
+                omitted.append({'path': path, 'kind': 'text_excerpt', 'characters': len(item),
+                                'sha256': result_id(item)})
+            return preview
+        if key in ('stdout', 'stderr', 'text', 'content', 'log') and isinstance(item, str) and len(item) > 512:
+            omitted.append({'path': path, 'kind': 'text_excerpt', 'characters': len(item),
+                            'sha256': result_id(item), 'preview': _preview(item, 256)})
+            return ''
+        exact = (key in ('metrics', 'status', 'simulated', 'mode', 'base_version', 'parent_system', 'digest', 'error_type', 'exception_type', 'exit_code')
+                 or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics')))
+        if exact:
+            return deepcopy(item)
+        if isinstance(item, (list, tuple)) and len(item) > 16:
+            omitted.append({'path': path, 'kind': 'collection_omitted', 'count': len(item),
+                            'sha256': result_id(item)})
+            return []
+        if isinstance(item, dict):
+            if len(item) > 64:
+                kept = {k: v for k, v in item.items() if essential(k)}
+                omitted.append({'path': path, 'kind': 'fields_omitted', 'count': len(item) - len(kept),
+                                'retained_fields': list(kept), 'sha256': result_id(item)})
+                return {k: visit(v, path + '/' + k.replace('~', '~0').replace('/', '~1'), k)
+                        for k, v in kept.items()}
+            return {k: visit(v, path + '/' + k.replace('~', '~0').replace('/', '~1'), k)
+                    for k, v in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [visit(v, path + '/' + str(i)) for i, v in enumerate(item)]
+        return deepcopy(item)
+    return factual_fields(visit(value)), omitted
+
+
+def bounded_evidence_view(context):
+    """Bound oversized individual observations before either native or local compact.
+
+    Latest/live observations remain present as factual records; only their bulk
+    payload is replaced. Without the corresponding read capability no projection
+    is permitted. This is an input view, never a mutation of state or archives.
+    """
+    return evidence_working_view(context, latest=True)
+
+def evidence_working_view(context, *, latest=False):
     """Bound old payloads, preserving every structured fact and exact originals.
 
     Capability checks are per collection. A card is retained as protected state,
@@ -117,7 +184,24 @@ def evidence_working_view(context):
     latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
     live_results = {result_id(h.details['result']) for h in context.history
                     if h.record_id in full and isinstance(h.details.get('result'), dict)}
+    archived_results = {result_id(h.details['result']) for h in context.history
+                        if h.kind == 'operation' and isinstance(h.details.get('result'), dict)}
     projected = {}
+    feedback = context.last_feedback
+    if (latest and feedback is not None and archive_available(context, 'history')
+            and len(encoded(asdict(feedback)).encode('utf-8')) > MAX_EVIDENCE_BYTES):
+        original_feedback = asdict(feedback)
+        source = next((h for h in reversed(context.history)
+                       if h.kind == 'feedback' and isinstance(h.details.get('feedback'), dict)
+                       and result_id(h.details['feedback']) == result_id(original_feedback)), None)
+        # Require an exact recorded source for last_feedback, not merely a guessed ID.
+        if source is not None:
+            descriptor = {'authority': 'excerpt_not_summary', 'sha256': result_id(original_feedback),
+                'read_path': {'operation': 'research_archive', 'collection': 'history',
+                              'record_id': source.record_id, 'evidence_path': '/details/feedback'},
+                'omitted_content_read': False}
+            summary = encoded({'evidence_view': descriptor, 'summary_preview': _preview(feedback.summary)})
+            projected['last_feedback'] = replace(feedback, summary=summary, error=_preview(feedback.error))
     for collection in ('history', 'experience', 'operation_results'):
         rows = getattr(context, collection)
         if not archive_available(context, collection):
@@ -127,8 +211,14 @@ def evidence_working_view(context):
             original = asdict(row)
             if collection == 'operation_results':
                 ident = result_id(original)
+                existing = row.data.get('evidence_card')
+                known_view = (isinstance(existing, dict) and existing.get('schema_version') == 1
+                              and isinstance(existing.get('read_path'), dict))
+                if latest and ident not in archived_results and not known_view:
+                    output.append(row)
+                    continue
                 required = index == len(rows) - 1 or ident in live_results
-                already_card = 'evidence_card' in row.data
+                existing = row.data.get('evidence_card')
             else:
                 ident = row.record_id
                 required = (ident in full or ident in decisions
@@ -136,17 +226,38 @@ def evidence_working_view(context):
                     or getattr(row, 'directive_id', None) in directives
                     or latest_feedback is not None
                     and getattr(row, 'directive_id', None) == latest_feedback)
-                already_card = 'evidence_card' in row.details
-            if required or already_card or not receipt_needs_protection(original):
+                existing = row.details.get('evidence_card')
+            already_card = (isinstance(existing, dict) and existing.get('schema_version') == 1
+                            and isinstance(existing.get('read_path'), dict))
+            if already_card and not latest:
+                field = 'data' if collection == 'operation_results' else 'details'
+                values = deepcopy(getattr(row, field))
+                descriptor = values['evidence_card']
+                descriptor.pop('summary_preview', None)
+                for omission in descriptor.get('omissions', ()):
+                    if isinstance(omission, dict):
+                        omission.pop('preview', None)
+                output.append(replace(row, **{field: values}))
+                continue
+            oversized = len(encoded(original).encode('utf-8')) > MAX_EVIDENCE_BYTES
+            if already_card or (latest and not oversized) or (not latest and (required or not receipt_needs_protection(original))):
                 output.append(row)
                 continue
-            card = {'evidence_card': {'schema_version': 1, 'authority': 'exact_structured_fields',
+            facts, omissions = _bounded_facts(original) if latest else (factual_fields(original), [])
+            card = {'evidence_card': {'schema_version': 1, 'authority': 'exact_structured_fields_with_excerpts' if omissions else 'exact_structured_fields',
                         'sha256': result_id(original),
                         'read_path': {'operation': 'research_archive', 'collection': collection,
                                       'record_id': ident}},
-                    'facts': factual_fields(original)}
+                    'facts': facts}
+            if latest:
+                card['evidence_card'].update(omitted_content_read=False, bulk_payload_omitted=True,
+                    omissions=omissions)
+                if required:
+                    card['evidence_card']['summary_preview'] = _preview(row.summary, 128)
             updates = {'summary': 'Archived evidence; read original for prose and qualifications.'}
             updates['data' if collection == 'operation_results' else 'details'] = card
+            if latest and collection == 'operation_results':
+                updates['error'] = _preview(row.error)
             candidate = replace(row, **updates)
             # Small receipts stay verbatim; cards must actually reduce the view.
             output.append(candidate if len(encoded(asdict(candidate))) < len(encoded(original)) else row)

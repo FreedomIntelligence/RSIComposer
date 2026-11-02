@@ -97,7 +97,7 @@ def read_original(tools, card):
 
 
 class EvidenceProjectionTests(unittest.TestCase):
-    def test_large_old_measured_feedback_fits_24k_with_exact_facts_and_unchanged_archives(self):
+    def test_large_measured_feedback_is_bounded_before_compact_with_exact_facts_and_unchanged_archives(self):
         with TemporaryDirectory() as directory:
             memory = DecisionMemory(Path(directory) / 'memory.json')
             raw, tools, memory, experience = fixture(memory)
@@ -105,8 +105,8 @@ class EvidenceProjectionTests(unittest.TestCase):
             compactor = BasicContextCompactor()
             projected = compactor.compact(raw, measure=measure, summarize=lambda *args: 'Archive navigation only')
             self.assertGreater(measure(raw), 80000)
-            self.assertLessEqual(measure(projected), 24000)
-            self.assertEqual(compactor.compactions, 1)
+            self.assertLess(measure(projected), 40000)
+            self.assertEqual(compactor.compactions, 0)
             self.assertEqual(projected.history[-2:], raw.history[-2:])
             self.assertEqual(projected.last_feedback, raw.last_feedback)
             self.assertEqual(projected.operation_results[-1], raw.operation_results[-1])
@@ -167,7 +167,7 @@ class EvidenceProjectionTests(unittest.TestCase):
         next_view = restored.compact(replace(raw, history=(*raw.history, fresh)), measure=measure)
         self.assertEqual(next_view.history[-2:], (raw.history[-1], fresh))
         self.assertEqual(next_view.history[0], first.history[0])
-        self.assertEqual(restored.compactions, 1)
+        self.assertEqual(restored.compactions, 0)
         legacy = compactor.export_state()
         legacy.pop('project_evidence')
         restored.restore_state(legacy)  # Previous snapshots remain valid.
@@ -186,7 +186,7 @@ class EvidenceProjectionTests(unittest.TestCase):
         self.assertEqual(projected.operation_results, raw.operation_results)
         self.assertEqual(IdentityContextCompactor().compact(projected), projected)
 
-    def test_transitive_active_dependencies_and_latest_feedback_are_irreducible(self):
+    def test_transitive_active_dependencies_keep_facts_but_can_project_large_payloads(self):
         raw, _, _, _ = fixture(count=3)
         graph = ({'decision_id': 'active', 'status': 'waiting', 'depends_on_decision_ids': ['decision-1']},
                  {'decision_id': 'decision-1', 'status': 'completed', 'source_decision_ids': ['decision-0']},
@@ -195,10 +195,11 @@ class EvidenceProjectionTests(unittest.TestCase):
         raw = replace(raw, decision_graph=graph)
         self.assertEqual(evidence_working_view(raw).history[:3], raw.history[:3])
         compactor = BasicContextCompactor(trigger_tokens=40000, target_tokens=24000, summary_tokens=200)
-        state = compactor.export_state()
-        with self.assertRaises(ContextBudgetError):
-            compactor.compact(raw, measure=measure)
-        self.assertEqual(compactor.export_state(), state)
+        projected = compactor.compact(raw, measure=measure)
+        for row in projected.history[:3]:
+            self.assertIn('evidence_card', row.details)
+            self.assertEqual(row.details['facts']['/details/feedback/quality_metrics'], METRICS)
+        self.assertEqual(projected.decision_graph, raw.decision_graph)
         # The latest feedback's matching history remains full even outside the newest two entries.
         later = tuple(HistoryEntry(f'wait-{i}', 'decision', None, 'Wait', False) for i in range(3))
         raw = replace(raw, decision_graph=(), history=(*raw.history, *later))
@@ -220,22 +221,18 @@ class EvidenceProjectionTests(unittest.TestCase):
         self.assertTrue({'evidence-0', 'evidence-1', 'old-tool'} <=
                         set(working.research_state['protected_history_ids']))
 
-    def test_irreducible_metric_maps_errors_and_latest_tools_fail_atomically(self):
+    def test_irreducible_aggregate_metric_maps_fail_atomically(self):
         raw, _, _, _ = fixture(count=1)
         huge_metrics = {f'metric-{i}': -0.25 for i in range(5000)}
         huge = replace(raw.history[0], details={'feedback': {'quality_metrics': huge_metrics}})
-        errors = replace(raw.history[0], details={'feedback': {'error': 'exact error detail ' * 6000}})
-        latest_tool = replace(raw.operation_results[-1], data={'content': 'latest full tool ' * 10000})
-        for context in (replace(raw, history=(huge, *raw.history[1:])),
-                        replace(raw, history=(errors, *raw.history[1:])),
-                        replace(raw, operation_results=(*raw.operation_results[:-1], latest_tool))):
-            saved = deepcopy(context)
-            compactor = BasicContextCompactor()
-            state = compactor.export_state()
-            with self.assertRaisesRegex(ContextBudgetError, 'Irreducible factual evidence'):
-                compactor.compact(context, measure=measure)
-            self.assertEqual(compactor.export_state(), state)
-            self.assertEqual(context, saved)
+        context = replace(raw, history=(huge, *raw.history[1:]))
+        saved = deepcopy(context)
+        compactor = BasicContextCompactor()
+        state = compactor.export_state()
+        with self.assertRaisesRegex(ContextBudgetError, 'Irreducible factual evidence'):
+            compactor.compact(context, measure=measure)
+        self.assertEqual(compactor.export_state(), state)
+        self.assertEqual(context, saved)
 
     def test_card_never_infers_a_result_from_prose(self):
         raw, _, _, _ = fixture(count=1)

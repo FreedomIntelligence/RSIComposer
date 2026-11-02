@@ -8,8 +8,11 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from rsisys.loops._memory import HistoryEntry
+from rsisys.loops.contracts.artifacts import ArtifactRef
+from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
+from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
 from rsisys.loops.decision_making.harness.context import encoded, result_id
@@ -17,6 +20,9 @@ from rsisys.loops.decision_making.harness.feedback_learning import (
     FeedbackLearning, SerializedLearningBackend,
 )
 from rsisys.loops.decision_making.harness.state import CandidateEvaluation
+from rsisys.loops.decision_making.action_space import OperationCall
+from rsisys.loops.decision_making.harness.learning_harness import LearningTools
+from rsisys.loops.decision_making.feedback.service import FeedbackLearningService
 from rsisys.runtime.files import json_bytes
 
 
@@ -312,11 +318,240 @@ class FeedbackEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             learning.read(ident, evidence_path='/history/-1')
 
-    def test_indivisible_receipt_failure_preserves_original_evidence_and_budget(self):
+    def test_current_long_summary_and_error_admit_with_exact_facts_and_readable_originals(self):
+        backend, learning = self.make()
+        directive = Directive('long-current', 'objective', 'strategy')
+        artifact = ArtifactRef('report', 'evidence', 'artifact://report', digest='frozen-digest')
+        candidate = Candidate('candidate', 'base-v1', {'model': artifact}, ('actor',), 'parent-system')
+        summary = 'Execution failed: ' + '未省略的原始正文。' * 10000 + ' SUMMARY-END'
+        error = 'TimeoutError: ' + 'exact failure body. ' * 10000 + ' ERROR-END'
+        metrics = {**METRICS, 'negative_delta': -0.125, 'zero_score': 0.0}
+        feedback = Feedback(directive.directive_id, ExecutionStatus.FAILED, summary, False,
+            error=error, quality_metrics=metrics, training_metrics={'loss': -0.0},
+            execution_metrics={'elapsed_seconds': 12.3456789012345},
+            artifact_refs=(artifact,), evidence_refs=('original-report',),
+            candidates=(candidate,), jobs=(JobRef('job-exact', 'backend-exact'),))
+        saved = deepcopy(feedback)
+        ident = learning.capture(directive, feedback, MODEL)
+        captured = deepcopy(learning.state['jobs'][ident]['raw_input'])
+        self.assertEqual(learning.state['jobs'][ident]['status'], 'queued')
+        learning.poll()
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed')
+        self.assertEqual(len(backend.requests), 1)
+        self.assertLessEqual(backend.count_tokens(backend.requests[0]), 16000)
+        self.assertLessEqual(len(json_bytes(row['input'])), 64000)
+        visible = json.loads(backend.requests[0].prompt)['receipt']['feedback']
+        original = json.loads(encoded(asdict(feedback)))
+        for key in original.keys() - {'summary', 'error'}:
+            self.assertEqual(visible[key], original[key], key)
+        self.assertTrue(visible['error'].startswith('TimeoutError: '))
+        self.assertTrue(visible['error'].endswith(' ERROR-END'))
+        self.assertTrue(visible['summary'].startswith('Execution failed: '))
+        self.assertTrue(visible['summary'].endswith(' SUMMARY-END'))
+        self.assertIn('[... omitted ...]', visible['summary'])
+        self.assertIn('[... omitted ...]', visible['error'])
+        self.assertEqual(row['input']['receipt']['feedback']['quality_metrics'], metrics)
+        descriptor = next(record for record in row['input']['evidence_packaging']['records']
+                          if record['raw_ref'] == '/receipt')
+        self.assertEqual(descriptor['coverage'], 'excerpt')
+        self.assertEqual(descriptor['sha256'], row['receipt_digest'])
+        omissions = {item['path']: item for item in descriptor['omitted_text']}
+        for field, value in (('summary', summary), ('error', error)):
+            path = '/receipt/feedback/' + field
+            omission = omissions[path]
+            self.assertEqual(omission['sha256'], result_id(value))
+            self.assertEqual(omission['total_characters'], len(value))
+            self.assertEqual(omission['supplied_characters'] + omission['omitted_characters'], len(value))
+            self.assertEqual(omission['preview'], 'head_tail')
+            self.assertEqual(omission['read'], {'operation': 'feedback_learning_read',
+                                              'job_id': ident, 'evidence_path': path})
+            offset, chunks = 0, []
+            while offset is not None:
+                page = learning.read(ident, evidence_path=path, offset=offset, limit=16)
+                self.assertEqual(page['sha256'], omission['sha256'])
+                self.assertLessEqual(len(page['text']), 2048)
+                chunks.append(page['text'])
+                offset = page['next_offset']
+            self.assertGreater(len(chunks), 1)
+            self.assertEqual(json.loads(''.join(chunks)), value)
+        memory = FeedbackLearningService._memory(row)
+        content = json.loads(memory.content)
+        self.assertEqual(content['receipt_facts']['error'], visible['error'])
+        self.assertEqual(content['receipt_facts']['quality_metrics'], metrics)
+        self.assertEqual(content['receipt_facts']['candidate_ids'], ['candidate'])
+        self.assertEqual(content['receipt_facts']['status'], 'failed')
+        self.assertEqual(content['receipt_text_omissions'], [omissions['/receipt/feedback/error']])
+        self.assertLess(len(memory.content), 4000)
+        self.assertEqual(row['raw_input'], captured)
+        self.assertEqual(row['raw_input']['receipt']['feedback'], asdict(feedback))
+        self.assertEqual(feedback, saved)
+        self.assertFalse(row['input']['evidence_packaging']['omitted_content_read'])
+
+    def test_raw_pages_bound_encoded_bytes_with_multibyte_and_escaped_json_roundtrip(self):
+        values = ('🧪' * 7000, '多字节原文' * 1500,
+                  '"\\\n\t\r\x00' * 1500, '中文🧪"\\\n\t\x00' * 1500)
+        for index, value in enumerate(values):
+            with self.subTest(index=index):
+                backend, learning = self.make()
+                directive = Directive(f'byte-pages-{index}', 'objective', 'strategy')
+                feedback = Feedback(directive.directive_id, ExecutionStatus.COMPLETED, value, False,
+                                    quality_metrics={'delta': -0.125, 'accuracy': 0.0})
+                ident = learning.capture(directive, feedback, MODEL)
+                before = deepcopy(learning.state)
+                tools = LearningTools(None, learning)
+                offset, chunks, shortened = 0, [], False
+                original = encoded(value)
+                while offset is not None:
+                    receipt = tools.execute(OperationCall('feedback_learning_read', {
+                        'job_id': ident, 'evidence_path': '/receipt/feedback/summary',
+                        'offset': offset, 'limit': 16}))
+                    page = receipt.data
+                    self.assertLessEqual(len(json_bytes(page)), 6000)
+                    self.assertLess(len(json_bytes(asdict(receipt))), 8192)
+                    self.assertLess(len(encoded(asdict(receipt)).encode('utf-8')), 8192)
+                    self.assertEqual(page['offset'], offset)
+                    self.assertEqual(page['total_characters'], len(original))
+                    self.assertEqual(page['sha256'], result_id(value))
+                    self.assertGreater(len(page['text']), 0)
+                    self.assertLessEqual(len(page['text']), 16 * 128)
+                    end = offset + len(page['text'])
+                    if end < len(original):
+                        self.assertEqual(page['next_offset'], end)
+                        self.assertGreater(page['next_offset'], offset)
+                        shortened |= len(page['text']) < 16 * 128
+                    else:
+                        self.assertIsNone(page['next_offset'])
+                    chunks.append(page['text'])
+                    offset = page['next_offset']
+                if index < 2:
+                    self.assertTrue(shortened)  # UTF-8, not character count, limits these pages.
+                self.assertGreater(len(chunks), 1)
+                self.assertEqual(''.join(chunks), original)
+                self.assertEqual(json.loads(''.join(chunks)), value)
+                end = learning.read(ident, evidence_path='/receipt/feedback/summary',
+                                    offset=len(original), limit=16)
+                self.assertEqual(end['text'], '')
+                self.assertIsNone(end['next_offset'])
+                self.assertEqual(learning.state, before)
+                self.assertEqual(backend.requests, [])
+                self.assertEqual(learning.state['attempted'], 0)
+
+    def test_long_current_summary_preserves_completed_adoption_exactly(self):
+        _, learning = self.make()
+        directive = Directive('adopted-current', 'objective', 'strategy')
+        feedback = Feedback(directive.directive_id, ExecutionStatus.COMPLETED,
+            'Summary starts. ' + 'long observed summary ' * 7000 + ' Summary ends.', False,
+            quality_metrics={'delta': -0.5}, adopted_candidate_ids=('adopted-1', 'adopted-2'))
+        ident = learning.capture(directive, feedback, MODEL)
+        learning.poll()
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed')
+        self.assertEqual(row['input']['receipt']['feedback']['adopted_candidate_ids'], feedback.adopted_candidate_ids)
+        self.assertEqual(row['input']['receipt']['feedback']['error'], None)
+        self.assertEqual(row['raw_input']['receipt']['feedback'], asdict(feedback))
+        content = json.loads(FeedbackLearningService._memory(row).content)
+        self.assertEqual(content['receipt_facts']['adopted_candidate_ids'], list(feedback.adopted_candidate_ids))
+        self.assertNotIn('receipt_text_omissions', content)
+
+    def test_small_current_feedback_first_admission_and_small_memory_error_remain_complete(self):
+        backend, learning = self.make()
+        directive = Directive('small-current', 'objective', 'strategy')
+        # Longer than the excerpt profile, but comfortably within the request
+        # budget: the first admission must still supply the complete feedback.
+        feedback = Feedback(directive.directive_id, ExecutionStatus.FAILED,
+            'Detailed small feedback ' * 50, False, error='ValueError: exact small error',
+            quality_metrics={'delta': -0.125})
+        ident = learning.capture(directive, feedback, MODEL)
+        learning.poll()
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed')
+        self.assertEqual(row['input']['receipt']['feedback'], asdict(feedback))
+        self.assertEqual(json.loads(backend.requests[0].prompt)['receipt']['feedback'],
+                         json.loads(encoded(asdict(feedback))))
+        receipt = next(record for record in row['input']['evidence_packaging']['records']
+                       if record['raw_ref'] == '/receipt')
+        self.assertEqual(receipt['coverage'], 'complete')
+        self.assertNotIn('omitted_text', receipt)
+        memory = json.loads(FeedbackLearningService._memory(row).content)
+        self.assertEqual(memory['receipt_facts']['error'], feedback.error)
+        self.assertNotIn('receipt_text_omissions', memory)
+
+    def test_conservative_counter_admits_long_current_prose_without_losing_error_type(self):
+        delegate = FixtureBackend()
+        class NoTokenizer:
+            supports_response_schema = True
+            def generate(self, request):
+                return delegate.generate(request)
+        _, learning = self.make(backend=NoTokenizer())
+        directive = Directive('no-tokenizer-current', 'objective', 'strategy')
+        feedback = Feedback(directive.directive_id, ExecutionStatus.FAILED, 'Summary ' * 12000, False,
+            error='RuntimeError: ' + 'Detailed raw failure. ' * 10000 + ' original-tail',
+            quality_metrics={'accuracy': 0.0, 'delta': -0.125})
+        ident = learning.capture(directive, feedback, MODEL)
+        learning.poll()
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed')
+        self.assertEqual(len(delegate.requests), 1)
+        self.assertLessEqual(len(json_bytes(asdict(delegate.requests[0]))), 16000)
+        self.assertTrue(row['input']['receipt']['feedback']['error'].startswith('RuntimeError: '))
+        self.assertTrue(row['input']['receipt']['feedback']['error'].endswith(' original-tail'))
+        self.assertEqual(row['input']['receipt']['feedback']['quality_metrics'], feedback.quality_metrics)
+        self.assertEqual(row['raw_input']['receipt']['feedback'], asdict(feedback))
+
+    def test_token_admission_previews_current_prose_that_passed_byte_admission_complete(self):
+        delegate = FixtureBackend()
+        class NoTokenizer:
+            supports_response_schema = True
+            def generate(self, request):
+                return delegate.generate(request)
+        _, learning = self.make(backend=NoTokenizer())
+        directive = Directive('token-preview', 'objective', 'strategy')
+        feedback = Feedback(directive.directive_id, ExecutionStatus.FAILED,
+            'Original summary ' * 700, False, error='ValueError: ' + 'original failure ' * 700,
+            quality_metrics={'delta': -0.125})
+        ident = learning.capture(directive, feedback, MODEL)
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'queued')
+        self.assertEqual(row['input']['receipt']['feedback'], asdict(feedback))
+        self.assertLessEqual(len(json_bytes(row['input'])), 64000)
+        self.assertGreater(len(json_bytes(asdict(learning._request(row)))), 16000)
+        raw = deepcopy(row['raw_input'])
+        learning.poll()
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed')
+        self.assertLessEqual(len(json_bytes(asdict(delegate.requests[0]))), 16000)
+        self.assertIn('[... omitted ...]', row['input']['receipt']['feedback']['error'])
+        self.assertEqual(row['raw_input'], raw)
+
+    def test_required_metrics_that_exceed_token_budget_are_not_excerpted_or_dispatched(self):
+        backend, learning = self.make(max_input_tokens=4000)
+        directive = Directive('required-token-facts', 'objective', 'strategy')
+        feedback = Feedback(directive.directive_id, ExecutionStatus.FAILED, 'Exact failure', False,
+            error='ValueError: exact small error',
+            quality_metrics={f'required-metric-{i}': -0.125 for i in range(1000)})
+        ident = learning.capture(directive, feedback, MODEL)
+        self.assertEqual(learning.state['jobs'][ident]['status'], 'queued')
+        learning.poll()
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'input_too_large')
+        self.assertEqual(row['input']['receipt']['feedback'], asdict(feedback))
+        self.assertEqual(row['raw_input']['receipt']['feedback'], asdict(feedback))
+        self.assertEqual(learning.limits['max_input_tokens'], 4000)
+        self.assertEqual(learning.state['attempted'], 0)
+        self.assertEqual(backend.requests, [])
+
+    def test_indivisible_required_metrics_preserve_original_evidence_and_budget_on_rejection(self):
         backend, learning = self.make()
         directive = Directive('oversized', 'objective', 'strategy')
         feedback = Feedback('oversized', ExecutionStatus.FAILED, 'Failed', False,
-                            error='Raw failure evidence. ' * 5000, quality_metrics=METRICS)
+                            error='ValueError: exact failure',
+                            quality_metrics={f'required-metric-{i}': -0.125 for i in range(7000)})
         ident = learning.capture(directive, feedback, MODEL)
         learning.poll()
         row = learning.state['jobs'][ident]

@@ -33,9 +33,9 @@ def _read_arguments(arguments):
 
 
 def _archive_arguments(arguments, *, experience=True):
-    if not isinstance(arguments, dict) or set(arguments) - {'collection', 'record_id', 'limit', 'cursor'}:
-        raise ValueError('Archive accepts only collection, record_id, limit and cursor')
-    args = {'collection': 'history', 'record_id': None, 'limit': 8, 'cursor': None}
+    if not isinstance(arguments, dict) or set(arguments) - {'collection', 'record_id', 'limit', 'cursor', 'evidence_path'}:
+        raise ValueError('Archive accepts only collection, record_id, limit, cursor and evidence_path')
+    args = {'collection': 'history', 'record_id': None, 'limit': 8, 'cursor': None, 'evidence_path': None}
     args.update(arguments)
     page_limit(args['limit'])
     if args['collection'] == 'experience' and not experience:
@@ -47,6 +47,10 @@ def _archive_arguments(arguments, *, experience=True):
         raise ValueError('record_id must be nonempty text or null')
     if args['cursor'] is not None and not isinstance(args['cursor'], str):
         raise ValueError('cursor must be a string or null')
+    pointer = args['evidence_path']
+    if pointer is not None and (args['record_id'] is None or not isinstance(pointer, str)
+            or len(pointer) > 1000 or pointer and not pointer.startswith('/')):
+        raise ValueError('evidence_path requires record_id and a JSON pointer of at most 1000 characters')
     return deepcopy(args)
 
 
@@ -93,14 +97,14 @@ class ResearchTools:
             'Read revision before retrying conflicts; summaries are model notes, not validated findings.',
             patch_schema), agenda.validate_patch)
         archive = _Definition(OperationSpec('research_archive',
-            'Read raw history, memories, operation_results, decision_graph, research_items, research_revisions'
-            + (', experience' if experience is not None else '') + '. Paginated JSON chunks (1000 characters); '
-            'concatenate each record_id before parsing. Exact record_id lookup is supported; operation_results '
-            'IDs are SHA-256. Follow next_cursor (archive-digest pinned) and experience source_refs for receipts.',
+            'Read archived JSON; concatenate 1000-character chunks per record. Follow next_cursor; '
+            'pages are byte-bounded. operation_results IDs are SHA-256. '
+            'With record_id, evidence_path selects a JSON Pointer; cursors pin source and path.',
             schema({'collection': {'enum': ['history', 'memories', 'operation_results', 'decision_graph',
                                             'research_items', 'research_revisions',
                                             *(['experience'] if experience is not None else [])]},
                     'record_id': {'type': ['string', 'null'], 'minLength': 1}, 'cursor': {'type': ['string', 'null']},
+                    'evidence_path': {'type': ['string', 'null'], 'maxLength': 1000},
                     'limit': {'type': 'integer', 'minimum': 1, 'maximum': 32}}), read_only=True),
             partial(_archive_arguments, experience=experience is not None))
         self.capabilities = Capabilities((Capability(read, self._read), Capability(patch, self._patch),
@@ -167,19 +171,37 @@ class ResearchTools:
             digest.update(encoded(row).encode('utf-8'))
             digest.update(b'\n')
         revision = digest.hexdigest()
+        pointer = args['evidence_path']
+        if pointer is not None:
+            revision = result_id({'archive': revision, 'evidence_path': pointer})
         scope = f'{collection}:{args["record_id"] or "all"}:{count}:{revision}'
         start = page_offset(args['cursor'], scope)
         chunks, offset, total = [], 0, 0
+        page_full = False
         for row in rows:
-            content = encoded(row)
+            value = row
+            if pointer is not None:
+                for part in pointer[1:].split('/') if pointer else ():
+                    key = part.replace('~1', '/').replace('~0', '~')
+                    if isinstance(value, dict):
+                        value = value[key]
+                    elif isinstance(value, (tuple, list)) and key.isascii() and key.isdecimal():
+                        value = value[int(key)]
+                    else:
+                        raise ValueError('evidence_path does not identify an archived value')
+            content = encoded(value)
             record_chunks = max(1, (len(content) + 999) // 1000)
             for chunk in range(max(0, start - offset), min(record_chunks, start + args['limit'] - offset)):
-                chunks.append({'record_id': str(row[identity]), 'chunk': chunk, 'chunks': record_chunks,
-                               'text': content[chunk * 1000:(chunk + 1) * 1000]})
+                item = {'record_id': str(row[identity]), 'chunk': chunk, 'chunks': record_chunks,
+                        'text': content[chunk * 1000:(chunk + 1) * 1000]}
+                if page_full or chunks and len(encoded([*chunks, item]).encode('utf-8')) > 6000:
+                    page_full = True
+                    break
+                chunks.append(item)
             offset += record_chunks
             total += record_chunks
         end = start + len(chunks)
         return OperationResult('Raw research archive page', (), False, data={
-            'revision': revision, 'collection': args['collection'], 'items': chunks,
+            'revision': revision, 'collection': args['collection'], 'evidence_path': pointer, 'items': chunks,
             'found': bool(rows),
             'total_chunks': total, 'next_cursor': f'{scope}:{end}' if end < total else None})

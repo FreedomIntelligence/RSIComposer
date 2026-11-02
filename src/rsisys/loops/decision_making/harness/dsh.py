@@ -147,7 +147,8 @@ class _SessionBackend:
         """Transfer additions/changed state; the native session owns prior history.
 
         Receipts are occurrence-aware (identical results from distinct calls are
-        still observations). No text or fields are cut before reaching DSH.
+        still observations). Large receipt payloads may already be archive-backed
+        evidence views; DSH retains ownership of session compaction.
         """
         current = json.loads(request.prompt)
         previous = self.transport
@@ -220,7 +221,7 @@ class _SessionBackend:
             if measured is not None and measured > self.config.target_tokens:
                 raise ContextBudgetError(f'DSH post-compaction full input {measured} exceeds '
                     f'target_tokens={self.config.target_tokens}; proposal withheld, native session advanced; '
-                    'reconcile or explicitly raise the budget (latest observations were not truncated)')
+                    'reconcile or explicitly raise the budget (required facts could not fit the configured target)')
         # Session completion means a proposed action, never completion of RSI.
         # Turn-wide usage (including auxiliary summaries) is unknown here; raw
         # SDK usage events and any post-compaction observation remain explicit.

@@ -18,7 +18,8 @@ class OperationResult:
     """Tool receipt; evaluation data uses data.quality_metrics/evidence_refs.
 
     Keep measured values and their source references together in data. Research
-    compaction preserves exact facts and an archive reference for older receipts.
+    input views preserve exact aggregate facts and archive references; oversized
+    prose and per-item tables may be explicitly excerpted, including the latest receipt.
     """
     summary: str
     artifacts: tuple[ArtifactRef, ...]

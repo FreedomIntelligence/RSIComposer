@@ -10,6 +10,7 @@ from typing import Protocol
 from rsisys.loops._memory import Memory
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.runtime.json_tools import encoded, result_id
+from .learning import feedback_text_preview
 
 
 @dataclass(frozen=True)
@@ -56,16 +57,22 @@ class FeedbackLearningService:
             return None
         receipt = row.get('raw_input', row['input'])['receipt']
         feedback, directive = receipt['feedback'], receipt['directive']
-        # These fields are copied from receipts, not rewritten by the model.
+        # Facts come from raw receipts; only error prose uses the same bounded,
+        # source-linked preview as learning admission, never a generated summary.
         facts = {key: feedback[key] for key in ('directive_id', 'status', 'quality_metrics',
             'training_metrics', 'execution_metrics', 'error', 'evidence_refs', 'adopted_candidate_ids')}
+        facts['error'], omission = feedback_text_preview(feedback['error'], job_id=row['job_id'],
+                                                        evidence_path='/receipt/feedback/error')
         facts.update(mode=directive['mode'], candidate_ids=[c['candidate_id'] for c in feedback['candidates']])
+        content = {'receipt_facts': facts, 'interpretations': proposals, 'learned_by': row['model'],
+                   'research_context': row['input'].get('research_context', {}),
+                   'attempt_interpretations': interpretations,
+                   'simulated': row['simulated'], 'authority': 'unverified_interpretations',
+                   'read_operation': 'feedback_learning_read', 'job_id': row['job_id']}
+        if omission:
+            content['receipt_text_omissions'] = [omission]
         return Memory('feedback-learning:' + row['job_id'], 'episodic',
-            encoded({'receipt_facts': facts, 'interpretations': proposals, 'learned_by': row['model'],
-                     'research_context': row['input'].get('research_context', {}),
-                     'attempt_interpretations': interpretations,
-                     'simulated': row['simulated'], 'authority': 'unverified_interpretations',
-                     'read_operation': 'feedback_learning_read', 'job_id': row['job_id']}),
+            encoded(content),
             tuple(row['input']['source_refs']),
             applicability=encoded({'objective': directive['objective'], 'experiment': directive['directive_id'],
                                    'scope': 'This experiment and its original model/protocol; not current global state'}),

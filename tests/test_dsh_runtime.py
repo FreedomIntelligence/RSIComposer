@@ -61,6 +61,43 @@ class DSHRuntimeTests(unittest.TestCase):
         self.assertTrue(compact['usage_is_synthetic'])
         self.assertEqual(compact['native_tools'], [])
 
+    def test_latest_large_adapter_result_is_user_data_and_is_not_tool_pruned(self):
+        report = self.run_smoke('--latest-result-only')
+        self.assertTrue(report['real_dsh_runtime'])
+        self.assertFalse(report['real_model_used'])
+        result = report['latest_result']
+        self.assertEqual(result['adapter_used'], '_SessionBackend')
+        self.assertGreater(result['latest_result_characters'], 128 * 1024)
+        self.assertEqual(result['latest_wire_role'], 'user')
+        self.assertTrue(result['latest_data_exactly_preserved'])
+        self.assertTrue(result['middle_and_tail_retained'])
+        self.assertEqual(result['native_tool_result_events'], 0)
+        self.assertEqual(result['native_prune_events'], 0)
+        self.assertGreaterEqual(result['summary_requests'], result['compaction_summaries'])
+        self.assertGreater(result['final_input_tokens_synthetic'], result['context_window'])
+        self.assertTrue(result['oversized_request_reached_fixture'])
+        self.assertTrue(result['fixture_accepts_oversized_requests'])
+        self.assertTrue(result['usage_is_synthetic'])
+        self.assertLessEqual(result['model_requests'], 12)
+        self.assertEqual(result['native_tools'], [])
+        projected = report['projected_latest']
+        self.assertEqual(projected['host_projection'], 'engine._project_context')
+        self.assertTrue(projected['identity_compactor_preserved'])
+        self.assertGreater(projected['latest_result_raw_bytes'], 128 * 1024)
+        self.assertGreater(projected['latest_feedback_raw_bytes'], 128 * 1024)
+        self.assertLess(projected['latest_result_view_bytes'], 8192)
+        self.assertLess(projected['latest_feedback_view_bytes'], 8192)
+        self.assertTrue(projected['exact_metrics_and_ownership_preserved'])
+        self.assertTrue(projected['raw_archive_unchanged'])
+        self.assertEqual(projected['latest_result_read_path']['operation'], 'research_archive')
+        self.assertLess(projected['input_tokens_synthetic'], result['final_input_tokens_synthetic'])
+        self.assertLess(projected['projected_packet_bytes'], 8192)
+        self.assertEqual(projected['latest_wire_role'], 'user')
+        self.assertTrue(projected['structured_response'])
+        self.assertEqual(projected['model_requests'], 1)
+        self.assertTrue(projected['usage_is_synthetic'])
+        self.assertFalse(projected['real_model_used'])
+
     @unittest.skipUnless(all(importlib.util.find_spec(name) is not None
                              for name in ('pip', 'setuptools', 'wheel')),
                          'Wheel verification additionally requires pip, setuptools>=68 and wheel')

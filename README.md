@@ -531,10 +531,10 @@ tokenize / 进程训练包装与候选路由准备；完整接线见上述 READM
 ### 默认长程研究能力
 
 默认 `BasicContextCompactor` 按完整模型请求预算，在 80k tokens 触发后压缩旧历史，
-压缩后以 24k 为目标。最新完整工具反馈与对应近期历史保留，旧记录生成带来源的滚动摘要，
+压缩后以 24k 为目标。最新反馈与近期历史保留必要事实和原文引用，旧记录生成带来源的滚动摘要，
 原始档案仍可查询。vLLM 使用 `/tokenize`；没有 tokenizer 的后端明确标记 UTF-8 保守估计。
-摘要使用同一模型预算，压缩失败不会丢弃反馈或执行动作。固定内容与最新反馈本身超出目标时
-明确报预算错误，需分页或提高预算。`IdentityContextCompactor` 用于 DSH 等自行管理会话的 Harness。
+摘要使用同一模型预算，压缩失败不会丢弃反馈或执行动作。单条超长证据先投影为事实与有界预览；必要固定信息仍超出目标时
+明确报预算错误，不自动提高预算。`IdentityContextCompactor` 用于 DSH 等自行管理会话的 Harness。
 具体配置、计数和 snapshot 约定见 [Decision Harness](src/rsisys/loops/decision_making/harness/README.md)。
 
 `ResearchAgenda` 保存模型维护的 agenda、todo、stage_summary；默认装配注册
@@ -604,8 +604,11 @@ Decision 仍说明具体行动、参数与验证计划，不必填写归属。�
 过程和指纹匹配的重复学习 memory；被修改的 memory 不会被当作旧副本移除。
 容量 compact 继续受 80k/24k 预算约束。旧的已结束证据在具备授权归档入口时可投影为
 事实卡片：保留指标（包括零分）、状态、身份、来源和原始内容指纹，完整记录仍在原存储。
-最新两条历史、最新工具结果/反馈及未完成任务依赖保持完整；不可再缩减的内容放不下
-仍明确失败。工具评测使用 `OperationResult.data.quality_metrics` 与 `data.evidence_refs`。
+最新两条历史、最新工具结果/反馈及未完成任务依赖仍保留在工作视图，但超长正文可投影。
+单条证据超过 8KiB 时，默认和 DSH 接入均先保留精确汇总指标、身份、状态及来源，
+日志/错误采用明确标记的首尾预览，逐项大表提供原文引用；执行账本不变。
+`research_archive` 支持 `evidence_path` 按 JSON Pointer 读取字段，返回页也限制大小。
+此输入预处理不计为模型 compact；必要汇总指标/身份本身放不下仍明确失败。工具评测使用 `OperationResult.data.quality_metrics` 与 `data.evidence_refs`。
 事实卡片由代码提取，不把模型摘要当成已验证证据。
 尚未验证此工作视图比线性历史加 compact 有更好的研究效果或实际 KV cache 命中。
 发起实验和整理反馈的 Decision 版本分别记录；混入模拟证据的学习结果仍标记 simulated。

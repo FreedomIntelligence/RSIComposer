@@ -118,6 +118,8 @@ class BasicContextCompactor:
     def compact(self, context, *, recent_limit=32, measure=None, summarize=None):
         if type(recent_limit) is not int or recent_limit < 1:
             raise ValueError('recent_limit must be positive')
+        from .research_state import bounded_evidence_view
+        context = bounded_evidence_view(context)
         context = with_working_decision_graph(context)
         meter = measure or (lambda c: len(encoded(asdict(c)).encode('utf-8')))
         def count(view):
@@ -234,7 +236,7 @@ class BasicContextCompactor:
         projected = view(chosen, summary)
         after = count(projected)
         if after > self.target_tokens:
-            raise ContextBudgetError('Summary plus fixed state and complete latest feedback exceed target_tokens; '
+            raise ContextBudgetError('Summary plus fixed state and required facts and latest evidence references exceed target_tokens; '
                                      'no compaction state was committed')
         # Commit only after the summary and complete final request fit.
         for name in self.streams:

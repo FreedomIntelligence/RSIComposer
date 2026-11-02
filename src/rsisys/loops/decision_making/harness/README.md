@@ -14,7 +14,8 @@
 
 [BasicContextCompactor](context.py) 默认 `trigger_tokens=80000, target_tokens=24000,
 summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请求以 24k 为目标；
-低于阈值时保留全部已选择的记录，不按字符数或最近 N 条裁剪 history/tool results。
+单条超过 8KiB 的证据先做有界输入投影；此步骤不调用模型、不计为 compact。
+默认和 DSH 接入共用此投影，DSH 仍使用自己的原生会话压缩器。
 `memory_limit` 仍限制工作记忆 recall 的条数，experience selector 的范围仍由装配决定。
 
 `ModelDecisionPolicy` 在构造最终请求时计量，包含 system、任务、能力 schema、控制信息和历史。
@@ -23,8 +24,9 @@ summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请�
 `utf8_conservative_estimate` 的 UTF-8 字节保守估计，可通过自定义 backend/counter 替换；
 估计值不冒充实际 tokenizer 计数，原生计数错误会显式失败。
 
-最新完整工具结果、最近两条动作/回执历史和 `last_feedback` 不被压缩；目标、候选、权限、
-研究议程和运行控制仍保留。旧 payload 被折叠时轻量 artifact 引用继续可用于 `input_ids`。
+最新工具结果、最近两条动作/回执历史和 `last_feedback` 不被移除，但超长正文可替换为
+有界首尾预览和可读的 archive 引用。汇总指标、身份、状态与来源保持精确；逐项大表
+明确标记未读取，不从片段推断总体结论。目标、候选、权限、研究议程和运行控制仍保留。旧 payload 被折叠时轻量 artifact 引用继续可用于 `input_ids`。
 如果这些受保护内容本身超过 24k，抛出 `ContextBudgetError`，要求分页或显式调整预算，
 不会静默丢反馈，也不会强制模型实验或移除 `finish`。
 
@@ -32,7 +34,8 @@ summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请�
 摘要保留操作结果、假设、限制、未决问题和证据 ID，标记为未验证；不能替代原始证据。
 脚本策略可注入 `measure`/`summarize`，默认提供带来源的确定性摘录。摘要失败或超出目标时，
 不提交折叠状态、不执行新动作。原始 memory/history、工具回执和研究笔记完整保留；
-`research_archive` 可按来源标签取回记录。滚动摘要和已折叠指纹通过
+`research_archive` 可按来源标签取回记录，或用 `record_id` + `evidence_path` 定位 JSON Pointer。
+返回页按实际编码字节限量，游标绑定所读字段，不能换字段沿用游标。滚动摘要和已折叠指纹通过
 `export_state()/restore_state()` 持久化，内置 snapshot 同时保存配置和状态。
 
 `compact(context, *, recent_limit=32, measure=None, summarize=None)` 是默认实现的可替换入口。
@@ -75,8 +78,8 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 动态观察之前。记忆更新会改变该位置后的前缀；字节稳定测试不能证明服务实际命中 KV
 cache，也不能证明研究质量提升。memory 仍是非可信用户上下文，不提升为 system 指令。
 学习输入的 coverage 只证明模型看过哪些记录，不证明解释保留了其含义。因此未验证的
-memory 不直接隐藏任何历史；原 compact 负责带来源的归档，并保护最新两条历史与完整
-最新反馈。摘要语义仍需独立核验。发起实验和整理反馈的模型版本分别记录，混合模拟
+memory 不直接隐藏任何历史；原 compact 负责带来源的归档，并保护最新记录的必要事实
+和原文读取入口。摘要语义仍需独立核验。发起实验和整理反馈的模型版本分别记录，混合模拟
 历史或评测的学习输出保留 simulated 标记。
 
 `project_context` 是宿主配置的稳定项目/资源前缀，默认 policy 深拷贝并限制为 32KB JSON。
@@ -284,7 +287,8 @@ recent history 的 `retainTokens=19904` 加至多 4096 的摘要构成**历史�
 默认 Harness 对最终完整请求的 preflight 预算校验与此不同。
 
 DSH 外层和 parser 强制使用 `IdentityContextCompactor`，只有原生会话拥有压缩权。
-历史、experience 与完整 tool receipts 增量发送，不每轮重放全部 snapshot；当前动作协议、
+历史、experience 与 tool receipt 工作视图增量发送，超长正文先提供 archive 入口；
+不每轮重放全部 snapshot，DSH 原生 tool-result pruner 不负责裁剪这些 user JSON。当前动作协议、
 能力 schema 和 run_control 每轮重申，避免它们被原生摘要折叠后丢失。医疗装配通过
 `policy_factory(native_backend, model)` 复用领域解析及校验，并真正替换整个 Harness。
 具体 CLI、JSON 配置和对照边界见[医疗示例](../../../../../examples/medical/README.md#replace-the-decision-harness-with-dsh)。

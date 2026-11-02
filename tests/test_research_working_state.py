@@ -125,7 +125,7 @@ class ResearchWorkingStateTests(unittest.TestCase):
     def test_oversized_protected_evidence_fails_without_committing_compaction(self):
         row, _ = job()
         evidence = HistoryEntry('huge', 'feedback', None, 'Earlier failure', True,
-                                details={'feedback': {'error': 'important failure ' * 1500}})
+                                details={'feedback': {'quality_metrics': {str(i): -1.0 for i in range(4000)}}})
         view = research_working_view(replace(context(), history=(evidence, *context().history)), [row], [])
         compactor = BasicContextCompactor(trigger_tokens=10000, target_tokens=5000, summary_tokens=200)
         with self.assertRaises(ContextBudgetError):
