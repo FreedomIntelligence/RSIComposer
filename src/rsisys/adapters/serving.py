@@ -102,6 +102,14 @@ class VLLMBackend(RemoteModelBackend):
         return convert(schema)
 
     def generate(self, request):
+        return self.generate_with_response_observer(request, None)
+
+    def generate_with_response_observer(self, request, observer):
+        """Observer persists bounded wire evidence before parsing or validation.
+
+        The observer is scoped to this call (never shared mutable adapter state).
+        A failed evidence write aborts the call; no result reaches the executor.
+        """
         if request.model.backend_id != self.binding.backend_id:
             raise ValueError('Generation request does not match this backend')
         alias = self._alias(request.model)
@@ -122,30 +130,59 @@ class VLLMBackend(RemoteModelBackend):
         payload['max_tokens'] = min(request.max_output_tokens,
                                    self.generation_options.get('max_tokens', request.max_output_tokens))
         payload.update(model=alias, messages=messages, stream=False)
-        data = self._request('chat/completions', payload)
+        data = (self._request('chat/completions', payload, response_observer=observer)
+                if observer is not None else self._request('chat/completions', payload))
+        finish_reason = None
+        provider_model = data.get('model') if isinstance(data, dict) else None
+        try:
+            finish_reason = data['choices'][0].get('finish_reason')
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
+
+        def reject(reason, *, retryable=False):
+            raise ModelResponseError('Rejected vLLM generation response: ' + reason,
+                reason=reason, retryable=retryable, finish_reason=finish_reason,
+                provider_model=provider_model)
+
+        # Identity checks precede recoverable format checks, even on truncated replies.
+        if provider_model != alias:
+            reject('model_identity_mismatch')
+        if data.get('model_revision', request.model.revision) != request.model.revision:
+            reject('model_revision_mismatch')
         try:
             message = data['choices'][0]['message']
-            if (data['model'] != alias or data.get('model_revision', request.model.revision) != request.model.revision
-                    or data['choices'][0].get('finish_reason') not in ('stop', 'length')
-                    or not isinstance(message['content'], str) or not message['content'].strip()
-                    or message.get('refusal') or message.get('tool_calls')):
-                raise ValueError()
+            if not isinstance(message, dict):
+                reject('malformed_message', retryable=True)
+            if message.get('refusal'):
+                reject('refusal')
+            if message.get('tool_calls'):
+                reject('unexpected_tool_calls')
+            if finish_reason not in ('stop', 'length'):
+                reject('unexpected_finish_reason')
+            if request.response_schema is not None and finish_reason == 'length':
+                reject('output_truncated', retryable=True)
+            if not isinstance(message.get('content'), str) or not message['content'].strip():
+                reject('empty_or_invalid_content', retryable=True)
             if request.response_schema is not None:
-                if data['choices'][0].get('finish_reason') != 'stop':
-                    raise ValueError('Structured response did not finish')
                 def unique_object(pairs):
                     result = {}
                     for key, value in pairs:
                         if key in result:
-                            raise ValueError('Duplicate JSON response key')
+                            reject('duplicate_json_key', retryable=True)
                         result[key] = value
                     return result
-                if not isinstance(json.loads(message['content'], object_pairs_hook=unique_object), dict):
-                    raise ValueError('Structured response must be an object')
+                try:
+                    decoded = json.loads(message['content'], object_pairs_hook=unique_object)
+                except json.JSONDecodeError:
+                    reject('invalid_json', retryable=True)
+                if not isinstance(decoded, dict):
+                    reject('nonobject_json', retryable=True)
             usage = data.get('usage')
             usage = TokenUsage(usage.get('prompt_tokens'), usage.get('completion_tokens')) if usage else None
+        except ModelResponseError:
+            raise
         except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-            raise ModelResponseError('Malformed or mismatched vLLM generation response') from None
+            reject('malformed_response_fields', retryable=True)
         return GenerationResponse(message['content'], request.model, False, usage, alias,
                                   revision_verified=data.get('model_revision') is not None)
 
@@ -166,7 +203,7 @@ class VLLMBackend(RemoteModelBackend):
             raise ModelResponseError('Malformed vLLM token count; configure a compatible token counter')
         return count
 
-    def _request(self, route, payload=None):
+    def _request(self, route, payload=None, *, response_observer=None):
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
         if self.binding.credential_env:
             key = os.environ.get(self.binding.credential_env)
@@ -193,8 +230,12 @@ class VLLMBackend(RemoteModelBackend):
             raise ModelTransportError(f'vLLM returned HTTP {code}') from None
         except (OSError, URLError, TimeoutError):
             raise ModelTransportError('vLLM request failed or timed out') from None
+        if response_observer is not None:
+            response_observer({'body': body.decode('utf-8', errors='replace'),
+                               'bytes_captured': len(body),
+                               'capture_truncated': len(body) > self.binding.max_response_bytes})
         if len(body) > self.binding.max_response_bytes:
-            raise ModelResponseError('vLLM response exceeded size limit')
+            raise ModelResponseError('vLLM response exceeded size limit', reason='response_size_limit')
         # vLLM load/unload handlers may return plain text instead of JSON.
         if route in ('load_lora_adapter', 'unload_lora_adapter'):
             return None
@@ -204,7 +245,8 @@ class VLLMBackend(RemoteModelBackend):
                 raise ValueError()
             return data
         except (ValueError, TypeError):
-            raise ModelResponseError('Malformed vLLM response') from None
+            raise ModelResponseError('Malformed vLLM response', reason='invalid_response_envelope',
+                                     retryable=True) from None
 
     def list_models(self):
         try:

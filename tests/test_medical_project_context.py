@@ -215,7 +215,7 @@ class MedicalProjectSettingsTests(unittest.TestCase):
 
     def test_medical_policy_keeps_memory_in_user_prefix_and_copies_project(self):
         model = ModelRef('fixture', 'researcher', 'pinned')
-        backend = SimpleNamespace(serving=SimpleNamespace(), decision_thinking=False)
+        backend = SimpleNamespace(serving=SimpleNamespace(), decision_thinking=False, max_output_tokens=8192)
         project = {'schema_version': 1, 'resources': {'physical_devices': [13]}}
         policy = ResearchPolicy(backend, model, DirectiveDefinitions(), None, None, None,
                                 ArtifactRef('train', 'training_data', 'artifact://train'), project_context=project)

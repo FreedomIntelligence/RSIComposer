@@ -432,7 +432,7 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertNotEqual(self.serving.activated[0].model, self.serving.base)
         request, _ = next(iter(self.process.requests.values()))
         self.assertEqual(request.base, self.serving.base)
-        self.assertTrue(all(r.model == researcher and r.max_output_tokens == 1024 for r in remote.requests))
+        self.assertTrue(all(r.model == researcher and r.max_output_tokens == 8192 for r in remote.requests))
         self.assertTrue(all(c['decision_model'] == asdict(researcher) for c in remote.contexts))
         self.assertEqual(self.read('decision_model.json'), asdict(researcher))
         self.assertEqual(self.read('model_calls.json')['requested_model'], asdict(researcher))
@@ -465,6 +465,28 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(remote.requests), 1)
         self.assertEqual(remote.requests[0].max_output_tokens, 8192)
         self.assertEqual(result['model_calls'], 1)
+
+    def test_configurable_output_budget_reaches_researcher_and_request_audit(self):
+        researcher = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'remote-revision')
+        remote = FixtureResearcher(researcher, self.process, [FINISH])
+        result = self.execute([], decision_model=researcher, decision_backend=remote,
+                              decision_max_output_tokens=16384)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(remote.requests[0].max_output_tokens, 16384)
+        audit = json.loads((self.root/'run/model_requests.jsonl').read_text().splitlines()[0])
+        self.assertEqual(audit['request']['max_output_tokens'], 16384)
+
+    def test_auxiliary_output_budget_is_not_silently_cut_to_1024(self):
+        from examples.medical.experiment import DecisionBackend
+        from rsisys.loops.contracts.model_service import GenerationRequest
+        from unittest.mock import Mock
+        model = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'remote-revision')
+        remote = SimpleNamespace(generate=Mock(return_value=GenerationResponse('{}', model, False)))
+        backend = DecisionBackend(remote, self.root, Mock(), 10, max_output_tokens=8192)
+        for limit in (4096, 512, 16384):
+            backend.generate(GenerationRequest('decision_maker', model, '{}', max_output_tokens=limit))
+            self.assertEqual(remote.generate.call_args.args[0].max_output_tokens, min(limit, 8192))
+        self.assertEqual(backend.calls, 3)
 
     def test_injected_researcher_identity_failure_is_logged_without_retry(self):
         researcher = ModelRef('researcher-vllm', 'Qwen3.8-27B', 'remote-revision')

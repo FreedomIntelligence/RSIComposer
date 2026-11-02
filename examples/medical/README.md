@@ -189,8 +189,21 @@ checks the action schema and permissions). Reasoning and incomplete JSON cannot
 trigger an action. Actor evaluation has no JSON stopping rule.
 SGLang uses native generation; its final response passes the same policy parser
 and permissions. It does not silently select one action from a multi-action response.
-Optional `--decision-thinking` enables the Qwen researcher thinking template with
-an 8192-token response limit and sampling (temperature 0.6, top-p 0.95, top-k 20).
+`--decision-max-output-tokens` sets the researcher output ceiling (default 8192),
+independently of thinking mode. Smaller feedback-learning or compaction request
+budgets are preserved; a declared native backend ceiling also remains binding.
+Actor answer-length limits are unchanged.
+`--decision-response-retries` allows 0–2 additional calls (default 2) for explicit
+response truncation/JSON format failures. Each call consumes the original shared
+model-call budget and rechecks the research deadline; identity/revision mismatches,
+refusals and transport failures are not retried. Recovery retains the same schema
+and output ceiling and never executes partial output. Canonical decision validation
+still runs before execution. For vLLM, `model_wire_responses.jsonl` persists the bounded
+HTTP response body before parsing; `model_response_errors.jsonl` records the call,
+reason, finish reason and retryability. Failure to save wire evidence aborts the call.
+These files are operator evidence, not additional input to the decision model.
+Optional `--decision-thinking` enables the Qwen researcher thinking template and
+sampling (temperature 0.6, top-p 0.95, top-k 20).
 Only the final answer after the reasoning delimiter reaches the decision parser;
 incomplete reasoning is rejected. Token usage includes reasoning. Actor scoring
 and completion-only SFT remain non-thinking, with greedy actor inference.

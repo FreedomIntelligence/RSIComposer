@@ -26,7 +26,16 @@ class ModelTransportError(RuntimeError):
 
 
 class ModelResponseError(ValueError):
-    pass
+    """A rejected response; recovery is opt-in for explicit format failures only."""
+
+    def __init__(self, message, *, reason='unspecified', retryable=False,
+                 finish_reason=None, provider_model=None):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = retryable
+        self.finish_reason = finish_reason
+        self.provider_model = provider_model
+
 
 
 class RemoteModelBackend:

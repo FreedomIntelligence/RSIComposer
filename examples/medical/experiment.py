@@ -40,6 +40,7 @@ from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
 from rsisys.loops.exploration.harness.commands import CommandHandler
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write
+from rsisys.runtime.model import ModelResponseError
 from rsisys.runtime.provenance import RunSource
 from rsisys.runtime.run_policy import RunContext, RunDecision, TimeRunPolicy
 from examples.qwen_toy.monitor import ACTIVE, Monitor
@@ -144,6 +145,8 @@ class ExperimentSettings:
     restart_delay_seconds: float = 10.0
     resource_allocation: dict | None = None
     feedback_learning: bool = False
+    decision_max_output_tokens: int = 8192
+    decision_response_retries: int = 2
 
     def __post_init__(self):
         for name in ('task', 'run_dir', 'model_path'):
@@ -162,6 +165,10 @@ class ExperimentSettings:
         if not isinstance(self.private_exclusions, tuple) or any(
                 not isinstance(path, Path) for path in self.private_exclusions):
             raise TypeError('private_exclusions must be a tuple of Paths')
+        if type(self.decision_response_retries) is not int or not 0 <= self.decision_response_retries <= 2:
+            raise ValueError('decision_response_retries must be an integer in 0..2')
+        if type(self.decision_max_output_tokens) is not int or self.decision_max_output_tokens < 1:
+            raise ValueError('decision_max_output_tokens must be a positive integer')
         if type(self.decision_thinking) is not bool:
             raise TypeError('decision_thinking must be boolean')
         for name in ('training_processes', 'tensor_parallel_size'):
@@ -260,6 +267,8 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
             'trainings': settings.max_trainings, 'decision_calls': settings.max_model_calls,
             'research_seconds': settings.seconds, 'max_train_steps': settings.max_train_steps,
             'max_seq_length': settings.max_seq_length,
+            'decision_max_output_tokens': settings.decision_max_output_tokens,
+            'decision_response_retries': settings.decision_response_retries,
             'current_remaining': 'Use live run_control; the static limits do not reset between research cycles.',
         },
     }
@@ -295,10 +304,14 @@ class JournalMonitor(Monitor):
 
 
 class DecisionBackend:
-    def __init__(self, serving, root: Path, monitor: Monitor, limit: int, *, decision_thinking=None):
+    def __init__(self, serving, root: Path, monitor: Monitor, limit: int, *, decision_thinking=None, max_output_tokens=8192, response_retries=2):
         self.serving, self.root, self.monitor, self.limit = serving, root, monitor, limit
         self.decision_thinking = (getattr(serving, 'decision_thinking', False)
                                   if decision_thinking is None else decision_thinking)
+        if type(response_retries) is not int or not 0 <= response_retries <= 2:
+            raise ValueError('response_retries must be an integer in 0..2')
+        self.response_retries = response_retries
+        self.max_output_tokens = min(max_output_tokens, getattr(serving, 'native_output_tokens', max_output_tokens))
         self.calls = 0
         self._monitor_owner = get_ident()
         self._monitor_events = SimpleQueue()
@@ -363,8 +376,24 @@ class DecisionBackend:
         return getattr(self.serving, 'supports_response_schema', False) is True
 
     def generate(self, request):
+        original_request = request
         try:
-            return self._generate(request)
+            for attempt in range(self.response_retries + 1):
+                try:
+                    return self._generate(request, response_attempt=attempt + 1)
+                except ModelResponseError as exc:
+                    if not exc.retryable or attempt == self.response_retries:
+                        raise
+                    self._monitor_event('model_response_retry', failed_call=self.calls,
+                                        reason=exc.reason, next_response_attempt=attempt + 2)
+                    # Static correction only: never promote partial model text into instructions.
+                    correction = ('The previous response exceeded the output limit. Return a shorter, complete JSON object.'
+                                  if exc.reason == 'output_truncated' else
+                                  'The previous response failed format validation. Return one complete valid JSON object.')
+                    request = replace(original_request, system=original_request.system + '\n' + correction +
+                        ' Preserve the required schema and evidence; do not execute or assume any previous action.')
+                    # Same identity, schema and output ceiling; every call re-enters admission.
+            raise AssertionError('Unreachable response recovery loop')
         except BudgetExhausted as exc:
             if get_ident() != self._monitor_owner:
                 # Learning records Exception failures; controller stops still
@@ -372,7 +401,7 @@ class DecisionBackend:
                 raise RuntimeError(str(exc)) from exc
             raise
 
-    def _generate(self, request):
+    def _generate(self, request, *, response_attempt=1):
         self.check_deadline()
         if self.training_active():
             raise RuntimeError('Decision inference prohibited while a training process is active')
@@ -384,18 +413,35 @@ class DecisionBackend:
         write_json(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.limit,
                                                   'requested_model': model})
         self._monitor_event('model_decision_requested', call=self.calls, requested_model=model)
-        cap = getattr(self.serving, 'native_output_tokens', 8192 if self.decision_thinking else 1024)
-        request = replace(request, max_output_tokens=min(cap, request.max_output_tokens))
+        request = replace(request, max_output_tokens=min(self.max_output_tokens, request.max_output_tokens))
         with (self.root / 'model_requests.jsonl').open('ab') as stream:
             # Retain schema property order so request logs can reproduce decoding.
-            record = {'call': self.calls, 'request': asdict(request)}
+            record = {'call': self.calls, 'response_attempt': response_attempt, 'request': asdict(request)}
             encoder = getattr(self.serving, 'native_response_schema', None)
             if request.response_schema is not None and callable(encoder):
                 record.update(native_schema_mode=self.serving.native_schema_mode,
                               native_response_schema=encoder(request.response_schema))
             stream.write(json.dumps(record,
                 ensure_ascii=False, allow_nan=False).encode() + b'\n')
-        response = self.serving.generate(request)
+        def observe_wire(record):
+            with (self.root / 'model_wire_responses.jsonl').open('ab') as stream:
+                stream.write(encoded({'call': call_id, 'requested_model': model,
+                                      'response_attempt': response_attempt, **record}) + b'\n')
+        observed_generate = (getattr(self.serving, 'generate_with_response_observer')
+            if getattr_static(self.serving, 'generate_with_response_observer', None) is not None else None)
+        try:
+            response = (observed_generate(request, observe_wire) if callable(observed_generate)
+                        else self.serving.generate(request))
+        except ModelResponseError as exc:
+            with (self.root / 'model_response_errors.jsonl').open('ab') as stream:
+                stream.write(encoded({'call': call_id, 'requested_model': model,
+                    'response_attempt': response_attempt, 'reason': exc.reason,
+                    'finish_reason': exc.finish_reason, 'provider_model': exc.provider_model,
+                    'retryable': exc.retryable, 'error': str(exc),
+                    'wire_observation_supported': callable(observed_generate)}) + b'\n')
+            self._monitor_event('model_response_rejected', call=call_id, reason=exc.reason,
+                                finish_reason=exc.finish_reason, retryable=exc.retryable)
+            raise
         with (self.root / 'model_responses.jsonl').open('ab') as stream:
             stream.write(encoded({'call': call_id, 'requested_model': model,
                                   'response': asdict(response)}) + b'\n')
@@ -808,9 +854,7 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
 
     def _decision_request(self, context):
         request = super()._decision_request(context)
-        cap = getattr(self.backend.serving, 'native_output_tokens',
-                      8192 if self.backend.decision_thinking else 1024)
-        return replace(request, max_output_tokens=cap)
+        return replace(request, max_output_tokens=self.backend.max_output_tokens)
 
     def decision_schema(self, context):
         schema = super().decision_schema(context)
@@ -1075,7 +1119,9 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             process_backend=process_backend, training_processes=settings.training_processes,
             native_model_kwargs=native_model_kwargs, training_device_type=settings.training_device_type)
         backend = DecisionBackend(serving if decision_backend is None else decision_backend,
-            root, monitor, settings.max_model_calls, decision_thinking=settings.decision_thinking)
+            root, monitor, settings.max_model_calls, decision_thinking=settings.decision_thinking,
+            max_output_tokens=settings.decision_max_output_tokens,
+            response_retries=settings.decision_response_retries)
         backend.training_active = learner.active
         def check_deadline():
             if research_started is not None and time.monotonic()-research_started >= settings.seconds:
@@ -1299,6 +1345,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--max-seq-length', type=int, default=2048)
     result.add_argument('--max-train-steps', type=int, default=64)
     result.add_argument('--private-exclusions', type=Path, action='append', default=[])
+    result.add_argument('--decision-response-retries', type=int, choices=(0, 1, 2), default=2,
+                        help='Additional calls for recoverable response format errors, charged to the same budget')
+    result.add_argument('--decision-max-output-tokens', type=int, default=8192,
+                        help='Researcher output ceiling, independent of thinking; preserves smaller per-call limits')
     result.add_argument('--decision-thinking', action='store_true',
                         help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
     result.add_argument('--decision-harness', choices=('default', 'dsh'), default='default')
