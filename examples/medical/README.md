@@ -209,13 +209,20 @@ sampling (temperature 0.6, top-p 0.95, top-k 20).
 Only the final answer after the reasoning delimiter reaches the decision parser;
 incomplete reasoning is rejected. Token usage includes reasoning. Actor scoring
 and completion-only SFT remain non-thinking, with greedy actor inference.
-The default policy retains complete context below 80,000 input tokens, then
-summarizes older records toward a complete request budget of 24,000 tokens.
-It protects the latest tool receipt, two newest history records and current
-feedback in full; an oversized protected request fails rather than cutting that
-feedback. A native tokenizer is used when available; otherwise the count is
-explicitly a conservative UTF-8 estimate. Full archives remain readable. The
-medical policy adds no 600-character summary, field allowlist or 8k character limit.
+The default harness triggers compaction at 80,000 input tokens and first targets
+24,000 tokens for the complete request. Only a context-budget failure raises the
+target by 12,000, up to 60,000 (24k → 36k → 48k → 60k). Each new compaction starts
+at 24k again. The summary is included in the measured request; summary calls
+and retries consume the original call/time budget. This does not increase the
+research, training, or output budget. Required facts and source identities stay
+protected; oversized bodies use bounded previews with readable archive references.
+Exceeding the ceiling still fails without committing partial compaction state.
+A native tokenizer is used when available; otherwise the count is explicitly a
+conservative UTF-8 estimate. Configure `--context-trigger-tokens`,
+`--context-target-tokens`, `--context-max-target-tokens` and
+`--context-target-increment-tokens`; setting max equal to target disables adaptation.
+These settings apply only to the default harness, not DSH or an injected harness.
+The effective configuration is recorded in `decision_harness.json`.
 It uses **LoRA SFT, not full-parameter training or RL**. The researcher chooses
 data subsets, bounded recipes, prompt experiments, evaluation and application;
 there is no fixed three-round research script. Defaults allow 90 minutes of

@@ -82,14 +82,21 @@ class BasicContextCompactor:
     """
     streams = ('history', 'experience', 'memories', 'operation_results')
 
-    def __init__(self, *, trigger_tokens=80000, target_tokens=24000, summary_tokens=4096):
+    def __init__(self, *, trigger_tokens=80000, target_tokens=24000, summary_tokens=4096,
+                 max_target_tokens=None, target_increment_tokens=12000):
         for name, value in (('trigger_tokens', trigger_tokens), ('target_tokens', target_tokens),
                             ('summary_tokens', summary_tokens)):
             if type(value) is not int or value < 1:
                 raise ValueError(f'{name} must be a positive integer')
         if not summary_tokens < target_tokens < trigger_tokens:
             raise ValueError('Require summary_tokens < target_tokens < trigger_tokens')
+        maximum = target_tokens if max_target_tokens is None else max_target_tokens
+        if (type(maximum) is not int or not target_tokens <= maximum < trigger_tokens
+                or type(target_increment_tokens) is not int or target_increment_tokens < 1
+                or (maximum - target_tokens) % target_increment_tokens):
+            raise ValueError('Adaptive target must use positive increments up to a ceiling below trigger_tokens')
         self.trigger_tokens, self.target_tokens, self.summary_tokens = trigger_tokens, target_tokens, summary_tokens
+        self.max_target_tokens, self.target_increment_tokens = maximum, target_increment_tokens
         self._folded = {name: set() for name in self.streams}
         self._summary = {}
         self._project_evidence = False
@@ -117,6 +124,32 @@ class BasicContextCompactor:
         self._project_evidence = state.get('project_evidence', False)
 
     def compact(self, context, *, recent_limit=32, measure=None, summarize=None):
+        """Try the base target first; only budget failures may use bounded headroom.
+
+        Each attempt commits atomically. Real summarizer calls, if necessary,
+        still use the caller's backend/budget. Other errors are never retried.
+        The configured target stays unchanged; future pressure starts at it again.
+        """
+        attempts = []
+        for target in range(self.target_tokens, self.max_target_tokens + 1, self.target_increment_tokens):
+            try:
+                result = self._compact(context, recent_limit=recent_limit, measure=measure,
+                                       summarize=summarize, target_tokens=target)
+            except ContextBudgetError as exc:
+                attempts.append({'target_tokens': target, 'status': 'budget_exceeded',
+                    'error': str(exc), **{k: self.last_measurement[k] for k in
+                        ('minimum_input_tokens', 'summary_token_limit') if k in self.last_measurement}})
+                self.last_measurement.update(configured_target_tokens=self.target_tokens,
+                    max_target_tokens=self.max_target_tokens, target_attempts=deepcopy(attempts))
+                if target == self.max_target_tokens:
+                    raise
+            else:
+                attempts.append({'target_tokens': target, 'status': 'accepted'})
+                self.last_measurement.update(configured_target_tokens=self.target_tokens,
+                    max_target_tokens=self.max_target_tokens, target_attempts=deepcopy(attempts))
+                return result
+
+    def _compact(self, context, *, recent_limit, measure, summarize, target_tokens):
         if type(recent_limit) is not int or recent_limit < 1:
             raise ValueError('recent_limit must be positive')
         from .research_state import bounded_evidence_view
@@ -174,13 +207,13 @@ class BasicContextCompactor:
         current = view(kept, self._summary)
         before = count(current)
         self.last_measurement = {'input_tokens': before, 'trigger_tokens': self.trigger_tokens,
-                                 'target_tokens': self.target_tokens, 'compacted': False}
+                                 'target_tokens': target_tokens, 'compacted': False}
         if before < self.trigger_tokens:
             return current
         project_evidence = True
         current = view(kept, self._summary)
         after = count(current)
-        if after <= self.target_tokens:
+        if after <= target_tokens:
             self._project_evidence = True
             self.compactions += 1
             self.last_measurement.update(compacted=True, output_tokens=after, compaction=self.compactions)
@@ -199,7 +232,7 @@ class BasicContextCompactor:
         minimum_tokens = count(minimal_view)
         self.last_measurement.update(minimum_input_tokens=minimum_tokens,
             protected_records={name: len(indices) for name, indices in minimal.items()})
-        if minimum_tokens > self.target_tokens:
+        if minimum_tokens > target_tokens:
             self.last_measurement['minimum_field_bytes'] = {
                 name: len(encoded(value).encode('utf-8'))
                 for name, value in asdict(minimal_view).items()}
@@ -207,8 +240,8 @@ class BasicContextCompactor:
                                      'exceed target_tokens; no compaction state was committed')
         # Reserve space for the rolling summary and compact provenance. Search by
         # whole records, never split a tool call/result to satisfy the budget.
-        reserve = self.summary_tokens + min(512, self.target_tokens // 8)
-        desired = self.target_tokens - reserve
+        reserve = self.summary_tokens + min(512, target_tokens // 8)
+        desired = target_tokens - reserve
         def after_removing(n):
             indices = {name: set(values) for name, values in kept.items()}
             for (name, _), members in removable[:n]:
@@ -239,7 +272,7 @@ class BasicContextCompactor:
                    'text': '', 'sources': sources, 'compaction': self.compactions+1}
         # Fixed facts may leave less than the configured summary allowance.
         # Price provenance too before asking the model to write the summary.
-        available = self.target_tokens - count(view(chosen, summary))
+        available = target_tokens - count(view(chosen, summary))
         summary_limit = min(self.summary_tokens, available - 64)
         self.last_measurement['summary_token_limit'] = max(0, summary_limit)
         if summary_limit < 1:
@@ -259,7 +292,7 @@ class BasicContextCompactor:
         summary['text'] = text
         projected = view(chosen, summary)
         after = count(projected)
-        if after > self.target_tokens:
+        if after > target_tokens:
             raise ContextBudgetError('Summary plus fixed state and required facts and latest evidence references exceed target_tokens; '
                                      'no compaction state was committed')
         # Commit only after the summary and complete final request fit.

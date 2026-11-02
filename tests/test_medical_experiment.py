@@ -387,6 +387,9 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
     def test_early_finish_constructs_real_build_monitor_and_persistence(self):
         result = self.execute([FINISH])
         self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(self.read('decision_harness.json')['default_context_budget'], {
+            'trigger_tokens': 80000, 'target_tokens': 24000,
+            'max_target_tokens': 60000, 'target_increment_tokens': 12000})
         self.assertEqual(result['researcher_finish_reason'], FINISH['reason'])
         self.assertEqual(result['trainings_reserved'], 0)
         context = self.serving.contexts[0]
@@ -922,8 +925,15 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
                           args.max_train_steps), (5400, 3, 96, 2048, 64))
         self.assertEqual(args.private_exclusions, [Path('a'), Path('b')])
         self.assertEqual(args.training_device_type, 'cuda')
+        self.assertEqual((args.context_trigger_tokens, args.context_target_tokens,
+                          args.context_max_target_tokens, args.context_target_increment_tokens),
+                         (80000, 24000, 60000, 12000))
+        fixed = ExperimentSettings(self.task, self.root/'run', self.root/'model',
+                                   context_max_target_tokens=24000)
+        self.assertEqual(fixed.context_budget()['max_target_tokens'], 24000)
         for overrides in ({'max_trainings': 4}, {'max_train_steps': 65}, {'seconds': float('nan')},
-                          {'max_trainings': True}, {'training_device_type': 'unknown'}):
+                          {'max_trainings': True}, {'training_device_type': 'unknown'},
+                          {'context_max_target_tokens': 80000}, {'context_target_increment_tokens': 0}):
             with self.assertRaises(ValueError):
                 ExperimentSettings(self.task, self.root/'run', self.root/'model', **overrides)
 

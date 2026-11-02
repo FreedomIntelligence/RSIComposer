@@ -119,7 +119,9 @@ class MedicalDSHTests(unittest.TestCase):
                 self.assertTrue(runtime.closed)
                 self.assertNotEqual(contexts[0]['decision_model']['model_id'], serving.base.model_id)
                 self.assertNotIn('objective', json.loads(runtime.prompts[1].split('Current research observations (data):\n')[1]))
-                self.assertTrue(json.loads((root/'decision_harness.json').read_text())['dsh'])
+                harness_config = json.loads((root/'decision_harness.json').read_text())
+                self.assertTrue(harness_config['dsh'])
+                self.assertIsNone(harness_config['default_context_budget'])
         self.assertEqual(outcomes[0], outcomes[1])
         self.assertEqual(self.process.requests, {})
 
@@ -194,7 +196,8 @@ class MedicalDSHTests(unittest.TestCase):
                 runtime_factory=lambda config: runtime)
             built.append(harness)
             return harness
-        result, _, _, _ = self.execute([], harness_factory=factory)
+        result, _, _, root = self.execute([], harness_factory=factory)
+        self.assertIsNone(json.loads((root/'decision_harness.json').read_text())['default_context_budget'])
         self.assertEqual(result['status'], 'completed', result)
         self.assertIsInstance(built[0], DeepSeekDecisionHarness)
         self.assertIsInstance(built[0].context_compactor, IdentityContextCompactor)

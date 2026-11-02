@@ -35,6 +35,7 @@ from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
 from rsisys.loops.decision_making.harness.dsh import DSHConfig, DeepSeekDecisionHarness
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+from rsisys.loops.decision_making.harness.context import BasicContextCompactor
 from rsisys.loops.decision_making.harness.attempts import AttemptContract
 from rsisys.loops.decision_making.harness.learning_policy import MemoryPrefixDecisionPolicy
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
@@ -149,8 +150,13 @@ class ExperimentSettings:
     decision_max_output_tokens: int = 8192
     decision_response_retries: int = 2
     require_research_attempts: bool = False
+    context_trigger_tokens: int = 80000
+    context_target_tokens: int = 24000
+    context_max_target_tokens: int = 60000
+    context_target_increment_tokens: int = 12000
 
     def __post_init__(self):
+        BasicContextCompactor(**self.context_budget())
         for name in ('task', 'run_dir', 'model_path'):
             if not isinstance(getattr(self, name), Path):
                 raise TypeError(f'{name} must be a Path')
@@ -201,6 +207,12 @@ class ExperimentSettings:
         object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
         if type(self.feedback_learning) is not bool:
             raise TypeError('feedback_learning must be boolean')
+
+    def context_budget(self):
+        return {'trigger_tokens': self.context_trigger_tokens,
+                'target_tokens': self.context_target_tokens,
+                'max_target_tokens': self.context_max_target_tokens,
+                'target_increment_tokens': self.context_target_increment_tokens}
 
 
 def build_project_context(settings: ExperimentSettings, task, *, target_model: ModelRef,
@@ -1191,6 +1203,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 raise BudgetExhausted('deadline')
         backend.check_deadline = check_deadline
         write_json(root / 'decision_harness.json', {'kind': settings.decision_harness,
+            'default_context_budget': settings.context_budget()
+                if dsh_config is None and decision_harness_factory is None else None,
             'dsh': ({**asdict(dsh_config), 'home': str(dsh_config.home), 'workspace': str(dsh_config.workspace)}
                     if dsh_config else None),
             'model_call_count_mode': ('native_turns_and_compaction_reservations' if dsh_config
@@ -1248,7 +1262,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                 runtime_factory=dsh_runtime_factory, on_notification=backend.native_notification)
         else:
             replacement = DefaultDecisionHarness(policy_factory(backend, researcher), tools, decision.experience,
-                memory=decision.memory, research_agenda=decision.research_agenda)
+                memory=decision.memory, research_agenda=decision.research_agenda,
+                context_compactor=BasicContextCompactor(**settings.context_budget()))
         replacement.attempt_contract = attempt_contract
         replacement.state.operation_results.extend(decision.state.operation_results)
         assembly.runner.decision_making.harness = decision = replacement
@@ -1433,6 +1448,11 @@ def parser() -> argparse.ArgumentParser:
                         help='Additional calls for recoverable response format errors, charged to the same budget')
     result.add_argument('--decision-max-output-tokens', type=int, default=8192,
                         help='Researcher output ceiling, independent of thinking; preserves smaller per-call limits')
+    result.add_argument('--context-trigger-tokens', type=int, default=80000)
+    result.add_argument('--context-target-tokens', type=int, default=24000)
+    result.add_argument('--context-max-target-tokens', type=int, default=60000,
+                        help='Default harness only; set equal to target to disable adaptive compact targets')
+    result.add_argument('--context-target-increment-tokens', type=int, default=12000)
     result.add_argument('--decision-thinking', action='store_true',
                         help='Enable researcher thinking and sampling; actor evaluation stays greedy/non-thinking')
     result.add_argument('--decision-harness', choices=('default', 'dsh'), default='default')
