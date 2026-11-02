@@ -129,3 +129,19 @@ test("legacy evaluator aliases recover only uniquely corroborated directives and
   h.run('state.snapshot.jobs.push({job_id:"another",directive_id:"eval-directive"})');
   assert.equal(h.run('linkedJob(state.snapshot.decisions[0],state.snapshot)'),undefined);
 });
+
+
+test("node selection restores page scroll after transient content collapse and only keyboard restores focus",()=>{
+  const h=open(),section=findClass(host(h),"execution-sequence")[0],entries=findClass(host(h),"flow-steps")[0],nav=findClass(host(h),"flow-map")[0];
+  section.getBoundingClientRect=()=>({height:1200});
+  const replace=entries.replaceChildren.bind(entries);let guarded=0,focus=0;
+  entries.replaceChildren=(...nodes)=>{if(section.style.minHeight==="1200px")guarded++;h.ctx.window.scrollY=0;replace(...nodes);};
+  nav.querySelector=()=>({focus(options){assert.equal(options.preventScroll,true);focus++;}});
+  h.ctx.window.scrollY=650;h.ctx.window.scrollX=7;
+  mainNodes(h)[0].listeners.click();
+  assert.equal(h.ctx.window.scrollY,650);assert.equal(h.ctx.window.scrollX,7);assert.equal(focus,0);assert.ok(guarded);assert.equal(section.style.minHeight,"");
+  mainNodes(h)[0].listeners.keydown({key:"Enter",preventDefault(){}});
+  assert.equal(h.ctx.window.scrollY,650);assert.equal(focus,1);
+  const child=findClass(findClass(host(h),"attempt-map")[0],"decision-node")[0];
+  child.listeners.click();assert.equal(h.ctx.window.scrollY,650);
+});

@@ -162,11 +162,11 @@ progress { display: block; appearance: none; width: 100%; height: 4px; border: 0
 #projects .project-heading { padding-top: 20px; }
 #project-name { overflow-wrap: anywhere; font-size: clamp(26px,3vw,38px); }
 .trajectory-shell { position: relative; margin-bottom: 28px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #f8f7f2; }
-.flow-map { display: block; overflow: hidden; height: 420px; padding: 0; overscroll-behavior: contain; cursor: grab; touch-action: none; }
+.flow-map { display: block; overflow: hidden; height: 420px; padding: 0; cursor: grab; touch-action: none; }
 .flow-map svg { display: block; width: 100%; height: 100%; user-select: none; }
 .decision-node { cursor: grab; }
 .decision-node:active, .flow-map:active { cursor: grabbing; }
-.decision-node:focus-visible { outline: none; }
+.decision-map:focus, .decision-node:focus { outline: none; }
 .decision-node:focus-visible circle { stroke: var(--orange); stroke-width: 3; }
 
 .project-groups { display: grid; gap: 32px; }

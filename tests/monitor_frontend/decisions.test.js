@@ -324,7 +324,7 @@ test("click, Enter and Space select with key, original row and original index", 
   }
   node.listeners.keydown({ key: " ", repeat: true, preventDefault() { prevented++; } });
   assert.equal(prevented, 4); assert.equal(calls.length, 4);
-  for (const call of calls) assert.deepEqual(call, ["a", record, 1]);
+  calls.forEach((call,index)=>assert.deepEqual(call, ["a", record, 1,index>0]));
   assert.doesNotThrow(() => renderedNodes(api.render({ rows: [record] }))[0].listeners.click());
 });
 
@@ -551,22 +551,15 @@ test("same-size rerenders preserve an auto-fit camera when new decisions arrive"
   updated.dispose();
 });
 
-test("Ctrl/Meta wheel zooms at pointer while ordinary wheel retains native scrolling", () => {
+test("graph leaves all wheel gestures native and zoom buttons remain usable", () => {
   const h = interactive(), view = { camera: { x: 0, y: 0, scale: 1 } };
   const svg = h.api.render({ rows: [row("a")], view });
   const before = { ...view.camera };
-  const ordinary = pointer(svg, "wheel", 200, 150, { deltaY: 100 });
-  assert.equal(ordinary.prevented, undefined); assert.deepEqual({ ...view.camera }, before);
-  for (const modifier of ["ctrlKey", "metaKey"]) {
-    const world = [(200 - view.camera.x) / view.camera.scale, (150 - view.camera.y) / view.camera.scale];
-    const event = pointer(svg, "wheel", 200, 150, { deltaY: -80, [modifier]: true });
-    assert.equal(event.prevented, true);
-    assert.ok(Math.abs((200 - view.camera.x) / view.camera.scale - world[0]) < 1e-8);
-    assert.ok(Math.abs((150 - view.camera.y) / view.camera.scale - world[1]) < 1e-8);
+  for(const extra of [{},{ctrlKey:true},{metaKey:true}]){
+    const event=pointer(svg,"wheel",200,150,{deltaY:100,...extra});
+    assert.equal(event.prevented,undefined);assert.deepEqual({...view.camera},before);
   }
-  const scale = view.camera.scale; svg.zoomBy(2); assert.equal(view.camera.scale, scale * 2);
-  const valid = { ...view.camera }; svg.zoomBy(NaN); svg.zoomBy(-1);
-  assert.deepEqual({ ...view.camera }, valid); svg.dispose();
+  svg.zoomBy(2);assert.equal(view.camera.scale,2);svg.dispose();
 });
 
 test("resize and CTM conversion preserve world drag distances and a manual camera", () => {

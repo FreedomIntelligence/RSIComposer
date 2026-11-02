@@ -31,7 +31,7 @@
  * onIdle() follows interaction/settling; dispose() NEVER calls it.
  * No idle RAF/timer: a drag starts at most 24 frames, release at most 18 frames.
  * selected is a node key; label(row, originalIndex) returns its full label.
- * onSelect(key, row, originalIndex) fires for click, Enter, or Space.
+ * onSelect(key, row, originalIndex, keyboard) fires for click, Enter, or Space.
  * edgeLabel(kind) optionally supplies a translated edge title.
  * Selection is controlled by the caller: rerender with the new selected key.
  * No dependencies; browser global RSIDecisions and CommonJS exports.
@@ -558,14 +558,14 @@
         group.style.cursor = "grab";
         group.setAttribute("role", "button"); group.setAttribute("tabindex", "0");
         group.setAttribute("aria-label", fullLabel); group.setAttribute("aria-pressed", String(active));
-        const select = () => { if (!disposed && typeof onSelect === "function") onSelect(node.key, node.row, node.index); };
+        const select = (keyboard=false) => { if (!disposed && typeof onSelect === "function") onSelect(node.key, node.row, node.index, keyboard); };
         listen(group, "click", event => {
           if (suppressed === node.key && event?.detail !== 0) { suppressed = null; return; }
           select();
         });
         listen(group, "keydown", event => {
           if (["Enter", " ", "Spacebar"].includes(event.key)) {
-            event.preventDefault(); if (!event.repeat) { suppressed = null; select(); }
+            event.preventDefault(); if (!event.repeat) { suppressed = null; select(true); }
           }
         });
         listen(group, "pointerdown", event => begin(event, node, group));
@@ -627,12 +627,7 @@
       camera.y = center.y - (center.y - camera.y) * ratio;
       camera.scale = scale; view.autoFit = false; paint();
     }
-    listen(svg, "wheel", event => {
-      if (disposed || (!event.ctrlKey && !event.metaKey)) return;
-      event.preventDefault();
-      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? HEIGHT : 1);
-      zoom(Math.exp(-Math.max(-200, Math.min(200, delta)) * 0.002), point(event)); notifyIdle();
-    }, { passive: false });
+
     function fitCamera(initial = false) {
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
       for (const n of model.nodes) {

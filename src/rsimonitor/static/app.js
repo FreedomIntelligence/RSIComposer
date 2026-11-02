@@ -390,6 +390,10 @@ function executionSequence(s, scope) {
   const onIdle=()=>{if(scope===state.activeScope&&state.page==="experiment"&&scope.renderPending&&!graphBusy(scope)){scope.renderPending=false;renderProject();}};
   const edgeLabel=kind=>t({sequence:"记录顺序，不表示因果",dependency:"依赖已完成决策",adoption:"已确认采纳结果",root:"布局起点，不表示依赖",source:"引用的决策"}[kind]);
   const fill=(restoreFocus=false,childFocus=false)=>{
+    const position=typeof window!=="undefined"?{left:window.scrollX,top:window.scrollY}:null;
+    const minHeight=section.style.minHeight||"";
+    const height=section.getBoundingClientRect?.().height;
+    if(height)section.style.minHeight=`${height}px`;
     const scroll={left:navigation.scrollLeft,top:navigation.scrollTop};
     scope.attemptGraph?.dispose?.();scope.attemptGraph=null;scope.attemptView=null;
     entries.replaceChildren();
@@ -402,7 +406,7 @@ function executionSequence(s, scope) {
       startLabel:`0 · ${t("实验起点")}`,label:(row,index)=>{
         const group=groups.find(g=>g.index===index);
         return `${groups.indexOf(group)+1} · ${attemptTitle(group)}`;
-      },edgeLabel,onSelect:key=>{scope.flowSelected.set(s.run_id,key);fill(true);},
+      },edgeLabel,onSelect:(key,_row,_index,keyboard)=>{scope.flowSelected.set(s.run_id,key);fill(keyboard===true);},
     });
     navigation.replaceChildren(scope.graph);navigation.scrollLeft=scroll.left;navigation.scrollTop=scroll.top;
     for(const [i,g] of groups.entries()){
@@ -437,7 +441,7 @@ function executionSequence(s, scope) {
         if(!scope.attemptViews.has(key))scope.attemptViews.set(key,{});scope.attemptView=scope.attemptViews.get(key);
         scope.attemptGraph=RSIDecisions.render({model:child,selected:chosen,view:scope.attemptView,compact:true,height:280,
           startLabel:t("尝试内决策"),label:(record,index)=>`${members.findIndex(n=>n.index===index)+1} · ${decisionTitle(record)}`,
-          edgeLabel,onIdle,onSelect:childKey=>{scope.attemptSteps.set(key,childKey);fill(false,true);}});
+          edgeLabel,onIdle,onSelect:(childKey,_row,_index,keyboard)=>{scope.attemptSteps.set(key,childKey);fill(false,keyboard===true);}});
         childMap.append(scope.attemptGraph);childShell.append(childMap,graphTools(()=>scope.attemptGraph));stages.append(childShell);entries.append(stages);
         if(!row){stages.append(el("p","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));continue;}
       }
@@ -446,6 +450,8 @@ function executionSequence(s, scope) {
     if(groups.length&&!selected)entries.append(el("li","quiet-note selection-hint",t("选择节点查看决策、任务与结果。")));
     if(restoreFocus)navigation.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
     if(childFocus)entries.querySelector?.('[aria-pressed="true"]')?.focus({preventScroll:true});
+    section.style.minHeight=minHeight;
+    if(position&&(window.scrollX!==position.left||window.scrollY!==position.top))window.scrollTo({...position,behavior:"instant"});
   };
   fill();
   const logs=experimentLogs(s,scope,projection);if(logs)section.append(logs);
