@@ -323,7 +323,7 @@ function dashboardPanel(panel,data,s) {
       const entry=el("span","",`${item.label} · ${dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])}`);entry.style.color=color;legend.append(entry);
     });
     for(const value of [...new Set([xmin,xmax])])svg.append(svgEl("text",{x:x(value),y:163,"text-anchor":"middle",class:"benchmark-axis"},fmt(value)));
-    if(series.length===1){const latest=el("div","benchmark-latest");latest.append(el("span","",t("最近记录")),el("strong","benchmark-value",dashboardFormat(series[0].points.at(-1)?.value,definition)));heading.append(latest);}
+    if(series.length===1){const latest=el("div","benchmark-latest");latest.append(el("strong","benchmark-value",dashboardFormat(series[0].points.at(-1)?.value,definition)));heading.append(latest);}
     content.append(plot,el("p","benchmark-axis-label",axisLabel));if(series.length>1)content.append(legend);
   }
   if(!series.length)content.append(empty(t("尚无指标数据。")));
