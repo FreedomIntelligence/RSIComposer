@@ -46,7 +46,7 @@ test("per-chart editor previews only its draft, saves one chart and preserves an
   button(d,"保存").listeners.click();assert.equal(d.open,false);assert.match(textOf(cards(h)[0]),/My loss/);assert.match(textOf(cards(h)[1]),/Second/);assert.equal(stored(storage).panels[0].type,"scalar");
   h.run('selectRun("b")');assert.doesNotMatch(textOf(grid(h)),/My loss/);h.run('selectRun("a")');assert.match(textOf(grid(h)),/My loss/);
   const {h:reloaded}=open(fixture,storage);assert.match(textOf(grid(reloaded)),/My loss/);
-  button(host(h),"恢复默认").listeners.click();assert.equal(storage.has("rsimonitor-dashboard:v1:a"),false);assert.match(textOf(grid(h)),/First/);
+  assert.equal(button(host(h),"恢复默认"),undefined);
 });
 test("add and delete chart operate individually and keep a deliberately empty dashboard",()=>{
   const {h,storage}=open(fixture);button(host(h),"添加图表").listeners.click();let d=findClass(host(h),"dashboard-dialog")[0];assert.equal(findClass(d,"dashboard-delete")[0].hidden,true);button(d,"保存").listeners.click();assert.equal(cards(h).length,2);

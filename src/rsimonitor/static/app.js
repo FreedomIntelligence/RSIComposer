@@ -334,9 +334,9 @@ function metricDashboard(s,scope) {
   const defaults=dashboardConfig(s.dashboard)||dashboardConfig(defaultDashboard(data));
   let saved=null;try{saved=dashboardConfig(JSON.parse(localStorage.getItem(storageKey)));}catch{}
   let config=dashboardConfig(scope.dashboardOverride)||saved||defaults;
-  const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),actions=el("div","dashboard-board-actions"),add=el("button","dashboard-add",t("添加图表")),reset=el("button","text-button",t("恢复默认"));
-  for(const button of [add,reset])button.type="button";add.setAttribute("aria-haspopup","dialog");add.disabled=config.panels.length>=24;
-  heading.append(el("h4","",t("指标看板")),actions);actions.append(reset,add);section.append(heading);
+  const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),actions=el("div","dashboard-board-actions"),add=el("button","dashboard-add",t("添加图表"));
+  add.type="button";add.setAttribute("aria-haspopup","dialog");add.disabled=config.panels.length>=24;
+  heading.append(el("h4","",t("指标看板")),actions);actions.append(add);section.append(heading);
   const grid=el("div","benchmark-grid dashboard-grid");section.append(grid);
   const persist=next=>{config=dashboardConfig(next);const isDefault=JSON.stringify(config)===JSON.stringify(defaults);scope.dashboardOverride=isDefault?null:config;try{if(isDefault)localStorage.removeItem(storageKey);else localStorage.setItem(storageKey,JSON.stringify(config));}catch{}};
   const repaint=()=>{scope.detailFingerprint=null;renderProject();};
@@ -374,7 +374,6 @@ function metricDashboard(s,scope) {
     };
     gesture(drag,"drag");gesture(resize,"resize");
   }
-  reset.addEventListener("click",()=>{persist(defaults);repaint();});
   const dialog=el("dialog","dashboard-dialog"),dialogHeader=el("header","dashboard-dialog-heading"),dialogTitle=el("h3"),close=el("button","dashboard-close","×"),body=el("div","dashboard-chart-editor"),settings=el("div","dashboard-chart-settings"),preview=el("div","dashboard-chart-preview"),footer=el("footer","dashboard-dialog-footer");
   dialogTitle.id="dashboard-config-title";dialog.setAttribute("aria-labelledby",dialogTitle.id);close.type="button";close.autofocus=true;close.setAttribute("aria-label",t("关闭"));dialogHeader.append(dialogTitle,close);body.append(settings,preview);dialog.append(dialogHeader,body,footer);section.append(dialog);
   let draft=null,editingID=null,isNew=false;
