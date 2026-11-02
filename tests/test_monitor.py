@@ -217,7 +217,8 @@ class DashboardProjectionTests(unittest.TestCase):
                                'timestamp': '2026-11-02T00:00:00Z', 'task_id': 't',
                                'decision_id': 'd', 'attempt_id': 'a'},
                               {'metric': 'unknown_score', 'value': 85}],
-            'dashboard': {'schema_version': 1, 'panels': [self.panel()]},
+            'dashboard': {'schema_version': 1, 'panels': [self.panel(layout={'w': 6, 'h': 360}),
+                                                        self.panel(id='legacy')]},
         }
         original = deepcopy(fields)
         projected = self.project(**fields)
@@ -227,6 +228,7 @@ class DashboardProjectionTests(unittest.TestCase):
         for key in fields:
             self.assertEqual(roundtrip[key], projected[key])
         projected['dashboard']['panels'][0]['metrics'].append('loss')
+        projected['dashboard']['panels'][0]['layout']['w'] = 12
         projected['metric_definitions']['accuracy']['label'] = 'Changed'
         projected['metric_points'][0]['value'] = 0
         self.assertEqual(fields, original)
@@ -238,12 +240,39 @@ class DashboardProjectionTests(unittest.TestCase):
             metric_points=[{'metric': 'loss', 'value': .5, **private},
                            {'metric': 'loss', 'value': {'payload': 'PRIVATE'}},
                            {'metric': 'loss', 'value': 1, 'task_id': {'payload': 'PRIVATE'}}],
-            dashboard={'schema_version': 1, 'panels': [self.panel(**private)], **private}, **private)
+            dashboard={'schema_version': 1, 'panels': [
+                self.panel(layout={'w': 6, 'h': 360, **private}, **private)], **private}, **private)
         self.assertEqual(projected['metric_definitions'], {
             'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}})
         self.assertEqual(projected['metric_points'], [{'metric': 'loss', 'value': .5}])
-        self.assertEqual(projected['dashboard'], {'schema_version': 1, 'panels': [self.panel()]})
+        self.assertEqual(projected['dashboard'], {
+            'schema_version': 1, 'panels': [self.panel(layout={'w': 6, 'h': 360})]})
         self.assertNotIn('PRIVATE', json.dumps(projected, allow_nan=False))
+
+    def test_panel_layout_accepts_inclusive_bounds_and_preserves_absence(self):
+        panels = [self.panel(id=f'{w}-{h}', layout={'w': w, 'h': h})
+                  for w in (3, 12) for h in (240, 720)] + [self.panel()]
+        dashboard = {'schema_version': 1, 'panels': panels}
+        projected = self.project(dashboard=dashboard)['dashboard']
+        self.assertEqual(projected, dashboard)
+        self.assertNotIn('layout', projected['panels'][-1])
+        self.assertEqual(monitor.dashboard_only(json.loads(json.dumps(projected))), dashboard)
+
+    def test_invalid_layout_is_omitted_without_losing_panel_or_valid_siblings(self):
+        invalid = [None, True, False, 6, '6', [], {}, {'w': 6}, {'h': 360}]
+        for key in ('w', 'h'):
+            invalid += [{**{'w': 6, 'h': 360}, key: value} for value in
+                        (None, True, False, '6', [], {}, 6.0, float('nan'), float('inf'), 10 ** 1000)]
+        invalid += [{'w': 2, 'h': 360}, {'w': 13, 'h': 360},
+                    {'w': 6, 'h': 239}, {'w': 6, 'h': 721}, {'w': 6, 'h': 360.0}]
+        sibling = self.panel(id='sibling', layout={'w': 12, 'h': 720})
+        for layout in invalid:
+            with self.subTest(layout=layout):
+                dashboard = {'schema_version': 1, 'panels': [self.panel(layout=layout), sibling]}
+                original = deepcopy(dashboard)
+                self.assertEqual(self.project(dashboard=dashboard)['dashboard'], {
+                    'schema_version': 1, 'panels': [self.panel(), sibling]})
+                self.assertEqual(dashboard, original)
 
     def test_collections_are_bounded_and_points_keep_recent_observations(self):
         definitions = {f'm{i}': {'label': str(i), 'unit': 'number', 'direction': 'neutral'} for i in range(105)}

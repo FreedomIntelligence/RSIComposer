@@ -40,8 +40,9 @@ class MonitorProducerTests(unittest.TestCase):
 
     def test_dashboard_and_points_publish_on_next_write_and_roundtrip_through_host(self):
         from rsimonitor.server import project_snapshot
-        panels = [self.panel(), self.panel(id='quality', type='scalar', metrics=['accuracy'],
-                                          x='evaluation', group_by='attempt')]
+        panels = [self.panel(layout={'w': 6, 'h': 360}),
+                  self.panel(id='quality', type='scalar', metrics=['accuracy'],
+                             x='evaluation', group_by='attempt')]
         definitions = {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}}
         original_panels, original_definitions = deepcopy(panels), deepcopy(definitions)
         before = deepcopy(self.monitor.data)
@@ -56,6 +57,7 @@ class MonitorProducerTests(unittest.TestCase):
             write.assert_not_called()
         panels[0]['metrics'].append('PRIVATE')
         panels[0]['title'] = 'Changed'
+        panels[0]['layout']['w'] = 12
         definitions['accuracy']['unit'] = 'number'
         self.assertEqual(self.monitor.data['dashboard']['panels'], original_panels)
         self.assertEqual(self.monitor.data['metric_definitions'], original_definitions)
@@ -65,6 +67,7 @@ class MonitorProducerTests(unittest.TestCase):
         self.monitor.write()
         snapshot = json.loads((self.root / 'monitor.json').read_text())
         public = project_snapshot(snapshot, self.root.name)
+        self.assertNotIn('layout', public['dashboard']['panels'][1])
         for key in ('dashboard', 'metric_definitions', 'metric_points'):
             self.assertEqual(public[key], self.monitor.data[key])
         self.assertEqual(public['metric_points'][0], {
@@ -73,6 +76,44 @@ class MonitorProducerTests(unittest.TestCase):
         self.assertEqual(public['metric_points'][1:], [{'metric': 'accuracy', 'value': .75},
                                                      {'metric': 'unknown_score', 'value': 75}])
         json.dumps(public, allow_nan=False)
+
+    def test_panel_layout_accepts_inclusive_bounds_and_roundtrips_through_host(self):
+        from rsimonitor.server import dashboard_only
+        panels = [self.panel(id=f'{w}-{h}', layout={'w': w, 'h': h})
+                  for w in (3, 12) for h in (240, 720)] + [self.panel()]
+        original = deepcopy(panels)
+        self.monitor.configure_dashboard(panels)
+        self.assertEqual(panels, original)
+        self.monitor.write()
+        dashboard = json.loads((self.root / 'monitor.json').read_text())['dashboard']
+        self.assertEqual(dashboard, {'schema_version': 1, 'panels': original})
+        self.assertNotIn('layout', dashboard['panels'][-1])
+        self.assertEqual(dashboard_only(dashboard), dashboard)
+
+    def test_invalid_panel_layout_rejects_whole_configuration_atomically(self):
+        self.monitor.configure_dashboard([self.panel(layout={'w': 6, 'h': 360})])
+        self.monitor.log_metric('loss', .5)
+        self.monitor.write()
+        before = deepcopy(self.monitor.data)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        definitions = {'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}}
+        invalid = [None, True, False, 6, '6', [], {}, {'w': 6}, {'h': 360},
+                   {'w': 6, 'h': 360, 'payload': {'secret': 'PRIVATE'}}]
+        for key in ('w', 'h'):
+            invalid += [{**{'w': 6, 'h': 360}, key: value} for value in
+                        (None, True, False, '6', [], {}, 6.0, float('nan'), float('inf'), 10 ** 1000)]
+        invalid += [{'w': 2, 'h': 360}, {'w': 13, 'h': 360},
+                    {'w': 6, 'h': 239}, {'w': 6, 'h': 721}, {'w': 6, 'h': 360.0}]
+        for layout in invalid:
+            with self.subTest(layout=layout):
+                panels = [self.panel(id='valid', layout={'w': 3, 'h': 240}), self.panel(layout=layout)]
+                original = deepcopy(panels)
+                with patch.object(self.monitor, 'write') as write, self.assertRaisesRegex(ValueError, 'layout'):
+                    self.monitor.configure_dashboard(panels, metric_definitions=definitions)
+                write.assert_not_called()
+                self.assertEqual(self.monitor.data, before)
+                self.assertEqual(panels, original)
+                self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
 
     def test_invalid_metric_inputs_raise_without_appending_or_writing(self):
         before = deepcopy(self.monitor.data)

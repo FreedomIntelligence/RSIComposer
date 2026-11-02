@@ -74,8 +74,8 @@ def _dashboard_config(panels, definitions):
             raise ValueError('invalid metric unit or direction')
     seen_ids, clean_panels = set(), []
     for row in panels:
-        if not isinstance(row, dict) or set(row) != {'id', 'title', 'type', 'metrics', 'x', 'group_by'}:
-            raise ValueError('panels require only id, title, type, metrics, x and group_by')
+        if not isinstance(row, dict) or set(row) - {'layout'} != {'id', 'title', 'type', 'metrics', 'x', 'group_by'}:
+            raise ValueError('panels require id, title, type, metrics, x and group_by, with optional layout only')
         for key in ('id', 'title'):
             _metric_text(row[key], key)
         if row['id'] in seen_ids:
@@ -88,6 +88,12 @@ def _dashboard_config(panels, definitions):
             raise ValueError('panel metrics must be a list of at most 12 names')
         for name in row['metrics']:
             _metric_text(name, 'metric', 100)
+        if 'layout' in row:
+            layout = row['layout']
+            if (not isinstance(layout, dict) or set(layout) != {'w', 'h'}
+                    or type(layout['w']) is not int or type(layout['h']) is not int
+                    or not 3 <= layout['w'] <= 12 or not 240 <= layout['h'] <= 720):
+                raise ValueError('panel layout requires only integer w in [3, 12] and h in [240, 720]')
         seen_ids.add(row['id'])
         clean_panels.append({**row, 'metrics': list(dict.fromkeys(row['metrics']))})
     return deepcopy({'dashboard': {'schema_version': 1, 'panels': clean_panels},

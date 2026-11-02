@@ -191,8 +191,14 @@ def dashboard_only(value):
         if row['id'] in seen_ids:
             continue
         seen_ids.add(row['id'])
-        panels.append({**{key: row[key] for key in ('id', 'title', 'type', 'x', 'group_by')},
-                       'metrics': list(dict.fromkeys(metrics))})
+        panel = {**{key: row[key] for key in ('id', 'title', 'type', 'x', 'group_by')},
+                 'metrics': list(dict.fromkeys(metrics))}
+        layout = row.get('layout')
+        if (isinstance(layout, dict) and type(layout.get('w')) is int
+                and type(layout.get('h')) is int
+                and 3 <= layout['w'] <= 12 and 240 <= layout['h'] <= 720):
+            panel['layout'] = {key: layout[key] for key in ('w', 'h')}
+        panels.append(panel)
     return {'schema_version': 1, 'panels': panels}
 
 

@@ -232,7 +232,8 @@ function dashboardConfig(value) {
   const ids=new Set(),panels=[];
   for(const panel of value.panels.slice(0,24)){
     if(!identifier(panel?.id)||ids.has(panel.id)||!["line","scalar","table"].includes(panel.type)||!Array.isArray(panel.metrics))return null;
-    ids.add(panel.id);panels.push({id:panel.id,title:typeof panel.title==="string"?panel.title.slice(0,200):"",type:panel.type,metrics:[...new Set(panel.metrics.filter(identifier))].slice(0,12),x:["step","elapsed_seconds","evaluation"].includes(panel.x)?panel.x:"step",group_by:["task","attempt","none"].includes(panel.group_by)?panel.group_by:"none"});
+    const layout=Number.isInteger(panel.layout?.w)&&panel.layout.w>=3&&panel.layout.w<=12&&Number.isInteger(panel.layout?.h)&&panel.layout.h>=240&&panel.layout.h<=720?{w:panel.layout.w,h:panel.layout.h}:{w:6,h:320};
+    ids.add(panel.id);panels.push({id:panel.id,title:typeof panel.title==="string"?panel.title.slice(0,200):"",type:panel.type,metrics:[...new Set(panel.metrics.filter(identifier))].slice(0,12),x:["step","elapsed_seconds","evaluation"].includes(panel.x)?panel.x:"step",group_by:["task","attempt","none"].includes(panel.group_by)?panel.group_by:"none",layout});
   }
   return {schema_version:1,panels};
 }
@@ -268,15 +269,15 @@ function dashboardSeries(panel,data,s) {
   return [...series.values()];
 }
 function dashboardPanel(panel,data,s) {
-  const card=el("article","benchmark-card dashboard-panel"),heading=el("div","detail-heading"),series=dashboardSeries(panel,data,s);
-  heading.append(el("h5","",panel.title||t("未命名面板")));card.append(heading);
+  const card=el("article","benchmark-card dashboard-panel"),heading=el("div","detail-heading"),series=dashboardSeries(panel,data,s),content=el("div","dashboard-chart-body");
+  heading.append(el("h5","",panel.title||t("未命名面板")));card.append(heading,content);
   const baseline=metric=>{
     const matches=list(s.jobs).filter(j=>j.role==="baseline"||(j.job_id==="evaluation:initial"&&!present(j.directive_id))).map(j=>flattenMetrics(j.metrics)[metric]).filter(number);
     return matches.length===1?matches[0]:undefined;
   };
   if(panel.type==="scalar"){
     const values=el("dl","dashboard-values");
-    for(const item of series){const cell=el("div");cell.append(el("dt","",item.label),el("dd","benchmark-value",dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])));values.append(cell);}card.append(values);
+    for(const item of series){const cell=el("div");cell.append(el("dt","",item.label),el("dd","benchmark-value",dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])));values.append(cell);}content.append(values);
   }else if(panel.type==="table"){
     const table=el("table","metric-table"),head=el("thead"),tr=el("tr"),body=el("tbody");
     for(const label of ["指标","当前值","基线","变化"]){const th=el("th","",t(label));th.scope="col";tr.append(th);}head.append(tr);
@@ -284,17 +285,17 @@ function dashboardPanel(panel,data,s) {
       const deltaText=number(delta)?`${delta>0?"+":""}${definition?.unit==="percent"?`${Number((delta*100).toFixed(2))} pp`:fmt(delta)}`:"—";
       const cell=el("td","",deltaText);if(number(delta)&&delta!==0&&["higher","lower"].includes(definition?.direction))cell.className=(definition.direction==="higher"?delta>0:delta<0)?"metric-better":"metric-worse";
       row.append(el("td","",item.label),el("td","",dashboardFormat(current,definition)),el("td","",dashboardFormat(base,definition)),cell);body.append(row);
-    }table.append(head,body);card.append(table);
+    }table.append(head,body);content.append(table);
   }else{
     const units=new Set(series.map(item=>data.definitions[item.metric]?.unit||"number"));
-    if(units.size>1){card.append(empty(t("请选择相同单位的指标绘制折线图。")));return card;}
+    if(units.size>1){content.append(empty(t("请选择相同单位的指标绘制折线图。")));return card;}
     const definition=data.definitions[series[0]?.metric],percent=definition?.unit==="percent";
     const rows=series.map(item=>{
       const points=item.points.map((point,index)=>({x:panel.x==="evaluation"?(point.evaluation??index+1):point[panel.x],y:point.value})).filter(point=>number(point.x));
       const unique=new Map();for(const point of points)unique.set(point.x,point);return {...item,rows:[...unique.values()].sort((a,b)=>a.x-b.x)};
     });
-    const plotted=rows.flatMap(item=>item.rows);if(!plotted.length){card.append(empty(t("当前横轴暂无数据。")));return card;}
-    if(percent&&plotted.some(point=>point.y<0||point.y>1)){card.append(empty(t("百分比指标应记录为 0 到 1。")));return card;}
+    const plotted=rows.flatMap(item=>item.rows);if(!plotted.length){content.append(empty(t("当前横轴暂无数据。")));return card;}
+    if(percent&&plotted.some(point=>point.y<0||point.y>1)){content.append(empty(t("百分比指标应记录为 0 到 1。")));return card;}
     const bases=rows.map(item=>baseline(item.metric)).filter(number),ys=[...plotted.map(p=>p.y),...bases],lo=percent?0:Math.min(...ys),hi=percent?1:Math.max(...ys),padding=hi===lo?Math.max(Math.abs(hi)*.05,1e-6):(hi-lo)*.08;
     const ymin=percent?0:lo-padding,ymax=percent?1:hi+padding,xmin=Math.min(...plotted.map(p=>p.x)),xmax=Math.max(...plotted.map(p=>p.x));
     const x=value=>48+(value-xmin)/(xmax-xmin||1)*440,y=value=>142-(value-ymin)/(ymax-ymin)*116;
@@ -302,7 +303,7 @@ function dashboardPanel(panel,data,s) {
     for(const value of [ymin,(ymin+ymax)/2,ymax])svg.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},dashboardFormat(value,definition)));
     const legend=el("div","dashboard-legend");
     rows.forEach((item,index)=>{
-      const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;svg.append(line);card.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
+      const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;svg.append(line);content.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
       let segment=[];const flush=()=>{if(segment.length>1){const line=svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"});line.style.stroke=color;svg.append(line);}segment=[];};
       item.rows.forEach((point,i)=>{if(panel.x==="evaluation"&&data.evaluationCount&&i&&point.x-item.rows[i-1].x>1)flush();segment.push(`${x(point.x)},${y(point.y)}`);});flush();
       item.rows.filter((_,index)=>index%Math.max(1,Math.ceil(item.rows.length/160))===0||index===item.rows.length-1).forEach(point=>{const dot=svgEl("circle",{cx:x(point.x),cy:y(point.y),r:4,class:"benchmark-point"});dot.style.fill=color;dot.append(svgEl("title",{},`${item.label} · ${fmt(point.x)} · ${dashboardFormat(point.y,data.definitions[item.metric])}`));svg.append(dot);});
@@ -310,48 +311,82 @@ function dashboardPanel(panel,data,s) {
     });
     for(const value of [...new Set([xmin,xmax])])svg.append(svgEl("text",{x:x(value),y:163,"text-anchor":"middle",class:"benchmark-axis"},fmt(value)));
     if(series.length===1){const latest=el("div","benchmark-latest");latest.append(el("span","",t("最近记录")),el("strong","benchmark-value",dashboardFormat(series[0].points.at(-1)?.value,definition)));heading.append(latest);}
-    card.append(svg,el("p","benchmark-axis-label",t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x])),legend);
+    content.append(svg,el("p","benchmark-axis-label",t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x])),legend);
   }
-  if(!series.length)card.append(empty(t("尚无指标数据。")));
+  if(!series.length)content.append(empty(t("尚无指标数据。")));
   return card;
 }
 function metricDashboard(s,scope) {
   const data=dashboardData(s),storageKey=`rsimonitor-dashboard:v1:${s.run_id}`;
-  let override=null;try{override=dashboardConfig(JSON.parse(localStorage.getItem(storageKey)));}catch{}
-  const defaults=dashboardConfig(s.dashboard)||defaultDashboard(data);
-  const config=scope.dashboardOverride||override||defaults;
-  const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),title=el("h4","",t("指标看板"));heading.append(title);section.append(heading);
-  const grid=el("div","benchmark-grid");for(const panel of config.panels)grid.append(dashboardPanel(panel,data,s));section.append(grid);
-  const trigger=el("button","dashboard-configure",t("配置看板"));trigger.type="button";trigger.setAttribute("aria-haspopup","dialog");heading.append(trigger);
-  const editor=el("dialog","dashboard-dialog"),dialogHeading=el("header","dashboard-dialog-heading"),dialogTitle=el("h3","",t("配置看板")),close=el("button","dashboard-close","×"),form=el("div","dashboard-editor-body"),footer=el("footer","dashboard-dialog-footer");
-  dialogTitle.id="dashboard-config-title";editor.setAttribute("aria-labelledby",dialogTitle.id);close.type="button";close.autofocus=true;close.setAttribute("aria-label",t("关闭"));dialogHeading.append(dialogTitle,close);editor.append(dialogHeading,form,footer);section.append(editor);
+  const defaults=dashboardConfig(s.dashboard)||dashboardConfig(defaultDashboard(data));
+  let saved=null;try{saved=dashboardConfig(JSON.parse(localStorage.getItem(storageKey)));}catch{}
+  let config=dashboardConfig(scope.dashboardOverride)||saved||defaults;
+  const section=el("section","benchmark-overview metric-dashboard"),heading=el("div","detail-heading"),actions=el("div","dashboard-board-actions"),add=el("button","dashboard-add",t("添加图表")),reset=el("button","text-button",t("恢复默认"));
+  for(const button of [add,reset])button.type="button";add.setAttribute("aria-haspopup","dialog");add.disabled=config.panels.length>=24;
+  heading.append(el("h4","",t("指标看板")),actions);actions.append(reset,add);section.append(heading);
+  const grid=el("div","benchmark-grid dashboard-grid");section.append(grid);
+  const persist=next=>{config=dashboardConfig(next);const isDefault=JSON.stringify(config)===JSON.stringify(defaults);scope.dashboardOverride=isDefault?null:config;try{if(isDefault)localStorage.removeItem(storageKey);else localStorage.setItem(storageKey,JSON.stringify(config));}catch{}};
   const repaint=()=>{scope.detailFingerprint=null;renderProject();};
-  const draft=()=>scope.dashboardDraft||=JSON.parse(JSON.stringify(config));
-  const field=(label,node)=>{const wrapper=el("label","dashboard-field");wrapper.append(el("span","",t(label)),node);return wrapper;};
-  const select=(values,current,onChange)=>{const node=el("select");for(const [value,label] of values){const option=el("option","",t(label));option.value=value;node.append(option);}node.value=current;node.addEventListener("change",()=>onChange(node.value));return node;};
-  const renderEditor=()=>{
-    form.replaceChildren();
-    for(const [index,panel] of draft().panels.entries()){
-      const row=el("div","dashboard-editor-panel"),title=el("input");title.value=panel.title;title.maxLength=200;title.addEventListener("input",()=>panel.title=title.value);
-      row.append(field("面板标题",title),field("图表类型",select([["line","折线图"],["scalar","数值卡"],["table","对比表"]],panel.type,value=>{panel.type=value;renderEditor();})),...(panel.type==="line"?[field("横轴",select([["step","训练步数"],["elapsed_seconds","运行时间（秒）"],["evaluation","记录顺序"]],panel.x,value=>panel.x=value))]:[]),field("分组",select([["none","不分组"],["task","按任务"],["attempt","按研究尝试"]],panel.group_by,value=>panel.group_by=value)));
-      const choices=el("fieldset","dashboard-metric-options");choices.append(el("legend","",t("指标")));
-      for(const key of [...new Set([...data.keys,...panel.metrics])]){const checkbox=el("input");checkbox.type="checkbox";checkbox.checked=panel.metrics.includes(key);checkbox.disabled=!checkbox.checked&&panel.metrics.length>=12;checkbox.addEventListener("change",()=>{panel.metrics=checkbox.checked?[...new Set([...panel.metrics,key])].slice(0,12):panel.metrics.filter(metric=>metric!==key);renderEditor();});const label=el("label");label.title=key;label.append(checkbox,el("span","",data.definitions[key]?.label||key));choices.append(label);}row.append(choices);
-      const controls=el("div","dashboard-order");for(const [label,delta] of [["上移",-1],["下移",1]]){const button=el("button","",t(label));button.type="button";button.disabled=index+delta<0||index+delta>=draft().panels.length;button.addEventListener("click",()=>{const target=index+delta;[draft().panels[index],draft().panels[target]]=[draft().panels[target],draft().panels[index]];renderEditor();});controls.append(button);}
-      const remove=el("button","",t("删除面板"));remove.type="button";remove.addEventListener("click",()=>{draft().panels.splice(index,1);renderEditor();});controls.append(remove);row.append(controls);form.append(row);
-    }
-    footer.replaceChildren();
-    const actions=el("div","dashboard-actions"),add=el("button","",t("添加面板")),save=el("button","dashboard-save",t("保存布局")),reset=el("button","",t("恢复默认")),cancel=el("button","",t("取消"));
-    for(const button of [add,save,reset,cancel])button.type="button";
-    add.disabled=draft().panels.length>=24;add.addEventListener("click",()=>{const ids=new Set(draft().panels.map(p=>p.id));let index=1;while(ids.has(`custom-${index}`))index++;draft().panels.push({id:`custom-${index}`,title:t("新面板"),type:"line",metrics:data.keys.slice(0,1),x:"step",group_by:"none"});renderEditor();});
-    save.addEventListener("click",()=>{const next=dashboardConfig(draft());if(!next)return;const isDefault=JSON.stringify(next)===JSON.stringify(defaults);scope.dashboardOverride=isDefault?null:next;try{if(isDefault)localStorage.removeItem(storageKey);else localStorage.setItem(storageKey,JSON.stringify(next));}catch{}scope.renderPending=true;editor.close();});
-    reset.addEventListener("click",()=>{scope.dashboardDraft=JSON.parse(JSON.stringify(defaults));renderEditor();});
-    cancel.addEventListener("click",()=>editor.close());actions.append(cancel,save);footer.append(reset,actions);form.append(add);
-  };
-  trigger.addEventListener("click",()=>{scope.dashboardDraft=JSON.parse(JSON.stringify(config));renderEditor();editor.showModal();scope.dashboardEditing=true;scope.dashboardDialog=editor;});
-  close.addEventListener("click",()=>editor.close());
-  editor.addEventListener("cancel",event=>{event.preventDefault();editor.close();});
-  editor.addEventListener("click",event=>{if(event.target!==editor)return;const rect=editor.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)editor.close();});
-  editor.addEventListener("close",()=>{scope.dashboardDraft=null;scope.dashboardEditing=false;scope.dashboardDialog=null;if(scope===state.activeScope&&state.page==="experiment"){if(scope.renderPending){scope.renderPending=false;repaint();}scope.details?.querySelector(".dashboard-configure")?.focus({preventScroll:true});}});
+  const focusControl=(id,selector)=>[...scope.details.querySelectorAll(".dashboard-panel")].find(card=>card.dataset.panelId===id)?.querySelector(selector)?.focus({preventScroll:true});
+  const cardEntries=[];
+  const clamp=(value,low,high)=>Math.max(low,Math.min(high,value));
+  for(const panel of config.panels){
+    const card=dashboardPanel(panel,data,s),tools=el("div","dashboard-card-tools"),drag=el("button","dashboard-drag","⠿"),edit=el("button","dashboard-edit",""),resize=el("button","dashboard-resize","");
+    const pencil=svgEl("svg",{viewBox:"0 0 20 20","aria-hidden":"true"});pencil.append(svgEl("path",{d:"M12.8 3.2l4 4-9.5 9.5-4.8.8.8-4.8z M11 5l4 4",fill:"none",stroke:"currentColor","stroke-width":1.4}));edit.append(pencil);
+    for(const [button,label] of [[drag,"拖动排序"],[edit,"编辑图表"],[resize,"调整图表大小"]]){button.type="button";button.title=t(label);button.setAttribute("aria-label",t(label));}
+    edit.setAttribute("aria-haspopup","dialog");edit.addEventListener("click",()=>openEditor(panel,false));tools.append(drag,edit);card.firstElementChild.append(tools);card.append(resize);card.dataset.panelId=panel.id;card.style.gridColumn=`span ${panel.layout.w}`;card.style.height=`${panel.layout.h}px`;grid.append(card);cardEntries.push({panel,card});
+    const gesture=(handle,kind)=>{
+      let active=null;
+      const cleanup=()=>{if(!active)return;const pointer=active.pointer;active=null;card.style.gridColumn=`span ${panel.layout.w}`;card.style.height=`${panel.layout.h}px`;card.className=card.className.replace(/ dashboard-moving/g,"");for(const item of cardEntries){delete item.card.dataset.drop;item.card.style.order="";}handle.releasePointerCapture?.(pointer);scope.dashboardInteracting=false;scope.dashboardGesture=null;};
+      handle.addEventListener("pointerdown",event=>{if(event.button!==0||event.isPrimary===false||scope.dashboardInteracting)return;event.preventDefault();active={pointer:event.pointerId,x:event.clientX,y:event.clientY,panels:[...config.panels],layout:{...panel.layout},lastTarget:null};scope.dashboardInteracting=true;scope.dashboardGesture=cleanup;card.className+=" dashboard-moving";handle.setPointerCapture(event.pointerId);});
+      handle.addEventListener("pointermove",event=>{
+        if(!active||active.pointer!==event.pointerId)return;event.preventDefault();
+        if(kind==="resize"){
+          const width=grid.getBoundingClientRect().width;active.layout={w:width<720?panel.layout.w:clamp(panel.layout.w+Math.round((event.clientX-active.x)/((width+16)/12)),3,12),h:clamp(panel.layout.h+Math.round((event.clientY-active.y)/24)*24,240,720)};card.style.gridColumn=`span ${active.layout.w}`;card.style.height=`${active.layout.h}px`;
+        }else{
+          const target=cardEntries.find(item=>{if(item.card===card)return false;const r=item.card.getBoundingClientRect();return event.clientX>=r.left&&event.clientX<=r.right&&event.clientY>=r.top&&event.clientY<=r.bottom;});
+          if(!target){active.lastTarget=null;return;}if(active.lastTarget===target.panel.id)return;active.lastTarget=target.panel.id;
+          const from=active.panels.findIndex(p=>p.id===panel.id),to=active.panels.findIndex(p=>p.id===target.panel.id);active.panels.splice(from,1);active.panels.splice(to,0,panel);
+          for(const item of cardEntries){item.card.style.order=String(active.panels.findIndex(p=>p.id===item.panel.id));delete item.card.dataset.drop;}target.card.dataset.drop="true";
+        }
+      });
+      const finish=(event,cancelled)=>{if(!active||active.pointer!==event.pointerId)return;const next=active;cleanup();if(!cancelled){persist({...config,panels:kind==="resize"?config.panels.map(p=>p.id===panel.id?{...p,layout:next.layout}:p):next.panels});}else{card.style.gridColumn=`span ${panel.layout.w}`;card.style.height=`${panel.layout.h}px`;}repaint();};
+      handle.addEventListener("pointerup",event=>finish(event,false));handle.addEventListener("pointercancel",event=>finish(event,true));handle.addEventListener("lostpointercapture",event=>finish(event,true));
+      handle.addEventListener("keydown",event=>{
+        if(!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key))return;event.preventDefault();const panels=[...config.panels],index=panels.findIndex(p=>p.id===panel.id);
+        if(kind==="resize"){const layout={...panel.layout};if(event.key==="ArrowLeft")layout.w=clamp(layout.w-1,3,12);if(event.key==="ArrowRight")layout.w=clamp(layout.w+1,3,12);if(event.key==="ArrowUp")layout.h=clamp(layout.h-24,240,720);if(event.key==="ArrowDown")layout.h=clamp(layout.h+24,240,720);panels[index]={...panel,layout};}
+        else {const to=index+(["ArrowLeft","ArrowUp"].includes(event.key)?-1:1);if(to<0||to>=panels.length)return;[panels[index],panels[to]]=[panels[to],panels[index]];}
+        persist({...config,panels});repaint();focusControl(panel.id,kind==="resize"?".dashboard-resize":".dashboard-drag");
+      });
+    };
+    gesture(drag,"drag");gesture(resize,"resize");
+  }
+  reset.addEventListener("click",()=>{persist(defaults);repaint();});
+  const dialog=el("dialog","dashboard-dialog"),dialogHeader=el("header","dashboard-dialog-heading"),dialogTitle=el("h3"),close=el("button","dashboard-close","×"),body=el("div","dashboard-chart-editor"),settings=el("div","dashboard-chart-settings"),preview=el("div","dashboard-chart-preview"),footer=el("footer","dashboard-dialog-footer");
+  dialogTitle.id="dashboard-config-title";dialog.setAttribute("aria-labelledby",dialogTitle.id);close.type="button";close.autofocus=true;close.setAttribute("aria-label",t("关闭"));dialogHeader.append(dialogTitle,close);body.append(settings,preview);dialog.append(dialogHeader,body,footer);section.append(dialog);
+  let draft=null,editingID=null,isNew=false;
+  const field=(label,input)=>{const wrap=el("label","dashboard-field");wrap.append(el("span","",t(label)),input);return wrap;};
+  function openEditor(panel,adding){
+    draft=JSON.parse(JSON.stringify(panel));scope.dashboardDraft=draft;editingID=panel.id;isNew=adding;
+    dialogTitle.textContent=t(adding?"添加图表":"编辑图表");settings.replaceChildren();preview.replaceChildren();footer.replaceChildren();
+    const renderPreview=()=>{preview.replaceChildren(el("h4","",t("预览")),dashboardPanel(draft,data,s));};
+    const title=el("input");title.value=draft.title;title.maxLength=200;title.addEventListener("input",()=>{draft.title=title.value;renderPreview();});settings.append(field("图表标题",title));
+    const types=el("div","dashboard-type-options");types.setAttribute("role","group");types.setAttribute("aria-label",t("图表类型"));
+    const typeButtons=[];for(const [value,label] of [["line","折线图"],["scalar","数值卡"],["table","对比表"]]){const button=el("button");button.type="button";button.setAttribute("aria-pressed",String(draft.type===value));const symbol=svgEl("svg",{viewBox:"0 0 20 20",class:"dashboard-type-icon","aria-hidden":"true"});if(value==="scalar")symbol.append(svgEl("text",{x:10,y:14,"text-anchor":"middle","font-size":11,fill:"currentColor"},"123"));else symbol.append(svgEl("path",{d:value==="line"?"M2 15l5-6 4 3 7-8":"M3 3h14v14H3z M3 8h14 M3 12h14 M8 3v14",fill:"none",stroke:"currentColor","stroke-width":1.4}));button.append(symbol,el("span","",t(label)));button.addEventListener("click",()=>{draft.type=value;for(const item of typeButtons)item.button.setAttribute("aria-pressed",String(item.value===value));axis.hidden=value!=="line";renderPreview();});typeButtons.push({value,button});types.append(button);}settings.append(types);
+    const picker=el("div","dashboard-metric-picker"),search=el("input"),metricList=el("div","dashboard-metric-list"),metricHeading=el("div","detail-heading"),count=el("span","dashboard-metric-count");search.type="search";search.placeholder=t("搜索指标");search.setAttribute("aria-label",t("搜索指标"));metricHeading.append(el("span","",t("指标")),count);picker.append(metricHeading,search,metricList);settings.append(picker);
+    const renderMetrics=()=>{
+      count.textContent=`${draft.metrics.length} / 12`;metricList.replaceChildren();const query=(search.value||"").trim().toLocaleLowerCase(),keys=[...new Set([...data.keys,...draft.metrics])].filter(key=>`${data.definitions[key]?.label||""} ${key}`.toLocaleLowerCase().includes(query));
+      for(const key of keys){const label=el("label","dashboard-metric-option"),checkbox=el("input");checkbox.type="checkbox";checkbox.checked=draft.metrics.includes(key);checkbox.disabled=!checkbox.checked&&draft.metrics.length>=12;label.title=key;checkbox.addEventListener("change",()=>{draft.metrics=checkbox.checked?[...new Set([...draft.metrics,key])].slice(0,12):draft.metrics.filter(metric=>metric!==key);renderMetrics();renderPreview();});label.append(checkbox,el("span","",data.definitions[key]?.label||key));metricList.append(label);}if(!keys.length)metricList.append(el("p","dashboard-editor-empty",t("没有匹配的指标")));
+    };search.addEventListener("input",renderMetrics);
+    const select=(values,current,change)=>{const input=el("select");for(const [value,label] of values){const option=el("option","",t(label));option.value=value;input.append(option);}input.value=current;input.addEventListener("change",()=>{change(input.value);renderPreview();});return input;};
+    const axis=field("横轴",select([["step","训练步数"],["elapsed_seconds","运行时间（秒）"],["evaluation","记录顺序"]],draft.x,value=>draft.x=value));axis.hidden=draft.type!=="line";settings.append(axis,field("分组",select([["none","不分组"],["task","按任务"],["attempt","按研究尝试"]],draft.group_by,value=>draft.group_by=value)));
+    const remove=el("button","dashboard-delete",t("删除图表")),buttons=el("div","dashboard-actions"),cancel=el("button","",t("取消")),save=el("button","dashboard-save",t("保存"));for(const button of [remove,cancel,save])button.type="button";remove.hidden=adding;
+    const apply=panels=>{persist({...config,panels});scope.renderPending=true;dialog.close();};remove.addEventListener("click",()=>apply(config.panels.filter(p=>p.id!==editingID)));save.addEventListener("click",()=>apply(adding?[...config.panels,draft]:config.panels.map(p=>p.id===editingID?draft:p)));cancel.addEventListener("click",()=>dialog.close());buttons.append(cancel,save);footer.append(remove,buttons);
+    renderMetrics();renderPreview();dialog.showModal();scope.dashboardEditing=true;scope.dashboardDialog=dialog;
+  }
+  add.addEventListener("click",()=>{if(config.panels.length>=24)return;const ids=new Set(config.panels.map(p=>p.id));let index=1;while(ids.has(`custom-${index}`))index++;const metric=data.keys[0];openEditor({id:`custom-${index}`,title:metric?data.definitions[metric].label:t("新面板"),type:"line",metrics:metric?[metric]:[],x:"step",group_by:"none",layout:{w:6,h:320}},true);});
+  close.addEventListener("click",()=>dialog.close());dialog.addEventListener("cancel",event=>{event.preventDefault();dialog.close();});dialog.addEventListener("click",event=>{if(event.target!==dialog)return;const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();});
+  dialog.addEventListener("close",()=>{draft=null;scope.dashboardDraft=null;scope.dashboardEditing=false;scope.dashboardDialog=null;if(scope===state.activeScope&&state.page==="experiment"){if(scope.renderPending){scope.renderPending=false;repaint();}if(!isNew&&config.panels.some(p=>p.id===editingID))focusControl(editingID,".dashboard-edit");else scope.details.querySelector(".dashboard-add")?.focus({preventScroll:true});}});
   return section;
 }
 
@@ -389,6 +424,7 @@ function abortEntry(entry) {
 }
 function disposeGraph(scope) {
   if(!scope)return;
+  scope.dashboardGesture?.();scope.dashboardGesture=null;scope.dashboardInteracting=false;
   scope.dashboardEditing=false;scope.dashboardDraft=null;scope.renderPending=false;
   if(scope.dashboardDialog?.open)scope.dashboardDialog.close();scope.dashboardDialog=null;
   scope.graph?.dispose?.();scope.graph=null;scope.attemptGraph?.dispose?.();scope.attemptGraph=null;scope.attemptView=null;scope.detailFingerprint=null;scope.renderPending=false;
@@ -410,7 +446,7 @@ function attemptTitle(group) {
   return group.type==="attempt" ? group.title || t("未命名研究尝试") : decisionTitle(group.row);
 }
 function graphBusy(scope) {
-  return scope?.dashboardEditing || [scope.graphView,scope.attemptView].some(view=>view?.interacting||view?.animating);
+  return scope?.dashboardEditing || scope?.dashboardInteracting || [scope.graphView,scope.attemptView].some(view=>view?.interacting||view?.animating);
 }
 function graphTools(current) {
   const controls=el("div","trajectory-tools");
