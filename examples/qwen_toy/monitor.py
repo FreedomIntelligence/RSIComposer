@@ -74,8 +74,9 @@ def _dashboard_config(panels, definitions):
             raise ValueError('invalid metric unit or direction')
     seen_ids, clean_panels = set(), []
     for row in panels:
-        if not isinstance(row, dict) or set(row) - {'layout'} != {'id', 'title', 'type', 'metrics', 'x', 'group_by'}:
-            raise ValueError('panels require id, title, type, metrics, x and group_by, with optional layout only')
+        if (not isinstance(row, dict)
+                or set(row) - {'layout', 'y_range'} != {'id', 'title', 'type', 'metrics', 'x', 'group_by'}):
+            raise ValueError('panels require id, title, type, metrics, x and group_by, with optional layout and y_range')
         for key in ('id', 'title'):
             _metric_text(row[key], key)
         if row['id'] in seen_ids:
@@ -94,8 +95,22 @@ def _dashboard_config(panels, definitions):
                     or type(layout['w']) is not int or type(layout['h']) is not int
                     or not 3 <= layout['w'] <= 12 or not 240 <= layout['h'] <= 720):
                 raise ValueError('panel layout requires only integer w in [3, 12] and h in [240, 720]')
+        panel = {**row, 'metrics': list(dict.fromkeys(row['metrics']))}
+        if 'y_range' in row:
+            bounds = panel.pop('y_range')
+            if not isinstance(bounds, dict) or set(bounds) - {'min', 'max'}:
+                raise ValueError('panel y_range allows only optional min and max')
+            for key, number in bounds.items():
+                _metric_number(number, f'y_range.{key}')
+            if 'min' in bounds and 'max' in bounds:
+                span = bounds['max'] - bounds['min']
+                _metric_number(span, 'y_range span')
+                if span <= 0:
+                    raise ValueError('panel y_range requires min < max and a finite positive span')
+            if bounds:
+                panel['y_range'] = bounds
         seen_ids.add(row['id'])
-        clean_panels.append({**row, 'metrics': list(dict.fromkeys(row['metrics']))})
+        clean_panels.append(panel)
     return deepcopy({'dashboard': {'schema_version': 1, 'panels': clean_panels},
                      'metric_definitions': definitions})
 

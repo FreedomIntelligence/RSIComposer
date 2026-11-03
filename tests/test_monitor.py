@@ -286,6 +286,59 @@ class DashboardProjectionTests(unittest.TestCase):
         self.assertEqual(projected['dashboard']['panels'][-1]['id'], 'p23')
         self.assertEqual(projected['dashboard']['panels'][0]['metrics'], list(definitions)[:12])
 
+    def test_panel_y_range_roundtrips_optional_bounds_and_normalizes_auto(self):
+        ranges = [{}, {'min': 0}, {'max': 0}, {'min': .7, 'max': .8},
+                  {'min': -.2, 'max': 1.2}, {'min': -1e308}, {'max': 1e308},
+                  {'min': 0, 'max': 5e-324}, {'min': -10 ** 307, 'max': 10 ** 307}]
+        panels = [self.panel(id=str(index), y_range=bounds, layout={'w': 6, 'h': 360})
+                  for index, bounds in enumerate(ranges)] + [self.panel(id='legacy')]
+        dashboard = {'schema_version': 1, 'panels': panels}
+        original = deepcopy(dashboard)
+        expected = deepcopy(dashboard)
+        del expected['panels'][0]['y_range']
+        projected = self.project(dashboard=dashboard)['dashboard']
+        self.assertEqual(projected, expected)
+        self.assertEqual(monitor.dashboard_only(json.loads(json.dumps(projected, allow_nan=False))), expected)
+        projected['panels'][1]['y_range']['min'] = -1
+        self.assertEqual(dashboard, original)
+
+    def test_panel_y_range_filters_unknown_keys_without_rescaling_percent_bounds(self):
+        private = {'payload': {'secret': 'PRIVATE'}, 'padding': True}
+        panels = [self.panel(y_range={'min': .7, 'max': .8, **private}),
+                  self.panel(id='viewport', y_range={'min': -.2, 'max': 1.2}),
+                  self.panel(id='auto', y_range=private)]
+        definitions = {'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}}
+        projected = self.project(dashboard={'schema_version': 1, 'panels': panels},
+                                 metric_definitions=definitions,
+                                 metric_points=[{'metric': 'accuracy', 'value': value}
+                                                for value in (-.2, 0, .75, 1, 1.2)])
+        self.assertEqual(projected['dashboard']['panels'], [
+            self.panel(y_range={'min': .7, 'max': .8}),
+            self.panel(id='viewport', y_range={'min': -.2, 'max': 1.2}), self.panel(id='auto')])
+        self.assertEqual(projected['metric_points'], [{'metric': 'accuracy', 'value': value}
+                                                     for value in (0, .75, 1)])
+        self.assertNotIn('PRIVATE', json.dumps(projected, allow_nan=False))
+
+    def test_invalid_y_range_omits_whole_range_and_keeps_panel_and_sibling(self):
+        invalid = [None, True, False, 0, 'auto', [], [0, 1],
+                   {'min': 1, 'max': 1}, {'min': 2, 'max': 1},
+                   {'min': -1e308, 'max': 1e308},
+                   {'min': -10 ** 308, 'max': 10 ** 308}]
+        for key in ('min', 'max'):
+            invalid += [{**{'min': 0, 'max': 1}, key: value} for value in
+                        (None, True, False, '0', [], {}, float('nan'), float('inf'),
+                         -float('inf'), 10 ** 1000)]
+            invalid += [{key: value} for value in (None, True, float('nan'), float('inf'))]
+        sibling = self.panel(id='sibling', y_range={'max': .8})
+        for bounds in invalid:
+            with self.subTest(y_range=bounds):
+                dashboard = {'schema_version': 1, 'panels': [
+                    self.panel(y_range=bounds, layout={'w': 6, 'h': 360}), sibling]}
+                original = deepcopy(dashboard)
+                self.assertEqual(self.project(dashboard=dashboard)['dashboard'], {
+                    'schema_version': 1, 'panels': [self.panel(layout={'w': 6, 'h': 360}), sibling]})
+                self.assertEqual(dashboard, original)
+
     def test_duplicate_panel_ids_keep_first_valid_and_metrics_keep_first_occurrence(self):
         first = self.panel(metrics=['accuracy', 'loss', 'accuracy', 'loss'])
         second = self.panel(id='other', metrics=['loss'] * 11 + ['accuracy', 'beyond-limit'])

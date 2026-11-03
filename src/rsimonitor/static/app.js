@@ -227,13 +227,29 @@ function dashboardData(s) {
   for(const key of keys)if(!definitions[key])definitions[key]={label:metricText(key),unit:!explicit&&/(?:^|[./])(?:accuracy|macro_f1|f1)$/.test(key)?"percent":"number",direction:"neutral"};
   return {definitions,points,keys,evaluationCount:explicit?0:evaluations.length};
 }
+function dashboardYConfig(value) {
+  if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
+  const range={};for(const key of ["min","max"])if(Object.hasOwn(value,key)){if(!number(value[key]))return undefined;range[key]=value[key];}
+  if(number(range.min)&&number(range.max)&&(!(range.max>range.min)||!number(range.max-range.min)))return undefined;
+  return Object.keys(range).length?range:undefined;
+}
+function dashboardYRange(values,percent,custom={}) {
+  const lo=Math.min(...values),hi=Math.max(...values),span=hi-lo;
+  const rawPadding=hi===lo?(Math.abs(lo)*.05||(percent?.005:1)):(number(span)?span*.08:Math.max(Math.abs(lo),Math.abs(hi))*.08);
+  const padding=Math.max(Number.MIN_VALUE,rawPadding);
+  let min=Math.max(-Number.MAX_VALUE,lo-padding),max=Math.min(Number.MAX_VALUE,hi+padding);
+  if(percent){min=Math.max(0,min);max=Math.min(1,max);}
+  if(number(custom.min))min=custom.min;if(number(custom.max))max=custom.max;
+  if(!(max>min)){const margin=Math.max(padding,Math.abs(number(custom.min)?min:max)*.05,percent?.005:1);if(number(custom.min))max=Math.min(Number.MAX_VALUE,min+margin);else min=Math.max(-Number.MAX_VALUE,max-margin);}
+  return max>min?{min,max}:null;
+}
 function dashboardConfig(value) {
   if(value?.schema_version!==1||!Array.isArray(value.panels))return null;
   const ids=new Set(),panels=[];
   for(const panel of value.panels.slice(0,24)){
     if(!identifier(panel?.id)||ids.has(panel.id)||!["line","scalar","table"].includes(panel.type)||!Array.isArray(panel.metrics))return null;
     const layout=Number.isInteger(panel.layout?.w)&&panel.layout.w>=3&&panel.layout.w<=12&&Number.isInteger(panel.layout?.h)&&panel.layout.h>=240&&panel.layout.h<=720?{w:panel.layout.w,h:panel.layout.h}:{w:6,h:320};
-    ids.add(panel.id);panels.push({id:panel.id,title:typeof panel.title==="string"?panel.title.slice(0,200):"",type:panel.type,metrics:[...new Set(panel.metrics.filter(identifier))].slice(0,12),x:["step","elapsed_seconds","evaluation"].includes(panel.x)?panel.x:"step",group_by:["task","attempt","none"].includes(panel.group_by)?panel.group_by:"none",layout});
+    ids.add(panel.id);panels.push({id:panel.id,title:typeof panel.title==="string"?panel.title.slice(0,200):"",type:panel.type,metrics:[...new Set(panel.metrics.filter(identifier))].slice(0,12),x:["step","elapsed_seconds","evaluation"].includes(panel.x)?panel.x:"step",group_by:["task","attempt","none"].includes(panel.group_by)?panel.group_by:"none",layout});const range=dashboardYConfig(panel.y_range);if(range)panels.at(-1).y_range=range;
   }
   return {schema_version:1,panels};
 }
@@ -297,13 +313,15 @@ function dashboardPanel(panel,data,s) {
     });
     const plotted=rows.flatMap(item=>item.rows);if(!plotted.length){content.append(empty(t("当前横轴暂无数据。")));return card;}
     if(percent&&plotted.some(point=>point.y<0||point.y>1)){content.append(empty(t("百分比指标应记录为 0 到 1。")));return card;}
-    const bases=rows.map(item=>baseline(item.metric)).filter(number),ys=[...plotted.map(p=>p.y),...bases],lo=percent?0:Math.min(...ys),hi=percent?1:Math.max(...ys),padding=hi===lo?Math.max(Math.abs(hi)*.05,1e-6):(hi-lo)*.08;
-    const ymin=percent?0:lo-padding,ymax=percent?1:hi+padding,xmin=Math.min(...plotted.map(p=>p.x)),xmax=Math.max(...plotted.map(p=>p.x));
-    const x=value=>48+(value-xmin)/(xmax-xmin||1)*440,y=value=>142-(value-ymin)/(ymax-ymin)*116;
-    const svg=svgEl("svg",{viewBox:"0 0 520 180",role:"img","aria-label":panel.title||t("指标趋势")}),palette=["#a85739","#4f6850","#8b754e","#74617c"];
-    for(const value of [ymin,(ymin+ymax)/2,ymax])svg.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},dashboardFormat(value,definition)));
+    const bases=rows.map(item=>baseline(item.metric)).filter(number),ys=[...plotted.map(p=>p.y),...bases],range=dashboardYRange(ys,percent,panel.y_range);
+    if(!range){content.append(empty(t("纵轴范围无法绘制，请调整边界。")));return card;}
+    const ymin=range.min,ymax=range.max,xmin=Math.min(...plotted.map(p=>p.x)),xmax=Math.max(...plotted.map(p=>p.x));
+    const x=value=>48+(value-xmin)/(xmax-xmin||1)*440,scale=Math.max(Math.abs(ymin),Math.abs(ymax),1e-300),y=value=>142-Math.max(-1e6,Math.min(1e6,(value/scale-ymin/scale)/(ymax/scale-ymin/scale)))*116;
+    const svg=svgEl("svg",{"data-y-min":ymin,"data-y-max":ymax,viewBox:"0 0 520 180",role:"img","aria-label":panel.title||t("指标趋势")}),palette=["#a85739","#4f6850","#8b754e","#74617c"];
+    for(const value of [ymin,ymin/2+ymax/2,ymax])svg.append(svgEl("line",{x1:44,x2:496,y1:y(value),y2:y(value),class:"benchmark-gridline"}),svgEl("text",{x:36,y:y(value)+4,"text-anchor":"end",class:"benchmark-axis"},(percent?`${fmt(value*100)}%`:fmt(value))));
     const legend=el("div","dashboard-legend"),plot=el("div","benchmark-plot"),tooltip=el("div","benchmark-tooltip"),tooltipName=el("strong"),tooltipAxis=el("span"),tooltipValue=el("strong","benchmark-tooltip-value");
     tooltip.id=`metric-tooltip-${++dashboardTooltipCount}`;tooltip.setAttribute("role","tooltip");tooltip.hidden=true;tooltip.append(tooltipName,tooltipAxis,tooltipValue);plot.append(svg,tooltip);
+    const defs=svgEl("defs"),clip=svgEl("clipPath",{id:`${tooltip.id}-clip`}),marks=svgEl("g",{"clip-path":`url(#${tooltip.id}-clip)`});clip.append(svgEl("rect",{x:44,y:20,width:452,height:126}));defs.append(clip);svg.append(defs,marks);
     const axisLabel=t({step:"训练步数",elapsed_seconds:"运行时间（秒）",evaluation:"记录顺序"}[panel.x]);
     const hidePoint=()=>{tooltip.hidden=true;};
     content.addEventListener("scroll",hidePoint);
@@ -315,11 +333,11 @@ function dashboardPanel(panel,data,s) {
       tooltip.style.top=`${Math.max(4,Math.min(top-box.height-10>=4?top-box.height-10:top+anchor.height+10,bounds.height-box.height-4))}px`;
     };
     rows.forEach((item,index)=>{
-      const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;svg.append(line);content.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
-      let segment=[];const flush=()=>{if(segment.length>1){const line=svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"});line.style.stroke=color;svg.append(line);}segment=[];};
+      const color=palette[index%palette.length],base=baseline(item.metric);if(number(base)){const line=svgEl("line",{x1:44,x2:496,y1:y(base),y2:y(base),class:"benchmark-baseline"});line.style.stroke=color;marks.append(line);content.append(el("p","quiet-note",t("基线 {p0}",{p0:dashboardFormat(base,data.definitions[item.metric])})));}
+      let segment=[];const flush=()=>{if(segment.length>1){const line=svgEl("polyline",{points:segment.join(" "),class:"benchmark-line"});line.style.stroke=color;marks.append(line);}segment=[];};
       item.rows.forEach((point,i)=>{if(panel.x==="evaluation"&&data.evaluationCount&&i&&point.x-item.rows[i-1].x>1)flush();segment.push(`${x(point.x)},${y(point.y)}`);});flush();
       item.rows.filter((_,index)=>index%Math.max(1,Math.ceil(item.rows.length/160))===0||index===item.rows.length-1).forEach(point=>{const dot=svgEl("circle",{cx:x(point.x),cy:y(point.y),r:4,class:"benchmark-point",tabindex:0,"aria-label":item.label,"aria-describedby":tooltip.id});dot.style.fill=color;
-        for(const event of ["pointerenter","focus","pointerdown"])dot.addEventListener(event,()=>showPoint(dot,item,point));for(const event of ["pointerleave","blur"])dot.addEventListener(event,hidePoint);dot.addEventListener("keydown",event=>{if(event.key==="Escape")hidePoint();});svg.append(dot);});
+        for(const event of ["pointerenter","focus","pointerdown"])dot.addEventListener(event,()=>showPoint(dot,item,point));for(const event of ["pointerleave","blur"])dot.addEventListener(event,hidePoint);dot.addEventListener("keydown",event=>{if(event.key==="Escape")hidePoint();});marks.append(dot);});
       const entry=el("span","",`${item.label} · ${dashboardFormat(item.points.at(-1)?.value,data.definitions[item.metric])}`);entry.style.color=color;legend.append(entry);
     });
     for(const value of [...new Set([xmin,xmax])])svg.append(svgEl("text",{x:x(value),y:163,"text-anchor":"middle",class:"benchmark-axis"},fmt(value)));
@@ -384,16 +402,21 @@ function metricDashboard(s,scope) {
     const renderPreview=()=>{preview.replaceChildren(el("h4","",t("预览")),dashboardPanel(draft,data,s));};
     const title=el("input");title.value=draft.title;title.maxLength=200;title.addEventListener("input",()=>{draft.title=title.value;renderPreview();});settings.append(field("图表标题",title));
     const types=el("div","dashboard-type-options");types.setAttribute("role","group");types.setAttribute("aria-label",t("图表类型"));
-    const typeButtons=[];for(const [value,label] of [["line","折线图"],["scalar","数值卡"],["table","对比表"]]){const button=el("button");button.type="button";button.setAttribute("aria-pressed",String(draft.type===value));const symbol=svgEl("svg",{viewBox:"0 0 20 20",class:"dashboard-type-icon","aria-hidden":"true"});if(value==="scalar")symbol.append(svgEl("text",{x:10,y:14,"text-anchor":"middle","font-size":11,fill:"currentColor"},"123"));else symbol.append(svgEl("path",{d:value==="line"?"M2 15l5-6 4 3 7-8":"M3 3h14v14H3z M3 8h14 M3 12h14 M8 3v14",fill:"none",stroke:"currentColor","stroke-width":1.4}));button.append(symbol,el("span","",t(label)));button.addEventListener("click",()=>{draft.type=value;for(const item of typeButtons)item.button.setAttribute("aria-pressed",String(item.value===value));axis.hidden=value!=="line";renderPreview();});typeButtons.push({value,button});types.append(button);}settings.append(types);
+    const typeButtons=[];for(const [value,label] of [["line","折线图"],["scalar","数值卡"],["table","对比表"]]){const button=el("button");button.type="button";button.setAttribute("aria-pressed",String(draft.type===value));const symbol=svgEl("svg",{viewBox:"0 0 20 20",class:"dashboard-type-icon","aria-hidden":"true"});if(value==="scalar")symbol.append(svgEl("text",{x:10,y:14,"text-anchor":"middle","font-size":11,fill:"currentColor"},"123"));else symbol.append(svgEl("path",{d:value==="line"?"M2 15l5-6 4 3 7-8":"M3 3h14v14H3z M3 8h14 M3 12h14 M8 3v14",fill:"none",stroke:"currentColor","stroke-width":1.4}));button.append(symbol,el("span","",t(label)));button.addEventListener("click",()=>{draft.type=value;for(const item of typeButtons)item.button.setAttribute("aria-pressed",String(item.value===value));axis.hidden=value!=="line";yControls.hidden=value!=="line";if(value==="line")updateRange();else{rangeError.hidden=true;save.disabled=false;renderPreview();}});typeButtons.push({value,button});types.append(button);}settings.append(types);
     const picker=el("div","dashboard-metric-picker"),search=el("input"),metricList=el("div","dashboard-metric-list"),metricHeading=el("div","detail-heading"),count=el("span","dashboard-metric-count");search.type="search";search.placeholder=t("搜索指标");search.setAttribute("aria-label",t("搜索指标"));metricHeading.append(el("span","",t("指标")),count);picker.append(metricHeading,search,metricList);settings.append(picker);
     const renderMetrics=()=>{
       count.textContent=`${draft.metrics.length} / 12`;metricList.replaceChildren();const query=(search.value||"").trim().toLocaleLowerCase(),keys=[...new Set([...data.keys,...draft.metrics])].filter(key=>`${data.definitions[key]?.label||""} ${key}`.toLocaleLowerCase().includes(query));
-      for(const key of keys){const label=el("label","dashboard-metric-option"),checkbox=el("input");checkbox.type="checkbox";checkbox.checked=draft.metrics.includes(key);checkbox.disabled=!checkbox.checked&&draft.metrics.length>=12;label.title=key;checkbox.addEventListener("change",()=>{draft.metrics=checkbox.checked?[...new Set([...draft.metrics,key])].slice(0,12):draft.metrics.filter(metric=>metric!==key);renderMetrics();renderPreview();});label.append(checkbox,el("span","",data.definitions[key]?.label||key));metricList.append(label);}if(!keys.length)metricList.append(el("p","dashboard-editor-empty",t("没有匹配的指标")));
+      for(const key of keys){const label=el("label","dashboard-metric-option"),checkbox=el("input");checkbox.type="checkbox";checkbox.checked=draft.metrics.includes(key);checkbox.disabled=!checkbox.checked&&draft.metrics.length>=12;label.title=key;checkbox.addEventListener("change",()=>{draft.metrics=checkbox.checked?[...new Set([...draft.metrics,key])].slice(0,12):draft.metrics.filter(metric=>metric!==key);renderMetrics();refreshRange();updateRange();});label.append(checkbox,el("span","",data.definitions[key]?.label||key));metricList.append(label);}if(!keys.length)metricList.append(el("p","dashboard-editor-empty",t("没有匹配的指标")));
     };search.addEventListener("input",renderMetrics);
     const select=(values,current,change)=>{const input=el("select");for(const [value,label] of values){const option=el("option","",t(label));option.value=value;input.append(option);}input.value=current;input.addEventListener("change",()=>{change(input.value);renderPreview();});return input;};
     const axis=field("横轴",select([["step","训练步数"],["elapsed_seconds","运行时间（秒）"],["evaluation","记录顺序"]],draft.x,value=>draft.x=value));axis.hidden=draft.type!=="line";settings.append(axis,field("分组",select([["none","不分组"],["task","按任务"],["attempt","按研究尝试"]],draft.group_by,value=>draft.group_by=value)));
+    const yControls=el("div","dashboard-y-range"),yTitle=el("span","",t("纵轴范围")),minInput=el("input"),maxInput=el("input"),minField=field("最小值",minInput),maxField=field("最大值",maxInput),rangeError=el("p","dashboard-range-error");
+    yControls.hidden=draft.type!=="line";rangeError.hidden=true;rangeError.setAttribute("role","alert");for(const input of [minInput,maxInput]){input.type="number";input.step="any";input.placeholder=t("自动");}
+    const refreshRange=()=>{const percent=draft.metrics.length>0&&draft.metrics.every(key=>data.definitions[key]?.unit==="percent");minField.firstElementChild.textContent=t(percent?"最小值（%）":"最小值");maxField.firstElementChild.textContent=t(percent?"最大值（%）":"最大值");for(const [key,input] of [["min",minInput],["max",maxInput]])input.value=number(draft.y_range?.[key])?(percent?String(Number((draft.y_range[key]*100).toPrecision(15))):String(draft.y_range[key])):"";};
+    const updateRange=()=>{const percent=draft.metrics.length>0&&draft.metrics.every(key=>data.definitions[key]?.unit==="percent"),range={};let error="";for(const [key,input] of [["min",minInput],["max",maxInput]]){if(input.validity?.badInput){error=t("请输入有效的数值。");break;}if(input.value.trim()!==""){const value=Number(input.value)/(percent?100:1);if(!number(value)){error=t("请输入有效的数值。");break;}range[key]=value;}}if(!error&&number(range.min)&&number(range.max)&&(!(range.max>range.min)||!number(range.max-range.min)))error=t("最大值必须大于最小值。");rangeError.textContent=error;rangeError.hidden=!error;save.disabled=!!error;if(!error){if(Object.keys(range).length)draft.y_range=range;else delete draft.y_range;renderPreview();}};
+    minInput.addEventListener("input",updateRange);maxInput.addEventListener("input",updateRange);yControls.append(yTitle,minField,maxField,rangeError);settings.append(yControls);refreshRange();
     const remove=el("button","dashboard-delete",t("删除图表")),buttons=el("div","dashboard-actions"),cancel=el("button","",t("取消")),save=el("button","dashboard-save",t("保存"));for(const button of [remove,cancel,save])button.type="button";remove.hidden=adding;
-    const apply=panels=>{persist({...config,panels});scope.renderPending=true;dialog.close();};remove.addEventListener("click",()=>apply(config.panels.filter(p=>p.id!==editingID)));save.addEventListener("click",()=>apply(adding?[...config.panels,draft]:config.panels.map(p=>p.id===editingID?draft:p)));cancel.addEventListener("click",()=>dialog.close());buttons.append(cancel,save);footer.append(remove,buttons);
+    const apply=panels=>{persist({...config,panels});scope.renderPending=true;dialog.close();};remove.addEventListener("click",()=>apply(config.panels.filter(p=>p.id!==editingID)));save.addEventListener("click",()=>{if(!save.disabled)apply(adding?[...config.panels,draft]:config.panels.map(p=>p.id===editingID?draft:p));});cancel.addEventListener("click",()=>dialog.close());buttons.append(cancel,save);footer.append(remove,buttons);
     renderMetrics();renderPreview();dialog.showModal();scope.dashboardEditing=true;scope.dashboardDialog=dialog;
   }
   add.addEventListener("click",()=>{if(config.panels.length>=24)return;const ids=new Set(config.panels.map(p=>p.id));let index=1;while(ids.has(`custom-${index}`))index++;const metric=data.keys[0];openEditor({id:`custom-${index}`,title:metric?data.definitions[metric].label:t("新面板"),type:"line",metrics:metric?[metric]:[],x:"step",group_by:"none",layout:{w:6,h:320}},true);});

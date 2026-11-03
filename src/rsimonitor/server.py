@@ -198,6 +198,14 @@ def dashboard_only(value):
                 and type(layout.get('h')) is int
                 and 3 <= layout['w'] <= 12 and 240 <= layout['h'] <= 720):
             panel['layout'] = {key: layout[key] for key in ('w', 'h')}
+        y_range = row.get('y_range')
+        if isinstance(y_range, dict):
+            bounds = {key: y_range[key] for key in ('min', 'max') if key in y_range}
+            if bounds and all(type(number) in (int, float) and scalar(number) is not None
+                              for number in bounds.values()):
+                span = bounds['max'] - bounds['min'] if len(bounds) == 2 else None
+                if len(bounds) == 1 or (scalar(span) is not None and span > 0):
+                    panel['y_range'] = bounds
         panels.append(panel)
     return {'schema_version': 1, 'panels': panels}
 

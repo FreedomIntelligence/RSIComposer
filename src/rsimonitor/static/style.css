@@ -343,3 +343,8 @@ body:has(.dashboard-dialog[open]) { overflow: hidden; }
 @media(prefers-reduced-motion:reduce) {
   .dashboard-panel, .dashboard-card-tools { transition: none; }
 }
+
+.dashboard-y-range { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 12px; }
+.dashboard-y-range > span, .dashboard-range-error { grid-column: 1 / -1; font-size: 13px; }
+.dashboard-y-range > span { color: var(--muted); }
+.dashboard-range-error { color: var(--red); margin: 0; }

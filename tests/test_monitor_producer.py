@@ -115,6 +115,76 @@ class MonitorProducerTests(unittest.TestCase):
                 self.assertEqual(panels, original)
                 self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
 
+    def test_panel_y_range_roundtrips_optional_bounds_and_normalizes_auto(self):
+        from rsimonitor.server import project_snapshot
+        ranges = [{}, {'min': 0}, {'max': 0}, {'min': .7, 'max': .8},
+                  {'min': -.2, 'max': 1.2}, {'min': -1e308}, {'max': 1e308},
+                  {'min': 0, 'max': 5e-324}, {'min': -10 ** 307, 'max': 10 ** 307}]
+        panels = [self.panel(id=str(index), metrics=['accuracy'], y_range=bounds)
+                  for index, bounds in enumerate(ranges)] + [self.panel(id='legacy')]
+        original = deepcopy(panels)
+        expected = deepcopy(panels)
+        del expected[0]['y_range']
+        file_before = (self.root / 'monitor.json').read_bytes()
+        with patch.object(self.monitor, 'write') as write:
+            self.monitor.configure_dashboard(panels, metric_definitions={
+                'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}})
+            self.monitor.log_metric('accuracy', .75)
+            write.assert_not_called()
+        self.assertEqual(self.monitor.data['dashboard']['panels'], expected)
+        self.assertEqual(panels, original)
+        self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+        panels[3]['y_range']['min'] = .6
+        self.assertEqual(self.monitor.data['dashboard']['panels'], expected)
+        self.monitor.write()
+        snapshot = json.loads((self.root / 'monitor.json').read_text())
+        public = project_snapshot(snapshot, self.root.name)
+        self.assertEqual(public['dashboard'], {'schema_version': 1, 'panels': expected})
+        self.assertEqual(public['dashboard'], snapshot['dashboard'])
+        self.assertEqual(public['metric_points'], [{'metric': 'accuracy', 'value': .75}])
+        json.dumps(public, allow_nan=False)
+
+    def test_invalid_panel_y_range_rejects_whole_configuration_atomically(self):
+        self.monitor.configure_dashboard([self.panel(y_range={'min': 0, 'max': 1})])
+        self.monitor.log_metric('loss', .5)
+        self.monitor.write()
+        before = deepcopy(self.monitor.data)
+        file_before = (self.root / 'monitor.json').read_bytes()
+        definitions = {'loss': {'label': 'Loss', 'unit': 'number', 'direction': 'lower'}}
+        invalid = [None, True, False, 0, 'auto', [], [0, 1],
+                   {'min': 1, 'max': 1}, {'min': 2, 'max': 1},
+                   {'min': -1e308, 'max': 1e308},
+                   {'min': -10 ** 308, 'max': 10 ** 308},
+                   {'padding': .08}, {'min': 0, 'payload': {'secret': 'PRIVATE'}},
+                   {'min': 0, 'max': 1, 'padding': .08}]
+        for key in ('min', 'max'):
+            invalid += [{**{'min': 0, 'max': 1}, key: value} for value in
+                        (None, True, False, '0', [], {}, float('nan'), float('inf'),
+                         -float('inf'), 10 ** 1000)]
+            invalid += [{key: value} for value in (None, True, float('nan'), float('inf'))]
+        for bounds in invalid:
+            with self.subTest(y_range=bounds):
+                panels = [self.panel(id='valid', y_range={'max': .8}), self.panel(y_range=bounds)]
+                original = deepcopy(panels)
+                with patch.object(self.monitor, 'write') as write, self.assertRaisesRegex(ValueError, 'y_range'):
+                    self.monitor.configure_dashboard(panels, metric_definitions=definitions)
+                write.assert_not_called()
+                self.assertEqual(self.monitor.data, before)
+                self.assertEqual(panels, original)
+                self.assertEqual((self.root / 'monitor.json').read_bytes(), file_before)
+
+    def test_percent_viewport_range_does_not_relax_metric_point_validation(self):
+        self.monitor.configure_dashboard([self.panel(metrics=['accuracy'], y_range={'min': -.2, 'max': 1.2})],
+                                         metric_definitions={
+                                             'accuracy': {'label': 'Accuracy', 'unit': 'percent', 'direction': 'higher'}})
+        for value in (0, .75, 1):
+            self.monitor.log_metric('accuracy', value)
+        before = deepcopy(self.monitor.data)
+        for value in (-.2, 1.2, 75):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.monitor.log_metric('accuracy', value)
+            self.assertEqual(self.monitor.data, before)
+
     def test_invalid_metric_inputs_raise_without_appending_or_writing(self):
         before = deepcopy(self.monitor.data)
         file_before = (self.root / 'monitor.json').read_bytes()
