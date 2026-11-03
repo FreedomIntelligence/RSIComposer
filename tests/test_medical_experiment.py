@@ -8,6 +8,7 @@ import re
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 try:
     from jsonschema import Draft202012Validator
@@ -680,13 +681,14 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(observed, [(1800, True, 0)])
 
-    def test_time_mode_waits_without_new_cycles_or_exposing_budgets(self):
-        result = self.execute(repeat({'kind': 'wait', 'reason': 'No evidence-supported next hypothesis yet'}),
-                              run_mode='time', seconds=2, restart_delay_seconds=.001, max_model_calls=1000)
-        self.assertEqual(result['status'], 'stopped', result)
-        self.assertIn(result['reason'], ('deadline', 'budget_exhausted'))
+    def test_time_mode_explores_without_new_cycles_or_exposing_budgets(self):
+        with patch.object(FixtureServing, 'supports_response_schema', True, create=True):
+            result = self.execute(repeat({'kind': 'invoke', 'operation': 'preview_training_data',
+                                          'arguments': {'offset': 0, 'limit': 1}}),
+                                  run_mode='time', seconds=10, max_model_calls=3)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'), result)
         self.assertEqual(result['research_rounds'], 1)
-        self.assertGreaterEqual(result['model_calls'], 2)
+        self.assertEqual(result['model_calls'], 3)
         self.assertEqual(result['model_calls'], self.serving.model_calls)
         self.assertFalse(self.process.requests)
         self.assertIsNone(result['researcher_finish_reason'])
@@ -697,16 +699,41 @@ class MedicalExperimentIntegrationTests(unittest.TestCase):
             self.assertNotIn('budgets', context['project_context'])
             self.assertNotIn('Train budget=', context['objective'])
             self.assertNotIn('research seconds=', context['objective'])
+            self.assertIn('You may test uncertain hypotheses without prior proof of improvement', context['objective'])
+        requests = [json.loads(line)['request'] for line in
+                    (self.root/'run/model_requests.jsonl').read_text().splitlines()]
+        for request in requests:
+            branches = request['response_schema']['oneOf']
+            self.assertEqual({b['properties']['kind']['const'] for b in branches}, {'invoke', 'explore'})
+            self.assertNotIn('"kind":"wait"', request['system'])
+            self.assertNotIn('supported next hypothesis', request['system'])
         self.assertFalse(any(row['kind'] == 'finish' for row in self.read('monitor.json')['decisions']))
 
     def test_time_mode_rejects_finish_and_host_still_enforces_call_limit(self):
-        result = self.execute([FINISH, {'kind': 'wait', 'reason': 'Need an actionable hypothesis'}],
+        result = self.execute([FINISH, {'kind': 'invoke', 'operation': 'preview_training_data',
+                                       'arguments': {'offset': 0, 'limit': 1}}],
                               run_mode='time', seconds=10, restart_delay_seconds=.001, max_model_calls=2)
         self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'))
         self.assertEqual(result['model_calls'], 2)
         self.assertIsNone(result['researcher_finish_reason'])
         self.assertEqual(result['research_rounds'], 1)
         self.assertFalse(any(row['kind'] == 'finish' for row in self.read('monitor.json')['decisions']))
+
+    def test_time_mode_rejects_idle_wait_then_executes_uncertain_experiment(self):
+        propose = {'kind': 'explore', 'mode': 'configure_prompt',
+                   'strategy': 'Test an uncertain prompt hypothesis; improvement is not known.',
+                   'arguments': {'instructions': 'Read the options and return one answer label.'}}
+        result = self.execute([{'kind': 'wait', 'reason': 'I will propose a hypothesis next turn'},
+                               FINISH, propose, evaluate],
+                              run_mode='time', seconds=10, max_model_calls=4)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'), result)
+        self.assertEqual(result['model_calls'], 4)
+        self.assertEqual(len(self.read('candidates.json')), 1)
+        self.assertEqual(len(self.read('evaluations.json')), 1)
+        self.assertTrue((self.root/'run/baseline.json').exists())
+        decisions = self.read('monitor.json')['decisions']
+        self.assertEqual([d['mode'] for d in decisions], ['configure_prompt', 'evaluate'])
+        self.assertFalse(self.process.requests)
 
     def test_training_limit_stays_host_owned_after_a_submission(self):
         result = self.execute([train, FINISH], max_trainings=1)

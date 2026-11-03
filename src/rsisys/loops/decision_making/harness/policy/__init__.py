@@ -238,6 +238,9 @@ class ModelDecisionPolicy:
     def _control_instructions(self, context):
         return 'Use {"kind":"finish"} when done. '
 
+    def _scheduling_instructions(self, context):
+        return 'Use {"kind":"wait"} to yield a scheduling turn while outstanding experiments run. '
+
     def _decision_request(self, context):
         inputs = self._context_inputs(context)
         inputs["directives"] = [asdict(spec) for spec in self.directives.describe(context.directive_modes)]
@@ -251,7 +254,7 @@ class ModelDecisionPolicy:
                     "A directive mode is never an operation name. "
                     "If directive_modes is empty, no new experiment can be submitted this turn; "
                     "you may still research or control existing experiments using context.operations. "
-                    "Use {\"kind\":\"wait\"} to yield a scheduling turn while outstanding experiments run. "
+                    + self._scheduling_instructions(context) +
                     "Put mode-specific parameters in arguments, following its listed input_schema. "
                     "Emit object fields in the property order shown in that schema; include intended optional "
                     "parameters before moving to later fields. "
@@ -265,7 +268,7 @@ class ModelDecisionPolicy:
                     "source_decision_ids cites known decisions, including pending or failed work. "
                     "Use candidate_origins to find producers; never infer lineage from history order. "
                     + self._attempt_instructions() +
-                    "Unknown or unfinished dependencies cannot execute; wait and propose again later. "
+                    "Unknown or unfinished dependencies cannot execute; select a currently executable action. "
                     "Decision IDs are system generated. Never claim adopted candidates or confirmed edges; "
                     "only successful executor receipts can confirm adoption. "
                     "For every decision, provide a brief public rationale in the optional top-level reason string: "

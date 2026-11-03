@@ -139,12 +139,11 @@ Add `--run-mode time --seconds 1800 --max-model-calls 10000` for continuous
 30-minute research. The host owns stopping, time and cumulative call/training caps.
 The decision model sees current capabilities, evidence and per-action validity
 constraints, but no training slots, remaining time or call allowance. It chooses
-the next useful hypothesis/action. In time mode, `finish` is absent from the action
-schema and rejected before execution. If no useful next action is supported, the
-model can `wait` with a concrete blocker or unresolved question; this preserves
-state and does not create another research cycle or replenish resources. The host
-paces such idle waits using `--restart-delay-seconds` (default 10). It does not
-require a particular experiment or a positive result. The generic `TimeRunPolicy`
+its next executable action, including experiments with uncertain outcomes. In
+time mode, model actions are `invoke` and `explore`; `finish` and idle `wait` are
+absent from the schema and rejected before execution. The serial executor owns
+waiting for running work. Exploration follows no fixed workflow or method
+rotation; the unchanged selection rule governs adoption. The generic `TimeRunPolicy`
 still supports legacy harnesses that finish/restart; the medical model contract
 no longer uses that path. The default `--run-mode researcher` still allows early
 finish. Limits remain enforced and recorded by the executor even though they
@@ -687,8 +686,8 @@ quality. Use a matched serving backend for controlled quality conclusions.
 
 With a `VLLMBackend` researcher, the medical wrapper forwards its native schema
 capability to `ResearchPolicy`. Each decision request carries the current action
-schemas; the serial example excludes wait, requires a finish rationale and
-training input references, and omits training-time review scheduling. This
+schemas; the serial example excludes model wait, requires a finish rationale in
+researcher mode and training input references, and omits training-time review scheduling. This
 reflects existing execution rules, without prescribing research steps. Other
 backends keep their declared capability behavior. Operator evidence now includes
 `model_requests.jsonl` with the actual output budget and response schema, alongside

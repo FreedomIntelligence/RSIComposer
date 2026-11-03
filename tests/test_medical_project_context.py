@@ -254,10 +254,8 @@ class MedicalProjectSettingsTests(unittest.TestCase):
         request = policy._decision_request(context)
         self.assertNotIn('Use {"kind":"finish"} when done.', request.system)
         self.assertIn('The host owns stopping', request.system)
-        branches = policy.decision_schema(context)['oneOf']
-        self.assertEqual([b['properties']['kind']['const'] for b in branches], ['wait'])
-        self.assertIn('reason', branches[0]['required'])
-        self.assertEqual(branches[0]['properties']['job'], {'type': 'null'})
+        self.assertNotIn('"kind":"wait"', request.system)
+        self.assertEqual(policy.decision_schema(context), {'not': {}})
 
 
 class MedicalMonitorThreadTests(unittest.TestCase):

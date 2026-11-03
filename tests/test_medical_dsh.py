@@ -70,13 +70,28 @@ class MedicalDSHTests(unittest.TestCase):
 
     def test_dsh_time_mode_keeps_host_limits_out_of_native_session(self):
         result, runtime, serving, root = self.execute(
-            [{'kind': 'wait', 'reason': 'No supported next hypothesis'}], run_mode='time', max_model_calls=1)
+            [{'kind': 'invoke', 'operation': 'preview_training_data',
+              'arguments': {'offset': 0, 'limit': 1}}], run_mode='time', max_model_calls=1)
         self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'), result)
         self.assertEqual(result['research_rounds'], 1)
         self.assertEqual(set(runtime.contexts[0]['run_control']), {'stopping_owner', 'initial_training_data'})
         self.assertNotIn('budgets', runtime.contexts[0]['project_context'])
         self.assertIn('The host owns stopping', runtime.prompts[0])
         self.assertNotIn('Use {"kind":"finish"} when done.', runtime.prompts[0])
+        self.assertNotIn('"kind":"wait"', runtime.prompts[0])
+
+    def test_dsh_time_mode_rejects_idle_wait_without_breaking_async_scheduling(self):
+        result, runtime, serving, root = self.execute([
+            {'kind': 'wait', 'reason': 'No supported next hypothesis'},
+            {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'Test an uncertain format hypothesis',
+             'arguments': {'instructions': 'Return one legal label.'}},
+            {'kind': 'invoke', 'operation': 'preview_training_data', 'arguments': {'offset': 0, 'limit': 1}},
+        ], run_mode='time', max_model_calls=3)
+        self.assertEqual((result['status'], result['reason']), ('stopped', 'model_call_budget_exhausted'), result)
+        self.assertEqual(result['model_calls'], 3)
+        self.assertEqual(len(runtime.prompts), 3)
+        self.assertEqual(len(json.loads((root/'candidates.json').read_text())), 1)
+        self.assertTrue(runtime.closed)
 
     def test_dsh_feedback_uses_independent_transport_and_shared_budget(self):
         from tests.test_feedback_learning_integration import Backend

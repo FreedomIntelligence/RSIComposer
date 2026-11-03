@@ -288,8 +288,9 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
         'control_ownership': {
             'budget_manager': 'host',
             'stopping_owner': 'host' if settings.run_mode == 'time' else 'researcher_or_host',
-            'decision_responsibility': ('Choose the next evidence-grounded hypothesis and concrete action from live '
-                'capabilities. Do not reserve resources for an imagined future cycle. Capability availability '
+            'decision_responsibility': ('Choose your next hypothesis and executable action freely from live '
+                'capabilities; uncertain outcomes are tested by experimentation. Do not reserve resources '
+                'for an imagined future cycle. Capability availability '
                 'is maintained by the executor; unavailable training does not prohibit other research.'),
         },
     }
@@ -918,10 +919,15 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
     def _control_instructions(self, context):
         if self.run_mode != 'time':
             return super()._control_instructions(context)
-        return ('The host owns stopping. Choose the next useful research action. '
-            'Use {"kind":"wait","reason":"concrete blocker or lack of a supported next hypothesis"} '
-            'only when there is no useful executable next step. Waiting preserves the same research state; '
-            'it does not replenish resources, create a future experiment or establish optimality. ')
+        return ('The host owns stopping. Explore freely through the available actions. '
+            'Choose and execute your next research action now. An experimental hypothesis may be uncertain; '
+            'it does not need prior evidence that it will succeed. Evaluation determines its outcome, '
+            'and the selection rule governs adoption. ')
+
+    def _scheduling_instructions(self, context):
+        if self.run_mode == 'time':
+            return 'The serial executor waits for running work; model decisions select invoke or explore actions. '
+        return super()._scheduling_instructions(context)
 
     def _decision_request(self, context):
         request = super()._decision_request(context)
@@ -930,15 +936,16 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
     def decision_schema(self, context):
         schema = super().decision_schema(context)
         # Match this example's existing serial execution rules, without choosing an action.
+        excluded = {'finish', 'wait'} if self.run_mode == 'time' else {'wait'}
         schema['oneOf'] = [branch for branch in schema['oneOf']
-                           if branch['properties']['kind']['const'] != ('finish' if self.run_mode == 'time' else 'wait')]
+                           if branch['properties']['kind']['const'] not in excluded]
+        if not schema['oneOf']:
+            return {'not': {}}
         for branch in schema['oneOf']:
             fields = branch['properties']
-            if fields['kind']['const'] in ('finish', 'wait'):
+            if fields['kind']['const'] == 'finish':
                 fields['reason']['minLength'] = 1
                 branch['required'].append('reason')
-                if fields['kind']['const'] == 'wait':
-                    fields['job'] = {'type': 'null'}
             if fields.get('mode', {}).get('const') == 'train':
                 fields.pop('review_after_seconds', None)
                 fields['input_ids']['minItems'] = 1
@@ -1026,10 +1033,9 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
                         if not decision.directive.input_refs or any(ref.kind != 'training_data' for ref in decision.directive.input_refs):
                             raise ValueError('train requires explicit input_ids containing training_data artifacts only')
                 elif decision.kind == 'wait':
-                    if self.run_mode != 'time' or decision.job is not None or not decision.reason.strip():
-                        raise ValueError('Host-controlled serial research permits wait with a reason and no job only')
+                    raise ValueError('The serial executor owns waiting; choose an available invoke or explore action')
                 elif decision.kind == 'finish' and self.run_mode == 'time':
-                    raise ValueError('Host owns stopping; choose a useful action, or wait with a concrete blocker')
+                    raise ValueError('Host owns stopping; choose an available invoke or explore action')
                 elif not decision.reason.strip():
                     raise ValueError('finish requires a nonempty reason')
             except (ValueError, TypeError, KeyError, PermissionError) as exc:
@@ -1332,7 +1338,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             'evaluate and apply an accepted candidate. '
             'Choose data construction, SFT recipes, inference prompts or combinations according to your hypotheses. '
             'No particular method or training submission is required. Compare candidates using frozen development evidence. '
-            'A few negative results do not exhaust the search; seed changes alone are not mechanism improvements. '
+            'A few negative results do not exhaust the search. '
             f'Application follows frozen selection_rule={task.selection_rule}. '
             'The default pareto rule requires at least one accuracy improvement over the current incumbent and no decreases. '
             'Tradeoff candidates remain available for comparison. '
@@ -1349,13 +1355,12 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             f'Evaluation protocol_ref={task.protocol_ref}. '
             'Fixed initial anchor: '+json.dumps(asdict(anchor)))
         if settings.run_mode == 'time':
-            objective += (' Continuous research: the host owns budgets and stopping. Choose the next useful '
-                'hypothesis and executable action using current evidence and capabilities. A completed or '
-                'rejected attempt is not the end of research. Do not save an action for a future cycle; '
-                'there is no model-controlled cycle or resource reset. A few negative results do not establish '
-                'a local optimum or prove overfitting. If no useful next step is supported, wait with a concrete '
-                'blocker or unresolved question; do not repeat completed queries without new information. '
-                'No particular experiment or positive outcome is required.')
+            objective += (' Continuous research: the host owns budgets and stopping. Explore freely and '
+                'choose your next executable action using the available capabilities. You may test uncertain '
+                'hypotheses without prior proof of improvement. A completed or rejected attempt is evidence '
+                'for further exploration. Execute your chosen action this turn; there is no future cycle or '
+                'resource reset. You choose the research direction and methods; no fixed workflow, method '
+                'rotation or positive outcome is required. The unchanged selection rule governs adoption.')
         else:
             objective += ' You may finish with a nonempty reason when research is done; the host also enforces limits.'
         monitor.stage('researching')
