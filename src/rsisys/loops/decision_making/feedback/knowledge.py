@@ -15,7 +15,7 @@ from rsisys.runtime.json_tools import encoded, result_id, EvidencePathError
 
 
 TARGETS = {'memory': 'context_memory', 'harness_change': 'harness',
-           'training_data': 'weights', 'system_change': 'system'}
+           'training_data': 'weights', 'policy_training': 'weights', 'system_change': 'system'}
 SUBJECTS = ('meta_agent', 'lab', 'unspecified')
 
 
@@ -100,7 +100,7 @@ def trajectory_records(jobs, *, research_attempt_id=None):
             **_identity(job), 'research_attempt_ids': attempts,
             'authority': 'archived_public_trajectory', 'feedback_status': job['status'],
             'execution_status': receipt_facts(raw['receipt'])['status'],
-            'feedback_model': deepcopy(job['model']),
+            'feedback_model': None if job.get('archive_only') else deepcopy(job['model']),
             'capture_index': job.get('capture_index'), 'snapshot_digest': result_id(raw),
             'source_snapshot': interpretation_read(job['job_id'], ''),
             'captured_history_records': len(raw.get('history', [])),
@@ -129,6 +129,19 @@ def trajectory_segment(job):
             'request': deepcopy(job.get('request')), 'response': deepcopy(job.get('response')),
             'products': deepcopy(job.get('products', {})), 'error': job.get('error')},
         'scope': 'captured_public_segment; original meta-agent exchange is not captured by this observer'}))
+
+
+def trajectory_snapshot(job):
+    """Immutable captured facts, independent of later memory/proposal results."""
+    raw = deepcopy(_snapshot(job))
+    return json.loads(encoded({'schema_version': 1,
+        'trajectory_id': 'trajectory:' + job['job_id'], 'job_id': job['job_id'],
+        **_identity(job), 'capture_index': job.get('capture_index'),
+        'authority': 'archived_public_trajectory', 'snapshot_digest': result_id(raw),
+        'capture': raw, 'complete_conversation': False, 'training_ready': False,
+        'coverage': {'decision_records': 'captured_history_only',
+                     'execution_receipt': 'original', 'original_meta_agent_exchange': 'not_captured'},
+        'dataset_construction_owner': 'lab'}))
 
 
 def proposal_records(jobs, *, target=None, research_attempt_id=None):
@@ -177,7 +190,12 @@ def working_memory(jobs, attempts, *, active_decision_ids=(), policy=None):
     policy = WorkingMemoryPolicy() if policy is None else policy
     if not isinstance(policy, WorkingMemoryPolicy):
         raise TypeError('working memory policy must be a WorkingMemoryPolicy')
-    jobs = ordered_jobs(jobs)
+    jobs = [j for j in ordered_jobs(jobs) if not j.get('archive_only')]
+    def attention(job):
+        return (job['status'] not in ('completed', 'archived') or bool(job.get('grouping_error'))
+                or any(p.get('status') != 'completed' for p in job.get('products', {}).values())
+                or any(job.get(key, {}).get('status') in ('failed', 'interrupted') for key in
+                       ('context_delivery', 'archive_delivery', 'publication_delivery')))
     rank = {j['job_id']: i for i, j in enumerate(jobs)}
     active = set(active_decision_ids)
     attempts = sorted(attempts, key=lambda a: (
@@ -197,8 +215,7 @@ def working_memory(jobs, attempts, *, active_decision_ids=(), policy=None):
                     for name in dict.fromkeys(TARGETS.values())},
         'totals': {'attempts': len(attempts), 'learning_jobs': len(jobs),
                    'explicit_attempts': len(explicit_attempts),
-                   'learning_attention': sum(j['status'] != 'completed' or bool(j.get('grouping_error'))
-                                             for j in jobs)},
+                   'learning_attention': sum(attention(j) for j in jobs)},
         'read_path': {'operation': 'feedback_learning_read', 'view': 'attempts'},
         'proposal_read_path': {'operation': 'feedback_learning_read', 'view': 'proposals'},
         'residency': {'max_bytes': policy.max_bytes, 'omitted_cards': 0},
@@ -266,9 +283,12 @@ def working_memory(jobs, attempts, *, active_decision_ids=(), policy=None):
                 'read_path': observation['read_path']})
         add('findings', card)
     state['findings'].reverse()
-    for job in reversed([j for j in jobs if j['status'] != 'completed' or j.get('grouping_error')][-policy.recent:]):
+    for job in reversed([j for j in jobs if attention(j)][-policy.recent:]):
         add('learning_attention', {'job_id': job['job_id'], 'status': job['status'],
-            'error_preview': _preview(str(job.get('error') or job.get('grouping_error') or ''), 160),
+            'error_preview': _preview(str(job.get('error') or job.get('grouping_error') or job.get('publication_error') or ''), 160),
+            'product_statuses': {name: product.get('status') for name, product in job.get('products', {}).items()},
+            'delivery_statuses': {name: job[name].get('status') for name in
+                ('context_delivery', 'archive_delivery', 'publication_delivery') if job.get(name)},
             'read_path': {'operation': 'feedback_learning_read', 'job_id': job['job_id']}})
     state['residency']['omitted_cards'] = (len(attempts) + len(ungrouped)
         + state['totals']['learning_attention']

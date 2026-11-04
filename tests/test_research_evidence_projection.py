@@ -58,12 +58,12 @@ def fixture(memory=None, experience=None, count=8):
                                False, quality_metrics={'accuracy': 0.25}, evidence_refs=('latest-source',))
     old_history = tuple(measured(i) for i in range(count))
     old_operation = HistoryEntry('old-tool', 'operation', None, old_tool.summary, False,
-                                details={'result': asdict(old_tool)})
+                                details={'result': old_tool.payload()})
     latest = (
         HistoryEntry('latest-feedback', 'feedback', 'latest', latest_feedback.summary, False,
                      details={'feedback': asdict(latest_feedback), 'directive': {'strategy': 'latest full strategy'}}),
         HistoryEntry('latest-tool', 'operation', None, latest_tool.summary, False,
-                     details={'result': asdict(latest_tool)}),
+                     details={'result': latest_tool.payload()}),
     )
     for row in (*old_history, old_operation, *latest):
         memory.append(row)
@@ -127,7 +127,7 @@ class EvidenceProjectionTests(unittest.TestCase):
             operation = projected.operation_results[0]
             self.assertEqual(operation.data['facts']['/data/quality_metrics'], METRICS)
             recovered = read_original(tools, operation.data['evidence_card'])
-            self.assertEqual(recovered, json.loads(encoded(asdict(raw.operation_results[0]))))
+            self.assertEqual(recovered, json.loads(encoded(raw.operation_results[0].payload())))
             observation = projected.experience[0]
             self.assertEqual(observation.details['facts']['/details/outcome/result/metrics'], METRICS)
             self.assertEqual(read_original(tools, observation.details['evidence_card']),

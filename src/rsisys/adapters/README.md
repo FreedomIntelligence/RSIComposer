@@ -5,6 +5,38 @@ The core adapters need only the standard library; the LangChain bridge described
 below explicitly needs its optional extra. Install neither frameworks nor
 services through the adapter. Harnesses continue to own policy and role binding.
 
+## Decision text window
+
+[decision.py](decision.py) adapts a public `decide(DecisionInput) -> Decision`
+policy, or a plain callable, to the default harness using `ContextDecisionPolicy`.
+`DecisionInputAdapter` renders the rich internal view into objective/context text,
+capability descriptions and optional JSON references. Custom `context(view)` and
+`references(view)` callbacks select their own representation; default rendering
+retains the observed fields. Inputs are detached from host objects before delivery.
+For custom directive modes, pass the installed `DirectiveDefinitions` catalog as
+`DecisionInputAdapter(directives=catalog)`, matching the action space. The built-in
+ModelDecisionPolicy already consumes the rich view and does not need this adapter.
+
+```python
+from rsisys.adapters.decision import ContextDecisionPolicy, DecisionInputAdapter
+from rsisys.loops.contracts.decision import Decision
+
+def choose(window):
+    return Decision('finish', reason='No further work in this fixture')
+
+loop.harness.policy = ContextDecisionPolicy(choose, input_adapter=DecisionInputAdapter())
+```
+
+The ordinary assembly retains the host model binding when replacing its policy.
+Other default-harness assemblies supply `model=ModelRef(...)` or a dynamic
+`model_provider` on the harness. These identities are provenance, even when the
+selected feedback modules perform no inference. Native SDK parsing/tool calling
+belongs to the policy; every returned action still enters host validation.
+Optional usage, request-context and backend-sharing capabilities may be forwarded
+through wrappers. Review is optional and defaults to continue; its window exposes
+review controls and permitted tools, without new exploration directives.
+See [implementation and validation](../../../docs/review/decision-module-windows-20261104.md).
+
 ## LangChain model bridge
 
 `langchain_model.BackendChatModel` bridges library-owned native tool workflows
@@ -14,6 +46,62 @@ the host's admission gate. Install the `langmem` extra for this integration;
 ordinary package imports do not load it. The feedback gateway records every
 internal call and admits the complete request, including native tool schemas.
 See the [adoption review](../../../docs/review/feedback-oss-adoption.md).
+
+## Open Lab execution
+
+[execution.py](execution.py) adapts the minimal [LabExecution](../loops/contracts/execution.py)
+port: `describe() -> OperationSpec[]`, `execute(OperationCall) -> OperationResult | JobRef`.
+`Application` and `build_demo` accept `lab_factory(context)` through one assembly
+path. This mode does not require an Actor or infer SFT/RL/evaluation categories.
+Descriptions/schemas come from the Lab; it validates domain arguments before
+effects. Host validation checks the JSON call envelope, permissions and receipts.
+No native SDK, internal validation class or loop state is required of the provider.
+
+[local_lab.py](local_lab.py) supplies a programmable local implementation with
+file read/write/export and background program start/poll/result/cancel. Programs
+can implement and revise training/evaluation themselves. `lab_poll` observations
+are query archives; `lab_result` collects terminal evidence into the ordinary
+feedback/memory path. Stdout is retained as native output, not verified metrics.
+Start keys prevent duplicate jobs within this process; submission is not completion.
+Providers may raise `LabToolError` for a model-correctable invocation failure;
+the Lab adapter returns a failed result and lets decision continue. Unclassified
+exceptions, permissions, identity conflicts and storage failures still reach the host.
+Optional `OperationResult.feedback_delivery=FeedbackDelivery(event_id, reprocess=False)`
+identifies one immutable producer result. Each collection is captured separately;
+duplicate collections are archive-only, while `lab_result(..., reprocess=True)`
+requests another host-accounted feedback pass without starting another program.
+Omitting this metadata retains per-receipt processing. See the
+[confirmed delivery semantics](../../../docs/review/lab-delivery-semantics-20261104.md).
+
+Optional `shutdown(mode)->bool` integrates owned jobs with Runner stop control.
+`close()` is registered automatically and must only release this provider's
+resources. It must be idempotent and retryable after failure. Assembly retains
+the failed owned close and earlier dependencies; Application keeps its lock and
+store until this cleanup succeeds. Ordinary callbacks are never replayed.
+Shutdown attempts cancellation for every owned job before reporting collected
+errors. Runner still checks its cleanup deadline when shutdown raises; a terminal
+stop report may explicitly leave `unresolved_execution=True` for host teardown.
+
+The local backend distinguishes `failure_origin` (`program`, `timeout`, or
+`infrastructure`; null on success/cancellation). Lab poll/result raises
+`LabInfrastructureError` for supervision faults, carrying the archived failed
+`OperationResult`. Host receipts preserve its logs, artifact refs and collected
+event identity before rethrowing. Teardown checks process exit separately, so an
+already reaped infrastructure failure does not permanently block close.
+Workspace file/directory type mistakes raise `LabToolError`; symlink refusal,
+workspace-root corruption, permissions and storage failures stay host errors.
+See the [execution lifecycle repair](../../../docs/review/execution-contract-fixes-20261104.md).
+
+Sync calls require bounded provider timeouts. JobRef still needs the
+existing external completion/resume integration; use native nonblocking tools
+when the meta-agent should continue acting. Durable recovery is explicitly
+unsupported until provider state and uncertain effects have an integration.
+
+LocalProcessLab uses the existing trusted LocalProcessBackend, not OS isolation.
+It does not install training libraries, choose accelerators, or infer training
+usage from arbitrary code. Production executors own these restrictions.
+See [implementation review](../../../docs/review/open-lab-execution-20261104.md)
+and [CPU fixture](../../../examples/open_lab.py).
 
 ## Lab task bridge
 
@@ -31,6 +119,29 @@ underlying endpoint must uphold its existing submission idempotency contract.
 Durable recovery requires explicit integration. This bridge adds no code agent,
 budget management, training capability or isolation guarantee. The default Runner
 continues to use the exploration endpoint rather than a cross-Lab scheduler.
+
+## Decision-policy improvement Lab
+
+[trajectory.py](trajectory.py) implements a read-only `FeedbackTrajectorySource`.
+Its references pin archive identity, trajectory identity and SHA256 of an immutable
+raw capture; later memory/proposal completion does not change that source.
+Captured public execution segments are not complete meta-agent conversations or
+training-ready examples. Recipes must inspect coverage and missing inputs.
+
+[improvement.py](improvement.py) installs separately replaceable
+`build_decision_dataset` and `train_decision_policy` capabilities. Builders implement
+[DecisionDatasetBuilder](../loops/contracts/improvement.py); training uses the
+existing DecisionLearner contract. `improvement_exploration_factory(...)` plugs
+installed capabilities into the normal Application/Demo exploration port. Only
+installed backends are advertised; this is not a cross-Lab scheduler.
+
+Both commands use the existing JobBook submit/poll/cancel lifecycle and stable
+keys. Dataset results retain source/recipe identity and versioned artifacts;
+training results retain base identity and target only decision_maker. Construction
+does not start training, and training returns a candidate without changing the live
+model. Algorithms, resource admission and durable custom-handler recovery remain
+explicit integrations. See the [workflow](../../../docs/review/feedback-workflow.md)
+and [CPU fixture](../../../examples/decision_policy_lab.py).
 
 ## Training
 

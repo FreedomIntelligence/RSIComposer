@@ -173,14 +173,15 @@ class FeedbackPipelineTests(unittest.TestCase):
                 self.assertEqual(learning.read(ident)['proposals'], [])
                 self.assertEqual(self.backend.requests, [])
 
-    def test_required_memory_failure_does_not_start_optional_model_call(self):
+    def test_memory_failure_does_not_block_independent_optional_model_call(self):
         memory = RecordedMemory(self.root / 'memory.json')
         memory.fail = True
         learning, _ = self.learning(memory=memory)
         ident = self.capture(learning)
-        self.assertEqual(learning.state['jobs'][ident]['status'], 'failed')
-        self.assertEqual(learning.state['jobs'][ident]['products']['harness_proposals']['status'], 'not_started')
-        self.assertEqual(self.backend.requests, [])
+        self.assertEqual(learning.state['jobs'][ident]['status'], 'completed')
+        self.assertEqual(learning.state['jobs'][ident]['products']['context_memory']['status'], 'failed')
+        self.assertEqual(learning.state['jobs'][ident]['products']['harness_proposals']['status'], 'completed')
+        self.assertEqual(len(self.backend.requests), 1)
         self.assertEqual(len(learning.trajectories()), 1)
 
     def test_native_proposal_call_is_recorded_without_executing_a_tool(self):
@@ -305,7 +306,7 @@ class FeedbackPipelineTests(unittest.TestCase):
             decision = Decision('invoke', operation=OperationCall('prepare_data', {'text': 'must not execute'}),
                                 feedback_proposal_ids=('unknown:0',))
             loop.harness.policy = Script(model, decision)
-            with self.assertRaisesRegex(ValueError, 'Unknown.*harness proposal'):
+            with self.assertRaisesRegex(ValueError, 'Unknown.*improvement proposal'):
                 loop.step('objective')
             self.assertEqual(loop.harness.state.operation_results, [])
 

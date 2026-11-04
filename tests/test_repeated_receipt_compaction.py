@@ -18,7 +18,7 @@ class RepeatedReceiptCompactionTests(unittest.TestCase):
         receipt = OperationResult('Training preview', (), False,
             data={'rows': [{'benchmark_id': 'fixture', 'text': 'sample ' * 1800}], 'offset': 0})
         rows = tuple(HistoryEntry(f'read-{i}', 'operation', None, receipt.summary, False,
-            details={'decision_id': f'decision-read-{i}', 'result': asdict(receipt)}) for i in range(count))
+            details={'decision_id': f'decision-read-{i}', 'result': receipt.payload()}) for i in range(count))
         for row in rows:
             memory.append(row)
         context = replace(context, history=(*context.history, *rows),
@@ -65,7 +65,7 @@ class RepeatedReceiptCompactionTests(unittest.TestCase):
         context, _, _, _ = fixture(count=1)
         receipt = OperationResult('Repeated read', (), False, data={'content': 'x' * 1200})
         rows = tuple(HistoryEntry(f'read-{i}', 'operation', None, 'read', False,
-                                 details={'result': asdict(receipt)}) for i in range(100))
+                                 details={'result': receipt.payload()}) for i in range(100))
         context = replace(context, history=rows, operation_results=(receipt,) * 100,
                           experience=(), research_state={}, last_feedback=None)
         self.assertEqual(full_history_ids(context), {'read-98', 'read-99'})

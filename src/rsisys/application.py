@@ -8,8 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rsisys.assembly import (
-    AssemblyContext, DecisionFactory, ExplorationFactory,
-    build_default_decision, build_default_exploration,
+    AssemblyContext, DecisionFactory, ExplorationFactory, LabExecutionFactory, assemble_runner, module_assembly,
 )
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.experience.retrieval import BasicExperienceSystem
@@ -20,7 +19,6 @@ from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
 from rsisys.runtime.sandbox import MockSandboxBackend
 from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.runner import Runner
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.provenance import RunSource
 
@@ -48,8 +46,8 @@ class ApplicationConfig:
             raise ValueError('rounds and experience_limit must be positive integers')
         if type(self.memory_limit) is not int or self.memory_limit < 1:
             raise ValueError('memory_limit must be a positive integer')
-        if set(self.roles) != {'decision_maker', 'actor'}:
-            raise ValueError('Both decision_maker and actor role bindings are required')
+        if 'decision_maker' not in self.roles or set(self.roles) - {'decision_maker', 'actor'}:
+            raise ValueError('decision_maker is required; actor is an optional legacy exploration role')
         RunSource(self.run_id, self.parent_run_id)
         for key, backend in self.backends.items():
             if key != backend.backend_id or backend.kind not in ('mock', 'http', 'chat_completions'):
@@ -89,27 +87,33 @@ class ApplicationConfig:
 class Application:
     def __init__(self, config: ApplicationConfig, *, decision_factory: DecisionFactory | None = None,
                  exploration_factory: ExplorationFactory | None = None,
+                 lab_factory: LabExecutionFactory | None = None,
                  action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
                  cleanup_timeout_seconds: float = 30, durable: bool = False,
                  recovery_contract=None, research=None, research_backend=None,
-                 feedback_adapter_factory=None, _restore: bool = False, _resume: bool = False):
-        from rsisys.research import ResearchAssembly
+                 feedback_adapter_factory=None, modules=None, _restore: bool = False, _resume: bool = False):
+        modules = module_assembly(modules, decision_factory=decision_factory,
+            exploration_factory=exploration_factory, lab_factory=lab_factory,
+            research=research, research_backend=research_backend, feedback_adapter_factory=feedback_adapter_factory)
+        decision_factory, exploration_factory, lab_factory = (
+            modules.decision_factory, modules.exploration_factory, modules.lab_factory)
+        research = modules.research
+        module_layout = {name: getattr(modules, name) is not None for name in (
+            'decision_factory', 'exploration_factory', 'lab_factory', 'research', 'state_factory')}
         if research is not None:
-            if not isinstance(research, ResearchAssembly):
-                raise TypeError('research must be a ResearchAssembly')
-            research.validate()
-            if durable and recovery_contract is None:
+            if durable and recovery_contract is None and modules.state_factory is None:
                 raise ValueError('Research assembly requires an explicit recovery_contract for durable=True')
-        elif research_backend is not None or feedback_adapter_factory is not None:
-            raise ValueError('Research backend/adapter requires a research assembly')
         if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         if type(durable) is not bool:
             raise TypeError('durable must be boolean')
+        if durable and lab_factory is not None and recovery_contract is None and modules.state_factory is None:
+            raise TypeError('Lab execution requires explicit recovery integration; durable execution is unsupported')
         if recovery_contract is not None and not durable:
             raise ValueError('recovery_contract requires durable=True')
         self.config = config
-        self.custom_assembly = decision_factory is not None or exploration_factory is not None
+        self.modules = modules
+        self.custom_assembly = decision_factory is not None or exploration_factory is not None or lab_factory is not None
         self.custom_exploration = exploration_factory is not None
         self.recovery = None
         self.assembly: AssemblyContext | None = None
@@ -137,8 +141,14 @@ class Application:
             if contents and not _restore:
                 raise ValueError('Workspace is not empty; use Application.resume for durable runs or restore a snapshot')
             if _restore:
+                if (root / 'lab_execution.json').exists() and (
+                        lab_factory is None or (recovery_contract is None and modules.state_factory is None)):
+                    raise TypeError('Lab execution requires explicit recovery integration; automatic restore is unsupported')
                 if (root / 'research_assembly.json').exists() and research is None:
                     raise ValueError('Supply the original research assembly when restoring this workspace')
+                marker = root / 'module_assembly.json'
+                if marker.exists() and json.loads(marker.read_text()) != module_layout:
+                    raise TypeError('Supply the original module assembly when restoring this workspace')
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
                     raise ValueError('Restored run identity does not match configuration')
@@ -152,8 +162,6 @@ class Application:
                 self.sandbox = LocalProcessBackend(root / 'workspaces')
             else:
                 self.sandbox = MockSandboxBackend()
-            if callable(getattr(self.sandbox, 'close_all', None)):
-                self._resources.callback(self.sandbox.close_all)
             self.assembly = AssemblyContext(
                 experience=self.experience, artifacts=self.artifacts, backends=self.backends,
                 sandbox=self.sandbox, roles=dict(config.roles), data_dir=root, execution=config.execution,
@@ -161,16 +169,16 @@ class Application:
                 memory_limit=config.memory_limit,
                 action_permissions=action_permissions if action_permissions is not None else ActionPermissions(),
             )
-            self._resources.callback(self.assembly.close)
-            exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(self.assembly)
-            decision = (decision_factory if decision_factory is not None else build_default_decision)(self.assembly, exploration)
-            if research is not None:
-                from rsisys.research import assemble_research
-                assemble_research(decision, assembly=research, path=root / 'feedback_learning.json',
-                    backend=research_backend, owner=self.assembly,
-                    adapter=feedback_adapter_factory(decision.harness) if feedback_adapter_factory else None)
-            self.runner = Runner(decision, exploration, run_policy=run_policy,
-                                 cleanup_timeout_seconds=cleanup_timeout_seconds)
+            # A shared executor can own work beyond the active Lab/environment.
+            # Failed close must retain its callback, storage and workspace lock.
+            if callable(getattr(self.sandbox, 'close_all', None)):
+                self.assembly.add_owned_cleanup(self.sandbox.close_all)
+            self.runner = assemble_runner(self.assembly, modules=modules, run_policy=run_policy,
+                                          cleanup_timeout_seconds=cleanup_timeout_seconds)
+            if any(module_layout.values()):
+                atomic_write(root / 'module_assembly.json', json_bytes(module_layout))
+            if self.assembly.lab_execution is not None:
+                atomic_write(root / 'lab_execution.json', json_bytes({'restore': 'requires_explicit_integration'}))
             if not _restore:
                 atomic_write(root / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))
@@ -191,8 +199,9 @@ class Application:
 
     @classmethod
     def resume(cls, data_dir, *, decision_factory=None, exploration_factory=None,
+               lab_factory=None,
                recovery_contract=None, run_policy=None, research=None, research_backend=None,
-               feedback_adapter_factory=None):
+               feedback_adapter_factory=None, modules=None):
         """Reopen the same durable workspace; uncertain effects remain blocked.
 
         Factories must reconstruct resources without starting work. The workspace
@@ -203,9 +212,10 @@ class Application:
         if config.data_dir.resolve() != root:
             raise ValueError('Resume uses the original workspace; recovery is not a portable snapshot')
         return cls(config, decision_factory=decision_factory, exploration_factory=exploration_factory,
+                   lab_factory=lab_factory,
                    recovery_contract=recovery_contract, run_policy=run_policy,
                    research=research, research_backend=research_backend,
-                   feedback_adapter_factory=feedback_adapter_factory,
+                   feedback_adapter_factory=feedback_adapter_factory, modules=modules,
                    durable=True, _restore=True, _resume=True)
 
     def run(self, *, rounds: int | None = None, max_decision_steps: int | None = None):
@@ -215,15 +225,22 @@ class Application:
                                max_decision_steps=max_decision_steps)
 
     def close(self):
-        if self._closed:
-            return
         self._closed = True
         try:
-            self._resources.close()
+            if self.assembly is not None:
+                self.assembly.close()
         finally:
-            self.store = None
+            # Keep the lock/store/backends available while an owned Lab close
+            # is pending. ExitStack cannot retain a callback that has raised.
+            if self.assembly is None or not self.assembly.cleanup_pending:
+                try:
+                    self._resources.close()
+                finally:
+                    self.store = None
 
     def __enter__(self):
+        if self._closed:
+            raise RuntimeError('Application is closed')
         return self
 
     def __exit__(self, exc_type, exc, traceback):

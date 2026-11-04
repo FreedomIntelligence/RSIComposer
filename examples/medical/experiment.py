@@ -1366,7 +1366,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
             path=root / 'feedback_learning.json',
             backend=FeedbackBackendRoute(backend, learning_transport) if learning_transport is not None else backend,
             model=feedback_model, adapter=feedback_adapter_factory(decision) if feedback_adapter_factory else None,
-            max_calls=settings.max_model_calls)
+            owner=assembly.runner.assembly, max_calls=settings.max_model_calls)
         decision = assembly.runner.decision_making.harness
         policy = decision.policy
         backend.decision_pending = lambda: getattr(policy, 'future', None) is not None
@@ -1472,9 +1472,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         cleanup_errors = []
         try:
             if assembly is not None:
-                close = getattr(assembly.runner.decision_making.harness, 'close', None)
-                if callable(close):
-                    close()
+                assembly.close()
                 harness = assembly.runner.decision_making.harness
                 if monitor is not None and hasattr(harness, 'attempt_interpretations'):
                     monitor.sync_attempt_interpretations(harness.attempt_interpretations())

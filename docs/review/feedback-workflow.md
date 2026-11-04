@@ -1,156 +1,195 @@
-# Feedback 链路与装配
+# Feedback 四条链路与改进 Lab
 
-更新：2026-11-04。研究装配入口已统一；memory 的整理质量单独验收。
+更新：2026-11-04。本文是当前职责与接线说明；此前验证记录保留为历史版本。
+本次已落实 [Context / Memory 接入窗口](feedback-context-window-20261104.md)：
+公开 context(query) -> str，默认 journal/LangMem 通过内部适配接入，当前文本替换 memory_context 区块。
+归档、处理、建议、调度的当前协议及失败行为见 [模块窗口](feedback-module-windows-20261104.md)。
+新插件只接公开事件和自己的产物，不必模拟内部 job、状态或计费结构。
 
-## 职责
+## 四条分支
 
-| 模块 | 输入 | 输出与执行边界 |
+Lab 原样提供文本、JSON、日志或原生文件引用，内容不要求符合 RSISys 的业务 schema。
+执行设施补充任务关联与生命周期状态；旧结构化 Feedback / OperationResult 接入继续有效。
+执行端先将真实回执写入决策账本，
+反馈侧保存原始捕获后返回；这个交付过程不调用 memory 或 proposer 模型，也不等待它们发布。
+
+| 分支 | 输入 | 产物与职责 |
 | --- | --- | --- |
-| Meta-agent 主决策 | 当前状态、可用能力、memory、提案入口 | 普通 decision；负责选择构建、修复、执行、验证和应用任务 |
-| Lab / 本地工具 | 被授权的 decision / task | 执行回执、指标、错误、产物引用 |
-| Feedback 宿主 | 执行回执及相关证据 | 原始 journal、派生产品、稳定身份、调用与恢复记录 |
-| Context/memory provider | 同一证据快照、已有记忆 | 主动整理与有界工作视图；必须激活，实现可替换 |
-| Trajectory archive / extractor | 已记录的公开决策、执行及反馈 | 默认开启，提取原始片段；不生成训练目标 |
-| Harness proposer | 证据快照 | 可选的 harness_change 提案；主决策选择是否构建 |
+| 快速结果返回 | Lab / 工具的真实结果 | 直接成为 decision 的 last_feedback / operation_results 与账本记录，不经过模型改写 |
+| Memory | 公开反馈事件与 ContextQuery | 必须启用、实现可替换；输出 context 文本，Harness 注入当前 memory_context |
+| 原始轨迹归档 | 已捕获的公开 decision、执行及证据 | 默认开启、实现可替换；保存原始片段，不筛选标签、不构建训练数据 |
+| 改进提案 | 公开反馈事件 | 原生建议；内置适配器支持 harness_change / policy_training，主 decision 选择正式动作 |
 
-反馈模型使用捕获时的 active meta-agent ModelRef，独立上下文。它不是另一套固定权重。
-Memory 与 harness 提案分别处理同一执行证据，提案生成不把 memory 解释提升为执行事实。
+同一份结果可以进入多条分支。短查询也保存原始轨迹，但不产生 memory 模型任务，
+不因读取 feedback 再调用 feedback 模型。归档查询不自动挤入研究 working memory。
+反馈分身使用捕获时 active meta-agent 的同一 ModelRef 和独立上下文。
 
 ```mermaid
 flowchart TD
-    A[Meta-agent 主决策] --> B[Lab 或本地工具执行]
-    B --> C[ExecutionReceipt 与原始 journal]
-    C --> M[Context/memory 整理]
-    C --> T[公开轨迹提取]
-    C --> P[可选 harness 提案]
-    M --> W[Harness 组装下一次 context]
-    P --> I[有界提案入口与归档读取]
-    I --> W
+    A[Meta-agent 主 decision] --> L[业务 Lab 或本地工具]
+    L --> R[真实执行回执与原始记录]
+    R --> A
+    R --> T[默认原始轨迹归档]
+    R --> M[可替换 memory 整理]
+    R --> P[可选改进任务提案]
+    M --> C[下一次 context 的工作视图]
+    C --> A
+    P --> A
+    A --> I[Meta-agent 改进 Lab]
+    T --> S[固定来源与摘要指纹]
+    S --> I
+    I --> D[可替换的数据构建能力]
+    D --> V[有版本的数据集与构建报告]
+    A --> TR[显式训练任务]
+    V --> TR
+    TR --> W[候选权重与训练回执]
     W --> A
-    A --> D[普通 decision 选择构建与验证]
-    D --> B
+    A --> E[按已安装能力评测与选择应用]
 ```
 
-## 装配入口
+## 统一装配与推进
 
-研究启动统一使用 `ResearchAssembly / assemble_research`。默认 JournalContextMemory 保留事实记录与工作视图，
-无需额外 memory 推理；默认 JournalTrajectoryArchive 提供索引和提取。省略 proposer 即关闭
-提案生成。显式传入 `context_memory=None` 仍会被拒绝。
+研究启动仍统一使用 `ResearchAssembly / assemble_research`。默认是 JournalContextMemory、
+JournalTrajectoryArchive，没有额外 memory/proposal 模型推理。
+
+新 Lab 的反馈接入只需提交原始输出，任务关联与 status 来自其执行器：
+
+```python
+job_id = service.observe_output(
+    native_output,
+    task_id=host_task_id,
+    status=host_terminal_status,
+    lab_id=host_lab_id,
+    references=native_artifact_references,
+)
+```
+
+output 可以是文本或任意可持久化 JSON；也可仅提供原生格式 references。
+Lab 不必实现 Directive / Feedback、统一 summary/error、三组 metrics、candidate 或 protocol。
+现有 FeedbackEvidence 是可选的补充证据，不是 Lab 的必填输出；这个入口默认不读取默认 harness 的领域目录。
+执行设施可调用 ExecutionReceipt.from_output 封装同样的输入。业务键即使叫 status、quality_metrics
+或 adopted_candidate_ids，也只保留在原始 output 中，不自动变成宿主状态、已验证指标或采纳声明。
+
+大输出和未知字段以有界 JSON 预览进入模型，包含精确原文读取路径和省略标记；
+原始 JSON/文本保存在 journal，不受模型预览大小影响。文件内容仍由对应 Lab 的读取工具提供，
+核心不自动下载引用，也不要求原生文件引用采用我们的 ArtifactRef 格式。
+observe_output 是反馈观察入口；执行器仍负责原结果交付与任务推进，未新增跨 Lab 调度。
+本轮接口减负自查与待 checkpoint 项见 [适配自查](feedback-adaptation-review-20261104.md)。
 
 ```python
 from rsisys.research import ResearchAssembly, assemble_research
-from rsisys.loops.decision_making.feedback import ModelHarnessProposer
+from rsisys.loops.decision_making.feedback import ModelImprovementProposer
 
-assemble_research(
+service = assemble_research(
     loop,
     assembly=ResearchAssembly(
-        harness_proposals=ModelHarnessProposer(run_dir / 'harness_proposals')),
+        improvement_proposals=ModelImprovementProposer(run_dir / 'improvement_proposals')),
     path=run_dir / 'feedback.json',
     backend=host_accounted_backend,
 )
 ```
 
-开源 memory 通过现有 LangMem 入口组合，同样可以不装 proposer：
+`service.observe(receipt)` 只持久捕获并排队，不推进模型。`service.archive(receipt)` 只归档，
+不排队。`service.refresh()` 通知可选 observe hook、写入外部归档、采集后台结果、按 selector 和 host 容量启动任务并发布兼容 memory；
+不等待未完成 worker。默认 Harness 在组装下一次 context 时 refresh，外部 Harness 自行提供 tick。
+宿主原始捕获落盘失败仍阻止确认交付。外部可选归档写入失败单独记录，不重做实际任务或自动重放未知写入。
+独立提案不依赖 memory 处理成功；显式设置 proposal_requires_memory 时才建立成功依赖。
+关闭时未提交的整理任务会取消，原始捕获仍保留；不保证最后一份结果已完成模型整理。
+
+模型 memory 可通过 `ResearchAssembly.langmem(memory_path=..., namespace=...)` 选择。
+缺少 optional 依赖或 native tool calling 时明确失败，不静默回退。外部 organizer/processor
+可以替换整个实现，不要求使用内置记忆格式。宿主仍管理准入和预算。
+
+`harness_proposals=ModelHarnessProposer(...)` 保留为仅产生 harness_change 的兼容选项，
+与 improvement_proposals 互斥。底层旧 enable_feedback_learning 的组合 prompt 保留兼容，
+可读取旧 training_data 草稿；新 ResearchAssembly pipeline 不生成训练样本。
+医疗默认配置继续使用统一入口，旧 --harness-proposals 仍仅启用 harness 提案。
+本次没有修改、迁移或恢复任何旧冻结实验。
+
+配置 schema_version=4 记录 text-v1/raw-event-v1/product-v1/selection-v1、独立产品依赖和故障策略，
+保留 replace_current_view、archive_only、direct_before_processing、dataset_construction_owner=lab。
+与旧 journal 配置不符时拒绝重开，不静默迁移；完整 Application durable 仍要求显式 recovery_contract。
+
+## 原始轨迹到 Lab 的接口
 
 ```python
-from rsisys.application import Application
-from rsisys.research import ResearchAssembly
+from rsisys.adapters.trajectory import FeedbackTrajectorySource
+from rsisys.loops.contracts.improvement import DecisionDatasetBuildRequest
 
-research = ResearchAssembly.langmem(
-    memory_path=config.data_dir / 'feedback_memory.sqlite',
-    namespace=('research', config.run_id),
+source = FeedbackTrajectorySource(service, archive_id='project/run')
+ref = source.reference(job_id)
+capture = source.read(ref)
+request = DecisionDatasetBuildRequest((ref,), recipe_ref='reviewed-data-recipe:v1')
+```
+
+`TrajectoryRef` 包含 archive_id、trajectory_id、SHA256 digest。读回必须匹配同一 archive、
+轨迹身份和摘要指纹。`/trajectory_snapshot` 是不可变原始捕获，不包括之后生成的 memory/proposal。
+整理任务由 queued 变为 completed，不会改变这个快照及引用。
+
+`/trajectory_segment` 和 extract_trajectory 保留为旧的组合查看接口，会附带后来完成的 feedback
+交换信息，不应作为固定训练来源。view=trajectories 仍提供索引。
+新外部 archive 只需 write(event)/read(reference)，host 校验读回后导出固定捕获。
+旧兼容 archive 可以只提供索引；没有 snapshot 的旧实现会明确拒绝导出固定来源。
+外部 Lab 也可实现自己的 TrajectorySource，不必依赖 FeedbackLearningService。
+
+当前 observer 捕获的是公开 decision 记录与执行片段，**未捕获原始 meta-agent 的完整模型交换**。
+快照明确标记 coverage、complete_conversation=false、training_ready=false。数据构建 recipe
+必须检查覆盖范围与所需原始输入；不能由 action/理由伪造完整训练对，也不能把反馈摘要当正确标签。
+
+## Lab 内的可替换能力
+
+| 能力 | 请求 | 结果 |
+| --- | --- | --- |
+| build_decision_dataset | DecisionDatasetBuildRequest：固定轨迹引用 + recipe_ref | DecisionDatasetBuildResult：数据集引用、构建报告、原始来源/recipe、样本数与 simulated |
+| train_decision_policy | 既有 DecisionTrainingRequest：明确 base、data_refs、recipe_ref、method | 既有 TrainingResult：base、新模型、candidate、真实后端提供的指标与 simulated |
+
+数据构建 backend 实现 submit/poll/cancel，主机用稳定 idempotency key 绑定请求。
+构建报告应记录筛选/排除、标签与格式规则及样本来源；协议校验来源和 recipe 身份，
+不声称验证了自然语言标签质量。训练只接受明确且有版本/指纹的数据集，不将 archive 直接当数据集。
+两个任务独立，构建完成不会自动训练；达到某个轨迹数量也不会自动提交训练。
+
+```python
+from rsisys.adapters.improvement import improvement_exploration_factory
+from rsisys.config import build_demo
+
+runner, _ = build_demo(
+    config,
+    exploration_factory=improvement_exploration_factory(
+        dataset_builder=external_dataset_builder,
+        decision_learner=external_decision_learner),
+    research=ResearchAssembly(),
 )
-with Application(config, research=research) as app:
-    app.run()
 ```
 
-自定义组件通过 `ResearchAssembly(context_memory=..., memory_processor=..., trajectory_archive=...,
-harness_proposals=...)` 声明。底层 enable_* 接口保留给兼容和独立组件集成；新研究启动只走统一入口。
-第三方 harness 仍通过 FeedbackAdapter 接入；默认 adapter 提供 context 接入及提案引用校验。
+该 factory 只公布已安装的能力，由普通 explore decision 经现有 Runner/命令生命周期执行。
+可以用 ExplorationLab 将该 endpoint 暴露为 LabSpec/LabTask/Lab；本次不新增跨 Lab scheduler。
+backend 的具体构建算法、训练框架、资源准入和外部恢复由部署方提供，factory 不安装或自动训练。
+持久化完整 JobBook/自定义 handler 状态仍需要显式恢复契约。
 
-`Application(config, research=...)` 和 `build_demo(config, research=...)` 负责服务关闭；
-手工调用 assemble_research 可传 AssemblyContext 作为 owner，或由调用方显式关闭服务。
-启动即持久化 `research_assembly.json` 及 journal 内的 assembly；配置变更、重复安装、
-缺失必需整理器和无效组件在执行前拒绝。LangMem 还要求 native tool calling，依赖缺失不回退。
-配置对象不创建 SQLite；存储访问发生在宿主建立工作区后。
-外部组件若提供 configuration()，其公开配置也参与身份校验；未提供时只记录组件类型，
-外部状态与完整恢复仍由集成方的显式契约负责，不从 Python 对象内部猜测配置。
+训练结果只能作用于 decision_maker，返回候选，不绑定或激活当前 meta-agent。
+评测/部署/应用由正式 decision 选择已安装能力执行；本次没有新增通用 policy evaluator、
+harness 构建器或版本激活器。Harness 提案仍通过现有代码能力构建和验证。
 
-医疗入口默认使用 journal，始终启用 context/memory，默认提取轨迹；用 `--memory-provider langmem`、
-`--harness-proposals`、`--no-trajectory-archive` 分别选择。旧 --feedback-learning 选择 LangMem，
-显式 memory provider 优先。旧冻结 run 仍使用原代码，不迁移旧 journal，也不重新启动。
-完整 Runner durable 仍需显式 recovery_contract；内置 snapshot 不支持此组合。
+## 改进提案到主 decision
 
-旧 `enable_feedback_learning` / `feedback_learning_decision_factory` 的组合解释 prompt 保留兼容，
-没有悄悄改写历史 campaign 或恢复日志。该旧路径仍能生成历史四类建议；上述新 pipeline 的
-数据职责固定为轨迹提取，新增模型提案只接受 harness_change。
+可选 ModelImprovementProposer 的 prompt 位于 feedback/prompts/improvement_proposals.txt。
+它只允许 harness_change 或 policy_training，拒绝 training_example 和不匹配的目标。
+这轮没有额外 routing 模型调用；同一执行证据由 memory 与可选 proposer 顺序处理。
 
-## 提案进入正式 decision
+主 decision 在 research_agenda.feedback_learning.improvement_proposals 中获得有界入口，
+通过 feedback_learning_read(view='proposals') 查看完整内容，使用 feedback_proposal_ids 关联正式任务。
+宿主在执行前检查 ID、目标和来源，记录 proposal digest；提案、选中、构建、训练、评测、采纳分别记录。
+原 harness_proposals 导航保留兼容。提案永远不直接执行代码、生成训练标签或修改权重。
 
-`service.proposals()` 返回稳定 ID、明确的 meta_agent/lab 对象及关联的正式决策。
-默认 harness 在 `research_agenda.feedback_learning.harness_proposals` 放入有界的提案入口。
-完整内容通过 `feedback_learning_read(view='proposals', target='harness')` 分页读取。
+## 可运行验证与审查入口
 
-主 meta-agent 可以在正常动作中引用提案：
+- [接口与迁移审查](m01-feedback-lab-20261104.md)。
+- [数据构建契约](../../src/rsisys/loops/contracts/improvement.py)。
+- [Lab capability / factory](../../src/rsisys/adapters/improvement.py)。
+- [归档来源适配器](../../src/rsisys/adapters/trajectory.py)。
+- [提案 prompt](../../src/rsisys/loops/decision_making/feedback/prompts/improvement_proposals.txt)。
+- `PYTHONPATH=src python examples/feedback_pipeline.py`：提案进入正式 decision。
+- `PYTHONPATH=src python examples/decision_policy_lab.py`：原始归档到 Lab 构建数据，再显式训练候选。
 
-```json
-{
-  "kind": "invoke",
-  "operation": "installed_build_or_test_operation",
-  "arguments": {},
-  "feedback_proposal_ids": ["learning-<recorded-id>:0"],
-  "reason": "Construct a candidate and check the observed failure."
-}
-```
-
-operation 必须实际安装并授权；示例不新增构建能力。explore 任务同样支持该顶层引用。
-执行前宿主校验提案 ID、来源及作用对象，保存 proposal digest 与决策关联。
-未知提案在工具调用前拒绝。执行结果通过原回执观察入口进入 feedback，关联 ID 随轨迹保留。
-选中、构建成功和真正应用是不同事件；当前通用成功回执不宣称 harness 已激活。
-版本部署与回滚取决于宿主已安装能力，本阶段未实现通用 harness 激活器。
-
-## 数据只提取轨迹
-
-```python
-index = service.trajectories()
-segment = service.extract_trajectory(job_id)
-```
-
-默认 extractor 返回 JSON 对象，保留捕获的 history、research_context、execution_receipt、
-evaluations、feedback model/request/response 与各产品状态，不调用模型加工监督标签。
-工具读取入口为 `/trajectory_segment`，索引入口仍为 `view=trajectories` / `/trajectory`。
-只实现自定义索引而没有 extract 方法的外部 archive，会明确报告不支持片段提取。
-
-这些是捕获到的公开片段。当前 observer 未捕获完整原始 meta-agent 模型交换，因此
-`complete_conversation=false`、`training_ready=false`，不能称作完整 SFT/RL 数据集。
-同一次反馈从 pending 到终态会补齐交换信息，分页读取继续使用 digest 检测变化。
-
-## 调度、故障与恢复
-
-宿主单 worker 顺序执行 memory，再执行可选 proposer，不另加模型 routing 调用。
-Memory 的选择与整理算法保持 provider 原实现。每个组件都经过共享宿主 backend；完整 prompt、
-schema/tools 参与准入，内部调用使用预留额度并按实际调用结算。模型不管理额度。
-
-`products.context_memory` 与 `products.harness_proposals` 分别记录状态、错误、调用数。
-必需 memory 处理失败时不继续可选生成。可选提案失败不会抹去已提交的 memory；其原响应
-和错误保留在 feedback_response。新 proposer 单次生成，支持 native tool calling、schema
-或 JSON 输出，不执行提案中的代码。
-
-恢复只读取已提交结果。已提交 memory 后可选调用结果不明时，保留 memory、将可选产品记为
-interrupted 并保留预约，不自动重放。原回执重送不会重复生成或执行。
-Journal 的恢复仍不替代完整 Runner/snapshot 的外部资源恢复协议。
-
-## 审查与运行入口
-
-- [pipeline.py](../../src/rsisys/loops/decision_making/feedback/pipeline.py)：产品组合与恢复。
-- [research.py](../../src/rsisys/research.py)：统一装配、组件检查和配置身份。
-- [proposals.py](../../src/rsisys/loops/decision_making/feedback/proposals.py)：可选提案生成。
-- [harness_proposals.txt](../../src/rsisys/loops/decision_making/feedback/prompts/harness_proposals.txt)：提案 prompt。
-- [knowledge.py](../../src/rsisys/loops/decision_making/feedback/knowledge.py)：默认轨迹索引与提取。
-- [CPU fixture](../../examples/feedback_pipeline.py)：`PYTHONPATH=src python examples/feedback_pipeline.py`。
-- [验证记录](repros/feedback-pipeline-validation.json)：全量日志、源文件指纹及验证范围。
-
-CPU fixture 只验证两份模拟执行回执、一条提案进入正式 decision 及轨迹提取。
-另有真实上游 LangMem/Trustcall/SQLite 配合 fixture 推理的组合回归。
-这些不是真实自主研究、真实训练或 harness 优化效果验证。LangMem 原有记忆删除、语义归因和
-长程 context 缺口仍见[原验收记录](feedback-oss-adoption.md#尚未通过的语义验收)。
+两个示例都是 CPU fixture，不验证真实自主研究、训练、数据标签、memory 语义或质量提升。
+当前 LangMem 的语义限制仍见[原验收记录](feedback-oss-adoption.md#尚未通过的语义验收)。

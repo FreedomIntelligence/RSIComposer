@@ -1,0 +1,81 @@
+{
+  "started_at_utc": "2026-11-04T07:06:46.362995+00:00",
+  "finished_at_utc": "2026-11-04T07:08:13.932902+00:00",
+  "tests": 1498,
+  "passed": 1486,
+  "failures": 0,
+  "errors": 0,
+  "failed_tests": [],
+  "skipped": [
+    {
+      "test": "test_installed_wheel_contains_and_uses_restricted_patch (test_dsh_runtime.DSHRuntimeTests.test_installed_wheel_contains_and_uses_restricted_patch)",
+      "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+    },
+    {
+      "test": "test_latest_large_adapter_result_is_user_data_and_is_not_tool_pruned (test_dsh_runtime.DSHRuntimeTests.test_latest_large_adapter_result_is_user_data_and_is_not_tool_pruned)",
+      "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+    },
+    {
+      "test": "test_native_automatic_compaction_uses_checkpoint (test_dsh_runtime.DSHRuntimeTests.test_native_automatic_compaction_uses_checkpoint)",
+      "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+    },
+    {
+      "test": "test_restricted_runtime_resume_and_authorized_decisions (test_dsh_runtime.DSHRuntimeTests.test_restricted_runtime_resume_and_authorized_decisions)",
+      "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+    },
+    {
+      "test": "test_control_complete_schemas_validate_parameters_only (test_live_generation.LiveGenerationTests.test_control_complete_schemas_validate_parameters_only)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_directive_refs_methods_origins_and_nullable_checkpoints (test_live_generation.LiveGenerationTests.test_directive_refs_methods_origins_and_nullable_checkpoints)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_medical_numeric_recipe_and_full_train_envelope_prepare_only (test_live_generation.LiveGenerationTests.test_medical_numeric_recipe_and_full_train_envelope_prepare_only)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_queries_workspace_and_multiline_argv (test_live_generation.LiveGenerationTests.test_queries_workspace_and_multiline_argv)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_research_notes_exact_chinese_newlines_quotes_and_arrays (test_live_generation.LiveGenerationTests.test_research_notes_exact_chinese_newlines_quotes_and_arrays)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_system_adopt_complete_production_spec_validate_only (test_live_generation.LiveGenerationTests.test_system_adopt_complete_production_spec_validate_only)",
+      "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+    },
+    {
+      "test": "test_real_chat_provider_native_compaction_preserves_latest_observation (test_medical_dsh.MedicalDSHProviderTests.test_real_chat_provider_native_compaction_preserves_latest_observation)",
+      "reason": "Optional SDK required"
+    },
+    {
+      "test": "test_real_rc2_chat_completions_provider_is_explicit_and_persistent (test_medical_dsh.MedicalDSHProviderTests.test_real_rc2_chat_completions_provider_is_explicit_and_persistent)",
+      "reason": "Optional SDK required"
+    }
+  ],
+  "source_changes": [],
+  "source_files": 296,
+  "successful": true,
+  "real_model_inference_performed": false,
+  "real_training_performed": false,
+  "context_window_tests": 16,
+  "context_protocol": "text-v1",
+  "base_revision": "cb67628151cdb855b30f657e37cbf0af801644a8",
+  "artifacts": {
+    "full-python.log": {
+      "path": ".local/context-window-20261104/full-python.log",
+      "sha256": "9083b4f5b60145254a73e5790e79aa6b6a962f5cb1a61727183b1f37033f77b4"
+    },
+    "source-manifest.json": {
+      "path": ".local/context-window-20261104/source-manifest.json",
+      "sha256": "48ebbf0864e5b9661bf521dcf94bb149f9b496c97b2f87a9b59bff67e4b91b3e"
+    },
+    "validate.py": {
+      "path": ".local/context-window-20261104/validate.py",
+      "sha256": "9354fbc22cfa36df19f97aef22d7f9fa7f7eb534acd44397500501b37e6720a4"
+    }
+  }
+}

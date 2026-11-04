@@ -176,7 +176,8 @@ class BasicContextCompactor:
                                      full_history_ids, live_evidence_ids, resident_evidence_indices)
         project_evidence = self._project_evidence
         raw = {name: tuple(getattr(context, name)) for name in self.streams}
-        fingerprints = {name: [result_id(asdict(row)) for row in rows] for name, rows in raw.items()}
+        fingerprints = {name: [result_id(row.payload() if name == 'operation_results' else asdict(row))
+                               for row in rows] for name, rows in raw.items()}
         protected = {name: set() for name in self.streams}
         research_protected = full_history_ids(context) | set(context.research_state.get('protected_history_ids', ()))
         protected['history'].update(i for i, row in enumerate(raw['history'])
@@ -276,7 +277,8 @@ class BasicContextCompactor:
             ident = result_id(row) if name == 'operation_results' else row.get('record_id', row.get('memory_id'))
             return f'{name}:{ident}'
         def draft(indices):
-            removed = {name: [asdict(raw[name][i]) for i in sorted(kept[name]-indices[name])]
+            removed = {name: [raw[name][i].payload() if name == 'operation_results' else asdict(raw[name][i])
+                              for i in sorted(kept[name]-indices[name])]
                        for name in self.streams}
             sources = {name: {'omitted_count': len(rows), 'sha256': result_id(rows),
                               'first_omitted': label(name, rows[0]), 'last_omitted': label(name, rows[-1]),

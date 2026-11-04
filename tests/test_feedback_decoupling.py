@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.coordination import LoopStepResult
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import GenerationRequest, GenerationResponse, ModelRef
@@ -35,7 +36,7 @@ class AlienHarness:
 
     def step(self, objective, space):
         self.service.refresh()
-        return tuple(self.summaries)
+        return LoopStepResult('progressed')
 
 
 class AlienAdapter:

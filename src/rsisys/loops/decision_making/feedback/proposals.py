@@ -17,16 +17,20 @@ class ModelHarnessProposer:
     """One accounted call in a separate context with no construction tools."""
     max_calls_per_job = 1
     actual_exchanges_read_path = '/feedback_response/model_exchanges'
+    kinds = ('harness_change',)
+    provider = 'model_harness_proposer'
+    prompt_resource = 'harness_proposals.txt'
+    tool_name = 'propose_harness_changes'
 
     def __init__(self, path, *, instructions=None):
         self.path = Path(path).resolve()
-        self.instructions = (resources.files(__package__).joinpath('prompts/harness_proposals.txt').read_text()
+        self.instructions = (resources.files(__package__).joinpath('prompts/' + self.prompt_resource).read_text()
                              if instructions is None else instructions)
         if not isinstance(self.instructions, str) or not self.instructions.strip():
             raise ValueError('Harness proposal instructions must be nonempty text')
 
     def configuration(self):
-        return {'provider': 'model_harness_proposer', 'path': str(self.path),
+        return {'provider': self.provider, 'path': str(self.path),
                 'instructions_digest': result_id(self.instructions), 'max_calls_per_job': 1}
 
     def _result_path(self, job):
@@ -54,13 +58,13 @@ class ModelHarnessProposer:
                 max_calls=min(1, limits['max_calls']), max_input_tokens=limits['max_input_tokens'],
                 path=self.path / (job['job_id'] + '.exchanges.json'))
             schema = _schema(job['input']['source_refs'], candidate_evidence=admitted_candidate_evidence(job),
-                             kinds=('harness_change',))
+                             kinds=self.kinds)
             transport = {}
             if getattr(backend, 'supports_tool_calling', False) is True:
                 transport = {'tools': ({'type': 'function', 'function': {
-                    'name': 'propose_harness_changes', 'description': 'Submit optional harness proposals.',
+                    'name': self.tool_name, 'description': 'Submit optional improvement task proposals.',
                     'parameters': schema}},),
-                    'tool_choice': {'type': 'function', 'function': {'name': 'propose_harness_changes'}}}
+                    'tool_choice': {'type': 'function', 'function': {'name': self.tool_name}}}
             elif backend.supports_response_schema:
                 transport = {'response_schema': schema}
             request = GenerationRequest('decision_maker', ModelRef(**job['model']), encoded(job['input']),
@@ -71,12 +75,13 @@ class ModelHarnessProposer:
             text = response.text
             if request.tools:
                 if (len(response.tool_calls) != 1 or
-                        response.tool_calls[0].get('function', {}).get('name') != 'propose_harness_changes'):
+                        response.tool_calls[0].get('function', {}).get('name') != self.tool_name):
                     raise ValueError('Expected one harness proposal function call')
                 text = response.tool_calls[0]['function']['arguments']
             proposals = validate_proposals(text, job['input']['source_refs'],
                                            candidate_evidence=admitted_candidate_evidence(job))
-            if any(p['kind'] != 'harness_change' or p.get('subject') not in ('meta_agent', 'lab')
+            if any(p['kind'] not in self.kinds or p.get('subject') not in ('meta_agent', 'lab')
+                   or (p['kind'] == 'policy_training' and p.get('subject') != 'meta_agent')
                    for p in proposals):
                 raise ValueError('This component only produces explicitly targeted harness proposals')
             result = {'status': 'completed', 'error': None, 'charged_calls': gateway.attempted,
@@ -93,3 +98,11 @@ class ModelHarnessProposer:
                      'model': job['model'], 'configuration': self.configuration(),
                      'input_digest': result_id(job['input']), 'result': result}))
         return result
+
+
+class ModelImprovementProposer(ModelHarnessProposer):
+    """Optional task proposals only; datasets and training stay inside a Lab."""
+    kinds = ('harness_change', 'policy_training')
+    provider = 'model_improvement_proposer'
+    prompt_resource = 'improvement_proposals.txt'
+    tool_name = 'propose_improvements'

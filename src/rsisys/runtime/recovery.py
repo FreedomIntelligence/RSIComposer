@@ -45,7 +45,8 @@ def durable_mutation(method):
 # Only data fields: callbacks, endpoints and clocks are rebound by the assembly.
 _RUN_FIELDS = ('_research_round', '_researcher_finished', '_restart_context', '_stop_decision',
                '_terminal_step', '_outcomes', '_quiescing', '_decision_finished', '_directive',
-               '_feedback', '_review_directive_id', '_review_result', '_review_pending', '_pending_cancel')
+               '_feedback', '_review_directive_id', '_review_result', '_review_pending', '_pending_cancel',
+               '_execution_shutdown_error')
 _RUN_TIMERS = ('_run_started', '_restart_at', '_stop_started', '_review_at')
 
 
@@ -60,6 +61,8 @@ def capture_runner(runner):
 
 
 def restore_runner(runner, state, downtime):
+    state = dict(state)
+    state.setdefault('_execution_shutdown_error', None)  # additive field in older checkpoints
     if set(state) != {*_RUN_FIELDS, 'timers', 'cleanup_timeout_seconds'} or set(state['timers']) != set(_RUN_TIMERS):
         raise ValueError('Unsupported runner recovery fields')
     for key in _RUN_FIELDS:
@@ -205,7 +208,9 @@ class DurableRecovery:
     """
     def __init__(self, app, contract=None, *, wall_clock=time):
         self.app = app
-        self.contract = contract if contract is not None else BuiltinRecovery()
+        from .component_state import AssemblyRecovery
+        self.contract = (contract if contract is not None else
+                         AssemblyRecovery() if app.assembly.state_adapters else BuiltinRecovery())
         if (not isinstance(getattr(self.contract, 'contract_id', None), str) or not self.contract.contract_id
                 or not callable(getattr(self.contract, 'capture', None))
                 or not callable(getattr(self.contract, 'restore', None))):

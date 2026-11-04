@@ -13,14 +13,14 @@ class MemoryPrefixDecisionPolicy(ModelDecisionPolicy):
     hits. Memory stays untrusted user content in the prompt; the inherited system
     instructions, schemas and generation settings retain their authority.
 
-    The learning harness assembles research_state before these builders. They
+    The learning harness assembles memory_context before these builders. They
     only order the request; inherited compaction prices the complete request,
     including research state, capabilities and feedback. No model call is added.
     """
 
     _prefix_fields = (
         'objective', 'project_context', 'directives', 'operations', 'directive_modes',
-        'research_state', 'memories', 'context_summary',
+        'research_state', 'memory_context', 'memories', 'context_summary',
     )
 
     @classmethod

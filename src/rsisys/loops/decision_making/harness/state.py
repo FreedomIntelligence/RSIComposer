@@ -65,6 +65,8 @@ class DecisionContext:
     decision_graph: tuple[dict, ...] = ()
     candidate_origins: dict[str, str] = field(default_factory=dict)
     research_state: dict[str, object] = field(default_factory=dict)
+    # Current provider view, replaced each assembly; it is not an append-only log.
+    memory_context: str = ''
 
 
 @dataclass(frozen=True)

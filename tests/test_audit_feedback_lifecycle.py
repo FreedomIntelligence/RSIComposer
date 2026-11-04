@@ -225,6 +225,7 @@ class FeedbackLifecycleAudit(unittest.TestCase):
         records['tail-23']['proposal']['directive'] = {'mode': 'evaluate', 'strategy': 'Compare',
             'payload': {'candidate': {'candidate_id': 'candidate-produced'}}, 'input_refs': []}
         harness = SimpleNamespace(policy=SimpleNamespace(model=MODEL),
+            current_model=lambda: MODEL,
             state=SimpleNamespace(decision_records=records, directive_decisions={},
                 candidate_origins={'candidate-produced': 'producer'}),
             memory=SimpleNamespace(history=lambda: ()),
@@ -251,7 +252,7 @@ class FeedbackLifecycleAudit(unittest.TestCase):
             self.assertEqual(segment, exact(learning, job_id=ident, evidence_path='/trajectory_segment'))
         self.assertEqual(learning.state, before)
 
-    def test_publication_journal_failure_retries_same_memory_without_second_model_call(self):
+    def test_publication_journal_failure_before_delivery_prevents_side_effects(self):
         learning, backend = self.learning()
         ident = self.capture(learning)
         learning.poll(); learning.poll()
@@ -261,9 +262,9 @@ class FeedbackLifecycleAudit(unittest.TestCase):
             with self.assertRaises(OSError):
                 service._publish()
         self.assertFalse(learning.state['jobs'][ident].get('published', False))
+        self.assertEqual(delivered, [])
         service.refresh()
-        self.assertEqual(len(delivered), 2)
-        self.assertEqual(delivered[0], delivered[1])
+        self.assertEqual(len(delivered), 1)
         self.assertEqual(len(backend.requests), 1)
         self.assertTrue(learning.state['jobs'][ident]['published'])
 

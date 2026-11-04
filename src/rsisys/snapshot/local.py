@@ -82,7 +82,7 @@ def load_manifest(directory: Path) -> SnapshotManifest:
     raw['role_bindings'] = {key: ModelRef(**value) for key, value in raw['role_bindings'].items()}
     raw['random_state_refs'] = tuple(raw['random_state_refs'])
     manifest = SnapshotManifest(**raw)
-    if manifest.schema_version != 2 or manifest.kind != 'local_quiescent':
+    if manifest.schema_version != 2 or manifest.kind not in ('local_quiescent', 'component_quiescent'):
         raise ValueError('Unsupported snapshot schema')
     if manifest.code_revision != code_revision():
         raise ValueError('Snapshot requires the same framework source revision')
@@ -100,8 +100,9 @@ def load_manifest(directory: Path) -> SnapshotManifest:
             raise ValueError('Snapshot file escapes its directory')
         if digest_file(directory / relative) != digest:
             raise ValueError(f'Snapshot digest mismatch: {name}')
-    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3',
-                'decision_memory.json', 'exploration_memory.json', 'decision_research.json'}
+    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3'}
+    if manifest.kind == 'local_quiescent':
+        required |= {'decision_memory.json', 'exploration_memory.json', 'decision_research.json'}
     if not required <= files:
         raise ValueError('Snapshot is missing required local state')
     return manifest
@@ -144,6 +145,9 @@ def validate_local_application(app, *, ongoing=False):
     """Validate explicit built-in composition; ongoing recovery supplies its own state boundary."""
     if app.store is None:
         raise RuntimeError('Application is closed')
+    from inspect import getattr_static
+    if getattr_static(getattr_static(app, 'assembly', None), 'lab_execution', None) is not None:
+        raise TypeError('Lab execution requires explicit snapshot/recovery integration')
     from rsisys.runtime.recovery import DurableRecovery
     if not ongoing and isinstance(getattr(app, 'recovery', None), DurableRecovery) and app.recovery.intervention is not None:
         raise RuntimeError('Reconcile interrupted durable recovery before creating a snapshot')
@@ -231,6 +235,10 @@ def validate_local_application(app, *, ongoing=False):
         raise ValueError('Attempt admission requires an explicit recovery contract; refusing to lose validation')
     if not extension and dm.policy.project_context:
         raise ValueError('Project context requires an explicit recovery contract; refusing to lose project allocation')
+    if not extension and dm.policy._explicit_compactor:
+        raise TypeError('Policy-owned context compactors need explicit snapshot integration')
+    if dm.model_provider is not None:
+        raise TypeError('Custom model identity providers need explicit snapshot integration')
     if not extension and dm.policy.allowed_actions != tuple(spec.name for spec in exploration_loop.action_space.describe()):
         raise TypeError('Custom decision action bindings need explicit snapshot integration')
     expected_modes = ("execute", "configure_prompt") + (("sft", "rl", "evaluate") if app.config.learning == 'mock' else ())
@@ -282,12 +290,29 @@ def validate_local_application(app, *, ongoing=False):
 
 
 class LocalSnapshotCapture:
-    def __init__(self, application):
+    def __init__(self, application, *, contract=None):
         self.application = application
         self.store = FileSnapshotStore(application.config.data_dir / 'snapshots')
+        self.contract = contract
 
     def capture(self, label: str) -> SnapshotManifest:
         app = self.application
+        contract = self.contract
+        from inspect import getattr_static
+        from collections.abc import Mapping
+        from rsisys.runtime.recovery import DurableRecovery
+        recovery = getattr_static(app, 'recovery', None)
+        if contract is None and isinstance(recovery, DurableRecovery):
+            from rsisys.runtime.capabilities import optional_method
+            if optional_method(recovery.contract, 'validate_snapshot') is not None:
+                contract = recovery.contract
+        adapters = getattr_static(getattr_static(app, 'assembly', None), 'state_adapters', None)
+        if contract is None and isinstance(adapters, Mapping) and adapters:
+            from rsisys.runtime.component_state import AssemblyRecovery
+            contract = AssemblyRecovery()
+        if contract is not None:
+            from .components import capture_components
+            return capture_components(app, self.store, contract, label)
         dm, actor, config, action_permissions = validate_local_application(app)
         roles = config.roles
         ident = uuid4().hex
@@ -342,7 +367,8 @@ class LocalSnapshotCapture:
                 shutil.rmtree(staging)
 
 
-def restore_snapshot(directory, target, *, run_id: str | None = None):
+def restore_snapshot(directory, target, *, run_id: str | None = None, modules=None,
+                     recovery_contract=None, run_policy=None):
     """Restore to a new workspace; a new run_id forks with automatic ancestry."""
     from rsisys.application import Application, ApplicationConfig
     from rsisys.runtime.artifacts import FileArtifactStore
@@ -350,6 +376,12 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
     if target.exists():
         raise FileExistsError('Restore target must be a new directory')
     manifest = load_manifest(directory)
+    if manifest.kind == 'component_quiescent':
+        from .components import restore_components
+        return restore_components(directory, target, manifest, run_id=run_id, modules=modules,
+                                  contract=recovery_contract, run_policy=run_policy)
+    if modules is not None or recovery_contract is not None or run_policy is not None:
+        raise TypeError('Built-in snapshots restore their original built-in assembly')
     states = json.loads((directory / 'state.json').read_text())
     decision, actor = decode(states['decision']), decode(states['actor'])
     check_states(decision, actor)
@@ -389,6 +421,24 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
         raise ValueError('Snapshot artifacts directory is missing')
     FileArtifactStore(directory / 'artifacts').refs()
     config = replace(config, data_dir=target)
+    def construct():
+        return Application(config, _restore=True, action_permissions=permissions)
+
+    def restore(app):
+        restore_research(app.runner.decision_making.harness, agenda, runtime['context_compactor'])
+        app.runner.decision_making.harness.state = decision
+        app.runner.exploration.harness.state = actor
+        app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
+        app.runner.decision_making.harness.review_tool_limit = runtime['review_tool_limit']
+        app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
+        app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
+
+    return publish_restore(directory, target, config, manifest,
+        ('decision_memory.json', 'exploration_memory.json', 'decision_research.json'), construct, restore)
+
+
+def publish_restore(directory, target, config, manifest, files, construct, restore):
+    """Publish either snapshot kind with the same atomicity and ownership checks."""
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix='.restore-', dir=target.parent))
     app, published, restore_lock = None, False, None
@@ -398,7 +448,7 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
         # can clean up only our workspace and only while holding its lock.
         restore_lock = (staging / '.lock').open('a+b')
         shutil.copyfile(directory / 'experience.sqlite3', staging / 'experience.sqlite3')
-        for name in ('decision_memory.json', 'exploration_memory.json', 'decision_research.json'):
+        for name in files:
             shutil.copyfile(directory / name, staging / name)
         shutil.copytree(directory / 'artifacts', staging / 'artifacts')
         atomic_write(staging / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
@@ -407,23 +457,21 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
         staging.rename(target)
         published = True
         sync_directory(target.parent)
-        app = Application(config, _restore=True, action_permissions=permissions)
-        restore_research(app.runner.decision_making.harness, agenda, runtime['context_compactor'])
-        app.runner.decision_making.harness.state = decision
-        app.runner.exploration.harness.state = actor
-        app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
-        app.runner.decision_making.harness.review_tool_limit = runtime['review_tool_limit']
-        app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
-        app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
+        app = construct()
+        restore(app)
         app.parent_snapshot_id = manifest.snapshot_id
         return app
     except BaseException as error:
+        cleanup_pending = False
         if app is not None:
             try:
                 app.close()
             except BaseException as cleanup_error:
                 error.add_note(f'Restored application cleanup also failed: {cleanup_error}')
-        if published:
+                cleanup_pending = app.assembly is not None and app.assembly.cleanup_pending
+        if published and cleanup_pending:
+            error.add_note('Restore target retained: owned resource cleanup is still pending')
+        elif published:
             try:
                 fcntl.flock(restore_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 current, lock = target.lstat(), (target / '.lock').lstat()

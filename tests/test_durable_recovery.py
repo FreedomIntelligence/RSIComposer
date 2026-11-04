@@ -251,7 +251,7 @@ os._exit(0)
         with self.start(decision_factory=extension_factory) as app:
             app.runner.decision_making.harness.session = 'persistent-session'
             self.tick(app)
-        with self.assertRaisesRegex(TypeError, 'recovery_id'):
+        with self.assertRaisesRegex(TypeError, 'original module assembly|recovery_id'):
             Application.resume(self.config.data_dir)
         with Application.resume(self.config.data_dir, decision_factory=extension_factory) as app:
             self.assertEqual(app.runner.decision_making.harness.session, 'persistent-session')

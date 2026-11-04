@@ -7,6 +7,10 @@ P 编号覆盖独立调用、指令片段、工具描述、数据投影及传输
 2026-11-04：M03 的九个通用文本已迁至 [policy/prompts](../../src/rsisys/loops/decision_making/harness/policy/prompts)，
 可通过 `DecisionPrompts` 分别覆盖。完整逻辑和八份渲染请求见 [M03 报告](m03.md)。
 下方历史行号可能移动，以方法名与当前模板为准；医疗领域和 DSH 的附加包装仍分别审查。
+Feedback 旧组合解释已迁入 [LegacyFeedbackInterpreter](../../src/rsisys/loops/decision_making/feedback/legacy.py)
+和 [legacy_feedback.txt](../../src/rsisys/loops/decision_making/feedback/prompts/legacy_feedback.txt)。
+这只是兼容组件；公开产物协议不要求调用该 prompt，其他实现可使用自己的 prompt 或无需模型。
+接口与故障策略见 [模块窗口](feedback-module-windows-20261104.md)。
 
 ## 审查一个 prompt 的完整单位
 
@@ -38,7 +42,7 @@ P 编号覆盖独立调用、指令片段、工具描述、数据投影及传输
 | P08 | 医疗 envelope 指引与三次动作校验纠正 | M03/M14 | 医疗每次 decision；失败时加纠正 |
 | P09 | 输出截断/格式恢复 | M03/M11 | 医疗 DecisionBackend 的有限恢复 |
 | P10 | 医疗 objective 与 project_context | M03/M14 | 医疗主实验装配 |
-| P11 | Feedback 分身的整理与路由主指令 | M07/M08/M09 | 每个准入的 feedback 整理任务 |
+| P11 | Feedback 分身的整理与路由主指令 | M07/M08/M09 | 选择模型整理器时；observe 本身不调用模型 |
 | P12 | Feedback 的 evaluation_claims 指引 | M08/M12 | 输入带 candidate_evidence 时追加 |
 | P13 | Feedback / Attempt / claims 输出 schema | M07/M08/M09 | 依 backend schema 能力和输入字段 |
 | P14 | 工作知识、证据卡、摘要导航中的说明 | M06/M09 | 不新增模型调用，进入后续 decision 数据 |
@@ -53,6 +57,7 @@ P 编号覆盖独立调用、指令片段、工具描述、数据投影及传输
 | P23 | Qwen toy 的 researcher 说明与预算提示 | M03/M14 | Qwen toy 入口，行为不同于医疗 time 模式 |
 | P24 | Qwen toy 的 Actor、部署探针与 NLL 输入 | M10/M11/M12/M14 | toy Actor、激活探针、训练/评测样本 |
 | P25 | 最终模型消息与 provider schema/template | M11 | transport/backend/worker 的真实发送与渲染 |
+| P26 | 可选改进任务提案 | M09/M10 | 安装 ModelImprovementProposer 时，memory 阶段之后 |
 
 ## P01：Meta-agent 身份与研究范围
 
@@ -73,7 +78,9 @@ P 编号覆盖独立调用、指令片段、工具描述、数据投影及传输
 
 user 输入为结构化 JSON；主要字段包括 objective、project_context、operations、directives、operation_results、
 history、experience、memories、last_feedback、candidates、candidate_evaluations、decision_graph、
-candidate_origins、directive_provenance、outstanding/executions、run_control、context_summary、research_agenda、research_state。
+candidate_origins、directive_provenance、outstanding/executions、run_control、context_summary、research_agenda、research_state、memory_context。
+memory_context 为当前 provider 的文本视图；research_state 留给宿主证据/依赖元数据。
+详见 [Context / Memory 接入窗口](feedback-context-window-20261104.md)。
 
 - [ ] invoke/explore 命名空间、arguments/input_ids、reason/strategy 是否明确且不会互相误导。
 - [ ] 动态裁剪后的输入是否仍能描述当前研究状态；省略字段/历史条目是否有明确导航与范围说明。
@@ -181,22 +188,27 @@ candidate_origins、directive_provenance、outstanding/executions、run_control�
 逐句审查材料：[当前实现与完整 prompt](feedback-implementation.md)，含由当前代码导出的原文、
 条件追加指令、完整合成输入/schema/输出，以及尚未随整理器插件化的解释策略边界。
 
-代码：[FeedbackLearning._request](../../src/rsisys/loops/decision_making/feedback/learning.py#L510)、
+兼容解释代码：[LegacyFeedbackInterpreter.request](../../src/rsisys/loops/decision_making/feedback/legacy.py)、
+[主模板](../../src/rsisys/loops/decision_making/feedback/prompts/legacy_feedback.txt)、
+[FeedbackLearning._request](../../src/rsisys/loops/decision_making/feedback/learning.py)、
 [FeedbackLearning.capture / _bound_input / _evidence_packet](../../src/rsisys/loops/decision_making/feedback/learning.py)、
 [FeedbackAdapter](../../src/rsisys/loops/decision_making/feedback/service.py)。
 
 输入包括 receipt、相关 history/evaluations、source_refs、research_context、grouping_context、candidate_evidence
 与 evidence_packaging；以本次实际捕获和准入后的字段为准。该调用共享 meta-agent 当前模型
 版本、使用独立反馈上下文；实际 system/prompt/schema 在提交前归档为 `/feedback_request`。
+这些是旧组合解释器的输入，不是新处理器的基础协议。新处理器只接公开事件和受控模型能力，
+自行组织 prompt，实际交换由 host gateway 归档。
 
 - [ ] 整理者只能解释与路由，不替研究 meta-agent 选择下一实验、停止或直接应用改进。
-- [ ] context/memory 整理能力必须激活，实现可以来自外部；轨迹归档是默认开启的可选组件，prompt 不应假定它永远开启。harness 修改按需提出。
-- [ ] `training_data` 只是兼容草稿，后续 skill/规则从轨迹定义训练材料，不强制每份反馈生成 input/target。
+- [ ] context/memory 整理能力必须激活，实现可以来自外部；轨迹归档是默认开启的可选组件。真实结果直接返回 decision，不等待整理；查询归档不触发本 prompt。
+- [ ] `training_data` 仅保留旧入口的兼容草稿；新 pipeline 不生成训练样本。筛选、标注、格式转换、训练由正式 Lab 任务及 recipe 负责。
 - [ ] coverage、摘录、未提供正文、旧 Attempt 解释与原始事实的区别是否清楚。
 - [ ] 反馈跟随当前 meta-agent 版本，历史 decision 发出版本分别归因；排队快照和已完成请求不追改版本。
 - [ ] 有限输入是否仍足以整理研究轨迹；捕获的本地操作是否覆盖代码修复等任务。
 
-关联：`test_feedback_learning_evidence.py`、`test_feedback_decoupling.py`、`test_feedback_learning_integration.py`、`test_feedback_required_outputs.py`。
+关联：`test_feedback_learning_evidence.py`、`test_feedback_decoupling.py`、`test_feedback_learning_integration.py`、`test_feedback_required_outputs.py`、`test_feedback_lab_boundaries.py`。
+当前四分支与旧组合入口的差异见 [工作流](feedback-workflow.md)；旧完整 prompt 导出只代表当时配置。
 
 ## P12：候选指标 claim 指令
 
@@ -368,6 +380,30 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 - [ ] readiness 的固定 `Reply OK.` 等探针与研究调用分开；wire 日志仍须记录对应身份和用途。
 
 关联：`test_structured_transport.py`、`test_framework_adapters.py`、`test_live_generation.py`、`test_medical_response_recovery.py`。
+
+## P26：可选改进任务提案
+
+当前完整模板：[improvement_proposals.txt](../../src/rsisys/loops/decision_making/feedback/prompts/improvement_proposals.txt)。
+构造与持久化：[ModelImprovementProposer](../../src/rsisys/loops/decision_making/feedback/proposals.py)；
+装配与阶段：[ResearchAssembly](../../src/rsisys/research.py)、[FeedbackPipeline](../../src/rsisys/loops/decision_making/feedback/pipeline.py)。
+
+输入是该回执实际捕获并准入的结构化证据，使用捕获的 active meta-agent ModelRef 和独立上下文。
+后端支持 native tool calling 时使用单个 `propose_improvements` 函数，否则按能力使用 response_schema
+或 JSON 文本；实际交换仍由 FeedbackModelGateway 计费、保存和校验。
+
+- [ ] 只允许 harness_change（subject=meta_agent/lab）或 policy_training（subject=meta_agent）；可返回空提案。
+- [ ] 不生成 memory、训练样本、标签、数据集或 system_change；计数只能提示调查，不能自动授权训练。
+- [ ] 保留候选/协议/指标/来源及不确定性；缺少快照证据不等于全局未发生。
+- [ ] 提案回到主 decision，由 feedback_proposal_ids 关联正式动作；不得直接执行、训练、停止或激活。
+- [ ] memory 与 proposer 各阶段的调用、失败、恢复及预算准确，真实结果交付不等待它们。
+- [ ] Lab 能力的描述和 schema 与 parser/执行校验一致，数据构建和训练分别下发；只公布已安装能力。
+
+Lab 模型侧接口：[improvement_directives](../../src/rsisys/adapters/improvement.py)。
+数据构建算法/recipe 和真实训练材料没有通用生产 prompt，本轮只提供可替换协议与 fixture。
+旧 harness-only 选项仍使用 [harness_proposals.txt](../../src/rsisys/loops/decision_making/feedback/prompts/harness_proposals.txt)，
+工具名为 propose_harness_changes，与新选项互斥。
+
+关联：`test_feedback_lab_boundaries.py`、`test_improvement_lab.py`、`test_feedback_pipeline.py`。
 
 ## 每个 prompt 的验收记录
 

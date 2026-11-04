@@ -2,31 +2,13 @@
 
 from collections.abc import Iterable
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Protocol
 
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from .directives import DirectiveDefinitions, DEFAULT_DIRECTIVE_MODES
 from .access import ActionPermissions
-
-
-@dataclass(frozen=True)
-class OperationSpec:
-    name: str
-    description: str
-    input_schema: dict[str, object]
-    read_only: bool = False
-
-    def __post_init__(self):
-        if type(self.read_only) is not bool:
-            raise TypeError('read_only must be a bool')
-
-
-@dataclass(frozen=True)
-class OperationCall:
-    name: str
-    arguments: dict[str, object]
 
 
 class DecisionActionSpace(Protocol):

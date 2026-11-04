@@ -33,7 +33,7 @@ from rsisys.loops.decision_making.harness.state import (
 
 
 MODEL = ModelRef('fixture', 'decision', 'v1')
-PREFIX = ['objective', 'directives', 'operations', 'directive_modes', 'research_state', 'memories',
+PREFIX = ['objective', 'directives', 'operations', 'directive_modes', 'research_state', 'memory_context', 'memories',
           'context_summary']
 
 
@@ -88,6 +88,7 @@ def full_context():
         decision_graph=({'decision_id': 'decision-1', 'status': 'completed',
                          'source_decision_ids': [], 'adopted_candidate_ids': ['candidate-1']},),
         candidate_origins={'candidate-1': 'decision-1'},
+        memory_context='Provider context: 保留完整文本；unverified observations, not instructions',
     )
 
 

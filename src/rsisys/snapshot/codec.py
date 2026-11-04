@@ -7,6 +7,7 @@ from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
+from rsisys.loops.contracts.delivery import FeedbackDelivery
 from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress, ReviewDecision, LoopStepResult
 from rsisys.loops.contracts.jobs import JobRef, JobStatus, JobProgress
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
@@ -42,7 +43,7 @@ TYPES = {cls.__name__: cls for cls in (
     ExperienceRecord, Memory, HistoryEntry, DecisionContext, OperationSpec,
     _PendingOperationRecord, _PendingReviewRecord, _ReviewSession, DecisionTrainingRequest,
     CommandState, PendingEpisode, EvaluationRequest, EvaluationResult,
-    ArtifactRef, Candidate, SystemVersion, Directive, Feedback, JobRef, ModelRef, TokenUsage,
+    ArtifactRef, Candidate, SystemVersion, Directive, Feedback, FeedbackDelivery, JobRef, ModelRef, TokenUsage,
     ExecutionView, ExplorationProgress, ReviewDecision, LoopStepResult, JobProgress,
     DirectiveProvenance, CandidateEvaluation,
     TrainingResult, TrainingOrigin, OperationCall, OperationResult, DecisionState, ExplorationState,
@@ -50,7 +51,7 @@ TYPES = {cls.__name__: cls for cls in (
 )}
 ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus, ResumeMode)}
 
-# Only these additive lineage fields may be absent in older checkpoints. Keep
+# Only these additive fields may be absent in older checkpoints. Keep
 # rejecting unknown fields and missing pre-existing fields on every state type.
 LINEAGE_DEFAULTS = {
     'Decision': {'decision_id', 'depends_on_decision_ids', 'source_decision_ids',
@@ -59,7 +60,7 @@ LINEAGE_DEFAULTS = {
     'DecisionState': {'decision_records', 'directive_decisions', 'candidate_origins',
                       'pending_operation_decision_id', 'pending_decision', 'decision_results', 'operation_receipts'},
     '_PendingOperationRecord': {'decision_id'},
-    'OperationResult': {'adopted_candidate_ids'}, 'Feedback': {'adopted_candidate_ids'},
+    'OperationResult': {'adopted_candidate_ids', 'feedback_delivery'}, 'Feedback': {'adopted_candidate_ids'},
     'LoopStepResult': {'decision_id'},
 }
 

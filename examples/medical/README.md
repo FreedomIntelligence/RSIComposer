@@ -10,6 +10,46 @@ symbol questions are not medical quality evidence. No source datasets are shippe
 
 Use Python 3.12+ from the RSISys directory with `PYTHONPATH=src:.`.
 
+## Open Lab with a real meta-agent
+
+`open_lab_experiment.py` uses the unified `ModuleAssembly` entry, programmable
+`LocalProcessLab`, native-tool LangMem memory and the default trajectory archive.
+The meta-agent chooses code edits and arbitrary installed programs; no SFT/RL/
+evaluation action menu is installed. Its separate feedback context uses the same
+captured model identity. The editable HTTP evaluator is an optional reference,
+and runs inference only when the meta-agent invokes it.
+
+Provision an owned Qwen3.5-9B SGLang endpoint named `rsisys-meta-qwen35-9b` with
+native tool calling and JSON-schema responses before launching. Install the
+`rsisys[langmem]` dependencies in an isolated controller environment. Inside a
+scheduler-owned allocation, pass only the GPUs reserved for generated Lab
+programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
+`RSISYS_LAB_ENDPOINT` can route development inference to a separately allocated
+baseline service; the default uses the meta-agent endpoint.
+
+```bash
+PYTHONPATH=src:. python -m examples.medical.open_lab_experiment \
+  --root /absolute/new/run-directory --run-id unique-medical-open-run \
+  --task /absolute/fixed/data/task.json --model-path /absolute/Qwen3.5-9B \
+  --python /absolute/cuda-training-env/bin/python \
+  --endpoint http://127.0.0.1:30000/v1 --seconds 600 --max-calls 128
+```
+
+The host owns time, shared decision/feedback/summary call admission and process
+cleanup. The model receives no countdown or research-round state and cannot
+choose idle `wait` or `finish`. Polling a real running program remains available.
+The 64k serving configuration uses a 48k compaction trigger and 16k/28k/40k
+targets; tokenizer counts include native chat messages and tool declarations.
+Each raw model request, response, rejected response and received wire body is
+recorded. Generated programs and results are retained remotely before workspace
+cleanup. Training and validated adoption must be established from their actual
+artifacts; native stdout and model-written interpretations are not attestations.
+
+This is trusted local process execution. OS/data/network isolation and endpoint
+ownership belong to the deployment. Local model configuration and shard sizes
+are recorded; a full weight digest is not inferred from a serving alias. Each
+controller directory is claimed once, with no automatic replay after failure.
+
 ## Local format and read-only preparation
 
 The example owns this UTF-8 JSONL schema, with exactly these fields per line:
@@ -720,7 +760,8 @@ shared run budget and separate learning limits.
 
 评测监控进度沿用 `MedicalEvaluator` 返回的真实任务编号，与 Decision 回执一致；同步初始评测独立标记为基线。测量完成后仍等待评测解释，最终成功或失败状态以 evaluator 的 JobOutcome 为准。
 
-启用反馈学习时，模型请求含统一的 `research_state` 工作前缀。最近解释按持久化的
+启用反馈学习时，模型请求的 `memory_context` 是可替换 provider 的当前文本视图，
+`research_state` 保留 host 的证据与依赖保护元数据。内置 journal 的最近解释按持久化的
 学习任务顺序选取，原始评测指标、错误和活跃依赖在容量 compact 中受到额外保护。
 `research_working_state.json` 保存最近一次装配的工作视图与投影数量（位于 token
 compact 之前）；实际发出的请求仍以 `model_requests.jsonl` 为准。没有已授权的

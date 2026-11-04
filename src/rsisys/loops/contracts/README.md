@@ -1,6 +1,44 @@
 # 共享协议
 
+开放式执行端口见 [execution.py](execution.py)：Lab 提供 `describe/execute`，
+工具输入输出复用 [decision.py](decision.py) 的 OperationSpec/OperationCall 与
+coordination.OperationResult。算法与参数语义属于 Lab，框架不限定 SFT、RL、evaluate 的实现。
+可选 ExecutionLifecycle 用于 host 停止时的 drain/cancel 和 owned 退出确认。
+close 必须幂等、失败可重试；装配保留失败的 owned close 与其依赖，普通清理回调不重放。
+LabToolError 表示可回到 decision 的工具错误；LabInfrastructureError 可携带已归档的失败
+OperationResult，执行回执保留其证据后仍抛给 host。后者不要求同步提供方使用，也不读取业务
+文本猜测故障来源。实现与验证见 [生命周期修复](../../../../docs/review/execution-contract-fixes-20261104.md)。
+装配与边界见 [M04 说明](../../../../docs/review/open-lab-execution-20261104.md)。
+
 两个 loop 共用的消息、引用和公开端口；此目录不包含后端实现。可选 ReviewAuthorizingEndpoint 让 Runner 在执行模型取消建议及重试前重新检查当前权限。协同顺序与交付规则见[系统架构](../../../../README.md#系统架构)。
+
+## Context / Memory 窗口
+
+[ContextMemory / ContextQuery / FeedbackContextEvent](feedback_context.py) 是文本上下文的最小边界：
+`context(query) -> str`，空字符串合法。可选 observe 接收公开的原始反馈事件；组件自行管理更新、
+检索、存储与 prompt，不需要内部 job、Memory 或三方法接口。
+默认 Harness 将当前文本替换到 memory_context，与实时执行结果及 host 保护状态分开。
+接口与适配方案见 [接入说明](../../../../docs/review/feedback-context-window-20261104.md)。
+
+## Decision Policy 窗口
+
+[decision.py](decision.py) 定义公开的 `DecisionInput`、`DecisionPolicy`、`Decision`、
+`OperationSpec` 和 `OperationCall`。最小策略只有 `decide(input) -> Decision`。
+输入是目标文本、context 文本、当前能力描述和可选 JSON 引用；能力描述用于发现，
+实际权限、参数、身份和执行准入仍由宿主校验。context 与引用内部格式由适配器和实现选择，
+不要求策略维护默认 `Memory`、`HistoryEntry` 或 `DecisionState`。
+
+默认 Harness 的丰富 `DecisionContext` 属于内部便利视图。
+[ContextDecisionPolicy / DecisionInputAdapter](../../adapters/decision.py) 将它接到公开窗口，
+旧 `harness.policy.DecisionPolicy` 保留为该内部视图的兼容协议。
+`Decision` 及 operation 类型的旧导入路径仍指向同一类型，已有快照的类型标签保持兼容。
+
+三个能力独立可选：`UsageObservedPolicy.track_usage(record)` 观察每份响应的用量，
+包括拒绝输出、纠错及摘要；`RequestContextPolicy.context_scope(...)` 声明最终请求上下文
+的处理权；`SharedBackendPolicy.share_backend(wrap)` 显式共享可串行化的无状态后端。
+它们不要求采用默认模型、prompt 或压缩算法，也不代替宿主的完整请求准入与实际调用记账。
+原生会话实现可使用独立 FeedbackAdapter / backend，无须共享自己的会话。
+接入规则与验收见 [Decision 接口修复](../../../../docs/review/decision-module-windows-20261104.md)。
 
 ## 实验查询
 
@@ -57,6 +95,13 @@ Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。
 
 ## Lab 与统一执行观察
 
+反馈组件的公开窗口见 [feedback_context.py](feedback_context.py)、[feedback_modules.py](feedback_modules.py)。
+ContextMemory 只输出文本；TrajectoryArchive 保存/读回原始 ArchiveEvent；FeedbackProcessor /
+FeedbackProposer 接收公开反馈事件、返回自己的原生产物；FeedbackScheduler 只选择待处理事件。
+状态、计费、并发准入及恢复由 host 维护，不作为插件业务输出的必填字段。
+旧 journal-shaped 方法仅在兼容适配器中使用，完整定义见
+[模块接口说明](../../../../docs/review/feedback-module-windows-20261104.md)。
+
 [LabSpec / LabTask / Lab](lab.py) 声明固定目标、已安装能力及可选系统版本，任务保留 decision、
 Lab、task、幂等键及可选 run/agent/发起模型。当前 LabTask 复用 Directive，task_id 与
 directive_id 一致；Lab 提供提交、推进、查询、取消、读取终态结果和确认。
@@ -69,8 +114,43 @@ directive_id 一致；Lab 提供提交、推进、查询、取消、读取终态
 本地操作的实际完成；异步提交不等于完成。通用工具指标不会自动绑定某候选/评测协议。
 反馈职能共享 active meta-agent 模型版本、使用独立上下文；可替换的整理器负责每份已观察
 回执的 context/memory，该能力必须激活；公开轨迹归档默认开启、可关闭或替换。
-是否有 harness 或训练草稿提案不影响 context/memory 整理。归档片段并不
-等于完整会话或可训练数据，后续 skill/规则负责数据转换与质量约束。
+是否有改进任务提案不影响 context/memory 整理。即时执行结果在持久捕获后直接返回，
+`observe` 不运行整理模型；后续 refresh 推进后台处理。只读查询默认只归档，不触发整理。
+
+可选 [FeedbackDelivery](delivery.py) 区分收集回执与原始结果事件。
+执行器在 `OperationResult.feedback_delivery` 或 `ExecutionReceipt.feedback_delivery` 提供稳定事件 ID；
+作用域为 Lab/run，未提供 Lab/run 时应使用全局唯一的生产事件 ID。同事件必须保持原始结果一致，
+重复收集全部捕获，但默认只触发一次 context/memory/提案处理；`reprocess=True` 显式请求另一轮处理，
+仍受 host 限额约束，不重做 Lab 工作。未提供元数据时沿用每回执处理，不读取业务字段猜测身份。
+开放 Lab 可用 [LabToolError](execution.py) 声明模型可修正的工具失败，默认适配器将其转成失败结果；
+权限、身份冲突及基础设施异常保持 host 错误。具体契约见
+[交付语义](../../../../docs/review/lab-delivery-semantics-20261104.md)。
+OperationResult 的归档与指纹统一使用 `result.payload()`，无元数据时保持旧格式；
+完整 `asdict` 展开不作为归档序列化入口。
+
+Lab 原生输出可通过 `ExecutionReceipt.from_output(task_id, output, status=..., references=...)`
+或 `service.observe_output` 接入。output 接受文本/JSON，references 保留生产者格式；
+任务关联、终态 status、可选的 Lab/run/model 身份由执行设施补充。
+Lab 不需要填 summary/error、metrics、候选或评测协议，也不需要转换成 Directive / Feedback。
+业务字段留在 output 中，不自动升级为宿主生命周期、有效测量或采纳声明。
+二进制等非 JSON 产物通过原生引用保留；大正文只裁剪模型投影，原始捕获保持完整。
+
+### Meta-agent 改进 Lab
+
+[TrajectoryRef / TrajectorySource / DecisionDatasetBuilder](improvement.py) 将原始归档与数据构建分开。
+`TrajectoryRef(archive_id, trajectory_id, digest)` 固定来源身份与 SHA256，读回不匹配必须拒绝。
+`DecisionDatasetBuildRequest` 指定来源和 recipe；结果保留来源/recipe，返回有版本/指纹的
+data_refs、report_ref、example_count 与 simulated。具体筛选、标注、格式及报告规则由 Lab recipe 负责。
+
+数据构建与 `DecisionTrainingRequest` 训练是两次显式任务；训练消耗构建后的数据集引用，
+返回 decision_maker 候选，不自动评测或激活。可选改进任务提案只是供主 decision 选择的建议。
+[能力适配](../../adapters/improvement.py) 使用现有 JobBook 和命令生命周期；只暴露已装配后端，
+不新增跨 Lab 调度、训练算法或持久恢复保证。
+
+[FeedbackTrajectorySource](../../adapters/trajectory.py) 导出默认 archive 的不可变
+`/trajectory_snapshot`，不包括随后生成的 memory/proposal；旧 trajectory_segment 仍是组合查看接口。
+归档片段并不等于完整会话或可训练数据：当前 observer 未捕获原始决策模型完整交换，
+coverage 明确标记缺失；Lab recipe 必须核对覆盖范围，不能伪造训练对。
 
 ## 作业与版本
 
@@ -151,3 +231,11 @@ Model requests may carry an optional `GenerationRequest.response_schema` JSON
 Schema. This is an output-format constraint, independent of model deployment and
 weight identity. Policies opt in only through a supporting backend; unsupported
 transports must fail explicitly rather than silently discard a requested schema.
+
+### 可选组件状态
+
+[component_state.py](component_state.py) 定义 `ComponentState(state_id, capture, restore)`，
+由模块或集成适配器自行实现。它不暴露默认 Harness 私有结构；保存值通过显式 JSON codec，
+不动态导入类，也不包含密钥。恢复必须校验身份、配置、引用和效果，不能重新提交工作。
+`PortableComponentState` 另有 `validate_snapshot()`，只允许已经空闲且可迁移的状态。
+`ModuleAssembly.state_factory` 将接口绑定到当前组件；详情见 [snapshot](../../snapshot/README.md)。

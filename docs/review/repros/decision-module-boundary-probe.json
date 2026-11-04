@@ -1,0 +1,139 @@
+{
+  "scope": "2026-11-04 local decision harness/policy boundary review",
+  "real_model_inference": false,
+  "real_training": false,
+  "production_changes": false,
+  "probes": {
+    "minimal_harness_positive_control": {
+      "status": "completed",
+      "rounds_completed": 1,
+      "has_policy": false,
+      "has_memory": false
+    },
+    "directive_permission_modes": [
+      {
+        "mode": "researcher",
+        "permitted_directives": [],
+        "status": "completed",
+        "rounds_completed": 1
+      },
+      {
+        "mode": "time",
+        "permitted_directives": [],
+        "error": {
+          "type": "PermissionError",
+          "message": "Directive is not permitted: execute"
+        }
+      }
+    ],
+    "minimal_policy_positive_control": {
+      "step_kind": "finished"
+    },
+    "transparent_wrapper_accounting": [
+      {
+        "wrapped": false,
+        "all_invalid": false,
+        "step_kind": "finished",
+        "backend_calls": 2,
+        "backend_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        },
+        "harness_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        }
+      },
+      {
+        "wrapped": true,
+        "all_invalid": false,
+        "step_kind": "finished",
+        "backend_calls": 2,
+        "backend_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        },
+        "harness_usage": {
+          "input_tokens": 11,
+          "output_tokens": 3
+        }
+      },
+      {
+        "wrapped": false,
+        "all_invalid": true,
+        "error": {
+          "type": "JSONDecodeError",
+          "message": "Expecting value: line 1 column 1 (char 0)"
+        },
+        "backend_calls": 2,
+        "backend_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        },
+        "harness_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        }
+      },
+      {
+        "wrapped": true,
+        "all_invalid": true,
+        "error": {
+          "type": "JSONDecodeError",
+          "message": "Expecting value: line 1 column 1 (char 0)"
+        },
+        "backend_calls": 2,
+        "backend_usage": {
+          "input_tokens": 22,
+          "output_tokens": 6
+        },
+        "harness_usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    ],
+    "transparent_wrapper_compaction": [
+      {
+        "wrapped": false,
+        "policy_compactor_preserved": false,
+        "policy_compactor_recent_limits": [],
+        "harness_compactor_recent_limits": [
+          32
+        ]
+      },
+      {
+        "wrapped": true,
+        "policy_compactor_preserved": true,
+        "policy_compactor_recent_limits": [
+          32
+        ],
+        "harness_compactor_recent_limits": [
+          7
+        ]
+      }
+    ],
+    "plain_policy_zero_inference_feedback": [
+      {
+        "explicit_backend": false,
+        "assembly_requires_model": false,
+        "error": {
+          "type": "ValueError",
+          "message": "Session/custom policies require an explicit feedback backend"
+        },
+        "model_calls": 0
+      },
+      {
+        "explicit_backend": true,
+        "assembly_requires_model": false,
+        "assembly_installed": true,
+        "step_kind": "finished",
+        "error": {
+          "type": "AttributeError",
+          "message": "'PlainPolicy' object has no attribute 'model'"
+        },
+        "model_calls": 0
+      }
+    ]
+  }
+}

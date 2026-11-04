@@ -103,8 +103,8 @@ class DSHTests(unittest.TestCase):
         self.assertEqual(loop.harness.state.operation_results[-1], receipt)
         from rsisys.loops.decision_making.harness.context import result_id
         from dataclasses import asdict
-        self.assertEqual(visible['data']['evidence_card']['sha256'], result_id(asdict(receipt)))
-        self.assertTrue(any(isinstance(h.details.get('result'), dict) and result_id(h.details['result']) == result_id(asdict(receipt)) for h in loop.harness.memory.history()))
+        self.assertEqual(visible['data']['evidence_card']['sha256'], result_id(receipt.payload()))
+        self.assertTrue(any(isinstance(h.details.get('result'), dict) and result_id(h.details['result']) == result_id(receipt.payload()) for h in loop.harness.memory.history()))
         self.assertNotIn('objective', latest)
         self.assertIn('directives', latest)  # Live schemas survive native compaction.
         self.assertIn('RSISys action protocol for this turn:\nReturn one JSON', runtime.prompts[-1])

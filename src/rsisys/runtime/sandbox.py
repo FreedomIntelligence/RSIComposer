@@ -1,7 +1,7 @@
 """Execution boundary. The mock never invokes a shell or creates a container."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from rsisys.loops.contracts.jobs import JobStatus
@@ -54,6 +54,7 @@ class ProcessState:
     stderr: str
     exit_code: int | None
     simulated: bool
+    failure_origin: Literal['program', 'timeout', 'infrastructure'] | None = None
 
 
 @dataclass(frozen=True)

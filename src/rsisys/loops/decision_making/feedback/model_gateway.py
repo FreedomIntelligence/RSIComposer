@@ -18,9 +18,9 @@ class FeedbackModelGateway:
     def __init__(self, backend, model, *, max_calls, max_input_tokens, path):
         self.backend, self.model = backend, model
         self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
-        self.path = Path(path)
+        self.path = Path(path) if path is not None else None
         self.exchanges, self._lock = [], RLock()
-        if self.path.exists():
+        if self.path is not None and self.path.exists():
             raise ValueError('Memory exchanges already exist; do not replay an uncertain job')
 
     @property
@@ -28,7 +28,8 @@ class FeedbackModelGateway:
         return len(self.exchanges)
 
     def _save(self):
-        atomic_write(self.path, json_bytes({'version': 1, 'exchanges': self.exchanges}))
+        if self.path is not None:
+            atomic_write(self.path, json_bytes({'version': 1, 'exchanges': self.exchanges}))
 
     def generate(self, request):
         with self._lock:

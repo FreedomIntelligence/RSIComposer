@@ -1,7 +1,8 @@
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import asdict, replace
 from copy import deepcopy
+from inspect import getattr_static
 from uuid import uuid4
 from time import perf_counter
 
@@ -21,13 +22,14 @@ from rsisys.loops.contracts.training import TrainingResult, ModelActivator
 from rsisys.runtime.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.runtime.jobs import JobBook
+from rsisys.runtime.capabilities import optional_method
 
 from rsisys.loops.contracts.coordination import LoopStepResult, ExecutionView, ExplorationProgress, ReviewDecision
 from rsisys.loops.contracts.requests import EvaluationSpec
 from ..action_space import DecisionActionSpace, OperationCall, OperationResult
 from ..action_space.access import authorized_space
 from .learner import DecisionLearner, DecisionTrainingRequest
-from .policy import DecisionPolicy, ModelDecisionPolicy
+from .policy import DecisionPolicy
 from .decision import Decision
 from .attempts import attempt_details, requested_attempt, AttemptContract
 from .tools import DecisionTools, execute_operation, record_operation
@@ -47,7 +49,8 @@ class DefaultDecisionHarness:
                  *, experience_limit: int = 32, memory: MemoryStore | None = None, memory_limit: int = 32,
                  model_activator: ModelActivator | None = None, review_tool_limit: int = 4,
                  max_outstanding: int = 1, feedback_selector=None,
-                 context_compactor=None, research_agenda=None, attempt_contract=None):
+                 context_compactor=None, research_agenda=None, attempt_contract=None,
+                 model: ModelRef | None = None, model_provider=None):
         self._feedback_listeners, self._context_processors, self._cleanup_callbacks = [], [], []
         self.feedback_proposal_resolver = None
         self._receipt_listeners = []
@@ -55,6 +58,11 @@ class DefaultDecisionHarness:
         if not isinstance(self.attempt_contract, AttemptContract):
             raise TypeError('attempt_contract must be an AttemptContract')
         self.policy, self.tools, self.experience, self.learner = policy, tools, experience, learner
+        if model is not None and not isinstance(model, ModelRef):
+            raise TypeError('Host model binding must be a ModelRef or None')
+        if model_provider is not None and not callable(model_provider):
+            raise TypeError('model_provider must be callable')
+        self.model_provider, self._model_binding = model_provider, model
         if type(experience_limit) is not int or experience_limit < 1:
             raise ValueError("experience_limit must be a positive integer")
         if type(memory_limit) is not int or memory_limit < 1:
@@ -89,6 +97,24 @@ class DefaultDecisionHarness:
 
     def add_feedback_listener(self, listener):
         self._feedback_listeners.append(listener)
+
+    def current_model(self):
+        """Resolve current identity without requiring it on an algorithm object."""
+        declared = getattr(self.policy, 'model', None)
+        # A dynamic object may manufacture every attribute. Only a real ModelRef
+        # or a declared binding is identity; a fabricated proxy is not one.
+        if not isinstance(declared, ModelRef) and getattr_static(self.policy, 'model', None) is None:
+            declared = None
+        if declared is not None and not isinstance(declared, ModelRef):
+            raise TypeError('Current meta-agent identity must be a ModelRef')
+        if self.model_provider is not None:
+            model = self.model_provider()
+            if not isinstance(model, ModelRef):
+                raise TypeError('Current meta-agent identity provider must return a ModelRef')
+            if declared is not None and declared != model:
+                raise ValueError('Policy model identity does not match the current host binding')
+            return model
+        return self._model_binding if declared is None else declared
 
     def add_receipt_listener(self, listener):
         """Observe recorded local completions; subscribers never execute tools."""
@@ -323,7 +349,7 @@ class DefaultDecisionHarness:
             record_operation(pending, self.memory, self.experience if experience else None)
             return metadata
         result, call = pending.result, pending.call
-        details = {'operation': asdict(call) if call else None, 'result': asdict(result), **metadata}
+        details = {'operation': asdict(call) if call else None, 'result': result.payload(), **metadata}
         if pending.event is not None:
             details.update(event=pending.event, elapsed_seconds=pending.elapsed_seconds)
         self.memory.append(HistoryEntry(pending.record_id, 'operation', pending.task_id, result.summary,
@@ -396,7 +422,7 @@ class DefaultDecisionHarness:
             self.state.directive_provenance[ident] = replace(provenance, execution_model=view.model)
 
     def _context(self, objective: str, action_space: DecisionActionSpace | None = None) -> DecisionContext:
-        model = getattr(self.policy, 'model', None)
+        model = self.current_model()
         context = DecisionContext(
             objective, deepcopy(tuple(self.feedback_selector.select(
                 self.experience, objective, limit=self.experience_limit))),
@@ -574,12 +600,6 @@ class DefaultDecisionHarness:
         # Reviews can append new tool results to a saved session. Re-project them
         # before every model call; full receipts remain in memory and session state.
         context = self._project_context(self._refresh_context(context))
-        # Model policies budget their final request after adding protocol/schema
-        # overhead. Other policies receive the same protected context projection.
-        if isinstance(self.policy, ModelDecisionPolicy):
-            self.policy.context_compactor = self.context_compactor
-        else:
-            context = self.context_compactor.compact(context, recent_limit=self.memory_limit)
         received = 0
 
         def record(usage):
@@ -587,10 +607,15 @@ class DefaultDecisionHarness:
             self._record_usage(usage)
             received += 1
 
-        if isinstance(self.policy, ModelDecisionPolicy):
-            with self.policy.track_usage(record):
-                result = method(context)
-        else:
+        with ExitStack() as stack:
+            observer = optional_method(self.policy, 'track_usage')
+            if observer is not None:
+                stack.enter_context(observer(record))
+            owner = optional_method(self.policy, 'context_scope')
+            if owner is not None:
+                stack.enter_context(owner(self.context_compactor, recent_limit=self.memory_limit))
+            else:
+                context = self.context_compactor.compact(context, recent_limit=self.memory_limit)
             result = method(context)
         if not received and isinstance(result, (Decision, ReviewDecision)):
             self._record_usage(result.usage)

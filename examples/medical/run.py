@@ -11,6 +11,7 @@ import math
 import time
 from pathlib import Path
 
+from rsisys.assembly import AssemblyContext, AssemblyRunner, ModuleAssembly, assemble_runner, module_assembly
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
@@ -36,7 +37,7 @@ from rsisys.loops.exploration.harness.commands import CommandHandler
 from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
 from rsisys.loops.exploration.harness.learner.command import TrainingCommandHandler
 from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.runtime.runner import Runner
+from rsisys.runtime.sandbox import MockSandboxBackend
 from rsisys.runtime.systems import SystemRegistry, SystemActivationRejected
 from .evaluation import MedicalEvaluator, MedicalEvaluationError
 from .task import encoded, prepare, samples, validate_training
@@ -260,14 +261,31 @@ class MedicalRunResult:
 @dataclass
 class MedicalAssembly:
     task: object
-    runner: Runner
+    runner: AssemblyRunner
     evaluator: MedicalEvaluator
     systems: SystemRegistry
     artifacts: object
     experience_store: object
     candidates: dict
 
+    def close(self):
+        self.runner.close()
+
+    def __enter__(self):
+        self.runner.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self.close()
+        except BaseException as cleanup_error:
+            if exc is None:
+                raise
+            exc.add_note(f'Medical assembly cleanup also failed: {cleanup_error}')
+
     def run(self, settings: RunSettings):
+        if self.runner.closed:
+            raise RuntimeError('Medical assembly is closed')
         try:
             anchor = self.evaluator.establish_anchor()  # Explicit run starts actual inference.
         except (MedicalEvaluationError, ModelActivationPending) as exc:
@@ -296,7 +314,8 @@ class MedicalAssembly:
 def build(task, *, artifacts, decision_backend, decision_model, initial_model,
           inference, system_activator, learner=None, trusted_exclusions=(),
           training_initializer=None, bind_training_inputs=None,
-          run_policy=None, action_permissions=None, evaluator_factory=MedicalEvaluator, prepare_inference=None):
+          run_policy=None, action_permissions=None, evaluator_factory=MedicalEvaluator, prepare_inference=None,
+          modules=None):
     """Construct only. Adapter owners configure native devices, recipes and serving.
 
     inference(GenerationRequest)->GenerationResponse must route the requested
@@ -305,6 +324,7 @@ def build(task, *, artifacts, decision_backend, decision_model, initial_model,
     this example passes JSONL bytes without a universal source conversion layer.
     trusted_exclusions is operator-only and never put in researcher context.
     """
+    modules = module_assembly(modules)
     if learner is not None and not callable(bind_training_inputs):
         raise TypeError('Training requires an explicit native input binding/validation callable')
     development = task.check()
@@ -424,9 +444,27 @@ def build(task, *, artifacts, decision_backend, decision_model, initial_model,
     decision = DefaultDecisionHarness(ModelDecisionPolicy(decision_backend, decision_model,
         directives=directives, max_validation_attempts=3), tools, experience, memory=memory, research_agenda=agenda)
     decision.state.operation_results.append(OperationResult('Frozen training data', (train,), False))
-    runner = Runner(DecisionMakingLoop(decision, ModularDecisionActionSpace(
+    decision_loop = DecisionMakingLoop(decision, ModularDecisionActionSpace(
         (_PrepareData(), _ReadArtifact(), *research_tools.definitions), directives=directives,
-        permissions=action_permissions)), exploration, run_policy=run_policy)
+        permissions=action_permissions))
+    context = AssemblyContext(experience, artifacts, {decision_model.backend_id: decision_backend},
+        MockSandboxBackend(), {'decision_maker': decision_model, 'actor': initial_model},
+        exploration_directives=directives)
+    # Domain factories retain the frozen medical protocol. The common entry owns
+    # optional feedback, state ports, run control and lifecycle for every launcher.
+    modules = replace(modules,
+        decision_factory=modules.decision_factory if modules.decision_factory is not None else
+            (lambda ctx, lab: decision_loop),
+        exploration_factory=modules.exploration_factory if modules.exploration_factory is not None else
+            (lambda ctx: exploration))
+    try:
+        runner = assemble_runner(context, modules=modules, run_policy=run_policy)
+    except BaseException as exc:
+        try:
+            context.close()
+        except BaseException as cleanup_error:
+            exc.add_note(f'Medical assembly cleanup also failed: {cleanup_error}')
+        raise
     return MedicalAssembly(task, runner, evaluator, systems, artifacts, store, candidates)
 
 
@@ -449,13 +487,14 @@ def main(argv=None):
         from .evaluation import backend_inference
         config = json.loads(args.backends.read_text())
         actor = ModelRef(**config['initial_model'])
-        assembly = build(task, artifacts=FileArtifactStore(args.output_directory),
+        settings = RunSettings(**json.loads(args.settings.read_text()))
+        with build(task, artifacts=FileArtifactStore(args.output_directory),
             decision_backend=RemoteModelBackend(BackendBinding(**config['decision_binding'])),
             decision_model=ModelRef(**config['decision_model']), initial_model=actor,
             inference=backend_inference(RemoteModelBackend(BackendBinding(**config['actor_binding']))),
-            system_activator=ReferenceSystemActivator(actor))
-        result = assembly.run(RunSettings(**json.loads(args.settings.read_text())))
-        assembly.artifacts.put(encoded(asdict(result)), kind='medical_run_result')
+            system_activator=ReferenceSystemActivator(actor)) as assembly:
+            result = assembly.run(settings)
+            assembly.artifacts.put(encoded(asdict(result)), kind='medical_run_result')
         print(json.dumps({'status': result.status, 'message': result.message}, indent=2))
         return 0 if result.status == 'done' else 2
     print(json.dumps({'task': asdict(task), 'protocol_ref': task.protocol_ref}, indent=2))

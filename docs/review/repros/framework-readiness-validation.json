@@ -1,0 +1,153 @@
+{
+  "date": "2026-11-04",
+  "scope": "Local framework readiness and lifecycle repair; current working tree",
+  "validation": {
+    "command": "PYTHONPATH=src .local/langmem-validation/bin/python -m unittest discover -s tests -q",
+    "total": 1648,
+    "passed": 1636,
+    "skipped": 12,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 93.739,
+    "new_regression_methods": 6
+  },
+  "smoke": {
+    "commands": [
+      {
+        "name": "final-cli-run",
+        "exit_code": 0
+      },
+      {
+        "name": "final-cli-inspect",
+        "exit_code": 0
+      },
+      {
+        "name": "final-cli-resume",
+        "exit_code": 0
+      },
+      {
+        "name": "final-demo",
+        "exit_code": 0
+      },
+      {
+        "name": "final-open-lab",
+        "exit_code": 0
+      },
+      {
+        "name": "final-feedback-pipeline",
+        "exit_code": 0
+      },
+      {
+        "name": "final-decision-policy-lab",
+        "exit_code": 0
+      }
+    ],
+    "initial_status": "completed",
+    "restored_status": "completed",
+    "same_run_id": true,
+    "initial_records": 3,
+    "restored_records": 6,
+    "open_lab": {
+      "status": "fixture_passed",
+      "shutdown_complete": true,
+      "native_output": {
+        "fixture": true,
+        "value": 5
+      },
+      "real_cpu_process": true,
+      "real_model_inference": false,
+      "real_training_performed": false,
+      "framework_sft_rl_evaluate_menu": false
+    },
+    "feedback_pipeline": {
+      "simulated": true,
+      "execution_receipts": 2,
+      "proposal_linked_decisions": 1,
+      "trajectory_mode": "archive_only",
+      "harness_activation_verified": false,
+      "status": "fixture_passed"
+    },
+    "decision_policy_lab": {
+      "status": "fixture_passed",
+      "archive_records": 3,
+      "dataset_task": "completed",
+      "training_task": "mock_candidate_returned",
+      "real_training_performed": false,
+      "live_policy_changed": false
+    }
+  },
+  "feedback_stress": {
+    "scenario": "120 distinct native feedback events; default journal context provider; no model inference",
+    "samples": [
+      {
+        "events": 20,
+        "memory_bytes": 11463,
+        "request_utf8_bytes": 27714,
+        "journal_events": 20
+      },
+      {
+        "events": 40,
+        "memory_bytes": 11735,
+        "request_utf8_bytes": 27994,
+        "journal_events": 40
+      },
+      {
+        "events": 60,
+        "memory_bytes": 11736,
+        "request_utf8_bytes": 27995,
+        "journal_events": 60
+      },
+      {
+        "events": 80,
+        "memory_bytes": 11736,
+        "request_utf8_bytes": 27995,
+        "journal_events": 80
+      },
+      {
+        "events": 100,
+        "memory_bytes": 11737,
+        "request_utf8_bytes": 27997,
+        "journal_events": 100
+      },
+      {
+        "events": 120,
+        "memory_bytes": 11746,
+        "request_utf8_bytes": 28006,
+        "journal_events": 120
+      }
+    ],
+    "first_native_output_exact": true,
+    "actual_model_calls": 0,
+    "elapsed_seconds": 0.414,
+    "limitations": "UTF-8 bytes are not tokenizer measurements. This checks bounded feedback projection, not arbitrary third-party memory, unlimited runs, or real model summary semantics."
+  },
+  "preservation": {
+    "baseline_files": 142,
+    "missing": [],
+    "modified_baseline_files": [
+      "examples/medical/run.py",
+      "src/rsisys/application.py",
+      "src/rsisys/assembly.py",
+      "src/rsisys/config.py"
+    ]
+  },
+  "evidence": {
+    ".local/framework-readiness-20261104/full-tests-final.log": "1103c6d0ba06576dcaaab83ecb2a6fbb76be5fdd59a8ad693d1cd664addaf47c",
+    ".local/framework-readiness-20261104/readiness-regressions.log": "f362b869df6c1755e1a3d8e694b7e6777d569d9593303e0bc2ba04750c72bdb9",
+    ".local/framework-readiness-20261104/focused-tests.log": "fbce9eed50f4d5b65410056d50dd0f78bcded3689e96dbc2cd3cf2fb4a78caeb",
+    ".local/framework-readiness-20261104/cleanup-before.json": "e2e34a7b3816400cbb39f48962d98549c4f811e7e68a55824110d4c96871ea17",
+    ".local/framework-readiness-20261104/smoke-final.json": "8c51da600cefa3007dfb6ffc7c193f17cc9fd3a6d4df2df8ede8d9f95c208991",
+    ".local/framework-readiness-20261104/feedback-stress.json": "df2f1b9a53520813e37f741e89bab87e5cac5891ade45b7ca4b3b7fdba3f9e76",
+    ".local/framework-readiness-20261104/preservation-check.json": "284ebd1831813d3830493566bc52733c6cf89af8baba77783cf2ae34687417dd",
+    ".local/framework-readiness-20261104/source-sha256.json": "2b8e9835fba3fbf7ebb3a60c123b3fb8cf6b908a5916f70988ddd87c6064a380"
+  },
+  "source_inventory_entries": 183,
+  "boundaries": [
+    "No remote production calls, NPU work or autonomous experiment launched",
+    "No real LLM SFT/RL, trained-weight deployment or production harness activation validated",
+    "Feedback stress measures UTF-8 bytes, not tokenizer counts or model summary semantics",
+    "Third-party private state still requires explicit recovery integration",
+    "Wheel building and clean-machine installation were not tested",
+    "No remote push, campaign changes or automation changes in this task"
+  ]
+}

@@ -1,6 +1,13 @@
 # Meta-agent 的反馈整理与路由
 
-这里负责从 decision 轨迹和 lab 回执形成研究知识及改进提案。反馈分身是同一个 meta-agent
+这里负责记录 decision / Lab 原始回执，并整理研究记忆及可选改进提案。
+Context / Memory 的公开出口已收敛为 `context(query) -> str`；
+[接口、SDK 适配与实际请求接线](../../../../../docs/review/feedback-context-window-20261104.md)
+记录本次实现，三方法是兼容实现细节。
+[模块窗口规范](../../../../../docs/review/feedback-module-windows-20261104.md) 进一步定义原始归档、
+原生产物/提案与调度接口；旧 job、Memory 和处理结果协议隔离在适配器内。
+真实执行结果在记账、持久捕获后直接交回 decision，不等待 memory 或提案模型。
+反馈分身是同一个 meta-agent
 在独立上下文中承担反馈职能，共享当前权重；反馈调用仍接入宿主的准入、
 计费和生命周期。它不依赖默认 meta-agent harness 的 state、会话格式或 compact 算法。
 
@@ -25,24 +32,28 @@ flowchart LR
     D --> L[Lab: 固定目标 + data/model/harness]
     L --> E[执行回执与产物引用]
     D --> T[Decision 轨迹]
+    E --> M
+    E --> W[默认原始轨迹归档]
+    T --> W
     E --> F[Feedback 分身: 整理 + 路由]
-    T --> F
     F --> K[必须激活: 可替换的 Context / Memory 整理器]
-    F -. 默认开启 / 可关闭或替换 .-> W[公开研究轨迹归档]
-    F -. 有改进时 .-> H[Harness 改进提案]
+    F -. 有改进时 .-> H[Harness / Policy 改进任务提案]
     K --> V[Meta-agent harness 选择当前视图]
     V --> M
-    H --> G[独立验证与应用]
-    W -. 后续 skill / 整理规则 .-> D2[训练材料 / 训练 / 评测]
+    H --> M
+    M --> G[正式 decision: 构建 / 训练 / 评测 / 应用]
+    W --> D2[改进 Lab: 可替换数据构建 / 训练能力]
+    G --> D2
 ```
 
 只有 context/memory 整理能力必须激活，实现可替换；其他组件按需装配：
 
 | 产物 | 现在提供什么 | 后续消费边界 |
 | --- | --- | --- |
-| context/memory（必须激活，实现可替换） | `ContextMemoryOrganizer` 的记录、视图与发布；默认实现提供事实记录、可选解释、Attempt 和原文入口 | Harness 消费约定的视图；外部实现不必复用默认 journal 整理算法或记忆格式 |
-| meta-agent 轨迹（默认开启，可关闭或替换） | 默认 `JournalTrajectoryArchive` 提供 `view=trajectories` 索引、公开决策/执行片段及反馈交换引用 | 后续 skill/规则定义如何聚合、清洗、标注和转成训练材料；当前不是可训练数据集 |
-| harness 修改（可选） | 改进提案、适用范围、来源、验证计划 | 独立实现、回归验证和版本应用；每次反馈不要求提出修改 |
+| 即时 context | 直接交付 Lab / 工具的真实结果、错误、指标和产物引用；不经反馈模型改写 | Decision 的 last_feedback / operation_results 及账本 |
+| context/memory（必须激活，实现可替换） | `context(query) -> str` 或函数；可选 observe 接收新反馈。默认 journal/LangMem 由适配器接入 | 当前文本替换 DecisionContext.memory_context，内部格式、检索与存储属于实现 |
+| 原始轨迹（默认开启，可关闭或替换） | write(event)/read(reference)；Journal 默认经适配器导出索引/固定捕获 | Lab 通过 TrajectorySource / TrajectoryRef 读固定来源，不在反馈端构建样本 |
+| 改进任务提案（可选） | propose(event, model) 返回原生建议；内置适配器生成结构化提案 | 主 decision 和具体消费者决定正式构建、训练与验证 |
 
 原 `training_data` / `target=weights` 仍兼容为未验证草稿，不要求每次生成 input/target。
 执行/反馈交付 journal 在模型整理前记录事实；它用于查询和恢复，与可选研究轨迹产物分开。
@@ -64,26 +75,36 @@ meta-agent 引用；实际权重及跨服务身份仍由后端兑现。
 ## 当前组合链路
 
 研究任务统一使用 [research.py](../../../research.py) 的 `ResearchAssembly / assemble_research`：
-必需 context/memory、默认公开轨迹提取、可选 harness
-提案分别记录产品状态。LangMem 可以组合 `harness_proposals=ModelHarnessProposer(...)`，
-memory 算法保持上游实现。主 meta-agent 在正常 decision 的 `feedback_proposal_ids` 引用建议，
-执行前校验来源，构建/验证仍由原执行链路负责；回执再次进入 feedback。
-`service.extract_trajectory(job_id)` / `/trajectory_segment` 提取已记录片段，不生成训练目标。
+必需 context/memory、默认原始轨迹归档、可选改进提案分别记录状态。
+LangMem 可以组合 `improvement_proposals=ModelImprovementProposer(...)`；memory 算法仍由
+整理器负责。旧 `harness_proposals=ModelHarnessProposer(...)` 仅生成 harness 提案，与新选项互斥。
+主 meta-agent 在正常 decision 的 `feedback_proposal_ids` 引用建议，执行前校验来源；
+构建/训练由 Lab 的正式任务负责，回执再次进入 feedback。
+`service.trajectory_snapshot(job_id)` / `/trajectory_snapshot` 提供不可变原始来源。
+`extract_trajectory` / `/trajectory_segment` 保留旧组合视图，包含后来完成的反馈交换，不能用作固定训练来源。
 完整 workflow、装配例子和边界见[链路文档](../../../../../docs/review/feedback-workflow.md)。
 Application / Demo 通过 `research=` 接入；医疗控制器始终经过统一入口。启动即记录组件配置，
-恢复拒绝更换组件；底层 enable_* 及旧组合解释入口保留兼容。新提案组件只生成 harness_change。
+恢复拒绝更换组件；配置 schema_version=4 记录公开协议、组件、依赖与故障策略，并保留 archive_only、direct_before_processing 和 Lab 数据归属，
+不静默迁移旧 journal。底层 enable_* 及旧组合解释入口保留兼容。
 
 ## 实现分工
 
-- [service.py](service.py)：通过 `observe(ExecutionReceipt, evidence=...)` 捕获反馈、调用 adapter、
-  发布兼容记录及管理生命周期。保留旧 `receive_feedback` 入口；第三方 harness 不需要默认 state。
-  Adapter 提供 `model/publish/decision_ids/install`，旧 exploration 交付还使用 `evidence`；
+- [service.py](service.py)：`observe(ExecutionReceipt, evidence=...)` 只持久捕获并排队，
+  `archive(...)` 只归档；后续 `refresh()` 非等待地推进任务并发布已完成结果。
+  保留旧 `receive_feedback` 入口；第三方 harness 不需要默认 state。
+  Adapter 只要求 `model/install`；`publish/decision_ids/evidence` 是兼容或补充接点；
   通用 observe 可直接传入 FeedbackEvidence，或由可选 `receipt_evidence` 提供。
 - [learning.py](learning.py)：单写者 journal、调用准入、有界证据输入、输出校验、分页读取。
-- [components.py](components.py)：`ContextMemoryOrganizer` 与 `TrajectoryArchive` 的可替换接口；
-  默认 `JournalContextMemory / JournalTrajectoryArchive`。核心只传入独立快照。
+- [ContextMemory 协议](../../contracts/feedback_context.py)：公开文本窗口和独立反馈事件。
+  [context_memory.py](context_memory.py) 对接回调/SDK，并隔离旧三方法；
+  [components.py](components.py) 保留默认 journal 组件，兼容旧实现。
+- [可选模块协议](../../contracts/feedback_modules.py)：归档、产物/提案、模型能力和调度选择。
+  [archive.py](archive.py)、[stages.py](stages.py) 隔离旧 journal/workflow；
+  [scheduling.py](scheduling.py) 提供默认 FIFO，host 继续控制容量和停止。
+- [legacy.py](legacy.py) 与 [兼容 prompt](prompts/legacy_feedback.txt)：旧解释器组件及覆盖入口。
 - [pipeline.py](pipeline.py)：memory 与可选提案的组合、分产品状态及恢复；
-  [proposals.py](proposals.py) 与 [独立 prompt](prompts/harness_proposals.txt) 仅生成 harness 提案。
+  [proposals.py](proposals.py) 与 [改进任务 prompt](prompts/improvement_proposals.txt) 只生成任务提案，
+  不生成训练样本；[旧 prompt](prompts/harness_proposals.txt) 保留 harness-only 选项。
 - [attempts.py](attempts.py)：基于已观察引用增量更新 Attempt，保留不可变修订；不按同名或时间相邻归组。
 - [evidence.py](evidence.py)：精确绑定候选 ID、协议、指标、来源和 simulated；不验证自由文字的含义。
 - [knowledge.py](knowledge.py)：默认实现从 journal 派生按 Attempt 组织的记忆、分类提案和轨迹索引；
@@ -91,6 +112,9 @@ Application / Demo 通过 `research=` 接入；医疗控制器始终经过统一
 - [默认适配器](../harness/learning_harness.py)：把上述中立视图接入默认/DSH harness；
   [证据投影](../harness/research_state.py)、[账本选择](../harness/ledger_context.py)
   和 [compact](../harness/context.py) 属于 harness。
+- [Lab 数据契约](../../contracts/improvement.py)、[固定来源适配](../../../adapters/trajectory.py)
+  和 [Lab 能力装配](../../../adapters/improvement.py)：把原始归档接到可替换的数据构建与训练后端，
+  使用现有 submit/poll/cancel 生命周期；返回数据集/候选，不修改当前 policy。
 
 执行回执是执行事实的依据；Attempt、memory 和摘要是可修订解释。结构化校验通过，
 只表示引用/指标符合来源，不表示解释正确、提案有效或改进已应用。
@@ -103,12 +127,21 @@ Application / Demo 通过 `research=` 接入；医疗控制器始终经过统一
 
 [ExecutionReceipt](../../contracts/receipts.py) 保留任务/决策/Lab 身份、发起模型、原始请求与
 终态结果。Lab 结果与本地操作共用观察入口；发起模型与反馈模型分别记录，不猜测未知身份。
+新 Lab 可直接使用 service.observe_output(native_output, task_id=..., status=...)，
+或 ExecutionReceipt.from_output；任务与状态由执行设施提供，原生文本/JSON/文件引用自由。
+无须预先构造统一指标、候选、summary/error 或 Directive / Feedback。
+FeedbackEvidence 可选；native 入口不强制读取默认 harness 的研究历史或领域目录。
+原始 payload 中的 status、metric 等字段保持普通内容，只有显式业务适配器才建立相应语义。
+大 native payload 提供有界预览和精确原文入口，原始档案不改写。
 默认 adapter 在本地非只读操作完成并记账后观察；异步提交 JobRef 不算完成，resume 到终态
-才整理。只读导航默认不触发整理，反馈读取被权限拒绝也不生成关于该读取的反馈。
+才整理。只读导航及被权限拒绝的读取只归档，不创建 memory/proposer 模型任务，避免递归整理查询。
+归档查询不注入常驻 working memory；轨迹关闭时不额外归档这些查询。
 独立接入方可选择自己需要整理的任务；这不改变执行授权或模型可选的研究动作。
 
 ```python
 service.observe(receipt, evidence=FeedbackEvidence(history=history, evaluations=evaluations))
+# 后续 Harness tick；不会等待尚未完成的 worker。
+service.refresh()
 ```
 
 同一身份和内容重送只补交付，不重做工具操作；同一身份换结果会被拒绝。原始回执与
@@ -118,6 +151,17 @@ service.observe(receipt, evidence=FeedbackEvidence(history=history, evaluations=
 实际发出的反馈请求（含 system/prompt/schema）在提交前持久化；`/feedback_request`、
 `/feedback_response` 分页读取这次交换。没有提交或历史未记录的交换明确报未记录，不用当前
 代码重新生成“历史 prompt”。轨迹中的 execution_status 与 feedback_status 分开。
+快速交付仍要求持久捕获成功；落盘失败由交付重试处理，不重新执行任务。
+关闭时未提交的整理任务会取消，原始捕获保留，不保证最后一份结果已完成模型整理。
+
+可选 [FeedbackDelivery](../../contracts/delivery.py) 用生产事件 ID 关联不同收集 decision。
+[delivery.py](delivery.py) 只使用该元数据及原始结果 SHA-256 校验：同一 Lab/run/event 的结果变更是身份冲突；
+原文的每次读取保留独立 journal/轨迹，重复结果记 `archive_only` 和 `duplicate_of`，
+不再次通知 context observer、调用 memory processor 或生成提案。只读归档不占用首次处理机会。
+`reprocess=True` 允许新收集 decision 显式再整理，仍遵守调用、并发和队列限额，不重启原始工作。
+首次处理失败或结果未知也不因重复读取自动重试，需显式请求。
+没有该元数据的模块保持原行为；output/data 中的同名字段都是原生内容，不控制路由。
+重新加载 feedback journal 后保留去重关系；这不表示开放 Lab 本身已支持恢复。
 
 ## Context 与完整档案分开
 
@@ -139,17 +183,23 @@ enable_feedback_learning(loop, backend=backend, adapter=adapter,
     context_memory=external_organizer, trajectory_archive=None)
 ```
 
-整理器实现 `record(job) -> dict`、`working_memory(jobs, attempts, ...) -> dict` 和
-`memory(job) -> Memory | None`。后者允许仅通过工作视图供给上下文，不强制重复发布默认
-episodic 格式。视图格式和驻留策略由消费 harness 约定；外部 harness 可使用自己的格式。
+新整理器只需实现 `context(ContextQuery) -> str`，也可直接使用函数。查询提供当前目标和最近
+非归档反馈的公开内容；可选 `observe(FeedbackContextEvent)` 在后续 refresh 接收一次更新通知。
+SDK 可通过 `CallbackContextMemory(render, on_feedback=...)` 接入自己的 API。
+普通组件无需 journal、Attempt、内部 Memory 或 recover 方法；context 更新替换当前视图。
+通知状态持久化，失败/未知副作用不自动重放；renderer 类型错误或异常显式失败。
+旧 `record / working_memory / memory` 经内部适配器继续兼容；它们不再是所有插件的要求。
 归档实现 `records(jobs, research_attempt_id=...) -> list[dict]`，未过滤时每 job 对应一个片段，
-可替换默认索引；跨 job 聚合及训练转换另行处理。发布前核心仍校验模型的引用/指标，
-插件交付失败只重试交付，不重做模型调用或执行任务。方法可能重复调用，实现需保持稳定身份。
+可替换默认索引；可选 `snapshot(job) -> dict` 提供不可变来源，没有该能力时明确拒绝固定来源导出。
+跨 job 聚合、筛选、标注和格式转换属于 Lab 的 dataset builder。发布前核心仍校验模型的引用/指标，
+兼容 Memory 发布失败只重试发布，不重做模型调用或执行任务。读取方法可能重复调用，实现需保持稳定身份。
 重新装配/恢复时必须重新提供相应组件及其外部状态；journal 不保存任意插件对象。
 
 以下具体记忆选择规则描述内置实现。
 
-`service.working_memory(active_decision_ids=..., policy=...)` 不访问默认 harness。
+`service.context(ContextQuery(...))` 是通用文本出口；默认 Harness 直接消费该出口。
+`service.working_memory(active_decision_ids=..., policy=...)` 保留为旧结构化检查入口；
+新组件在该兼容入口返回 `{'context': text}`。以下字节选择规则仅用于内置 journal/LangMem 适配。
 `WorkingMemoryPolicy(max_bytes=12000, recent=8, summary_characters=600)` 是宿主选择的常驻
 视图策略，不是模型管理的实验预算。每次加入卡片都检查编码后的 UTF-8 总字节，
 限制适用于派生知识部分；harness 添加的事实保护元数据及整个请求另外计量。
@@ -185,7 +235,9 @@ episodic 格式。视图格式和驻留策略由消费 harness 约定；外部 h
 {"view":"trajectories","offset":0,"limit":8}
 ```
 
-指定 job 后读取 `/context_memory` 查看所配置整理器的记录。`/trajectory` 只在归档启用时可用；
+指定 job 后读取 `/context_memory` 查看兼容整理器的记录，或新组件的反馈通知状态；
+新组件当前检索文本以实际 decision 请求的 memory_context 为准。`/trajectory` 只在归档启用时可用；
+`/trajectory_snapshot` 是固定来源，`/trajectory_segment` 是兼容组合视图。
 job 元信息的 `trajectory.enabled` 与轨迹列表的 `enabled` 显式标记配置，关闭时列表为空且
 单条轨迹读取报不可用。长正文仍通过带指纹的 JSON 文本页读取。
 
@@ -201,7 +253,7 @@ job 元信息的 `trajectory.enabled` 与轨迹列表的 `enabled` 显式标记�
 
 ## 后续迁移
 
-这一阶段落实基础 Lab/receipt 契约、共同观察入口及反馈整理/路由边界。后续仍需迁移
-默认调度、任务索引持久恢复及通用代码能力，分别补 harness 提案的验证/应用流程，以及
-研究轨迹数据集与 researcher 训练流程。
+这一阶段落实四条反馈链路、固定来源契约，以及 Lab 数据构建/训练能力适配。
+具体数据 recipe、真实训练后端、独立 policy 评测与激活仍由相应实现提供。
+默认跨 Lab 调度、任务索引持久恢复及通用代码能力尚需继续迁移，harness 提案的验证/应用流程也未补齐。
 不能将接口草图、fixture、一次整理调用或已有的 actor SFT 计为完成了这些能力。

@@ -6,7 +6,10 @@ Other harnesses supply FeedbackAdapter rather than inheriting this implementatio
 from copy import deepcopy
 from dataclasses import asdict, replace
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.feedback_context import ContextQuery
 from rsisys.runtime.json_tools import EvidencePathError
+from rsisys.runtime.capabilities import optional_method
+from rsisys.loops.contracts.model_service import ModelRef
 
 from ..feedback import FeedbackAdapter, FeedbackEvidence, FeedbackLearningService
 from ..feedback import WorkingMemoryPolicy
@@ -24,10 +27,14 @@ FeedbackLearningHarness = FeedbackLearningService
 
 class DefaultFeedbackAdapter:
     """Translate the built-in execution ledger; the learning service is agnostic."""
-    def __init__(self, harness, model=None, working_memory_policy=None):
-        if model is not None and model != harness.policy.model:
-            raise ValueError('Feedback must use the active meta-agent model')
+    def __init__(self, harness, model=None, working_memory_policy=None, model_provider=None):
+        if model_provider is not None and not callable(model_provider):
+            raise TypeError('model_provider must be callable')
         self.harness = harness
+        self._model_provider = model_provider
+        current = self.model()
+        if model is not None and model != current:
+            raise ValueError('Feedback must use the active meta-agent model')
         self.working_memory_policy = (WorkingMemoryPolicy() if working_memory_policy is None
                                       else working_memory_policy)
         if not isinstance(self.working_memory_policy, WorkingMemoryPolicy):
@@ -40,7 +47,12 @@ class DefaultFeedbackAdapter:
     def model(self):
         # Resolve for each new capture; an install-time argument must not pin
         # this role to old weights after the meta-agent changes model version.
-        return self.harness.policy.model
+        active = self.harness.current_model()
+        if not isinstance(active, ModelRef):
+            raise ValueError('Feedback requires an explicit host meta-agent model binding or model_provider')
+        if self._model_provider is not None and self._model_provider() != active:
+            raise ValueError('Feedback must use the active meta-agent model')
+        return active
 
     def evidence(self, directive, feedback):
         return FeedbackEvidence(self.memory.history(), tuple(self.state.candidate_evaluations.values()),
@@ -63,7 +75,7 @@ class DefaultFeedbackAdapter:
         self.harness.add_context_processor(self.project_context)
         self.harness.add_cleanup(service.close)
         self.harness.add_receipt_listener(self._receive_operation)
-        self.harness.feedback_proposal_resolver = service.resolve_harness_proposals
+        self.harness.feedback_proposal_resolver = service.resolve_improvement_proposals
         # Read-only compatibility/navigation used by monitor and existing callers.
         self.harness.feedback_learning = service.learning
         self.harness.feedback_service = service
@@ -76,6 +88,17 @@ class DefaultFeedbackAdapter:
         # feedback about reading feedback, including denied reads.
         if not receipt.read_only and receipt.request.get('name') != READ_SPEC.name:
             return self.service.observe(receipt, evidence=self.receipt_evidence(receipt))
+        # Raw queries belong to the trajectory; reading feedback must not
+        # recursively invoke a model to interpret that read.
+        if self.service.learning.trajectory_archive is not None:
+            origin = self.state.decision_records.get(receipt.decision_id, {})
+            # Archive this action, not another copy of its entire Attempt or
+            # grouping catalog. Queries never become background memory jobs.
+            return self.service.archive(receipt, evidence=FeedbackEvidence(self.memory.history(),
+                research_context={'decision_id': receipt.decision_id,
+                    'research_attempt_id': origin.get('research_attempt_id'),
+                    'feedback_proposal_ids': list(origin.get('feedback_proposal_ids', ())),
+                    'scope': 'single_decision_receipt_archive'}))
 
     def receipt_evidence(self, receipt):
         return FeedbackEvidence(self.memory.history(), tuple(self.state.candidate_evaluations.values()),
@@ -170,7 +193,17 @@ class DefaultFeedbackAdapter:
             'recent': [{'job_id': row['job_id'], 'status': row['status'],
                         'research_attempt_id': row['input'].get('research_context', {}).get('research_attempt_id'),
                         'kinds': [p['kind'] for p in row['proposals']],
+                        'context_delivery': deepcopy(row.get('context_delivery')),
+                        'archive_delivery': {key: deepcopy(value) for key, value in
+                            row.get('archive_delivery', {}).items() if key in ('status', 'error')},
+                        'publication_delivery': deepcopy(row.get('publication_delivery')),
                         'products': deepcopy(row.get('products', {}))} for row in jobs[-6:]]}
+        navigation['scheduler_error'] = self.service.learning.state.get('scheduler_error')
+        navigation['context_error'] = deepcopy(self.service.learning.state.get('context_error'))
+        outputs = self.service.outputs()
+        navigation['product_outputs'] = {'total': len(outputs),
+            'recent': [{key: deepcopy(row[key]) for key in
+                       ('event_id', 'product', 'authority', 'applied', 'read_path')} for row in outputs[-6:]]}
         proposals = self.service.proposals()
         navigation['harness_proposals'] = {'total': len(proposals),
             'read_path': {'operation': 'feedback_learning_read', 'view': 'proposals', 'target': 'harness'},
@@ -178,13 +211,26 @@ class DefaultFeedbackAdapter:
             'recent': [{'proposal_id': p['proposal_id'], 'subject': p['subject'],
                 'content_preview': p['proposal']['content'][:200], 'read_path': p['read_path'],
                 'decision_links': p['decision_links'][-4:], 'applied': False} for p in proposals[-6:]]}
+        improvements = [p for p in self.service.proposals(target=None)
+                        if p['kind'] in ('harness_change', 'policy_training')]
+        navigation['improvement_proposals'] = {'total': len(improvements),
+            'read_path': {'operation': 'feedback_learning_read', 'view': 'proposals'},
+            'decision_owner': 'main_meta_agent_decision', 'dataset_construction_owner': 'lab',
+            'recent': [{'proposal_id': p['proposal_id'], 'kind': p['kind'], 'subject': p['subject'],
+                'content_preview': p['proposal']['content'][:200], 'read_path': p['read_path'],
+                'decision_links': p['decision_links'][-4:], 'applied': False} for p in improvements[-6:]]}
         context = replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
         active = {r['decision_id'] for r in context.decision_graph
                   if r['status'] not in ('completed', 'failed', 'cancelled')}
-        knowledge = self.service.working_memory(active_decision_ids=active,
-                                                policy=self.working_memory_policy)
-        view = research_working_view(context, jobs, self.attempt_interpretations()['items'], knowledge=knowledge)
+        memory_context = self.service.context(ContextQuery(objective=context.objective),
+            active_decision_ids=active, policy=self.working_memory_policy)
+        navigation['context_error'] = deepcopy(self.service.learning.state.get('context_error'))
+        # Memory organization is opaque text. Host evidence/dependency projection
+        # stays separate, so providers cannot overwrite live protection metadata.
+        view = research_working_view(context, jobs, (), knowledge={})
+        view = replace(view, memory_context=memory_context)
         self.harness.last_working_view = deepcopy({'research_state': view.research_state,
+            'memory_context': memory_context,
             'projection': view.research_agenda['working_projection'],
             'scope': 'last assembled view before token-budget compaction',
             'history_records_before': len(context.history), 'history_records_after': len(view.history),
@@ -197,9 +243,10 @@ READ_SPEC = OperationSpec('feedback_learning_read',
     'decisions, execution and feedback; they are not training-ready datasets. '
     'Context/memory organization is active via a replaceable provider; read /context_memory. '
     'Trajectory archival defaults on but may be disabled/replaced; check trajectory.enabled before /trajectory. '
-    'Read /trajectory_segment to extract captured public material without generating training targets. '
-    'Harness proposals can be referenced by feedback_proposal_ids in a later ordinary decision; '
-    'feedback does not construct or activate them. '
+    'Read /trajectory_snapshot for an immutable raw capture; /trajectory_segment is the legacy combined view. '
+    'Dataset construction, filtering, labeling and policy training belong to an explicitly configured Lab. '
+    'Harness and policy_training task proposals can be referenced by feedback_proposal_ids in a later ordinary decision; '
+    'feedback does not construct datasets, train or activate changes. '
     'Proposal targets are context_memory, harness, weights '
     '(legacy system changes stay separate). Attempt views return latest revisions; proposals stay unverified. '
     'These are unverified proposals, never applied changes or training-ready examples. '
@@ -207,6 +254,7 @@ READ_SPEC = OperationSpec('feedback_learning_read',
     'With job_id and evidence_path (JSON pointer, empty for root), read original evidence '
     'in JSON-text pages; offset counts characters and each limit unit is 128 characters. '
     '/proposals and /attempt_revisions address interpretation output, not captured evidence. '
+    '/outputs and /output read native product payloads; product fields are not host state or execution authority. '
     '/feedback_request and /feedback_response read the recorded feedback model exchange when available. '
     'Knowledge views also return JSON-text pages; pass sha256 as expected_digest on subsequent pages.',
     {'type': 'object', 'properties': {
@@ -319,7 +367,7 @@ def feedback_learning_decision_factory(*, decision_factory=None, backend=None, m
     return build
 
 
-def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None,
+def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None, model_provider=None,
                              working_memory_policy=None, **options):
     """Attach once before execution, retaining harness and compactor identities.
 
@@ -327,7 +375,7 @@ def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, 
     host's shared admission/budget when that deployment has a global call limit.
     Custom harnesses supply a FeedbackAdapter with lifecycle/context integration.
     """
-    from .policy import ModelDecisionPolicy
+    from ..feedback.stages import FeedbackStageBinding
     base = base_loop.harness
     if getattr(base_loop, 'feedback_service', None) is not None:
         raise ValueError('Feedback learning is already installed')
@@ -339,22 +387,34 @@ def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, 
         pristine.operation_results = list(base.state.operation_results)
         if base.state != pristine:
             raise ValueError('Install feedback learning before the first decision')
-        adapter = DefaultFeedbackAdapter(base, model=model, working_memory_policy=working_memory_policy)
+        adapter = DefaultFeedbackAdapter(base, model=model, working_memory_policy=working_memory_policy,
+                                         model_provider=model_provider)
     elif working_memory_policy is not None:
         raise ValueError('Custom adapters select their own working memory policy')
-    for method in ('model', 'evidence', 'publish', 'decision_ids', 'install'):
+    elif model_provider is not None:
+        raise ValueError('Custom feedback adapters supply their own model provider')
+    for method in ('model', 'install'):
         if not callable(getattr(adapter, method, None)):
             raise TypeError('FeedbackAdapter requires ' + method)
+    if not isinstance(adapter.model(), ModelRef):
+        raise TypeError('Feedback adapter model() must return the current ModelRef')
     policy = getattr(base, 'policy', None)
-    if backend is None or (isinstance(policy, ModelDecisionPolicy) and backend is policy.backend):
-        # Shared stateless backend is a convenience of this adapter, not a service requirement.
-        if not isinstance(policy, ModelDecisionPolicy):
+    processor = options.get('processor')
+    requires_model = processor is None or FeedbackStageBinding(processor).max_calls > 0
+    share = optional_method(policy, 'share_backend')
+
+    def serialized(value):
+        return value if isinstance(value, SerializedLearningBackend) else SerializedLearningBackend(value)
+
+    if backend is None and requires_model:
+        if share is None:
             raise ValueError('Session/custom policies require an explicit feedback backend')
-        shared = (policy.backend if isinstance(policy.backend, SerializedLearningBackend)
-                  else SerializedLearningBackend(policy.backend))
-        backend = shared
-        policy.backend = shared
-    backend = backend if isinstance(backend, SerializedLearningBackend) else SerializedLearningBackend(backend)
+        backend = share(serialized)
+    elif backend is not None and share is not None and backend is getattr(policy, 'backend', None):
+        backend = share(serialized)
+    if requires_model and not callable(getattr(backend, 'generate', None)):
+        raise ValueError('Feedback inference requires a model backend')
+    backend = serialized(backend) if backend is not None else None
     learning = FeedbackLearning(backend, path=path, **options)
     service = FeedbackLearningService(learning, adapter)
     if isinstance(adapter, DefaultFeedbackAdapter):

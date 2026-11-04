@@ -26,6 +26,7 @@ else:
                           WorkerActivator, WorkerEvaluator, WorkerTrainer)
 
 from rsisys.experience.retrieval import BasicExperienceSystem
+from rsisys.assembly import AssemblyContext, ModuleAssembly, assemble_runner
 from rsisys.experience.sqlite import SQLiteExperienceStore
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
@@ -52,7 +53,7 @@ from rsisys.loops.exploration.loop import ExplorationLoop
 from rsisys.runtime.artifacts import FileArtifactStore
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.provenance import RunSource
-from rsisys.runtime.runner import Runner
+from rsisys.runtime.sandbox import MockSandboxBackend
 from rsisys.runtime.run_policy import GoalRunPolicy, MetricGoal, ResearcherRunPolicy, TimeRunPolicy
 
 
@@ -273,6 +274,7 @@ def run(args):
     lock = root / '.controller.lock'
     lock_fd = lock.open('x')
     store = None
+    context = None
     try:
         atomic_write(root / 'run.json', json_bytes({**source.to_dict(), 'objective': OBJECTIVE}))
         deadline = Deadline(args.timeout)
@@ -323,8 +325,14 @@ def run(args):
                                         review_hint=args.review_after_seconds)
         decision = DefaultDecisionHarness(policy, BoundDecisionTools(bindings), experience,
             memory=memory, research_agenda=agenda, memory_limit=16, experience_limit=16)
-        runner = Runner(DecisionMakingLoop(decision, space), exploration_loop,
-                        run_policy=make_run_policy(args), cleanup_timeout_seconds=30)
+        context = AssemblyContext(experience, environment.artifacts, {base.backend_id: models},
+            MockSandboxBackend(), {'decision_maker': base, 'actor': base}, data_dir=root,
+            exploration_directives=catalog, action_permissions=permissions)
+        context.add_cleanup(environment.close)
+        runner = assemble_runner(context, modules=ModuleAssembly(
+            decision_factory=lambda ctx, lab: DecisionMakingLoop(decision, space),
+            exploration_factory=lambda ctx: exploration_loop),
+            run_policy=make_run_policy(args), cleanup_timeout_seconds=30)
         status, error_code, remote_may_run = 'running', None, False
         run_stop = None
         monitor.data['run_mode'] = args.run_mode
@@ -490,10 +498,15 @@ def run(args):
         monitor.stage(result['phase'], status=status)
         return result
     finally:
-        if store is not None:
-            store.close()
-        lock_fd.close()
-        lock.unlink()
+        try:
+            if context is not None:
+                context.close()
+        finally:
+            if context is None or not context.cleanup_pending:
+                if store is not None:
+                    store.close()
+                lock_fd.close()
+                lock.unlink()
 
 
 def parse_args(argv=None):

@@ -1,6 +1,6 @@
 """Invalid model-selected evidence paths are observations, not fatal loop errors."""
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import replace
 import json
 import unittest
 from unittest.mock import Mock
@@ -38,8 +38,8 @@ class EvidencePathRecoveryTests(unittest.TestCase):
         raw, provider, memory, experience = fixture(count=0)
         original = OperationResult('Training page', (), False, data={'rows': [{'id': 'row-zero'}]})
         memory.append(HistoryEntry('preview', 'operation', None, original.summary, False,
-                                   details={'result': asdict(original)}))
-        args = {'collection': 'operation_results', 'record_id': result_id(asdict(original)),
+                                   details={'result': original.payload()}))
+        args = {'collection': 'operation_results', 'record_id': result_id(original.payload()),
                 'evidence_path': '/data/rows/0', 'limit': 1}
         policy = Mock()
         policy.decide.side_effect = [Decision('invoke', operation=OperationCall('research_archive', args)),
@@ -56,14 +56,14 @@ class EvidencePathRecoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(second.operation_result.data['items'][0]['text']), {'id': 'row-zero'})
         receipts = memory.history(kind='operation')[-2:]
         self.assertEqual([r.details['result']['status'] for r in receipts], ['failed', 'completed'])
-        self.assertEqual(memory.history(kind='operation')[2].details['result'], asdict(original))
+        self.assertEqual(memory.history(kind='operation')[2].details['result'], original.payload())
 
     def test_projected_tool_card_has_exact_receipt_root_and_rejects_missing_elements(self):
         raw, provider, memory, _ = fixture(count=0)
         result = OperationResult('Training page', (), False,
             data={'rows': [{'id': str(i), 'text': 'bulk ' * 100} for i in range(32)]})
         memory.append(HistoryEntry('oversized', 'operation', None, result.summary, False,
-                                   details={'result': asdict(result)}))
+                                   details={'result': result.payload()}))
         view = bounded_evidence_view(replace(raw, history=memory.history(), operation_results=(result,)))
         path = view.operation_results[0].data['evidence_card']['read_path']
         self.assertEqual(path['evidence_path'], '/result')

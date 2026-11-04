@@ -97,8 +97,10 @@ class FeedbackComponentTests(unittest.TestCase):
                                      context_memory=ExternalContext(), trajectory_archive=None)
             loop.feedback_service.observe(observation())
             context = loop.harness._context('objective', loop.action_space)
-            self.assertEqual(context.research_state['provider'], 'external')
-            self.assertEqual(context.research_state['observed_jobs'], 1)
+            view = json.loads(context.memory_context)
+            self.assertEqual(view['provider'], 'external')
+            self.assertEqual(view['observed_jobs'], 1)
+            self.assertNotIn('observed_jobs', context.research_state)
 
     def test_disabled_trajectory_does_not_disable_context_or_delete_execution_evidence(self):
         service, harness, backend = self.install(trajectory_archive=None)
@@ -137,6 +139,7 @@ class FeedbackComponentTests(unittest.TestCase):
         service, harness, _ = self.install(backend=Backend(), context_memory=provider)
         ident = service.observe(observation())
         service.learning.poll()
+        service.learning.poll(dispatch=False)
         row = service.learning.state['jobs'][ident]
         row['proposals'][0]['source_refs'] = ['unknown']
         service.refresh()
@@ -158,10 +161,13 @@ class FeedbackComponentTests(unittest.TestCase):
 
         service, harness, backend = self.install(context_memory=FlakyContext())
         ident = service.observe(observation())
-        with self.assertRaisesRegex(RuntimeError, 'store unavailable'):
-            service.refresh()
+        service.refresh()
         self.assertEqual(service.learning.state['jobs'][ident]['status'], 'completed')
         self.assertFalse(service.learning.state['jobs'][ident].get('published', False))
+        self.assertEqual(service.learning.state['jobs'][ident]['publication_delivery']['status'], 'failed')
+        service.refresh()
+        self.assertFalse(service.learning.state['jobs'][ident].get('published', False))
+        service.retry_publication(ident)
         service.refresh()
         self.assertTrue(service.learning.state['jobs'][ident]['published'])
         self.assertEqual(len(backend.requests), 1)

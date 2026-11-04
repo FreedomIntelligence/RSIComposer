@@ -4,6 +4,12 @@
 
 ## 接口
 
+通用策略协议位于 [contracts/decision.py](../../../contracts/decision.py)：
+`decide(DecisionInput) -> Decision`，输入为目标、context 文本、能力描述和可选引用。
+使用 [ContextDecisionPolicy](../../../../adapters/decision.py) 接入默认 harness，
+可以是普通函数，也可以使用自己的 prompt、原生 tool calling 和 SDK。
+默认 `DecisionContext` 及下文的字段属于内置实现；第三方策略无须照搬其组织方式。
+
 [DecisionPolicy](__init__.py) 的同步接口 `decide(context: DecisionContext) → Decision` 接收目标、全部来源的 experience、自身 history 和 memories、操作定义、当前准备结果、最新反馈、directive_modes 和跨轮 candidates。默认 Harness 的 `experience_limit=32` 限制系统证据条数，`memory_limit=32` 限制工作记忆 recall 条数，本地 history 由 token 预算管理，两者必须为正整数；候选集合不受这两个 limit 截断。scope 仅标记证据来源，不是优化目标接口。
 
 [Decision](../decision.py) 的 invoke / explore / wait 分别只能携带 operation / directive / job；finish 不携带这三项。四种决策都可附顶层 `reason` 字符串，省略时保留既有空字符串默认值；显式提供 null、数字、布尔、数组或对象均拒绝。wait 的任务由外部通过 `loop.harness.resume(job, result)` 回填，见 [Harness](../README.md)。
@@ -31,6 +37,12 @@
 复查异步 job 的提交回执独立保存在对应 ledger 记录中，不占用主 `pending_job`，也不阻止后续普通决策或替换当前实验。提交仅标记 pending；只有显式 `resume(job, result, decision_id=...)` 完成后才能满足依赖或确认采纳。无歧义的独立 review job 可以省略 decision_id；同一 JobRef 对应多个 review 决策时必须显式指定。主 pending job 的既有无关键字 resume 语义不变，无后台轮询或额外 Runner 调度。
 
 ## 实现与替换
+
+开放式 Lab 通过 `lab_factory` 把原生工具描述传入 policy 的 operations；
+directive_modes 为空时仍能通过 invoke 编写、修改、执行研究代码。
+内置 research / decision prompt 明确允许在已授予权限内修改 SFT、RL、evaluate 实现；
+不同评测协议的分数不能直接比较，host 的目标与验收权限不由模型改写。
+见 [M04 接线与验证](../../../../../../docs/review/open-lab-execution-20261104.md)。
 
 通用模型提示文本通过 [DecisionPrompts](prompts.py) 装配。九个内置 [prompts](prompts)
 分别包含 research、decision、review、summary、control、scheduling、可选/必需 Attempt 与
@@ -89,4 +101,9 @@ explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`Model
 
 `context_compactor` 默认使用 80k→24k 的 `BasicContextCompactor`，在最终决策/review请求构造后
 计量，包含协议和能力定义。摘要调用也经过 backend 并记录 usage；最新完整工具结果不被删除。
-DefaultDecisionHarness 注入同一实例，避免双重压缩；DSH 使用 Identity，由原生会话管理上下文。
+`context_scope(...)` 在一次调用中选择显式配置的 policy compactor，否则使用 harness 默认；
+不覆盖配置对象，不在 harness 预先重复压缩，`recent_limit` 与宿主 memory_limit 一致。
+DSH 使用 Identity，由原生会话管理上下文。
+`track_usage(...)` 让宿主观察每份响应，透明包装转发该方法后保留相同计数。
+`share_backend(wrap)` 显式更新实际持有的 backend，供可选反馈共享串行模型窗口；
+这些能力都不属于最小 decide 接口。独立配置的压缩器需要显式 snapshot/recovery 适配。

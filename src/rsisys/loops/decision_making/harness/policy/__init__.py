@@ -52,7 +52,9 @@ class ModelDecisionPolicy:
         self.backend, self.model = backend, model
         self.allowed_actions = allowed_actions
         self.directives = directives if directives is not None else DirectiveDefinitions()
-        self.context_compactor = context_compactor if context_compactor is not None else BasicContextCompactor()
+        self._context_compactor = context_compactor if context_compactor is not None else BasicContextCompactor()
+        self._explicit_compactor = context_compactor is not None
+        self._context_runtime = None
         self.context_token_count_mode = "unmeasured"
         self._usage_recorder = None
         if project_context is not None and not isinstance(project_context, dict):
@@ -66,6 +68,32 @@ class ModelDecisionPolicy:
     def project_context(self):
         """Host-owned configuration; callers cannot mutate a live run through a reference."""
         return json.loads(self._project_context_json)
+
+    @property
+    def context_compactor(self):
+        return self._context_compactor
+
+    @context_compactor.setter
+    def context_compactor(self, value):
+        if not callable(getattr(value, 'compact', None)):
+            raise TypeError('context_compactor requires compact(context, recent_limit=...)')
+        self._context_compactor, self._explicit_compactor = value, True
+
+    @contextmanager
+    def context_scope(self, compactor, *, recent_limit):
+        """Own final-request projection without overwriting configured objects."""
+        previous = self._context_runtime
+        selected = self.context_compactor if self._explicit_compactor else compactor
+        self._context_runtime = selected, recent_limit
+        try:
+            yield
+        finally:
+            self._context_runtime = previous
+
+    def share_backend(self, wrap):
+        """Explicitly share a stateless dependency; wrappers may forward this."""
+        self.backend = wrap(self.backend)
+        return self.backend
 
     def _research_instructions(self):
         return self.prompts.render('research') + ' '
@@ -89,7 +117,7 @@ class ModelDecisionPolicy:
                 for name in ('depends_on_decision_ids', 'source_decision_ids')}}
             properties['feedback_proposal_ids'] = {'type': 'array', 'maxItems': 16, 'uniqueItems': True,
                 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512},
-                'description': 'Optional harness proposal IDs selected from feedback; not proof of application.'}
+                'description': 'Optional harness or policy-training proposal IDs selected from feedback; not proof of execution or adoption.'}
         return {'type': 'object', 'properties': {**properties, 'reason': {'type': 'string'}},
                 'required': list(required), 'additionalProperties': False}
 
@@ -295,15 +323,16 @@ class ModelDecisionPolicy:
         from ..context import with_working_decision_graph
         # Prompt selection must never shrink the context used by the parser.
         context = with_working_decision_graph(working_ledger_context(context))
-        compactor = self.context_compactor
+        compactor, recent_limit = (self._context_runtime if self._context_runtime is not None
+                                  else (self.context_compactor, 32))
         if isinstance(compactor, BasicContextCompactor):
-            projected = compactor.compact(context,
+            projected = compactor.compact(context, recent_limit=recent_limit,
                 measure=lambda view: self._count_request(build(view)),
                 summarize=lambda records, previous, limit: self._summarize_context(
                     records, previous, limit, current_state=self._summary_current_state(context)))
             compactor.last_measurement['count_method'] = self.context_token_count_mode
         else:
-            projected = compactor.compact(context)
+            projected = compactor.compact(context, recent_limit=recent_limit)
         return self.backend.generate(build(projected))
 
     def _generate_decision(self, context):

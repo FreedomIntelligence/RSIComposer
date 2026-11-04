@@ -78,7 +78,7 @@ class HarnessCompositionTests(unittest.TestCase):
         actor_actions.validate = Mock(side_effect=AssertionError('System instruction is not an Actor action'))
         runner = Runner(DecisionMakingLoop(decision, decision_actions), ExplorationLoop(execution, actor_actions))
         self.assertEqual(runner.run('task', 1).status, 'completed')
-        self.assertIs(decision.seen_space, decision_actions)
+        self.assertIs(decision.seen_space.source, decision_actions)
         self.assertIs(execution.seen_space, actor_actions)
         self.assertEqual(execution.acknowledged, directive.directive_id)
         self.assertFalse(hasattr(decision, 'memory'))

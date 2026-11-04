@@ -93,7 +93,7 @@ src/rsisys/
 
 `src/rsimonitor/` 与 `src/rsisys/` 并列，包含监控 API 与前端资源，通过公开快照读取实验，不依赖双 loop 的内部实现。
 
-`examples/medical/` 位于源码包外，独立组合任务、固定评测协议、两个 Harness 与 Runner。
+`examples/medical/` 位于源码包外，通过统一装配入口组合领域任务、固定评测协议、两个 Harness 与 Runner。
 它使用共享端口和 adapters，不向核心注入医学数据集、验收阈值或训练配方。
 `native.py` 显式包装原始数据、tokenize 回调与进程训练，并保留转化证据；MedicalServing 在评测前
 准备独立候选路由。装配可替换 evaluator_factory 或注入 prepare_inference；默认评测 poll 每次
@@ -106,8 +106,9 @@ Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](sr
 默认长程上下文、研究议程与可选 DSH 的配置见[默认长程研究能力](#默认长程研究能力)和[使用 DSH Harness](#使用-dsh-harness)。
 
 研究任务通过 `research.py` 的 `ResearchAssembly / assemble_research` 组合必需的
-context/memory、默认轨迹提取与可选 harness 提案。主 meta-agent
-在正式 decision 中引用提案并选择构建/验证，回执继续进入反馈；装配入口、workflow 和
+context/memory、默认原始轨迹归档与可选改进提案。真实结果先直接交付 decision，memory 后续整理。
+数据构建与 decision-policy 训练通过改进 Lab 的可替换能力执行；主 meta-agent
+在正式 decision 中引用提案并选择构建/训练/验证，回执继续进入反馈；装配入口、workflow 和
 当前验收边界见[Feedback 链路](docs/review/feedback-workflow.md)。
 
 `runtime/recovery.py` 保存运行中协同状态；空闲 `snapshot/` 负责独立可移交快照。前者在同一工作目录继续，后者恢复到新目录。运行恢复按意图 / 回执边界处理，中断且结果不明时要求核对，不假设所有外部副作用都可重放。默认仅串行内置组合，外部组件显式实现恢复契约。
@@ -289,6 +290,51 @@ with Application(config, action_permissions=ActionPermissions.unrestricted()) as
 显式/provider 能力装配和参数级检查见 [Action Space](src/rsisys/loops/decision_making/action_space/README.md)。整体替换 Harness 时，应在操作执行前复用 authorized_space 或提供等效权限检查。
 
 ### 使用 Python 接入组件
+
+统一装配配置使用 `ModuleAssembly`，Application、demo、医疗和 Qwen 的循环构造都经过
+`assemble_runner`。旧工厂关键字继续兼容；不能与 `modules=` 同时传入，以免覆盖配置。
+
+```python
+from rsisys.application import Application
+from rsisys.assembly import ModuleAssembly
+from rsisys.research import ResearchAssembly
+
+modules = ModuleAssembly(lab_factory=make_lab, research=ResearchAssembly())
+with Application(config, modules=modules) as app:
+    app.run()
+```
+
+需要跨进程恢复时，通过 `state_factory(context, decision, exploration)` 注册具备
+`state_id / capture() / restore(state)` 的组件适配器；默认要求覆盖 decision、exploration、
+已启用的 lab_execution 和 feedback。它们自行管理内部状态格式与依赖，host 不读取插件私有字段。
+同一接口也支持空闲快照，但需额外声明并实现 `validate_snapshot()`。
+完整接入方式、支持范围和验证见[统一装配与组件状态](docs/review/unified-module-assembly-20261104.md)。
+
+开放代码任务使用新的 `lab_factory(context)` 入口：
+
+```python
+from rsisys.adapters.local_lab import LocalProcessLab
+from rsisys.application import Application
+from rsisys.research import ResearchAssembly
+
+# config.execution='local_process'；roles 只需 decision_maker。
+# 模型后端和本机已安装环境由操作者配置。
+def lab_factory(context):
+    return LocalProcessLab(context.sandbox, context.artifacts)
+
+with Application(config, lab_factory=lab_factory, research=ResearchAssembly()) as app:
+    app.run(max_decision_steps=32)
+```
+
+Lab 只需实现 `describe() -> OperationSpec[]` 与 `execute(OperationCall)`。
+默认 decision 直接读取 Lab 工具，模型可以改写 SFT、RL、evaluate 的程序实现，
+无需注册固定研究动作类型。持有后台工作时，Lab 可提供 `shutdown(mode)->bool` 和 `close()`，
+由 host 确认退出并清理。上例本地进程没有 OS 隔离；正式资源、数据权限和训练准入由 executor 落实。
+`run()` 的步数只限制本次调用；后台工作应持续通过 `step()` 驱动至终态，关闭 Application 时取消其 owned 工作。
+CPU 示例：`PYTHONPATH=src python examples/open_lab.py`。
+完整接口、后台任务、反馈交付与恢复边界见 [M04 实现说明](docs/review/open-lab-execution-20261104.md)。
+
+未传入 `lab_factory` 时，保留下面的旧 exploration 装配方式。
 
 [Application](src/rsisys/application.py) 和 [build_demo](src/rsisys/config.py) 接受可选的 `exploration_factory(context)` 与 `decision_factory(context, exploration)`，分别返回 ExplorationLoop 与 DecisionMakingLoop。先构造 exploration，再构造 decision；未传入的一侧使用 [assembly.py](src/rsisys/assembly.py) 的 `build_default_exploration` / `build_default_decision`，也可在自定义工厂内直接调用这两个函数。默认 decision 的 allowed_actions 从已构造的 exploration.action_space 读取；directive_modes 根据实际未被覆盖的内置 command handlers，以及 learner/evaluator、模型和 rollout 能力推导，不从 with_learning 猜测。
 
@@ -604,6 +650,12 @@ Application 若使用 durable，必须提供显式 recovery_contract，内置 sn
 基础 `Application(config)` / `build_demo(config)` 保留底层循环构建行为，不自动安装研究组件。
 本次未迁移默认 Runner 的跨 Lab 调度；完整 workflow 见[装配文档](docs/review/feedback-workflow.md)。
 
+可替换组件的公开协议见[模块窗口与运行边界](docs/review/feedback-module-windows-20261104.md)：
+context 输出文本，归档使用 write(event)/read(reference)，处理器与提案返回原生产物，
+调度器只选择公开待处理事件。旧 Journal/LangMem 协议经适配器保留，不是新插件的必需方法。
+产品状态和计费由 host 维护；独立提案不因 memory 处理失败跳过，旧 Memory 发布故障默认单独记录。
+ResearchAssembly 配置版本为 4；恢复明确核对组件、依赖和故障策略。
+
 ### 底层反馈接口与兼容路径
 
 以下底层入口及组合解释 prompt 保留给旧调用方；新研究任务使用上一节的统一入口。
@@ -664,8 +716,11 @@ Decision 仍说明具体行动、参数与验证计划，不必填写归属。�
 证据不足的记录可以暂未归组。模型总结不证明实验成功、采纳或事前假设；
 没有开启反馈学习时不自动归组，旧显式归属仍兼容，历史记录不会自动补写。
 
-启用反馈学习时，`research_state` 将最新 Attempt 解释、带适用条件的发现及学习异常
-组织成下一次决策的工作前缀。独立反馈模块派生知识视图，默认限制编码后 12KB；
+启用反馈学习时，memory provider 通过 `context(query) -> str` 提供下一次决策的
+`memory_context` 文本，更新时替换当前视图；`research_state` 保留宿主的证据与依赖保护元数据。
+新组件也可直接使用函数，SDK 可通过 `CallbackContextMemory` 接入可选反馈通知；
+三方法与内部 Memory 发布只在兼容适配器中保留。详见 [Context / Memory 接入窗口](docs/review/feedback-context-window-20261104.md)。
+内置 journal 将最新 Attempt 解释、带适用条件的发现及学习异常编码为知识视图，默认限制编码后 12KB；
 同一 Attempt 不重复注入旧 job 长文，完整成员/来源和旧版本按需读取。
 Harness 在具备 archive 入口时也选择候选/评测/来源窗口，执行校验仍使用完整账本。
 固定项目约束仍由宿主维护；当前模型、候选、预算和

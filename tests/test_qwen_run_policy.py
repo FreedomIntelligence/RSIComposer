@@ -17,7 +17,7 @@ from test_qwen_toy import Services, servers
 from examples.qwen_toy import run as controller
 from examples.qwen_toy.adapters import PROTOCOL
 from rsisys.runtime.run_policy import GoalRunPolicy, ResearcherRunPolicy, TimeRunPolicy
-from rsisys.runtime.runner import Runner
+from rsisys.assembly import AssemblyRunner, assemble_runner
 
 
 class QwenRunPolicyTests(unittest.TestCase):
@@ -32,10 +32,12 @@ class QwenRunPolicyTests(unittest.TestCase):
             clock.sleeps.append(seconds)
             clock.now += seconds
 
-        def runner_factory(*args, **kwargs):
+        def runner_factory(context, **kwargs):
             self.assertEqual(kwargs['cleanup_timeout_seconds'], 30)
             clock.policies.append(kwargs['run_policy'])
-            runner = Runner(*args, **kwargs, clock=lambda: clock.now)
+            runner = assemble_runner(context, **kwargs)
+            self.assertIsInstance(runner, AssemblyRunner)
+            runner._clock = lambda: clock.now
             step = runner.step
 
             def recorded_step(objective):
@@ -57,7 +59,7 @@ class QwenRunPolicyTests(unittest.TestCase):
                 '--restart-delay-seconds', '0.01', '--max-trainings', '1', *extra])
             # Only controller sleep and Runner elapsed time are virtual. HTTP and
             # the hard service deadline retain real clocks and real loopback I/O.
-            with patch.object(controller, 'Runner', side_effect=runner_factory), patch.object(
+            with patch.object(controller, 'assemble_runner', side_effect=runner_factory), patch.object(
                     controller, 'time', SimpleNamespace(monotonic=time.monotonic, sleep=sleep)), \
                     redirect_stdout(io.StringIO()):
                 result = controller.run(args)

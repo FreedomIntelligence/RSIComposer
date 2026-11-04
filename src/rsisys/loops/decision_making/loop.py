@@ -3,7 +3,7 @@ from .action_space import DecisionActionSpace
 from .action_space.access import authorized_space
 from .harness import DecisionHarness
 from .harness.decision import DecisionRunResult
-from rsisys.loops.contracts.coordination import ReviewDecision
+from rsisys.loops.contracts.coordination import ReviewDecision, LoopStepResult
 from rsisys.loops.contracts.jobs import JobRef
 
 
@@ -12,10 +12,22 @@ class DecisionMakingLoop:
         self.harness, self.action_space = harness, action_space
 
     def step(self, objective: str):
-        return self.harness.step(objective, self.action_space)
+        space = authorized_space(self.action_space, 'decision')
+        return self._step(objective, space)
+
+    def _step(self, objective, space):
+        result = self.harness.step(objective, space)
+        if not isinstance(result, LoopStepResult):
+            raise TypeError('Decision harness step must return LoopStepResult')
+        result.__post_init__()
+        if result.kind == 'dispatch':
+            # A plugin's internal checks never replace host admission. Recheck
+            # the current permission even if it skipped validation itself.
+            space.validate_directive(result.directive)
+        return result
 
     def step_guarded(self, objective, before_action):
-        return self.harness.step(objective, _GuardedActionSpace(
+        return self._step(objective, _GuardedActionSpace(
             authorized_space(self.action_space, 'decision'), before_action))
 
     def review_guarded(self, objective, progress, before_action):
@@ -26,7 +38,7 @@ class DecisionMakingLoop:
         else:
             result = self.review(objective, progress)
         before_action()
-        return result
+        return self._review_result(result)
 
     def pending_records(self):
         pending = getattr(self.harness, 'pending_records', None)
@@ -96,9 +108,18 @@ class DecisionMakingLoop:
     def review(self, objective, progress):
         with_tools = getattr(self.harness, 'review_with_tools', None)
         if callable(with_tools):
-            return with_tools(objective, progress, self.action_space)
+            result = with_tools(objective, progress, authorized_space(self.action_space, 'review'))
+            return self._review_result(result)
         review = getattr(self.harness, 'review', None)
-        return review(objective, progress) if review is not None else ReviewDecision()
+        result = review(objective, progress) if review is not None else ReviewDecision()
+        return self._review_result(result)
+
+    def _review_result(self, result):
+        if not isinstance(result, ReviewDecision):
+            raise TypeError('Decision harness review must return ReviewDecision')
+        result.__post_init__()
+        self.authorize_review(result)
+        return result
 
     def authorize_review(self, result):
         """Recheck current access immediately before Runner applies a model control."""

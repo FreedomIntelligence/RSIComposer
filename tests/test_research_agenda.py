@@ -1,7 +1,6 @@
 """Model-owned notebook semantics and ordinary capability execution."""
 
 from copy import deepcopy
-from dataclasses import asdict
 from pathlib import Path
 import json
 import tempfile
@@ -179,7 +178,7 @@ class ResearchToolTests(unittest.TestCase):
         experience.record(record)
         result = OperationResult('Long tool response', (), True, data={'raw': 'y' * 6000})
         self.memory.append(HistoryEntry('receipt', 'operation', None, result.summary, True,
-                                        details={'result': asdict(result)}))
+                                        details={'result': result.payload()}))
         raw = DecisionContext('Investigate', (record,), (), (result, OperationResult('Latest', (), False)))
         projected = BasicContextCompactor(trigger_tokens=10000, target_tokens=5000, summary_tokens=500).compact(raw)
         provider = ResearchTools(self.agenda, self.memory, experience=experience)

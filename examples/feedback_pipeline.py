@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 
 from rsisys.config import DemoConfig, build_demo
 from rsisys.loops.contracts.model_service import GenerationResponse
-from rsisys.loops.decision_making.feedback import ModelHarnessProposer
+from rsisys.loops.decision_making.feedback import ModelImprovementProposer
 from rsisys.research import ResearchAssembly, assemble_research
 
 
@@ -43,7 +43,7 @@ class FixtureBackend:
         elif not value['decision_graph']:
             payload = {'kind': 'invoke', 'operation': 'prepare_data', 'arguments': {'text': 'Initial fixture receipt'}}
         else:
-            inbox = value['research_agenda']['feedback_learning']['harness_proposals']['recent']
+            inbox = value['research_agenda']['feedback_learning']['improvement_proposals']['recent']
             if not any(row.get('feedback_proposal_ids') for row in value['decision_graph']):
                 payload = {'kind': 'invoke', 'operation': 'prepare_data',
                     'arguments': {'text': 'Fixture construction output; not an installed harness'},
@@ -61,7 +61,7 @@ def main():
         backend = FixtureBackend()
         loop.harness.policy.backend = backend
         assemble_research(loop, assembly=ResearchAssembly(
-            harness_proposals=ModelHarnessProposer(root / 'proposals')),
+            improvement_proposals=ModelImprovementProposer(root / 'proposals')),
             backend=backend, path=root / 'feedback.json', executor=InlineExecutor(), owner=runner.assembly)
         for _ in range(3):
             loop.step('Exercise feedback product routing')
@@ -72,7 +72,7 @@ def main():
         assert len(linked) == 1 and len(segments) == 2
         assert all(not s['training_ready'] and not s['applied'] for s in segments)
         print(json.dumps({'simulated': True, 'execution_receipts': len(segments),
-            'proposal_linked_decisions': len(linked), 'trajectory_mode': 'extraction_only',
+            'proposal_linked_decisions': len(linked), 'trajectory_mode': 'archive_only',
             'harness_activation_verified': False, 'status': 'fixture_passed'}, indent=2))
 
 

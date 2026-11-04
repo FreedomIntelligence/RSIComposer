@@ -8,6 +8,7 @@ from typing import Protocol
 
 from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.execution import LabInfrastructureError
 from rsisys.loops._memory import HistoryEntry
 from rsisys.experience.records import ExperienceRecord
 from rsisys.runtime.artifacts import ArtifactStore
@@ -52,15 +53,17 @@ def execute_operation(tools, action_space, call: OperationCall, *, simulated=Fal
         outcome = deepcopy(outcome)
     except Exception as exc:
         error = exc
-        outcome = OperationResult('Decision operation failed', (), simulated,
-            ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
+        outcome = (replace(exc.result, simulated=exc.result.simulated or simulated)
+                   if isinstance(exc, LabInfrastructureError) else
+                   OperationResult('Decision operation failed', (), simulated,
+                       ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}'))
     return OperationExecution(call, outcome, clock() - started, simulated, error)
 
 
 def record_operation(pending, memory, experience=None):
     """Write the same frozen receipt on retry; the caller commits its own state afterwards."""
     ident, call, result = pending.record_id, pending.call, pending.result
-    details = {'operation': asdict(call) if call else None, 'result': asdict(result)}
+    details = {'operation': asdict(call) if call else None, 'result': result.payload()}
     if pending.event is not None:
         details.update(event=pending.event, elapsed_seconds=pending.elapsed_seconds)
     memory.append(HistoryEntry(ident, 'operation', pending.task_id, result.summary, result.simulated,

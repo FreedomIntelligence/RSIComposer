@@ -10,6 +10,17 @@
 `BasicContextCompactor()` 与 `ResearchAgenda()`。它们是默认 Harness 的内部组件，
 不扩展 `DecisionHarness` 协议，也不要求外部实现采用固定科研流程。
 
+整个 harness 可按三方法协议替换；其中的策略也可经
+[ContextDecisionPolicy](../../../adapters/decision.py) 单独替换，接收公开的文本窗口。
+旧 `decide(DecisionContext)` 接入保留兼容。默认装配另外保存实际角色的 `model` 身份；
+自定义装配可传入 `model` 或动态 `model_provider`，无需把身份强加为策略算法的必选属性。
+`current_model()` 每次读取当前身份，动态提供者与策略显式声明的模型不一致时拒绝。
+提供者必须返回 ModelRef，身份未知时不退回旧版本。
+
+DecisionMakingLoop 在普通与定时路径均提供授权 Action Space，并在交付 dispatch 或
+review 控制时复核当前权限。替代 harness 不需要复制默认类的权限包装逻辑；
+进程内插件自身仍是受信代码，接口授权不构成进程隔离。
+
 ## Token 预算与完整档案
 
 [BasicContextCompactor](context.py) 默认 `trigger_tokens=80000, target_tokens=24000,
@@ -54,6 +65,16 @@ summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请�
 DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再被原生会话二次压缩。
 无法压缩时另记最小请求计数、保护记录数和各字段序列化字节数，供定位不可缩减的部分。
 
+最终请求处理通过可选 `context_scope(compactor, recent_limit=...)` 声明。
+内置策略显式配置的 compactor 优先，其余使用本次宿主默认；不会覆盖配置属性。
+声明该能力时 harness 不先压缩一次；未声明时由 harness 处理一次输入视图。
+直接策略和透明包装都使用相同规则与 `memory_limit`，作用域在异常后也恢复。
+`track_usage(record)` 同样按可选能力接入，记录每份响应；没有该能力的纯策略可返回最终 usage。
+这些 token 观察不能替代部署后端对全部真实推理调用的准入。
+
+内置 snapshot/durable 支持宿主 compactor；独立的 policy-owned compactor 和自定义
+身份提供者需要显式恢复适配，未适配时拒绝保存，避免静默丢失其配置或状态。
+
 ## 可选的反馈学习与记忆前缀
 
 [feedback_learning_decision_factory](learning_harness.py) 可组合默认、DSH 或自定义 decision_factory。
@@ -62,6 +83,12 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 独立 worker 使用接收时捕获的 Decision
 模型身份整理反馈、相关历史和评测。worker 只返回建议，Runner 所在线程写日志与 memory。
 接线与 CPU fixture 见[使用指南](../../../../../README.md#由-decision-整理实验反馈可选)。
+
+纯 context/memory 组合可以不提供推理 backend，但仍保留宿主的真实模型身份。
+只有选定的 processor 需要推理时才要求 backend；缺能力在安装前明确失败。
+默认适配器每次捕获通过 `current_model()` 解析身份；额外的反馈身份提供者不得与宿主分叉。
+共享后端需策略声明 `share_backend(wrap)`，包装器应转发到实际持有 backend 的对象；
+自带会话或独立 SDK 可以显式配置反馈 backend，无须满足这个可选共享能力。
 
 反馈角色与 meta-agent 共享当前权重、使用独立上下文。context/memory 整理能力
 必须激活，实现可替换；公开研究轨迹归档默认开启、可关闭或替换，harness 修改是可选提案。轨迹转训练材料由后续 skill/规则定义。

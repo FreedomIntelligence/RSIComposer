@@ -1,10 +1,18 @@
 # Snapshot
 
-独立于两个 loop 的状态捕获与恢复；通过 loop.harness 访问内置实现的状态。不同组件实现需要保存的内容可能不同；通用组件快照适配尚未落地，可搬迁空闲快照支持内置 Application；原目录持续研究重启使用独立的 durable 路径。
+独立于两个 loop 的状态捕获与恢复。内置默认组合使用明确的类型校验；替换组件通过显式状态适配器保存各自内部状态。可搬迁快照只接受空闲、可迁移边界；原目录持续研究重启使用 durable 路径。
 
 ## 接口与当前实现
 
 [capture.py](capture.py)、[restore.py](restore.py) 提供协议与抛出 NotImplementedError 的占位类，[storage.py](storage.py) 仅定义清单存取协议。[local.py](local.py) 实现 LocalSnapshotCapture、FileSnapshotStore、load_manifest、restore_snapshot；[manifest.py](manifest.py) 定义清单，[codec.py](codec.py) 仅编解码明确允许的状态类型。
+
+[components.py](components.py) 提供 `component_quiescent` 快照，复用同一校验清单、摘要、原子发布和目标锁所有权检查。
+在 `ModuleAssembly.state_factory` 注册 [ComponentState](../loops/contracts/component_state.py) 后，
+`LocalSnapshotCapture(app)` 自动选择 `AssemblyRecovery`；每个适配器必须额外实现
+`validate_snapshot()`，确认无在途任务、外部副作用已确认、必要私有数据已导出或有稳定可解析引用。
+恢复调用 `restore_snapshot(directory, new_target, modules=原装配)`；恢复不提交工作。
+全组合自定义契约也可显式传入 `LocalSnapshotCapture(app, contract=...)` 与
+`restore_snapshot(..., recovery_contract=...)`，但需实现相同的空闲验证。
 
 协议中的 restore(manifest) 是抽象边界；当前本地入口使用 restore_snapshot(directory, target)，返回恢复后的 Application。操作命令见[使用指南](../../../README.md#使用指南)。
 
@@ -31,16 +39,18 @@ parent_run_id 自动取快照中的直接来源 run_id（例如 run5），不能
 
 配置了 model_activator 的组合也需显式快照集成；内置捕获不会丢弃部署适配器配置后以默认组合恢复。外部产物引用的保存不代表外部内容已被快照备份。
 
-自定义集成需定义空闲边界、状态保存与恢复，以及组件间引用一致性。非默认 RunPolicy 还需显式处理计时基准与剩余预算、研究轮次、已交付 outcomes、重启等待和停止清理状态，以及 goal callable 的重建；保存一个策略名称不足以恢复其运行语义。目前没有通用适配器注册接口；本地捕获显式检查内置组件类型和共享实例关系，恢复则按配置重建内置 Application，只支持内置 Harness 及其内部组件，不能自动恢复自定义组件。整体替换 Harness（包括无 memory 的实现）或替换内部 MemoryStore 都不会自动获得快照支持，需另行实现保存、恢复与引用校验。
+自定义集成需定义空闲边界、状态保存与恢复，以及组件间引用一致性。`state_factory` 返回具名适配器，框架核对完整 inventory、state_id 和可选 configuration 后才恢复；组件自己的内部依赖和格式仍由适配器负责。组件快照保存 Runner 计时、outcomes 和内置 RunPolicy，停机时间计入原预算；自定义 RunPolicy 需再次显式提供并由适配器保存其依赖状态。整体替换 Harness（包括无默认 memory 的实现）无需继承内置类，但不能仅靠存在接口就自动获得恢复支持。
 
-通过工厂参数装配的 Application、自定义 DirectiveDefinitions，以及新增或覆盖 command_handlers 都由内置捕获器在写文件前拒绝；即使工厂返回内置组件，也不能据 JSON 配置推断其重建方式。恢复支持需要单独集成，不会静默还原为默认实现。内置 Exploration 的 episode / learning / evaluation / local RL 执行组件也检查类型和共享引用；组件使用不同 state 或脱离原绑定时拒绝捕获。恢复时统一重绑新状态，后续执行使用恢复后的计数、候选和版本信息。
+没有状态适配器时，通过工厂参数装配的 Application、自定义 DirectiveDefinitions，以及新增或覆盖 command_handlers 仍由内置捕获器在写文件前拒绝；即使工厂返回内置组件，也不能据 JSON 配置推断重建方式。内置 Exploration 的 episode / learning / evaluation / local RL 执行组件继续检查类型和共享引用；组件使用不同 state 或脱离原绑定时拒绝捕获。恢复时统一重绑新状态，后续执行使用恢复后的计数、候选和版本信息。
 
 并行 Runner、max_outstanding 不为 1，以及自定义 FeedbackSelector 暂不由本地快照重建，捕获时明确拒绝；默认 RecentFeedbackSelector 可正常恢复。
 
 ## 与运行恢复的区别
 
 `LocalSnapshotCapture` / `restore_snapshot(directory, target)` 是可搬迁的空闲副本：
-要求新的目标目录，继续拒绝在途任务、并行和非默认运行策略。
+要求新的目标目录，拒绝在途任务和并行；默认内置路径仍拒绝非默认运行策略。
+组件快照可通过显式适配器保存非默认运行策略，保留同一 run 身份；
+通用组件状态不能自动改写内部来源，因此组件快照暂不提供 `run_id=` 分叉。
 新增 [runtime/recovery.py](../runtime/recovery.py) 的
 `Application(config, durable=True)` / `Application.resume(data_dir)` 用于原目录重启，
 可保存仍在研究、等待内置 Mock 训练/评测、待交付反馈的控制边界。
@@ -59,7 +69,7 @@ command receipts/outbox、Mock 作业标识及取消状态。已有 memory、Exp
 有 intervention 的 workspace 禁止生成可绕过恢复检查的空闲快照。
 
 扩展 Harness 的 `recovery_id` / `export_recovery_state` / `restore_recovery_state`
-或全组合 `RecoveryContract` 只用于明确声明的恢复路径；它们不自动赋予空闲可搬迁快照支持。
+或全组合 `RecoveryContract` 只用于明确声明的恢复路径；要支持可迁移快照还需显式 `validate_snapshot(app)`。
 恢复要求显式传回同一工厂/契约；DSH 原生 session 恢复另行核实。
 源码指纹、Python 主/次版本和原配置必须匹配；不承诺恢复任意本地/远端进程或权重。
 

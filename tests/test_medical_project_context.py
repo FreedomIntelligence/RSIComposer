@@ -39,8 +39,9 @@ class MedicalProjectContextTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed', result)
         request = self.requests()[0]
         context = json.loads(request['prompt'])
-        self.assertEqual(list(context)[:8], ['objective', 'project_context', 'directives', 'operations',
-                                           'directive_modes', 'research_state', 'memories', 'context_summary'])
+        self.assertEqual(list(context)[:9], ['objective', 'project_context', 'directives', 'operations',
+                                           'directive_modes', 'research_state', 'memory_context',
+                                           'memories', 'context_summary'])
         project = context['project_context']
         self.assertEqual(self.read('project-context.json'), project)
         self.assertEqual(project['schema_version'], 1)

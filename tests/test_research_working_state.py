@@ -148,7 +148,7 @@ class ResearchWorkingStateTests(unittest.TestCase):
             with patch.object(ctx.backends['fixture'], 'generate', side_effect=generate):
                 harness._call_policy(harness.policy.decide, initial)
             payload = json.loads(requests[0].prompt)
-            self.assertTrue(payload['research_state']['findings'])
+            self.assertTrue(json.loads(payload['memory_context'])['findings'])
             self.assertIn('feedback_learning', payload['research_agenda'])
             self.assertEqual(payload['last_feedback']['summary'], 'Raw feedback')
             self.assertEqual(len(requests), 1)

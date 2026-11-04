@@ -42,10 +42,18 @@ class _RunStopping(BaseException):
     """Internal control signal; tool-error recovery must not swallow a run stop."""
 
 
+def _shutdown_error_details(error):
+    details = {'error_type': type(error).__name__, 'message': str(error)}
+    if isinstance(error, BaseExceptionGroup):
+        details['errors'] = [_shutdown_error_details(child) for child in error.exceptions]
+    return details
+
+
 class Runner:
     def __init__(self, decision_making: DecisionEndpoint, exploration: ExplorationEndpoint,
                  *, clock: Callable[[], float] = monotonic, parallel: bool = False,
-                 run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
+                 run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30,
+                 execution_shutdown: Callable[[str], bool] | None = None):
         if type(parallel) is not bool:
             raise TypeError('parallel must be boolean')
         self.run_policy = run_policy if run_policy is not None else ResearcherRunPolicy()
@@ -53,6 +61,10 @@ class Runner:
             raise TypeError('run_policy must implement evaluate(context)')
         positive(cleanup_timeout_seconds, 'cleanup_timeout_seconds')
         self.cleanup_timeout_seconds = cleanup_timeout_seconds
+        if execution_shutdown is not None and not callable(execution_shutdown):
+            raise TypeError('execution_shutdown must be callable')
+        self._execution_shutdown = execution_shutdown
+        self._execution_shutdown_error = None
         self._run_started = None
         self._research_round = 1
         self._researcher_finished = False
@@ -158,14 +170,28 @@ class Runner:
                 cancel_research()
                 research_job = self._research_job()  # an acknowledgement alone is not completion
         pending_records = self._pending_records()
-        complete = not pending and research_job is None and not pending_records
+        execution_complete = True
+        execution_error = None
+        if self._execution_shutdown is not None:
+            try:
+                execution_complete = self._execution_shutdown(self._stop_decision.shutdown)
+                if type(execution_complete) is not bool:
+                    raise TypeError('Execution shutdown must return bool confirming owned work has exited')
+            except Exception as exc:
+                execution_complete = False
+                execution_error = exc
+                self._execution_shutdown_error = _shutdown_error_details(exc)
+        complete = not pending and research_job is None and not pending_records and execution_complete
         expired = self._clock() - self._stop_started >= self.cleanup_timeout_seconds
         stop = {'reason': self._stop_decision.reason, 'shutdown': self._stop_decision.shutdown,
                 'evidence_refs': list(self._stop_decision.evidence_refs),
                 'shutdown_complete': complete, 'cleanup_timed_out': bool(expired and not complete),
                 'unresolved_directives': list(pending),
                 'unresolved_research_job': asdict(research_job) if research_job else None,
+                'unresolved_execution': not execution_complete,
                 'unresolved_records': bool(pending_records)}
+        if self._execution_shutdown_error is not None:
+            stop['execution_shutdown_error'] = {**self._execution_shutdown_error, 'resolved': execution_complete}
         if complete or expired:
             event = {**(original.event if original else {}), 'run_stop': stop}
             if original is not None and original.kind == 'completed':
@@ -174,6 +200,8 @@ class Runner:
                 return replace(original, event=event)
             self._terminal_step = RunnerStep('finished', event, original.decision_steps if original else 0)
             return deepcopy(self._terminal_step)
+        if execution_error is not None:
+            raise execution_error
         if original is not None:
             return replace(original, event={**original.event, 'run_stop': stop})
         if pending_records and not pending:

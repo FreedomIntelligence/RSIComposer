@@ -36,9 +36,9 @@ class ResearchAssemblyTests(unittest.TestCase):
         for provider in (None, object()):
             with self.subTest(provider=provider), self.assertRaisesRegex(TypeError, 'active context/memory'):
                 ResearchAssembly(context_memory=provider)
-        with self.assertRaisesRegex(TypeError, 'trajectory archive'):
+        with self.assertRaisesRegex(TypeError, '[Tt]rajectory archive'):
             ResearchAssembly(trajectory_archive=object())
-        with self.assertRaisesRegex(TypeError, 'configuration/process/recover'):
+        with self.assertRaisesRegex(TypeError, 'process\\(event, model\\)'):
             ResearchAssembly(harness_proposals=object())
         self.assertFalse(self.backend.requests)
         self.assertFalse((self.root / 'feedback.json').exists())

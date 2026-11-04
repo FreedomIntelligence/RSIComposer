@@ -278,16 +278,18 @@ class ReceiptObservationTests(unittest.TestCase):
                 Decision('invoke', operation=OperationCall('feedback_learning_read', {})), Decision('finish'))
             first = loop.step('objective')
             learning = loop.feedback_service.learning
-            self.assertEqual(learning.state['attempted'], 1)
+            self.assertEqual(learning.state['attempted'], 0)
             row = next(iter(learning.state['jobs'].values()))
             raw = row['raw_input']['receipt']
             self.assertEqual(raw['operation'], {'name': 'prepare_data', 'arguments': {'text': 'code output'}})
-            self.assertEqual(raw['result'], asdict(first.operation_result))
+            self.assertEqual(raw['result'], first.operation_result.payload())
+            self.assertNotIn('feedback_delivery', raw['result'])
             self.assertEqual(raw['task']['decision_id'], 'write')
             self.assertNotIn('directive', raw)
             self.assertEqual(row['raw_input']['research_context']['issuing_decision_model'], asdict(MODEL))
             self.assertEqual(loop.step('objective').kind, 'progressed')
-            self.assertEqual(len(learning.state['jobs']), 1)
+            self.assertEqual(len(learning.state['jobs']), 2)
+            self.assertEqual(learning.ordered_jobs()[-1]['status'], 'archived')
             self.assertEqual(learning.state['attempted'], 1)
             self.assertEqual(loop.step('objective').kind, 'finished')
             self.assertEqual(len(backend.requests), 1)
@@ -319,6 +321,8 @@ class ReceiptObservationTests(unittest.TestCase):
             loop.harness.tools.execute.assert_called_once()
             self.assertEqual(policy.calls, 1)
             self.assertEqual(len(loop.feedback_service.learning.state['jobs']), 1)
+            self.assertEqual(backend.requests, [])
+            loop.feedback_service.refresh()
             self.assertEqual(len(backend.requests), 1)
 
     def test_denied_feedback_navigation_does_not_observe_itself(self):
@@ -334,7 +338,8 @@ class ReceiptObservationTests(unittest.TestCase):
             self.assertEqual(record['status'], 'failed')
             self.assertIn('PermissionError', record['error'])
             self.assertIsNone(loop.harness.state.pending_operation_record)
-            self.assertEqual(loop.feedback_service.learning.state['jobs'], {})
+            archived, = loop.feedback_service.learning.state['jobs'].values()
+            self.assertEqual(archived['status'], 'archived')
             self.assertEqual(backend.requests, [])
 
     def test_async_submission_is_not_a_completion_and_resume_is_observed_once(self):
@@ -354,6 +359,8 @@ class ReceiptObservationTests(unittest.TestCase):
             self.assertEqual(raw['task']['job'], asdict(job))
             with self.assertRaises(ValueError):
                 loop.harness.resume(job, result)
+            self.assertEqual(backend.requests, [])
+            loop.feedback_service.refresh()
             self.assertEqual(len(backend.requests), 1)
 
     def test_common_observer_works_without_default_harness_and_namespaces_receipts(self):

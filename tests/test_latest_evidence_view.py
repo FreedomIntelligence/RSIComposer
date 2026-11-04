@@ -35,7 +35,7 @@ class LatestEvidenceTests(unittest.TestCase):
                 'error_type': 'BackendTimeout', 'protocol_ref': 'protocol-v1',
                 'items': [{'sample_id': str(i), 'quality_metrics': {'accuracy': 0.0}} for i in range(4000)]})
         history = HistoryEntry('big-tool', 'operation', None, result.summary, False,
-                               details={'result': asdict(result)})
+                               details={'result': result.payload()})
         memory.append(history)
         raw = replace(raw, history=memory.history(), operation_results=(result,))
         original = deepcopy(raw)
@@ -50,7 +50,7 @@ class LatestEvidenceTests(unittest.TestCase):
         omitted = visible.data['evidence_card']['omissions']
         self.assertIn('/data/items', [item['path'] for item in omitted])
         card = visible.data['evidence_card']
-        self.assertEqual(card['sha256'], result_id(asdict(result)))
+        self.assertEqual(card['sha256'], result_id(result.payload()))
         self.assertEqual(archive_text(tools, collection='operation_results', record_id=card['read_path']['record_id'],
                                      evidence_path='/result/data/items/3999'), result.data['items'][-1])
         self.assertEqual(archive_text(tools, collection='operation_results', record_id=card['read_path']['record_id'],
@@ -66,7 +66,7 @@ class LatestEvidenceTests(unittest.TestCase):
                     model={'backend_id': 'fixture', 'model_id': 'actor', 'revision': 'v1'},
                     evidence_card='untrusted domain field, not a host card')
         result = OperationResult('Measured keyed results', (), False, data=data)
-        entry = HistoryEntry('keyed', 'operation', None, result.summary, False, details={'result': asdict(result)})
+        entry = HistoryEntry('keyed', 'operation', None, result.summary, False, details={'result': result.payload()})
         raw = replace(raw, history=(*raw.history, entry), operation_results=(result,))
         view = bounded_evidence_view(raw)
         self.assertEqual(bounded_evidence_view(replace(raw, history=())).operation_results, (result,))
@@ -123,7 +123,7 @@ class LatestEvidenceTests(unittest.TestCase):
         raw, _, _, _ = fixture(count=0)
         huge = OperationResult('latest', (), False, data={'text': 'bulk ' * 40000, 'quality_metrics': METRICS})
         recorded = HistoryEntry('huge-op', 'operation', None, huge.summary, False,
-                                details={'result': asdict(huge)})
+                                details={'result': huge.payload()})
         raw = replace(raw, operation_results=(huge,), history=(*raw.history, recorded))
         for factory in (None, dsh_decision_factory(DSH)):
             with patch('rsisys.loops.decision_making.harness.dsh._sdk_runtime', return_value=Runtime([])):

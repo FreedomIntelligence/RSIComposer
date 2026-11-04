@@ -1,0 +1,54 @@
+{
+  "scope": "offline fixtures; public windows and explicit compatibility boundaries",
+  "real_model_inference": false,
+  "real_training": false,
+  "probes": {
+    "context_only_provider": {
+      "accepted": true,
+      "protocol": "context(query) -> str"
+    },
+    "legacy_processor_field_guard": {
+      "status": "failed",
+      "error": "Feedback processor cannot overwrite host journal fields",
+      "charged_calls": 0,
+      "proposals": [],
+      "attempt_updates": []
+    },
+    "native_product_window": {
+      "status": "completed",
+      "output": {
+        "context": "native context",
+        "charged_calls": 999
+      },
+      "host_charged_calls": 0
+    },
+    "proposal_dependency": {
+      "memory_calls": 1,
+      "proposer_calls": 1,
+      "products": {
+        "context_memory": {
+          "status": "failed",
+          "error": "fixture memory failure",
+          "charged_calls": 0
+        },
+        "improvement_proposals": {
+          "status": "completed",
+          "error": null,
+          "charged_calls": 0
+        }
+      }
+    },
+    "publication_isolated_from_decision_context": {
+      "delivery": {
+        "status": "failed",
+        "error": "RuntimeError: fixture context store unavailable"
+      },
+      "processing_status": "completed",
+      "has_context": true
+    },
+    "publication_retry": {
+      "published": true,
+      "fixture_generation_requests": 1
+    }
+  }
+}

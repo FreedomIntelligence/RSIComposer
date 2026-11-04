@@ -24,6 +24,15 @@ monitor 在写入前校验此约束；受监控的父目录也必须与 parent_r
 
 ## Runner 与作业
 
+`Application`、`build_demo`、医疗和 Qwen 启动器共享
+[ModuleAssembly / assemble_runner](../assembly.py)：循环、可选反馈、组件状态端口和 owned cleanup 在同一入口装配。
+工厂只构造、不提交工作；运行期资源与领域限制仍由各自 host 管理。
+`ModuleAssembly.state_factory` 可返回独立的具名状态适配器，
+[AssemblyRecovery](component_state.py) 聚合其状态用于 durable 与显式可迁移快照。
+每个适配器实现稳定 `state_id`、只读 capture、无新副作用 restore；端口缺失、版本/配置冲突或未注册组件替换会拒绝恢复或继续执行。
+不确定效果仍走 journal / reconcile，原运行预算不会在恢复时清零。
+详见[统一接入](../../../docs/review/unified-module-assembly-20261104.md)。
+
 [runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../README.md#系统架构)。
 
 支持可选的探索侧 `pending()` 发现未确认指令，Runner 重建时先核对两侧所有权、补交反馈和确认，再允许新决策。默认 Harness 实现此接口；只实现基础端口的外部 Harness 仍能运行，但不具备该恢复能力。单独重建 Runner 的此机制依赖仍存活的端点状态。跨进程恢复使用下述显式启用的 durable Application。

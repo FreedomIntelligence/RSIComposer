@@ -1,0 +1,43 @@
+{
+  "scope": "offline fixtures; assertions document current behavior, not interface acceptance",
+  "real_model_inference": false,
+  "real_training": false,
+  "probes": {
+    "context_only_provider": {
+      "accepted": false,
+      "error": "Research requires an active context/memory organizer: record"
+    },
+    "context_result": {
+      "status": "failed",
+      "error": "Feedback processor cannot overwrite host journal fields",
+      "charged_calls": 0,
+      "proposals": [],
+      "attempt_updates": []
+    },
+    "proposal_dependency": {
+      "memory_calls": 1,
+      "proposer_calls": 0,
+      "products": {
+        "context_memory": {
+          "status": "failed",
+          "error": "fixture memory failure",
+          "charged_calls": 0
+        },
+        "improvement_proposals": {
+          "status": "not_started",
+          "error": "Memory processing did not complete",
+          "charged_calls": 0
+        }
+      }
+    },
+    "publication_bubbles_into_decision_context": {
+      "error": "fixture context store unavailable",
+      "processing_status": "completed",
+      "published": false
+    },
+    "publication_retry": {
+      "published": true,
+      "fixture_generation_requests": 1
+    }
+  }
+}

@@ -1,12 +1,6 @@
 """Explicit attempt membership, derived from the decision ledger only."""
 from dataclasses import dataclass
-
-
-def validate_attempt_fields(ident, title):
-    if ident is not None and (not isinstance(ident, str) or not ident.strip() or len(ident) > 200):
-        raise ValueError('research_attempt_id must be a nonempty string of at most 200 characters or None')
-    if not isinstance(title, str) or (title and not title.strip()) or len(title) > 500:
-        raise ValueError('research_attempt_title must be a string of at most 500 characters, nonblank when supplied')
+from rsisys.loops.contracts.decision import validate_attempt_fields
 
 
 def attempt_details(row):

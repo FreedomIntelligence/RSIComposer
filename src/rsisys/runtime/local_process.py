@@ -71,6 +71,8 @@ class _Process:
     cancelled: bool = False
     timed_out: bool = False
     truncated: bool = False
+    error: str | None = None
+    readers: list[threading.Thread] = field(default_factory=list)
 
 
 class LocalProcessBackend:
@@ -124,18 +126,40 @@ class LocalProcessBackend:
         ref = ProcessRef(uuid4().hex, sandbox)
         entry = _Process(process, timeout)
         self._processes[ref] = entry
-        threading.Thread(target=self._watch, args=(entry,), daemon=True).start()
+        try:
+            threading.Thread(target=self._watch, args=(entry,), daemon=True).start()
+        except Exception as exc:
+            self._record_error(entry, exc)
+            try:
+                self._finish(entry)
+            finally:
+                entry.done.set()
+            raise
         return ref
 
     def _drain(self, stream, target: bytearray, entry: _Process):
         try:
-            while block := stream.read(8192):
+            # Buffered read(size) can wait for size bytes or EOF, hiding short
+            # flushed logs throughout a running program. read1 drains what is
+            # available from the pipe without waiting to fill the buffer.
+            while block := stream.read1(8192):
                 with entry.lock:
                     room = max(0, self.max_output_bytes - len(target))
                     target.extend(block[:room])
                     entry.truncated = entry.truncated or len(block) > room
+        except Exception as exc:
+            self._record_error(entry, exc)
         finally:
             stream.close()
+
+    @staticmethod
+    def _record_error(entry: _Process, exc: Exception):
+        message = f'Process supervision failed ({type(exc).__name__}): {exc}'
+        with entry.lock:
+            if entry.error is None:
+                entry.error = message
+            elif message not in entry.error:
+                entry.error += '\n' + message
 
     @staticmethod
     def _kill(entry: _Process):
@@ -143,35 +167,58 @@ class LocalProcessBackend:
             _kill_process_group(entry.process)
 
     def _watch(self, entry: _Process):
-        readers = [threading.Thread(target=self._drain, args=(stream, target, entry), daemon=True)
-                   for stream, target in ((entry.process.stdout, entry.stdout), (entry.process.stderr, entry.stderr))]
-        for reader in readers:
-            reader.start()
         try:
+            for stream, target in ((entry.process.stdout, entry.stdout), (entry.process.stderr, entry.stderr)):
+                reader = threading.Thread(target=self._drain, args=(stream, target, entry), daemon=True)
+                reader.start()
+                entry.readers.append(reader)
             try:
                 _wait_for_process_exit(entry.process, entry.timeout)
             except subprocess.TimeoutExpired:
                 with entry.lock:
                     entry.timed_out = True
-            # A command owns its child processes; background children are not retained.
-            # Signal before wait() reaps the group leader, including normal exit.
-            with entry.lock:
-                self._kill(entry)
-                code = entry.process.wait()
-            for reader in readers:
-                reader.join(timeout=2)
-            with entry.lock:
-                status = (JobStatus.CANCELLED if entry.cancelled else
-                          JobStatus.FAILED if entry.timed_out or code != 0 else JobStatus.SUCCEEDED)
-                stderr = entry.stderr.decode('utf-8', errors='replace')
-                if entry.timed_out:
-                    stderr += '\nExecution timed out'
-                if entry.truncated:
-                    stderr += '\nOutput was truncated at the configured byte limit'
-                entry.state = ProcessState(status, entry.stdout.decode('utf-8', errors='replace'),
-                                           stderr, code, False)
+        except Exception as exc:
+            self._record_error(entry, exc)
         finally:
-            entry.done.set()
+            try:
+                self._finish(entry)
+            except Exception as exc:
+                # A finished watcher is not proof of process exit. Retain the
+                # session and unreaped process so close() can retry cleanup.
+                self._record_error(entry, exc)
+            finally:
+                entry.done.set()
+
+    def _finish(self, entry: _Process):
+        with entry.lock:
+            if entry.state is not None:
+                return
+            # A command owns its child processes; signal before wait() reaps
+            # the group leader, including on normal exit or observer failure.
+            self._kill(entry)
+            code = entry.process.wait(timeout=10)
+        for reader in entry.readers:
+            reader.join(timeout=2)
+        # A watcher or reader may have failed to start; close pipes for which
+        # no reader ever took ownership.
+        for stream in (entry.process.stdout, entry.process.stderr)[len(entry.readers):]:
+            stream.close()
+        with entry.lock:
+            status = (JobStatus.FAILED if entry.error else
+                      JobStatus.CANCELLED if entry.cancelled else
+                      JobStatus.FAILED if entry.timed_out or code != 0 else JobStatus.SUCCEEDED)
+            stderr = entry.stderr.decode('utf-8', errors='replace')
+            if entry.timed_out:
+                stderr += '\nExecution timed out'
+            if entry.truncated:
+                stderr += '\nOutput was truncated at the configured byte limit'
+            if entry.error:
+                stderr += '\n' + entry.error
+            entry.state = ProcessState(status, entry.stdout.decode('utf-8', errors='replace'),
+                                       stderr, code, False,
+                                       'infrastructure' if entry.error else
+                                       'timeout' if entry.timed_out else
+                                       'program' if status == JobStatus.FAILED else None)
 
     def _get(self, ref: ProcessRef) -> _Process:
         if ref not in self._processes:
@@ -184,7 +231,7 @@ class LocalProcessBackend:
             if entry.state is not None:
                 return entry.state
             if entry.done.is_set():
-                raise RuntimeError('Process watcher failed before reporting an outcome')
+                raise RuntimeError('Process watcher failed; owned process cleanup is incomplete: ' + str(entry.error))
             return ProcessState(JobStatus.RUNNING, entry.stdout.decode('utf-8', errors='replace'),
                                 entry.stderr.decode('utf-8', errors='replace'), None, False)
 
@@ -207,12 +254,22 @@ class LocalProcessBackend:
         if sandbox not in self._sessions:
             return
         for ref, entry in tuple(self._processes.items()):
-            if ref.sandbox == sandbox and not entry.done.is_set():
-                self.cancel(ref)
-                if not entry.done.wait(10):
-                    raise TimeoutError('Local processes did not stop; workspace was retained')
-        root, _ = self._sessions.pop(sandbox)
-        shutil.rmtree(root)
+            if ref.sandbox == sandbox:
+                if not entry.done.is_set():
+                    self.cancel(ref)
+                    if not entry.done.wait(10):
+                        raise TimeoutError('Local processes did not stop; workspace was retained')
+                self._finish(entry)
+                if entry.process.returncode is None:
+                    raise RuntimeError('Owned process exit is unconfirmed; workspace was retained')
+        root, _ = self._sessions[sandbox]
+        try:
+            shutil.rmtree(root)
+        except FileNotFoundError:
+            if root.exists():
+                raise
+        # Keep ownership on any cleanup failure so another close can retry.
+        del self._sessions[sandbox]
 
     def close_all(self):
         for ref in tuple(self._sessions):

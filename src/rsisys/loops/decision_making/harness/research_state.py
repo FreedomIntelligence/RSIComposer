@@ -64,7 +64,7 @@ def resident_evidence_indices(context, collection, *, recent=2):
     Latest/live dependencies are protected separately, regardless of this window.
     """
     rows = getattr(context, collection)
-    values = [asdict(row) if collection == 'operation_results' else row.details for row in rows]
+    values = [row.payload() if collection == 'operation_results' else row.details for row in rows]
     measured = [i for i, value in enumerate(values) if receipt_needs_protection(value)]
     if not archive_available(context, collection):
         return set(measured)
@@ -92,7 +92,7 @@ def resident_evidence_indices(context, collection, *, recent=2):
             linked = (isinstance(card, dict) and card.get('schema_version') == 1
                       and isinstance(card.get('read_path'), dict)
                       and card['read_path'].get('collection') == collection)
-            if result_id(asdict(row)) not in recorded and not linked:
+            if result_id(row.payload()) not in recorded and not linked:
                 keep.add(i)
     return keep
 
@@ -123,7 +123,7 @@ def live_evidence_ids(context):
 def full_history_ids(context):
     decisions, directives = live_evidence_ids(context)
     latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
-    latest_result = result_id(asdict(context.operation_results[-1])) if context.operation_results else None
+    latest_result = result_id(context.operation_results[-1].payload()) if context.operation_results else None
     # Identical reads can have the same receipt digest. Only the newest matching
     # occurrence is the latest observation; older occurrences are not live work.
     latest_result_history = next((h.record_id for h in reversed(context.history)
@@ -266,7 +266,7 @@ def evidence_working_view(context, *, latest=False):
             continue
         output = []
         for index, row in enumerate(rows):
-            original = asdict(row)
+            original = row.payload() if collection == 'operation_results' else asdict(row)
             if collection == 'operation_results':
                 ident = result_id(original)
                 existing = row.data.get('evidence_card')
@@ -344,7 +344,7 @@ def research_working_view(context, jobs, attempts, *, recent=8, knowledge=None):
     state.update(
         live_state_fields=['execution', 'executions', 'outstanding', 'candidate_evaluations',
                            'candidates', 'run_control', 'last_feedback'],
-        protected_operation_result_ids=[result_id(asdict(context.operation_results[i]))
+        protected_operation_result_ids=[result_id(context.operation_results[i].payload())
             for i in sorted(resident_evidence_indices(context, 'operation_results'))],
         protected_history_ids=[h.record_id for i, h in enumerate(context.history)
             if i in resident_history

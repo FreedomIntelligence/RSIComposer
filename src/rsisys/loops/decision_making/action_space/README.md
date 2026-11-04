@@ -37,6 +37,15 @@
 
 OperationCall 包含 name、arguments；OperationResult 描述工具执行后的 summary、artifacts、simulated、status 和可选 error。结果必须为 COMPLETED / FAILED / CANCELLED，FAILED 必须有 error，COMPLETED 不能有 error。异步结果回填、重试与记录由 Harness 管理。
 
+## Lab 声明动作出口
+
+`Application(..., lab_factory=...)` / `build_demo(..., lab_factory=...)`
+将 [LabExecution](../../contracts/execution.py) 的工具目录接入默认 action space。
+Lab 只提供 OperationSpec 和 execute(call)，无需构造下述内部 Capability / validator 对象。
+默认适配器校验 JSON 封装，具体参数语义由 Lab 在执行前校验；权限仍在 host 分派前复核。
+可暴露通用代码执行工具，SFT、RL、evaluate 不再是该路径的固定动作分类。
+示例、非阻塞任务与限制见 [实现说明](../../../../../docs/review/open-lab-execution-20261104.md)。
+
 ## 显式能力装配
 
 [capabilities.py](capabilities.py) 提供独立的 `Capability(definition, handler)` 与 `Capabilities(capabilities=())`。已有 definition 必须提供 `OperationSpec` 和 `validate(arguments) → OperationCall`；只有 spec 时使用 `Capability.from_spec(spec, validator, handler)`。handler 接收校验后的参数字典，返回 `OperationResult | JobRef`。重复名、空名、缺失或不可调用的 validator / handler、无绑定的 provider 输出都会在装配时失败。

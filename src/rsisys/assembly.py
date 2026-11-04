@@ -1,16 +1,18 @@
 """Python assembly hooks sharing resources owned by an application or demo."""
 
 from collections.abc import Callable, Mapping
-from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.loops.contracts.execution import LabExecution
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
 from rsisys.loops.contracts.queries import QueryProvider
 from rsisys.loops.contracts.backend import BackendCapabilityProvider
 from rsisys.loops.contracts.training import ResumeMode
-from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace, LocalDecisionActionSpace
+from rsisys.loops.decision_making.action_space import (
+    DemoDecisionActionSpace, LocalDecisionActionSpace, ModularDecisionActionSpace,
+)
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
@@ -38,6 +40,7 @@ from rsisys.runtime.run_policy import RunPolicy
 from rsisys.runtime.artifacts import ArtifactStore
 from rsisys.runtime.runner import Runner
 from rsisys.runtime.sandbox import SandboxBackend
+from rsisys.runtime.capabilities import optional_method
 
 
 @dataclass
@@ -56,7 +59,9 @@ class AssemblyContext:
     exploration_directives: DirectiveDefinitions | None = None
     action_permissions: ActionPermissions = field(default_factory=ActionPermissions)
     project_context: dict = field(default_factory=dict)
-    _cleanup: ExitStack = field(default_factory=ExitStack, init=False, repr=False)
+    lab_execution: LabExecution | None = None
+    state_adapters: dict = field(default_factory=dict, init=False, repr=False)
+    _cleanup: list[tuple[Callable[[], object], bool]] = field(default_factory=list, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def add_cleanup(self, callback: Callable[[], object]) -> None:
@@ -65,27 +70,162 @@ class AssemblyContext:
             raise RuntimeError("Assembly is closed")
         if not callable(callback):
             raise TypeError("Cleanup must be callable")
-        self._cleanup.callback(callback)
+        self._cleanup.append((callback, False))
+
+    def add_owned_cleanup(self, callback: Callable[[], object]) -> None:
+        """Register an idempotent owned-resource close, retaining dependencies on failure."""
+        self.add_cleanup(callback)
+        self._cleanup[-1] = (callback, True)
+
+    @property
+    def cleanup_pending(self) -> bool:
+        return bool(self._cleanup)
 
     def close(self) -> None:
-        """Run every callback once, in reverse order, even if one raises."""
-        if not self._closed:
-            self._closed = True
-            self._cleanup.close()
+        """Stop admission; retry only failed owned closes before releasing dependencies.
+
+        Ordinary callbacks run once in LIFO order, even on failure. An owned
+        close is a barrier: failure retains it and the earlier dependencies.
+        Successful callbacks, and ordinary callbacks with uncertain effects,
+        are never replayed by a later close.
+        """
+        self._closed = True
+        errors = []
+        while self._cleanup:
+            callback, owned = self._cleanup[-1]
+            try:
+                callback()
+            except BaseException as exc:
+                errors.append(exc)
+                if owned:
+                    break
+            self._cleanup.pop()
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup('Assembly cleanup failed', errors)
 
 
 ExplorationFactory = Callable[[AssemblyContext], ExplorationLoop]
 DecisionFactory = Callable[[AssemblyContext, ExplorationLoop], DecisionMakingLoop]
+LabExecutionFactory = Callable[[AssemblyContext], LabExecution]
+
+
+@dataclass(frozen=True)
+class ModuleAssembly:
+    """Replaceable modules, shared by every launcher; factories only construct.
+
+    state_factory(context, decision, exploration) optionally returns named state
+    adapters. Their private state format belongs to the integration, not the host.
+    """
+
+    decision_factory: DecisionFactory | None = None
+    exploration_factory: ExplorationFactory | None = None
+    lab_factory: LabExecutionFactory | None = None
+    research: object = None
+    research_backend: object = None
+    feedback_adapter_factory: Callable | None = None
+    feedback_options: Mapping = field(default_factory=dict)
+    state_factory: Callable | None = None
+
+    def __post_init__(self):
+        for name in ('decision_factory', 'exploration_factory', 'lab_factory',
+                     'feedback_adapter_factory', 'state_factory'):
+            value = getattr(self, name)
+            if value is not None and not callable(value):
+                raise TypeError(f'{name} must be callable')
+        if self.research is not None:
+            from rsisys.research import ResearchAssembly
+            if not isinstance(self.research, ResearchAssembly):
+                raise TypeError('research must be a ResearchAssembly')
+            self.research.validate()
+        elif self.research_backend is not None or self.feedback_adapter_factory is not None or self.feedback_options:
+            raise ValueError('Research backend/adapter/options requires a research assembly')
+        if not isinstance(self.feedback_options, Mapping):
+            raise TypeError('feedback_options must be a mapping')
+        reserved = {'loop', 'assembly', 'owner', 'adapter', 'backend'}
+        if reserved.intersection(self.feedback_options):
+            raise ValueError('Feedback assembly bindings cannot be overridden by feedback_options')
+
+
+def module_assembly(modules=None, **legacy):
+    """Accept old keyword APIs without silently overriding a module bundle."""
+    if modules is not None:
+        if not isinstance(modules, ModuleAssembly):
+            raise TypeError('modules must be a ModuleAssembly')
+        if any(value is not None for value in legacy.values()):
+            raise ValueError('Supply modules or individual module arguments, not both')
+        return modules
+    return ModuleAssembly(**legacy)
+
+
+def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None = None,
+                    run_policy=None, cleanup_timeout_seconds=30):
+    """Compose loops, feedback, state ports and lifecycle through one entry.
+
+    The caller owns shared resources and closes context on construction failure.
+    No factory, state restore or feedback setup may submit research work here.
+    """
+    modules = module_assembly(modules)
+    if context._closed:
+        raise RuntimeError('Assembly is closed')
+    decision, exploration = assemble_loops(context, decision_factory=modules.decision_factory,
+        exploration_factory=modules.exploration_factory, lab_factory=modules.lab_factory)
+    # Resolve the current harness at close, including domain configuration before
+    # the first step. Owned close retains its dependencies if cleanup must retry.
+    def close_decision():
+        close = optional_method(decision.harness, 'close')
+        if close is not None:
+            close()
+    context.add_owned_cleanup(close_decision)
+    if modules.research is not None:
+        from rsisys.research import assemble_research
+        options = dict(modules.feedback_options)
+        options.setdefault('path', context.data_dir / 'feedback_learning.json'
+                           if context.data_dir is not None else None)
+        assemble_research(decision, assembly=modules.research, backend=modules.research_backend,
+            owner=context, adapter=modules.feedback_adapter_factory(decision.harness)
+                if modules.feedback_adapter_factory else None, **options)
+    if modules.state_factory is not None:
+        from rsisys.runtime.component_state import validate_adapters, assembly_bindings
+        context.state_adapters = validate_adapters(modules.state_factory(context, decision, exploration))
+        context._state_bindings = assembly_bindings(context, decision, exploration)
+        context._state_port_bindings = dict(context.state_adapters)
+    return AssemblyRunner(decision, exploration, context, run_policy=run_policy,
+                          cleanup_timeout_seconds=cleanup_timeout_seconds)
+
+
+def assemble_loops(context: AssemblyContext, *, decision_factory=None,
+                   exploration_factory=None, lab_factory: LabExecutionFactory | None = None):
+    """One assembly path for persistent applications and in-memory demos."""
+    if lab_factory is not None:
+        context.lab_execution = lab_factory(context)
+        if context.lab_execution is None:
+            raise TypeError('lab_factory must return a LabExecution provider')
+        close = optional_method(context.lab_execution, 'close')
+        if close is not None:
+            context.add_owned_cleanup(close)
+    if exploration_factory is not None:
+        exploration = exploration_factory(context)
+    elif context.lab_execution is not None:
+        from rsisys.adapters.execution import OperationOnlyExploration
+        exploration = OperationOnlyExploration()
+    else:
+        exploration = build_default_exploration(context)
+    decision = (decision_factory if decision_factory is not None else build_default_decision)(context, exploration)
+    return decision, exploration
 
 
 def build_default_exploration(context: AssemblyContext) -> ExplorationLoop:
+    if 'actor' not in context.roles:
+        raise ValueError('Legacy exploration requires an actor role; supply lab_factory for direct Lab execution')
     if context.execution == "local_process":
         space = CommandActionSpace()
         environment = LocalProcessEnvironment(context.sandbox, context.artifacts)
     else:
         space = EchoActionSpace()
         environment = SandboxEchoEnvironment(context.sandbox, context.artifacts)
-    context.add_cleanup(environment.close)
+    context.add_owned_cleanup(environment.close)
     model = context.roles["actor"]
     memory_path = context.data_dir / "exploration_memory.json" if context.data_dir is not None else None
     return ExplorationLoop(
@@ -147,16 +287,22 @@ def _decision_directives(context: AssemblyContext, exploration: ExplorationLoop)
 
 
 def build_default_decision(context: AssemblyContext, exploration: ExplorationLoop) -> DecisionMakingLoop:
-    directives, modes = _decision_directives(context, exploration)
+    open_lab = context.lab_execution is not None
+    directives, modes = (DirectiveDefinitions(()), ()) if open_lab else _decision_directives(context, exploration)
     query_tools = (QueryTools(exploration, artifacts=context.artifacts)
-                   if isinstance(exploration, QueryProvider) and exploration.describe_queries() else None)
+                   if not open_lab and isinstance(exploration, QueryProvider) and exploration.describe_queries() else None)
     memory_path = context.data_dir / "decision_memory.json" if context.data_dir is not None else None
     memory = DecisionMemory(memory_path)
     agenda = ResearchAgenda(context.data_dir / "decision_research.json" if context.data_dir is not None else None)
     research_tools = ResearchTools(agenda, memory, experience=context.experience)
     definitions = (*(query_tools.definitions if query_tools is not None else ()), *research_tools.definitions)
     bindings = {**(query_tools.bindings if query_tools is not None else {}), **research_tools.bindings}
-    if context.data_dir is None:
+    if open_lab:
+        from rsisys.adapters.execution import LabExecutionTools
+        tools = LabExecutionTools(context.lab_execution, extra_definitions=definitions, extra_bindings=bindings)
+        space = ModularDecisionActionSpace(tools.definitions, directive_modes=(), directives=directives,
+                                           permissions=context.action_permissions)
+    elif context.data_dir is None:
         tools = DemoDecisionTools(context.sandbox, context.artifacts, extra_bindings=bindings)
         space = DemoDecisionActionSpace(directive_modes=modes, directives=directives, extra_definitions=definitions,
                                         permissions=context.action_permissions)
@@ -170,30 +316,37 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     return DecisionMakingLoop(
         DefaultDecisionHarness(
             ModelDecisionPolicy(context.backends[model.backend_id], model,
-                                allowed_actions=tuple(spec.name for spec in exploration.action_space.describe()),
+                                allowed_actions=() if open_lab else tuple(
+                                    spec.name for spec in exploration.action_space.describe()),
                                 directives=directives, project_context=context.project_context),
             tools, context.experience,
             learner=MockDecisionLearner(context.artifacts) if context.with_learning else None,
             experience_limit=context.experience_limit,
             memory=memory, memory_limit=context.memory_limit, research_agenda=agenda,
+            model=model,
         ), space,
     )
 
 
 class AssemblyRunner(Runner):
-    """Demo runner owning its assembly callbacks; close explicitly or use with."""
+    """Runner sharing its assembly's admission and owned cleanup lifecycle."""
 
     def __init__(self, decision: DecisionMakingLoop, exploration: ExplorationLoop, assembly: AssemblyContext,
                  *, run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
         super().__init__(decision, exploration, run_policy=run_policy,
-                         cleanup_timeout_seconds=cleanup_timeout_seconds)
+                         cleanup_timeout_seconds=cleanup_timeout_seconds,
+                         execution_shutdown=optional_method(assembly.lab_execution, 'shutdown'))
         self.assembly = assembly
+
+    @property
+    def closed(self) -> bool:
+        return self.assembly._closed
 
     def close(self) -> None:
         self.assembly.close()
 
     def __enter__(self):
-        if self.assembly._closed:
+        if self.closed:
             raise RuntimeError("Assembly is closed")
         return self
 
@@ -206,6 +359,6 @@ class AssemblyRunner(Runner):
             exc.add_note(f"Assembly cleanup also failed: {cleanup_error}")
 
     def step(self, objective: str):
-        if self.assembly._closed:
+        if self.closed:
             raise RuntimeError("Assembly is closed")
         return super().step(objective)

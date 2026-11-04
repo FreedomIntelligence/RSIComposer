@@ -1,12 +1,13 @@
 """Public lifecycle boundaries; no concrete loop or backend imports."""
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from copy import deepcopy
 import json
 import math
 from typing import Protocol, Literal
 
 from .artifacts import ArtifactRef
+from .delivery import FeedbackDelivery
 from .lifecycle import ExecutionStatus
 
 from .directive import Directive
@@ -31,8 +32,13 @@ class OperationResult:
     error: str | None = None
     data: dict[str, object] = field(default_factory=dict)
     adopted_candidate_ids: tuple[str, ...] = ()
+    feedback_delivery: FeedbackDelivery | None = None
 
     def __post_init__(self):
+        if self.feedback_delivery is not None:
+            if not isinstance(self.feedback_delivery, FeedbackDelivery):
+                raise TypeError('feedback_delivery must be FeedbackDelivery or None')
+            self.feedback_delivery.__post_init__()
         if not isinstance(self.status, ExecutionStatus):
             raise TypeError('Operation status must be a terminal ExecutionStatus')
         if (not isinstance(self.adopted_candidate_ids, tuple)
@@ -54,6 +60,16 @@ class OperationResult:
             raise ValueError("A failed operation requires an error")
         if self.status == ExecutionStatus.COMPLETED and self.error is not None:
             raise ValueError("A completed operation cannot carry an error")
+
+    def payload(self):
+        """Canonical receipt/history fields; hash these instead of asdict(self).
+
+        Absent optional metadata preserves the exact historical archive format.
+        """
+        value = asdict(self)
+        if self.feedback_delivery is None:
+            value.pop('feedback_delivery')
+        return value
 
 
 @dataclass(frozen=True)

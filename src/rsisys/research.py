@@ -5,7 +5,7 @@ ResearchAssembly and pass their finished decision loop through assemble_research
 No model calls or execution capabilities are introduced by assembly itself.
 """
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 
@@ -14,6 +14,10 @@ from rsisys.loops.decision_making.feedback.components import (
     JournalContextMemory, JournalTrajectoryArchive,
 )
 from rsisys.loops.decision_making.feedback.pipeline import FeedbackPipeline
+from rsisys.loops.decision_making.feedback.context_memory import validate_context_memory
+from rsisys.loops.decision_making.feedback.archive import validate_archive
+from rsisys.loops.decision_making.feedback.scheduling import validate_scheduler
+from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer
 from rsisys.runtime.files import atomic_write, json_bytes
 
 
@@ -22,6 +26,9 @@ def _component(component):
         return None
     configuration = getattr(component, 'configuration', None)
     result = {'type': f'{type(component).__module__}.{type(component).__qualname__}'}
+    if callable(component) and not callable(getattr(component, 'context', None)):
+        result['callable'] = {'module': getattr(component, '__module__', type(component).__module__),
+                              'name': getattr(component, '__qualname__', type(component).__qualname__)}
     if callable(configuration):
         settings = configuration()
         if not isinstance(settings, dict):
@@ -37,29 +44,38 @@ class ResearchAssembly:
 
     Journal memory supplies factual views without model inference. Use langmem()
     for the existing upstream manager, or supply an external provider/processor.
-    Component state belongs to this run; reconstruction is an explicit recovery
-    responsibility, not serialization of arbitrary Python objects.
+    Component state belongs to this run; reconstruction uses explicit component
+    state adapters or a recovery contract, not arbitrary Python serialization.
     """
     context_memory: ContextMemoryOrganizer = field(default_factory=JournalContextMemory)
     memory_processor: FeedbackProcessor | None = None
     trajectory_archive: TrajectoryArchive | None = field(default_factory=JournalTrajectoryArchive)
     harness_proposals: FeedbackProcessor | None = None
+    improvement_proposals: FeedbackProposer | FeedbackProcessor | None = None
+    scheduler: FeedbackScheduler | None = None
+    proposal_requires_memory: bool = False
+    failure_policy: FeedbackFailurePolicy = field(default_factory=FeedbackFailurePolicy)
 
     def __post_init__(self):
         self.validate()
 
     def validate(self):
-        for method in ('record', 'working_memory', 'memory'):
-            if not callable(getattr(self.context_memory, method, None)):
-                raise TypeError('Research requires an active context/memory organizer: ' + method)
-        if self.trajectory_archive is not None and not callable(getattr(self.trajectory_archive, 'records', None)):
-            raise TypeError('Research trajectory archive requires records, or None to disable it')
-        FeedbackPipeline(memory_processor=self.memory_processor, harness_proposals=self.harness_proposals)
+        validate_context_memory(self.context_memory)
+        validate_archive(self.trajectory_archive)
+        if self.scheduler is not None:
+            validate_scheduler(self.scheduler)
+        if not isinstance(self.failure_policy, FeedbackFailurePolicy):
+            raise TypeError('failure_policy must be a FeedbackFailurePolicy')
+        FeedbackPipeline(memory_processor=self.memory_processor, harness_proposals=self.harness_proposals,
+                         improvement_proposals=self.improvement_proposals,
+                         proposal_requires_memory=self.proposal_requires_memory)
         self.configuration()
 
     @property
     def requires_model(self):
-        return self.memory_processor is not None or self.harness_proposals is not None
+        return FeedbackPipeline(memory_processor=self.memory_processor, harness_proposals=self.harness_proposals,
+            improvement_proposals=self.improvement_proposals,
+            proposal_requires_memory=self.proposal_requires_memory).max_calls_per_job > 0
 
     @property
     def memory_provider(self):
@@ -70,13 +86,21 @@ class ResearchAssembly:
         return 'journal' if type(self.context_memory) is JournalContextMemory else 'custom'
 
     def configuration(self):
-        return {'schema_version': 1, 'entrypoint': 'rsisys.research.assemble_research',
+        return {'schema_version': 4, 'entrypoint': 'rsisys.research.assemble_research',
+            'context_protocol': 'text-v1', 'context_delivery': 'replace_current_view',
+            'archive_protocol': 'raw-event-v1', 'processor_protocol': 'product-v1',
+            'proposal_protocol': 'product-v1', 'scheduler_protocol': 'selection-v1',
             'context_memory': _component(self.context_memory),
             'memory_provider': self.memory_provider,
             'memory_processor': _component(self.memory_processor),
             'trajectory_archive': _component(self.trajectory_archive),
             'harness_proposals': _component(self.harness_proposals),
-            'trajectory_mode': 'extraction_only',
+            'improvement_proposals': _component(self.improvement_proposals),
+            'scheduler': _component(self.scheduler),
+            'proposal_requires_memory': self.proposal_requires_memory,
+            'failure_policy': asdict(self.failure_policy),
+            'trajectory_mode': 'archive_only', 'dataset_construction_owner': 'lab',
+            'receipt_delivery': 'direct_before_processing',
             'construction_owner': 'main_meta_agent_decision', 'budget_owner': 'host'}
 
     @classmethod
@@ -93,7 +117,7 @@ class ResearchAssembly:
 
 
 def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=None,
-                      model=None, adapter=None, owner=None, **learning_options):
+                      model=None, model_provider=None, adapter=None, owner=None, **learning_options):
     """Install the same validated pipeline for generic and domain launchers.
 
     A journal records the exact assembly alongside processor/host limits. Old
@@ -103,7 +127,9 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     if not isinstance(assembly, ResearchAssembly):
         raise TypeError('Research launches require a ResearchAssembly')
     assembly.validate()
-    reserved = {'context_memory', 'processor', 'trajectory_archive', 'assembly_configuration'}
+    reserved = {'context_memory', 'processor', 'trajectory_archive', 'assembly_configuration',
+                'memory_processor', 'harness_proposals', 'improvement_proposals',
+                'scheduler', 'proposal_requires_memory', 'failure_policy'}
     if reserved.intersection(learning_options):
         raise ValueError('Configure research products through ResearchAssembly')
     if getattr(loop, 'feedback_service', None) is not None:
@@ -121,10 +147,14 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         manifest = Path(path).parent / 'research_assembly.json'
         if manifest.exists() and json.loads(manifest.read_text()) != configuration:
             raise ValueError('Research assembly configuration differs from the workspace manifest')
-    enable_feedback_learning(loop, path=path, backend=backend, model=model, adapter=adapter,
+    enable_feedback_learning(loop, path=path, backend=backend, model=model, model_provider=model_provider,
+        adapter=adapter,
         context_memory=assembly.context_memory, trajectory_archive=assembly.trajectory_archive,
+        scheduler=assembly.scheduler, failure_policy=assembly.failure_policy,
         processor=FeedbackPipeline(memory_processor=assembly.memory_processor,
-                                   harness_proposals=assembly.harness_proposals),
+                                   harness_proposals=assembly.harness_proposals,
+                                   improvement_proposals=assembly.improvement_proposals,
+                                   proposal_requires_memory=assembly.proposal_requires_memory),
         assembly_configuration=configuration, **learning_options)
     service = loop.feedback_service
     try:
@@ -133,7 +163,8 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         if path is not None:
             atomic_write(Path(path).parent / 'research_assembly.json', json_bytes(configuration))
         if owner is not None:
-            owner.add_cleanup(service.close)
+            register = getattr(owner, 'add_owned_cleanup', owner.add_cleanup)
+            register(service.close)
     except BaseException as exc:
         try:
             service.close()
