@@ -63,6 +63,9 @@ can implement and revise training/evaluation themselves. `lab_poll` observations
 are query archives; `lab_result` collects terminal evidence into the ordinary
 feedback/memory path. Stdout is retained as native output, not verified metrics.
 Start keys prevent duplicate jobs within this process; submission is not completion.
+Temporary parallel saturation and changed arguments under an existing start key
+return failed tool feedback. Neither starts work or changes the original binding;
+decision must free a slot or choose a new key before trying a valid submission.
 Providers may raise `LabToolError` for a model-correctable invocation failure;
 the Lab adapter returns a failed result and lets decision continue. Unclassified
 exceptions, permissions, identity conflicts and storage failures still reach the host.
