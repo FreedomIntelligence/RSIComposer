@@ -241,7 +241,14 @@ class VLLMBackend(RemoteModelBackend):
                 body = response.read(self.binding.max_response_bytes + 1)
         except HTTPError as exc:
             code = exc.code
-            exc.close()
+            try:
+                body = exc.read(self.binding.max_response_bytes + 1)
+                if response_observer is not None:
+                    response_observer({'body': body.decode('utf-8', errors='replace'),
+                        'http_status': code, 'bytes_captured': len(body),
+                        'capture_truncated': len(body) > self.binding.max_response_bytes})
+            finally:
+                exc.close()
             raise ModelTransportError(f'vLLM returned HTTP {code}') from None
         except (OSError, URLError, TimeoutError):
             raise ModelTransportError('vLLM request failed or timed out') from None

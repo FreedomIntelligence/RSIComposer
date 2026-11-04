@@ -11,7 +11,7 @@ from unittest.mock import Mock
 from examples.medical.experiment import BudgetExhausted, DecisionBackend
 from rsisys.adapters.serving import VLLMBackend
 from rsisys.loops.contracts.model_service import BackendBinding, GenerationRequest, ModelRef
-from rsisys.runtime.model import ModelResponseError
+from rsisys.runtime.model import ModelResponseError, ModelTransportError
 
 MODEL = ModelRef('vllm', 'model', 'revision')
 SCHEMA = {'type': 'object', 'properties': {'kind': {'const': 'finish'}, 'reason': {'type': 'string'}},
@@ -37,8 +37,9 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
                 else:
                     case.requests.append(payload)
                     value = case.responses.pop(0)
+                status, value = value if isinstance(value, tuple) else (200, value)
                 body = value if isinstance(value, bytes) else json.dumps(value).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -131,6 +132,15 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
             self.serving.generate_with_response_observer(self.request, observed.append)
         self.assertEqual(observed[0]['body'], 'not a JSON response')
         self.assertEqual(error.exception.reason, 'invalid_response_envelope')
+
+    def test_http_error_body_is_retained_without_retry(self):
+        self.responses = [(400, {'error': 'Complete prompt exceeds context window'})]
+        observed = []
+        with self.assertRaises(ModelTransportError):
+            self.serving.generate_with_response_observer(self.request, observed.append)
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(observed[0]['http_status'], 400)
+        self.assertIn('exceeds context', observed[0]['body'])
 
     def test_failed_evidence_write_prevents_returning_a_decision(self):
         self.responses = [reply()]

@@ -24,7 +24,7 @@ from rsisys.adapters.langchain_model import BackendChatModel
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.runtime.json_tools import result_id
 from rsisys.runtime.files import json_bytes
-from .evidence import admitted_candidate_evidence, validate_claims
+from .evidence import admitted_candidate_evidence, validate_claims, claim_schema
 from .knowledge import context_record, WorkingMemoryPolicy
 from .model_gateway import FeedbackModelGateway
 
@@ -128,14 +128,17 @@ def _research_schema(refs, evidence, simulated_refs=frozenset()):
         evaluation_claims: list[dict] = Field(default_factory=list, max_length=16,
             description='Factual evaluation claims only: candidate_id, evaluation_ref, '
                         'protocol_ref, metrics (exact names and values), simulated. '
-                        'Use [] for non-evaluation observations or hypotheses.')
+                        'Use [] for non-evaluation observations or hypotheses.',
+            json_schema_extra=claim_schema(evidence))
         simulated: bool = Field(default=False,
             description='Derived by the host from cited receipts; not an inference about real experiments.')
 
         @model_validator(mode='after')
         def validate_evidence(self):
             if not set(self.source_refs).issubset(refs):
-                raise ValueError('Memory cites an unsupplied evidence source')
+                raise ValueError('Memory cites an unsupplied evidence source. Copy exact source_refs '
+                    'from the supplied feedback or existing memories; do not construct refs from job IDs. '
+                    'Examples of admitted refs: ' + repr(sorted(refs)[:8]))
             validate_claims(self.model_dump(), evidence)
             self.simulated = bool(set(self.source_refs).intersection(simulated_refs))
             return self

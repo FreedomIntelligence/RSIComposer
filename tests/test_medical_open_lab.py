@@ -1,5 +1,6 @@
 """Deployment boundaries: timed decisions, exact admission, allocated child devices."""
 import json
+from collections import UserDict
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -7,11 +8,13 @@ import unittest
 
 from examples.medical.open_lab_experiment import (
     AllocatedProcessBackend, HostAdmissionStop, RecordedBackend, TimedOpenPolicy,
+    AbsoluteHostPolicy,
 )
 from rsisys.loops.contracts.model_service import ModelRef, GenerationRequest, GenerationResponse
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.state import DecisionContext
 from rsisys.runtime.sandbox import SandboxSpec, ExecRequest
+from rsisys.runtime.run_policy import RunContext
 
 
 MODEL = ModelRef('meta', 'fixture', 'revision')
@@ -58,6 +61,29 @@ class MedicalOpenLabTests(unittest.TestCase):
             self.assertEqual(tokenizer.seen[0], request.chat_messages())
             self.assertEqual(tokenizer.seen[1]['tools'], list(request.tools))
             self.assertFalse(tokenizer.seen[1]['enable_thinking'])
+
+    def test_transformers_batch_encoding_mapping_counts_tokens_not_fields(self):
+        class BatchTokenizer:
+            def apply_chat_template(self, *args, **kwargs):
+                return UserDict(input_ids=list(range(54075)), attention_mask=[1] * 54075)
+        with TemporaryDirectory() as directory:
+            backend = RecordedBackend(Transport(), BatchTokenizer(), directory, max_calls=1)
+            self.assertEqual(backend.count_tokens(GenerationRequest('decision_maker', MODEL, 'long')), 54075)
+
+    def test_host_signal_closes_admission_before_another_request(self):
+        with TemporaryDirectory() as directory:
+            transport = Transport()
+            backend = RecordedBackend(transport, Tokenizer(), directory, max_calls=10)
+            backend.stop_requested = True
+            with self.assertRaises(HostAdmissionStop):
+                backend.generate(GenerationRequest('decision_maker', MODEL, 'choose'))
+            self.assertEqual(transport.calls, 0)
+
+    def test_absolute_deadline_cannot_be_extended_by_a_new_run(self):
+        backend = type('Backend', (), {'stop_requested': False})()
+        policy = AbsoluteHostPolicy(backend, 36000, deadline_epoch=1)
+        outcome = policy.evaluate(RunContext('objective', 0, 1, False))
+        self.assertEqual((outcome.action, outcome.shutdown), ('stop', 'cancel'))
 
     def test_rejected_response_is_accounted_and_not_replayed_after_limit(self):
         with TemporaryDirectory() as directory:

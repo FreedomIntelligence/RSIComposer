@@ -21,3 +21,11 @@ and metrics together. Cite the new exact record for the corrected value; keep an
 old value only as explicitly historical and supported by its original source.
 Prefer concise research observations and reusable lessons over session IDs,
 schema descriptions, packaging counters, and copies of the task instructions.
+
+Copy source_refs verbatim from the supplied source_refs list or an existing
+memory you are updating. A job ID, file path or decision ID is not itself a
+source_ref; never build a new reference by adding a history: or operation suffix.
+Do not replace existing source_refs when editing a memory unless the replacement
+is present verbatim in the supplied evidence. If no candidate_evidence evaluation
+records are supplied, evaluation_claims MUST be []. Debugging observations,
+warnings and training plans are not evaluation_claims.

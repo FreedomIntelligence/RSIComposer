@@ -5,12 +5,14 @@ in model-written programs; native Lab outputs are observations, not validated
 candidate adoption. Use only in a trusted, scheduler-isolated allocation.
 """
 import argparse
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import threading
 import time
 import traceback
@@ -28,7 +30,7 @@ from rsisys.loops.decision_making.harness.policy.prompts import DecisionPrompts
 from rsisys.research import ResearchAssembly
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.run_policy import TimeRunPolicy
+from rsisys.runtime.run_policy import TimeRunPolicy, RunDecision
 
 
 def write(path, value):
@@ -44,6 +46,16 @@ class HostAdmissionStop(RuntimeError):
     pass
 
 
+class AbsoluteHostPolicy:
+    def __init__(self, backend, seconds, deadline_epoch=None):
+        self.backend, self.timed, self.deadline_epoch = backend, TimeRunPolicy(seconds), deadline_epoch
+
+    def evaluate(self, context):
+        if self.backend.stop_requested or (self.deadline_epoch is not None and time.time() >= self.deadline_epoch):
+            return RunDecision('stop', 'absolute_host_deadline_or_signal', 'cancel')
+        return self.timed.evaluate(context)
+
+
 class RecordedBackend:
     """One account for decisions, feedback, summaries and rejected responses."""
     supports_tool_calling = True
@@ -54,17 +66,20 @@ class RecordedBackend:
         self.transport, self.tokenizer, self.root = transport, tokenizer, Path(root)
         self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
         self.calls, self.deadline = 0, None
+        self.stop_requested = False
         self.lock = threading.RLock()
 
     def count_tokens(self, request):
         kwargs = {'tools': list(request.tools)} if request.tools else {}
         tokens = self.tokenizer.apply_chat_template(request.chat_messages(), tokenize=True,
             add_generation_prompt=True, enable_thinking=False, **kwargs)
-        return len(tokens['input_ids'] if isinstance(tokens, dict) else tokens)
+        # Transformers 5 returns BatchEncoding (a Mapping, not a dict). Its
+        # length counts fields, usually 2, rather than prompt tokens.
+        return len(tokens['input_ids'] if isinstance(tokens, Mapping) else tokens)
 
     def generate(self, request):
         with self.lock:
-            if self.calls >= self.max_calls or (self.deadline is not None and time.monotonic() >= self.deadline):
+            if self.stop_requested or self.calls >= self.max_calls or (self.deadline is not None and time.monotonic() >= self.deadline):
                 raise HostAdmissionStop('Host inference admission closed')
             count = self.count_tokens(request)
             if count > self.max_input_tokens:
@@ -177,9 +192,13 @@ def main(argv=None):
     parser.add_argument('--endpoint', required=True)
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--max-calls', type=int, default=128)
+    parser.add_argument('--deadline-epoch', type=float, help='Absolute host UTC deadline, never extended by initialization or restart')
+    parser.add_argument('--max-jobs', type=int, default=1024)
+    parser.add_argument('--program-timeout', type=int, default=1800)
+    parser.add_argument('--revision', default='unreported')
     parser.add_argument('--run-id', required=True)
     args = parser.parse_args(argv)
-    if args.seconds < 1 or args.max_calls < 1:
+    if min(args.seconds, args.max_calls, args.max_jobs, args.program_timeout) < 1:
         parser.error('Host limits must be positive')
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -192,6 +211,13 @@ def main(argv=None):
     transport = VLLMBackend(binding, generation_options={
         'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}, native_schema_mode='portable')
     backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls)
+    from .open_lab_monitor import OpenLabMonitor
+    monitor = OpenLabMonitor(root, args.run_id, model, args.revision)
+    previous_handlers = {}
+    def request_stop(signum, frame):
+        backend.stop_requested = True
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers[sig] = signal.signal(sig, request_stop)
     compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
         max_target_tokens=40000, target_increment_tokens=12000)
     prompts = DecisionPrompts({
@@ -242,7 +268,8 @@ def main(argv=None):
     def make_lab(context):
         allocated = AllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment)
         context.add_owned_cleanup(allocated.close_all)
-        lab = LocalProcessLab(allocated, context.artifacts, timeout_seconds=300, max_jobs=32, max_parallel=1)
+        lab = LocalProcessLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
+                              max_jobs=args.max_jobs, max_parallel=1)
         # Seed assets before construction returns. No research programs are started.
         (lab.workspace / 'data').mkdir()
         for name in relative_files:
@@ -261,9 +288,12 @@ def main(argv=None):
             directives=DirectiveDefinitions(()), max_validation_attempts=3, structured_output=True,
             context_compactor=compactor, project_context=project, prompts=prompts)
         return loop
+    from importlib import resources
+    memory_instructions = resources.files('rsisys.loops.decision_making.feedback').joinpath(
+        'prompts/langmem_research.txt').read_text()
     assembly = ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
         namespace=('rsisys', args.run_id), memory_options={'max_calls_per_job': 6, 'max_steps': 1,
-            'additional_instructions': 'Capture concise reusable medical research and debugging observations. '
+            'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
                 'Distinguish program outputs from validated evaluations and adoption. '
                 'Absence from the supplied snapshot does not prove absence from the full history.'})
     modules = ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
@@ -280,20 +310,31 @@ def main(argv=None):
         'note': 'Model decisions and native program results are evidence; experiment/training counts require review.'}
     started = time.monotonic()
     try:
-        with Application(config, modules=modules, run_policy=TimeRunPolicy(args.seconds),
+        remaining = min(args.seconds, args.deadline_epoch - time.time()) if args.deadline_epoch else args.seconds
+        if remaining <= 0 or backend.stop_requested:
+            result.update(status='deadline_reached_before_start')
+            return result
+        backend.deadline = time.monotonic() + remaining
+        with Application(config, modules=modules, run_policy=AbsoluteHostPolicy(backend, args.seconds, args.deadline_epoch),
                          cleanup_timeout_seconds=40) as app:
             started = time.monotonic()
             result['started_at'] = time.time()
-            write(root / 'research-started.json', {'started_at': result['started_at'], 'seconds': args.seconds})
-            backend.deadline = started + args.seconds
+            remaining = min(args.seconds, args.deadline_epoch - time.time()) if args.deadline_epoch else args.seconds
+            write(root / 'research-started.json', {'started_at': result['started_at'], 'seconds': remaining,
+                'absolute_deadline_epoch': args.deadline_epoch})
+            backend.deadline = started + max(0, remaining)
             try:
                 while True:
+                    if backend.stop_requested or time.monotonic() >= backend.deadline:
+                        result.update(status='completed', stop='host_deadline_or_signal')
+                        break
                     try:
                         step = app.runner.step(objective)
                     except HostAdmissionStop:
                         result.update(status='host_limit_reached')
                         break
                     append(root / 'steps.jsonl', {'at': time.time(), 'step': asdict(step)})
+                    monitor.update(app.runner.decision_making.harness, backend, compactor, step)
                     write(root / 'context-audit.json', compactor.last_measurement)
                     if step.kind == 'finished':
                         result.update(status='completed', stop=step.event.get('run_stop'))
@@ -309,13 +350,18 @@ def main(argv=None):
                 # Retain generated programs/results/weights remotely; bundles may omit large/private files.
                 shutil.copytree(lab.workspace, root / 'retained-workspace', symlinks=True,
                     ignore=lambda directory, names: {'data', '.cache'} & set(names))
+                write(root / 'controller-cleanup.json', {'owned_lab_closed': True, 'at': time.time()})
     except BaseException as exc:
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc())
         raise
     finally:
         result.update(ended_at=time.time(), elapsed_seconds=time.monotonic() - started,
             model_calls=backend.calls, compactions=compactor.compactions)
+        write(root / 'context-audit.json', compactor.last_measurement)
+        monitor.finish(result)
         write(root / 'result.json', result)
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
 
