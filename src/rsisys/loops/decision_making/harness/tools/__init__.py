@@ -9,6 +9,7 @@ from typing import Protocol
 from rsisys.loops.contracts.jobs import JobRef, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.execution import LabInfrastructureError
+from rsisys.loops.contracts.decision import OperationArgumentError
 from rsisys.loops._memory import HistoryEntry
 from rsisys.experience.records import ExperienceRecord
 from rsisys.runtime.artifacts import ArtifactStore
@@ -43,7 +44,14 @@ def execute_operation(tools, action_space, call: OperationCall, *, simulated=Fal
     call = deepcopy(call)
     error = None
     try:
-        call = deepcopy(action_space.validate(call))
+        try:
+            call = deepcopy(action_space.validate(call))
+        except OperationArgumentError as exc:
+            # Only an explicit pre-execution argument rejection is recoverable.
+            # The same exception from a tool is still an unexpected host fault.
+            outcome = OperationResult('Decision arguments rejected; correct the next call', (),
+                simulated, ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
+            return OperationExecution(call, outcome, clock() - started, simulated)
         outcome = tools.execute(deepcopy(call))
         if not isinstance(outcome, (OperationResult, JobRef)):
             raise TypeError('Tool must return OperationResult or JobRef')

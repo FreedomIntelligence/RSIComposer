@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.feedback_context import ContextQuery
+from rsisys.loops.contracts.decision import OperationArgumentError
 from rsisys.runtime.json_tools import EvidencePathError
 from rsisys.runtime.capabilities import optional_method
 from rsisys.loops.contracts.model_service import ModelRef
@@ -259,7 +260,8 @@ READ_SPEC = OperationSpec('feedback_learning_read',
     'Knowledge views also return JSON-text pages; pass sha256 as expected_digest on subsequent pages.',
     {'type': 'object', 'properties': {
         'view': {'enum': ['jobs', 'attempts', 'proposals', 'trajectories']},
-        'target': {'enum': ['context_memory', 'harness', 'weights', 'system']},
+        'target': {'enum': ['context_memory', 'harness', 'weights', 'system'],
+                   'description': 'Filter proposals only; requires view=proposals. Omit for job reads.'},
         'expected_digest': {'type': 'string', 'minLength': 64, 'maxLength': 64},
         'job_id': {'type': 'string', 'minLength': 1},
         'evidence_path': {'type': 'string', 'maxLength': 1000,
@@ -274,35 +276,35 @@ READ_SPEC = OperationSpec('feedback_learning_read',
 def _read_arguments(arguments):
     if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit',
                                                           'evidence_path', 'view', 'target', 'expected_digest'}:
-        raise ValueError('Invalid feedback_learning_read arguments')
+        raise OperationArgumentError('Invalid feedback_learning_read arguments')
     view = arguments.get('view', 'jobs')
     if view not in ('jobs', 'attempts', 'proposals', 'trajectories'):
-        raise ValueError('Invalid feedback view')
+        raise OperationArgumentError('Invalid feedback view')
     if view != 'jobs' and ('job_id' in arguments or 'evidence_path' in arguments):
-        raise ValueError('Knowledge view cannot be combined with job evidence')
+        raise OperationArgumentError('Knowledge view cannot be combined with job evidence')
     if 'target' in arguments and (view != 'proposals' or arguments['target'] not in
                                 ('context_memory', 'harness', 'weights', 'system')):
-        raise ValueError('target requires a proposals view')
+        raise OperationArgumentError('target requires a proposals view')
     if 'expected_digest' in arguments and (not isinstance(arguments['expected_digest'], str)
             or len(arguments['expected_digest']) != 64):
-        raise ValueError('Invalid expected_digest')
+        raise OperationArgumentError('Invalid expected_digest')
     if 'expected_digest' in arguments and view == 'jobs' and 'evidence_path' not in arguments:
-        raise ValueError('expected_digest requires an evidence or knowledge page')
+        raise OperationArgumentError('expected_digest requires an evidence or knowledge page')
     if 'job_id' in arguments and (not isinstance(arguments['job_id'], str) or not arguments['job_id'].strip()):
-        raise ValueError('job_id must be a nonempty string')
+        raise OperationArgumentError('job_id must be a nonempty string')
     if 'evidence_path' in arguments:
         pointer = arguments['evidence_path']
         if ('job_id' not in arguments or not isinstance(pointer, str) or len(pointer) > 1000
                 or (pointer and not pointer.startswith('/'))):
-            raise ValueError('evidence_path requires job_id and a bounded JSON pointer')
+            raise OperationArgumentError('evidence_path requires job_id and a bounded JSON pointer')
     if 'research_attempt_id' in arguments:
         ident = arguments['research_attempt_id']
         if not isinstance(ident, str) or not ident.strip() or len(ident) > 200 or 'job_id' in arguments:
-            raise ValueError('research_attempt_id must be a bounded ID for a job listing')
+            raise OperationArgumentError('research_attempt_id must be a bounded ID for a job listing')
     if type(arguments.get('offset', 0)) is not int or arguments.get('offset', 0) < 0:
-        raise ValueError('offset must be nonnegative')
+        raise OperationArgumentError('offset must be nonnegative')
     if type(arguments.get('limit', 8)) is not int or not 1 <= arguments.get('limit', 8) <= 16:
-        raise ValueError('limit must be in 1..16')
+        raise OperationArgumentError('limit must be in 1..16')
     return deepcopy(arguments)
 
 
@@ -340,16 +342,25 @@ class LearningTools:
         if call.name != READ_SPEC.name:
             return self.base.execute(call)
         try:
-            data = self.learning.read(**_read_arguments(call.arguments))
+            arguments = _read_arguments(call.arguments)
+        except OperationArgumentError as exc:
+            return self._read_failure(call, exc)
+        try:
+            data = self.learning.read(**arguments)
         except EvidencePathError as exc:
-            return OperationResult('Feedback read rejected', (), False,
-                ExecutionStatus.FAILED, str(exc), data={
-                    'view': call.arguments.get('view', 'jobs'),
-                    'job_id': call.arguments.get('job_id'),
-                    'evidence_path': call.arguments.get('evidence_path'),
-                    'read_operation': READ_SPEC.name})
+            return self._read_failure(call, exc)
         return OperationResult('Feedback learning proposals; validation still required', (),
                                bool(data.get('simulated', False)), data=data)
+
+    @staticmethod
+    def _read_failure(call, error):
+        arguments = call.arguments if isinstance(call.arguments, dict) else {}
+        return OperationResult('Feedback read rejected', (), False,
+            ExecutionStatus.FAILED, str(error), data={
+                'view': arguments.get('view', 'jobs'),
+                'job_id': arguments.get('job_id'),
+                'evidence_path': arguments.get('evidence_path'),
+                'read_operation': READ_SPEC.name})
 
 
 def feedback_learning_decision_factory(*, decision_factory=None, backend=None, model=None,

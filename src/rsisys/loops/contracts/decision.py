@@ -28,6 +28,15 @@ class OperationCall:
     arguments: dict[str, object]
 
 
+class OperationArgumentError(ValueError):
+    """A validator's explicit rejection of model-correctable call arguments.
+
+    The default executor records this as failed feedback before calling a tool.
+    It never retries the call. Permission, identity and internal provider faults
+    must not use this signal; ordinary exceptions keep their host semantics.
+    """
+
+
 def validate_attempt_fields(ident, title):
     """Compatibility metadata validation; membership itself is optional."""
     if ident is not None and (not isinstance(ident, str) or not ident.strip() or len(ident) > 200):

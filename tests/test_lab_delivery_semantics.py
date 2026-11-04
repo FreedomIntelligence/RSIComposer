@@ -113,6 +113,21 @@ class LocalLabDeliveryTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.lab._jobs, {})
 
+    def test_invalid_feedback_read_is_recorded_and_next_decision_can_correct_arguments(self):
+        arguments = {'view': 'jobs', 'target': 'context_memory', 'limit': 1}
+        failed = self.invoke('feedback_learning_read', **arguments)
+        self.assertEqual(failed.kind, 'progressed')
+        self.assertEqual(failed.event['operation_result']['status'], ExecutionStatus.FAILED)
+        self.assertIn('target requires a proposals view', failed.event['operation_result']['error'])
+        fixed = self.invoke('feedback_learning_read', view='jobs', limit=1)
+        self.assertEqual(fixed.event['operation_result']['status'], ExecutionStatus.COMPLETED)
+        self.assertIn('target requires a proposals view', self.requests[-1].prompt)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.lab._jobs, {})
+        rows = self.harness.memory.history(kind='operation')[-2:]
+        self.assertEqual(rows[0].details['operation']['arguments'], arguments)
+        self.assertEqual([r.details['result']['status'] for r in rows], ['failed', 'completed'])
+
     def test_input_and_missing_executable_errors_are_returned_without_effects(self):
         for name, args in (
             ('lab_write_file', {'path': 'x'}),

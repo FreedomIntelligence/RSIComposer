@@ -7,6 +7,7 @@ import test_researcher_review as fixtures
 from rsisys.loops.contracts.coordination import ReviewDecision
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.decision import OperationArgumentError
 from rsisys.loops.decision_making.action_space import (
     ModularDecisionActionSpace, OperationCall, OperationResult, OperationSpec,
 )
@@ -23,6 +24,31 @@ class Normalize:
 
 
 class SharedOperationExecutionTests(unittest.TestCase):
+    def test_only_explicit_validator_argument_rejections_are_recoverable_without_execution(self):
+        call = OperationCall('inspect', {'view': 'jobs', 'target': 'context_memory'})
+        tools = Mock()
+        for error in (OperationArgumentError('target requires a proposals view'),
+                      ValueError('identity conflict'), PermissionError('denied'), OSError('store failed')):
+            with self.subTest(error=error):
+                space = Mock(validate=Mock(side_effect=error))
+                result = execute_operation(tools, space, call, simulated=True)
+                self.assertEqual(result.observation().status, ExecutionStatus.FAILED)
+                self.assertTrue(result.observation().simulated)
+                self.assertEqual(result.call, call)
+                if isinstance(error, OperationArgumentError):
+                    self.assertIsNone(result.error)
+                else:
+                    self.assertIs(result.error, error)
+        tools.execute.assert_not_called()
+
+    def test_argument_exception_from_executor_does_not_hide_an_internal_fault(self):
+        call = OperationCall('inspect', {})
+        error = OperationArgumentError('unexpected after validation')
+        result = execute_operation(Mock(execute=Mock(side_effect=error)),
+                                   Mock(validate=Mock(return_value=call)), call)
+        self.assertIs(result.error, error)
+        self.assertEqual(result.observation().status, ExecutionStatus.FAILED)
+
     def test_both_entry_points_record_the_same_normalized_result_and_simulation(self):
         saved = []
         for phase in ('decision', 'review'):

@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 from rsisys.loops._memory import HistoryEntry
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.decision import OperationArgumentError
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef
@@ -96,6 +97,19 @@ class EvidencePathRecoveryTests(unittest.TestCase):
 
     def test_feedback_internal_fault_is_not_disguised_as_a_bad_path(self):
         learning = Mock()
-        learning.read.side_effect = KeyError('broken internal state')
-        with self.assertRaises(KeyError):
-            LearningTools(None, learning).execute(OperationCall('feedback_learning_read', {'job_id': 'known'}))
+        for error in (KeyError('broken internal state'), ValueError('identity'), PermissionError('denied'),
+                      OSError('storage'), OperationArgumentError('unexpected after validation')):
+            learning.read.side_effect = error
+            with self.subTest(error=error), self.assertRaises(type(error)):
+                LearningTools(None, learning).execute(OperationCall('feedback_learning_read', {'job_id': 'known'}))
+
+    def test_direct_feedback_read_rejects_bad_arguments_before_accessing_storage(self):
+        learning = Mock()
+        tools = LearningTools(None, learning)
+        for arguments in ({'view': 'jobs', 'target': 'context_memory'},
+                          {'view': 'trajectories', 'job_id': 'known'},
+                          {'limit': 0}, {'offset': -1}, {'evidence_path': '/receipt'}):
+            with self.subTest(arguments=arguments):
+                result = tools.execute(OperationCall('feedback_learning_read', arguments))
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+        learning.read.assert_not_called()
