@@ -290,11 +290,14 @@ class BasicContextCompactor:
                         'success or of an unevaluated candidate. Consult raw research_archive sources '
                         'for original receipts and qualifications.',
                 'text': '', 'sources': sources, 'compaction': self.compactions+1}
-        # Fixed facts may leave less than the configured summary allowance.
         # The initial reserve is a heuristic, not the size of the actual source
         # manifest. Fold additional eligible records if provenance itself needs
-        # more room, before failing or making a summarizer call. Increasing
+        # more room. A model summarizer needs its configured output allowance;
+        # a tiny positive remainder is not a usable structured summary budget.
+        # Reject insufficient headroom before inference so only this budget
+        # failure can use the bounded adaptive target. Increasing
         # steps bound the number of full-request meter calls on long histories.
+        required_summary_tokens = self.summary_tokens if summarize is not None else 1
         extra = 1
         while True:
             chosen = after_removing(lo)
@@ -302,14 +305,14 @@ class BasicContextCompactor:
             if not summary['sources']:
                 raise ContextBudgetError('No old records can be compacted without losing latest feedback')
             available = target_tokens - count(view(chosen, summary))
-            if available > 64 or lo == len(removable):
+            if available >= required_summary_tokens + 64 or lo == len(removable):
                 break
             lo = min(len(removable), lo + extra)
             extra *= 2
         summary_limit = min(self.summary_tokens, available - 64)
         self.last_measurement['summary_token_limit'] = max(0, summary_limit)
-        if summary_limit < 1:
-            raise ContextBudgetError('Required facts and summary provenance leave no summary budget; '
+        if summary_limit < required_summary_tokens:
+            raise ContextBudgetError('Required facts and summary provenance leave insufficient summary budget; '
                                      'no compaction state was committed')
         if summarize is not None:
             text = summarize(deepcopy(removed), deepcopy(previous_summary), summary_limit)

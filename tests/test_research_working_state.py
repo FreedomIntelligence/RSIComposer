@@ -114,7 +114,7 @@ class ResearchWorkingStateTests(unittest.TestCase):
         history = (evidence, *(HistoryEntry(str(i), 'operation', None, 'x' * 800, True) for i in range(25)))
         raw = replace(context(), history=history)
         view = research_working_view(raw, [row], [])
-        compactor = BasicContextCompactor(trigger_tokens=14000, target_tokens=7000, summary_tokens=200)
+        compactor = BasicContextCompactor(trigger_tokens=14000, target_tokens=7500, summary_tokens=200)
         projected = compactor.compact(view, summarize=lambda *args: 'Unverified navigation only')
         self.assertEqual(compactor.compactions, 1)
         self.assertIn(evidence, projected.history)

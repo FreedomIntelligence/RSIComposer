@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
+from rsisys.loops._memory import Memory
 from rsisys.loops.decision_making.harness.context import BasicContextCompactor, ContextBudgetError
 from rsisys.loops.decision_making.harness.research import ResearchAgenda
 from rsisys.snapshot.local import research_configuration, restore_research
@@ -46,6 +47,86 @@ class AdaptiveContextBudgetTests(unittest.TestCase):
         self.assertEqual([a['target_tokens'] for a in compactor.last_measurement['target_attempts']],
                          [24000, 36000, 48000, 60000])
         writer.assert_not_called()
+
+    def test_thirty_five_token_headroom_expands_before_calling_model(self):
+        # Deterministic character meter recreates the live 35-token allocation;
+        # it is not a claim about a provider tokenizer or a real inference.
+        raw = context(objective='s' * 10938, history=records(50))
+        saved = deepcopy(raw)
+        compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000,
+            summary_tokens=2048, max_target_tokens=40000)
+        writer = Mock(return_value='Archived evidence remains qualified by its original receipts.')
+        result = compactor.compact(raw, measure=measure, summarize=writer)
+        writer.assert_called_once()
+        self.assertEqual(writer.call_args.args[-1], 2048)
+        self.assertEqual([a['target_tokens'] for a in compactor.last_measurement['target_attempts']],
+                         [16000, 28000])
+        self.assertEqual(compactor.compactions, 1)
+        self.assertLessEqual(measure(result), 28000)
+        self.assertEqual(result.history[-2:], raw.history[-2:])
+        self.assertEqual(raw, saved)
+
+    def test_insufficient_summary_headroom_at_ceiling_is_atomic_without_inference(self):
+        for maximum in (16000, 40000):
+            with self.subTest(maximum=maximum):
+                raw = context(objective='s' * (10938 + maximum - 16000), history=records(50))
+                compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000,
+                    summary_tokens=2048, max_target_tokens=maximum)
+                before = compactor.export_state()
+                writer = Mock(return_value='No model call should be admitted.')
+                with self.assertRaisesRegex(ContextBudgetError, 'summary budget'):
+                    compactor.compact(raw, measure=measure, summarize=writer)
+                writer.assert_not_called()
+                self.assertEqual(compactor.last_measurement['target_tokens'], maximum)
+                self.assertEqual(compactor.export_state(), before)
+
+    def test_exact_summary_headroom_is_admitted_but_one_token_short_is_not(self):
+        for fixed, admitted in ((8925, True), (8926, False)):
+            with self.subTest(fixed=fixed):
+                compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000,
+                                                 summary_tokens=2048)
+                raw = context(objective='s' * fixed, history=records(50))
+                writer = Mock(return_value='Bounded summary')
+                if admitted:
+                    compactor.compact(raw, measure=measure, summarize=writer)
+                    writer.assert_called_once()
+                    self.assertEqual(writer.call_args.args[-1], 2048)
+                else:
+                    with self.assertRaises(ContextBudgetError):
+                        compactor.compact(raw, measure=measure, summarize=writer)
+                    writer.assert_not_called()
+
+    def test_scripted_fallback_retains_partial_allowance_without_model(self):
+        compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000,
+                                         summary_tokens=2048)
+        result = compactor.compact(context(objective='s' * 10938, history=records(50)), measure=measure)
+        self.assertEqual(compactor.last_measurement['summary_token_limit'], 35)
+        self.assertEqual(compactor.last_measurement['target_tokens'], 16000)
+        self.assertLessEqual(measure(result), 16000)
+
+    def test_format_failure_with_reserved_headroom_does_not_expand_target(self):
+        compactor = self.compactor()
+        before = compactor.export_state()
+        writer = Mock(side_effect=ValueError('Summary output_truncated'))
+        with self.assertRaisesRegex(ValueError, 'output_truncated'):
+            compactor.compact(self.large(1000), measure=measure, summarize=writer)
+        writer.assert_called_once()
+        self.assertEqual(writer.call_args.args[-1], compactor.summary_tokens)
+        self.assertEqual(compactor.last_measurement['target_tokens'], 24000)
+        self.assertEqual(compactor.export_state(), before)
+
+    def test_source_manifest_folds_more_eligible_records_before_expanding(self):
+        raw = context(history=records(), memories=tuple(
+            Memory(str(i), 'episodic', 'x' * 200) for i in range(40)))
+        compactor = BasicContextCompactor(trigger_tokens=22000, target_tokens=8500,
+            summary_tokens=1000, max_target_tokens=20500, target_increment_tokens=12000)
+        writer = Mock(return_value='Use original receipts for all scientific claims.')
+        result = compactor.compact(raw, measure=measure, summarize=writer)
+        writer.assert_called_once()
+        self.assertEqual(writer.call_args.args[-1], 1000)
+        self.assertEqual(compactor.last_measurement['target_tokens'], 8500)
+        self.assertLessEqual(measure(result), 8500)
+        self.assertEqual(result.history[-2:], raw.history[-2:])
 
     def test_provider_or_summary_validation_errors_are_not_retried(self):
         compactor = self.compactor()

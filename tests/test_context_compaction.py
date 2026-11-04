@@ -152,7 +152,7 @@ class ContextCompactionTests(unittest.TestCase):
                         if request.system.startswith('Summarize') else '{"kind":"finish","reason":"fixture"}')
                 return GenerationResponse(text, model, True, TokenUsage(100, 10))
         backend = Backend()
-        compactor = BasicContextCompactor(trigger_tokens=25000, target_tokens=14000, summary_tokens=1000)
+        compactor = BasicContextCompactor(trigger_tokens=25000, target_tokens=16000, summary_tokens=1000)
         policy = ModelDecisionPolicy(backend, model, context_compactor=compactor)
         latest = OperationResult('Complete feedback', (), False, data={'content':'latest-body'*100})
         observed = []

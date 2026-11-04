@@ -95,8 +95,15 @@ class RepeatedReceiptCompactionTests(unittest.TestCase):
         writer = Mock(side_effect=lambda rows, previous, limit: 's' * limit)
         compactor = BasicContextCompactor()
         meter = lambda view: overhead + measure(view)
+        before = compactor.export_state()
+        with self.assertRaisesRegex(ContextBudgetError, 'summary budget'):
+            compactor.compact(context, measure=meter, summarize=writer)
+        writer.assert_not_called()
+        self.assertEqual(compactor.export_state(), before)
+        compactor = BasicContextCompactor(max_target_tokens=36000)
         view = compactor.compact(context, measure=meter, summarize=writer)
         allowance = writer.call_args.args[2]
-        self.assertGreater(allowance, 0)
-        self.assertLess(allowance, compactor.summary_tokens)
-        self.assertLessEqual(meter(view), 24000)
+        self.assertEqual(allowance, compactor.summary_tokens)
+        writer.assert_called_once()
+        self.assertEqual(compactor.last_measurement['target_tokens'], 36000)
+        self.assertLessEqual(meter(view), 36000)
