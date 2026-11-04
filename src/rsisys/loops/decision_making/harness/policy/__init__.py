@@ -309,6 +309,12 @@ class ModelDecisionPolicy:
             json.dumps({'previous_summary': previous, 'archived_records': records,
                         'current_state': current_state}),
             system=self.prompts.render('summary'),
+            # Summaries are JSON too. Let the serving/backend boundary reject
+            # truncated or malformed replies before parsing or committing state.
+            **({'response_schema': {'type': 'object',
+                'properties': {'summary': {'type': 'string', 'minLength': 1}},
+                'required': ['summary'], 'additionalProperties': False}}
+               if self.structured_output else {}),
             max_output_tokens=max_tokens))
         self._received(response)
         if response.model != self.model:

@@ -123,6 +123,69 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
                 backend.generate(self.request)
         self.assertEqual(backend.calls, 1)
 
+    def summary_policy(self):
+        from rsisys.loops.decision_making.harness.context import BasicContextCompactor
+        from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+        backend = self.open_backend()
+        # Deterministic request-size fixture; no real tokenizer or inference.
+        backend.count_tokens = lambda request: len(request.prompt) + len(request.system)
+        compactor = BasicContextCompactor(trigger_tokens=25000, target_tokens=14000,
+            summary_tokens=217, max_target_tokens=23000, target_increment_tokens=9000)
+        return backend, compactor, ModelDecisionPolicy(backend, MODEL, context_compactor=compactor)
+
+    def test_open_lab_truncated_summary_recovers_and_decision_resumes(self):
+        from tests.test_context_compaction import context, records
+        backend, compactor, policy = self.summary_policy()
+        self.responses = [reply('{"summary":"Evaluated medical QA; evidence d66bbf64-2', 'length'),
+                          reply('{"summary":"Retain the original evidence and uncertainty."}'), reply()]
+        decision = policy.decide(context(history=records(18)))
+        self.assertEqual(decision.kind, 'finish')
+        self.assertEqual((backend.calls, compactor.compactions), (3, 1))
+        first, recovered, final = self.requests
+        self.assertEqual(first['max_tokens'], 217)
+        for key in ('model', 'response_format', 'max_tokens'):
+            self.assertEqual(first[key], recovered[key])
+        schema = first['response_format']['json_schema']['schema']
+        self.assertEqual(set(schema['properties']), {'summary'})
+        self.assertEqual(schema['required'], ['summary'])
+        self.assertFalse(schema['additionalProperties'])
+        self.assertEqual(first['messages'][-1], recovered['messages'][-1])
+        self.assertIn('shorter, complete JSON', recovered['messages'][0]['content'])
+        self.assertNotIn('Summarize', final['messages'][0]['content'])
+        self.assertEqual([r['response_attempt'] for r in self.rows('model_requests.jsonl')], [1, 2, 1])
+        self.assertEqual(self.rows('model_errors.jsonl')[0]['reason'], 'output_truncated')
+        self.assertEqual(len(self.rows('model_wire.jsonl')), 3)
+
+    def test_open_lab_summary_recovery_exhaustion_preserves_state_and_target(self):
+        from copy import deepcopy
+        from tests.test_context_compaction import context, records
+        backend, compactor, policy = self.summary_policy()
+        raw = context(history=records(18))
+        saved, before = deepcopy(raw), compactor.export_state()
+        self.responses = [reply('{"summary":"unfinished', 'length')] * 3
+        with self.assertRaises(ModelResponseError) as error:
+            policy.decide(raw)
+        self.assertEqual(error.exception.reason, 'output_truncated')
+        self.assertEqual(backend.calls, 3)
+        self.assertEqual(compactor.export_state(), before)
+        self.assertEqual(raw, saved)
+        self.assertEqual(compactor.last_measurement['target_tokens'], 14000)
+        self.assertTrue(all(r['max_tokens'] == 217 for r in self.requests))
+        self.assertTrue(all(r['messages'][0]['content'].startswith('Summarize') for r in self.requests))
+        self.assertFalse((self.root/'model_responses.jsonl').exists())
+
+    def test_summary_structured_output_opt_out_and_canonical_validation_remain(self):
+        from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
+        backend = self.open_backend()
+        policy = ModelDecisionPolicy(backend, MODEL, structured_output=False)
+        self.responses = [reply('{"summary":"A valid unstructured provider reply."}')]
+        self.assertEqual(policy._summarize_context([], {}, 217), 'A valid unstructured provider reply.')
+        self.assertIsNone(self.rows('model_requests.jsonl')[0]['request']['response_schema'])
+        for text in ('{"summary":""}', '{"summary":"ok","unexpected":true}'):
+            self.responses = [reply(text)]
+            with self.assertRaisesRegex(ValueError, 'Invalid rolling context summary'):
+                policy._summarize_context([], {}, 217)
+
     def test_truncation_recovery_preserves_wire_identity_schema_and_budget(self):
         self.responses = [reply('{"kind":"invoke",', 'length'), reply()]
         result = self.backend.generate(self.request)
