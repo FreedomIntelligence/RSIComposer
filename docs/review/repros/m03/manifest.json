@@ -1,0 +1,30 @@
+{
+  "scope": "CPU fixture only; generated requests are not evidence of real model behavior",
+  "files": {
+    "docs/review/repros/m03/decision-required-attempt.json": "757b8648d84e663c3c3d3ed65981b6c0921a43b636838f19fce45162d5a0ba07",
+    "docs/review/repros/m03/decision.json": "0761a0191cbc93b93f544600a9270394c51620e3852caedee7a8c7892a68de6d",
+    "docs/review/repros/m03/medical-researcher.json": "9e01fc593545148b8a04512bbe2a077c2fa02dbf98679e9f05f833bb62fba05b",
+    "docs/review/repros/m03/medical-time.json": "b79a5b7cceb8ede0e8ffe86b814180802f8c1f40589893721449b0a9216b0825",
+    "docs/review/repros/m03/review-required-attempt.json": "847c95d0477ce26776f05d3d2a25e780091a0b4410732f31414651cda9c5c925",
+    "docs/review/repros/m03/review.json": "69d0f7efedf1d8c72a86ce516c86a8052f7f5fb053d84af1075275954791a799",
+    "docs/review/repros/m03/summary.json": "5295585ff8644316d240d8160b6f4b71da3abf67a9f2580d6c048f8d2167badf",
+    "docs/review/repros/m03/validation-correction.json": "b98fc2ac40b3fa99d8de82df6720738e1f1d91bce4f6d1a6a83943359066bcb1"
+  },
+  "source_sha256": {
+    "src/rsisys/loops/decision_making/harness/policy/__init__.py": "5942edbeb96d7ce828f9342d8315d12ef38be9d2cb209118365e427fb2d87a2e",
+    "src/rsisys/loops/decision_making/harness/policy/prompts.py": "83f7a70b3ba11a8bd5fd05c95c1d9f643a2e32dd833f97436a77034a65faa286",
+    "examples/medical/experiment.py": "9418491fb43e2ec97791659b31c7c605017c4a647135ca8069ed4ae54ecfa0dd",
+    "src/rsisys/snapshot/local.py": "ea6a402d64ce918693dee5f972275f695e334af1f72fff24bc738622f8dc1b97",
+    "tests/test_m03_decision_policy.py": "6714812efcdfbdec1e420322c0cda857b123c502587ba4fe44b04cb3700975cc",
+    "docs/review/repros/m03.py": "ac2e6e066cdc7540f7ed55fee312afb682d9237defdf08a993ff55b19f273372",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/attempt_optional.txt": "2332a0590d35ad1472659daf7756fe55380fa490a4db04b6cf4705ac51b3bcab",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/attempt_required.txt": "315b89d7d72383baefaf7885fb608c5d92df56f66898ca88b7e99a35573be80d",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/control.txt": "62479d8bb633a5292efc1a5ec76d4f77ab0d27d8677513212691df1593f003b0",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/decision.txt": "1949c444563a4eb55d5b9fd291c1bf7c0a20732fd51bea985fde6325f2bec1ea",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/research.txt": "2a8b401804545540e72df9001826547387417273ca8b42589b26401b17002040",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/review.txt": "1ba0d757c557167464b77546b50ae23ffe3148f5c6fe66e6e8b77da534d11c36",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/scheduling.txt": "06cded8fb62b9fd6a761f5da7c30debf3f539ceb07dcafd4e28d6f1ba693448d",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/summary.txt": "d9a57890e03caa9e3cf5dc0053bbb763d665f5deafefade5956373c6184512e2",
+    "src/rsisys/loops/decision_making/harness/policy/prompts/validation_correction.txt": "cdd82eb88768eed075afd4a8a38ca12d1ede25f11fecaa0975fa3f38cf30759a"
+  }
+}

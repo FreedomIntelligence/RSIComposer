@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ from rsisys.loops._memory import MemoryStore
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
+from rsisys.loops.contracts.metrics import InvalidMetrics, validated_metrics
 from rsisys.loops.contracts.training import ModelActivator, TrainingResult, TrainingOrigin
 from rsisys.runtime.jobs import JobBook, InvalidJobResult
 from rsisys.runtime.model import prepare_model_activation
@@ -105,11 +106,27 @@ class LearningExecution:
         return self.jobs.submit(request, idempotency_key=idempotency_key)
 
     def poll(self, job: JobRef) -> JobOutcome[TrainingResult]:
-        outcome = self.jobs.poll(job)
+        outcome = self.jobs.poll(job, normalize=self._validate_metrics)
         return self._record(outcome)
 
     def cancel(self, job: JobRef) -> JobOutcome[TrainingResult]:
-        return self._record(self.jobs.cancel(job))
+        return self._record(self.jobs.cancel(job, normalize=self._validate_metrics))
+
+    def _validate_metrics(self, outcome):
+        result = outcome.result
+        request = self.jobs.request(outcome.job)
+        if (outcome.status != JobStatus.SUCCEEDED or not isinstance(result, TrainingResult)
+                or result.base != request.base or 'actor' not in result.candidate.affected_roles
+                or (request.origin is not None
+                    and result.candidate.parent_system != request.origin.parent_system)):
+            return outcome  # Identity/type violations retain the InvalidJobResult path.
+        try:
+            validated_metrics(result.metrics, 'training metrics')
+        except InvalidMetrics:
+            return replace(outcome, status=JobStatus.FAILED, result=None,
+                simulated=outcome.simulated or result.simulated,
+                error='Invalid training metrics: expected nonempty names and finite numeric values')
+        return outcome
 
     def _record(self, outcome: JobOutcome[TrainingResult]) -> JobOutcome[TrainingResult]:
         request = self.jobs.request(outcome.job)

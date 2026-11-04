@@ -1,0 +1,30 @@
+{
+  "base_revision": "b0378aa4ceb1cc12ef40b2ca5aaf15f4a2b96d9c",
+  "scope": "Local working tree. Follow active meta-agent weights in separate feedback context; required factual context and public trajectory archive, optional harness changes. No commit or push.",
+  "regressions": {
+    "ran": 6,
+    "skipped": 0,
+    "status": "passed"
+  },
+  "full_suite": {
+    "command": "PYTHONPATH=src /Users/xcx/.local/bin/python3.12 -m unittest discover -s tests -q",
+    "ran": 1294,
+    "seconds": 81.955,
+    "skipped": 18,
+    "status": "passed"
+  },
+  "diff_check": "passed",
+  "limits": [
+    "CPU/mock/temporary fixtures only; no remote run, training or model service validation",
+    "Archived segments do not cover complete original meta-agent model exchanges",
+    "Training-material skill/recipe and automatic harness application remain undefined",
+    "Captured model identities do not independently verify deployed weight bytes"
+  ],
+  "sha256": {
+    "src/rsisys/loops/decision_making/feedback/learning.py": "34f3d135fbddc486047bf54e87a423e235d7574f9acf5deec8d5bd5c3f9e1b15",
+    "src/rsisys/loops/decision_making/feedback/service.py": "22528b5204db40f9f7bb9591752ad9dadeadba01e2089b27ef99ca6ce046c5c2",
+    "src/rsisys/loops/decision_making/feedback/knowledge.py": "0035f94f907d022c67632dd1cbd1ae280b13b0e84e2e40da0370dac09814876c",
+    "src/rsisys/loops/decision_making/harness/learning_harness.py": "e5f4f00228a28340a64c5b6aede5ded3701fa4688cea03839602c7b138817927",
+    "tests/test_feedback_required_outputs.py": "c326f167f7c62e3ca7c8559afbc47e01745d77f73073136cc669a57b0f030968"
+  }
+}

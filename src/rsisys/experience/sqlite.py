@@ -27,6 +27,9 @@ class SQLiteExperienceStore:
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path)
+        # SQLite lower() only folds ASCII. Match the in-memory store's Unicode
+        # search semantics before ORDER BY/LIMIT selects the most recent rows.
+        self.connection.create_function('casefold', 1, str.casefold, deterministic=True)
         self.connection.execute('PRAGMA journal_mode=WAL')
         self.connection.execute('PRAGMA synchronous=FULL')
         self.connection.executescript('''
@@ -71,7 +74,7 @@ class SQLiteExperienceStore:
             clauses.append('kind IN (' + ','.join('?' for _ in kinds) + ')')
             parameters.extend(kinds)
         if text:
-            clauses.append('instr(lower(summary), lower(?)) > 0')
+            clauses.append('instr(casefold(summary), casefold(?)) > 0')
             parameters.append(text)
         sql = 'SELECT payload FROM experience'
         if clauses:

@@ -1,0 +1,103 @@
+{
+  "review_date": "2026-11-03",
+  "base_head": "b0378aa4ceb1cc12ef40b2ca5aaf15f4a2b96d9c",
+  "scope": "current local worktree; CPU-only fixtures; no model or training calls",
+  "source_sha256": {
+    "src/rsisys/loops/contracts/coordination.py": "f572c109f81861667f42fe255da18113b44df660e6f0b6424d3e4be8630e03b6",
+    "src/rsisys/loops/contracts/feedback.py": "640bb1c156ae31c5618df6b876ce46397b2176b9707c1922b2fa40ee5b8912d3",
+    "src/rsisys/loops/decision_making/loop.py": "138662ed8f76b273f82f4a6535c037d39efa6d493c74cd92db275b8f4f15bff3",
+    "src/rsisys/runtime/runner.py": "25dd54ff5b8963a539e16b526e73581af539c0012b1e880c07afb7814ac29955",
+    "src/rsisys/loops/decision_making/harness/engine.py": "19395d2d3909c3904442e804b6f2d09144e3498b85a9cb9e10a4f8b69f3dfa8f",
+    "src/rsisys/assembly.py": "fb59a32d863033f65b266393772f88a228d870d36a4e22769a090115bc526a5c",
+    "src/rsisys/loops/decision_making/feedback/service.py": "2ee5ff0b7ccbca83e245758290fa22bb24233b2cd4a0a54dfd8be54a4fd00b82",
+    "src/rsisys/loops/decision_making/harness/learning_harness.py": "c42ccf4270c3ccb24dac8a04c2b8c4cf95ff309946b7d11cfbd1aa5f3c3ecd63",
+    "docs/review/repros/m01.py": "063b1251da2472be792f0b6ec919108780591913c5aaf62626844e9d7caf17e9"
+  },
+  "observations": {
+    "operation_status": [
+      {
+        "status_type": "ExecutionStatus",
+        "first": {
+          "kind": "progressed"
+        },
+        "retry": null,
+        "executor_calls": 1,
+        "policy_calls": 1,
+        "pending_record": false
+      },
+      {
+        "status_type": "str",
+        "first": {
+          "error_type": "AttributeError",
+          "error": "'str' object has no attribute 'value'"
+        },
+        "retry": {
+          "error_type": "AttributeError",
+          "error": "'str' object has no attribute 'value'"
+        },
+        "executor_calls": 1,
+        "policy_calls": 1,
+        "pending_record": true
+      }
+    ],
+    "optional_control": [
+      {
+        "timed": false,
+        "first": {
+          "kind": "progressed"
+        },
+        "harness_step_calls": 1
+      },
+      {
+        "timed": true,
+        "first": {
+          "error_type": "NotImplementedError",
+          "error": "This decision harness does not support update_run_control"
+        },
+        "harness_step_calls": 0
+      }
+    ],
+    "nonfinite_feedback": [
+      {
+        "metric": "finite",
+        "constructor_accepted": true,
+        "first_delivery": {
+          "kind": "NoneType"
+        },
+        "retry_delivery": {
+          "kind": "NoneType"
+        },
+        "directive_pending": false,
+        "completed": 1
+      },
+      {
+        "metric": "NaN",
+        "constructor_accepted": true,
+        "first_delivery": {
+          "error_type": "ValueError",
+          "error": "Out of range float values are not JSON compliant: nan"
+        },
+        "retry_delivery": {
+          "error_type": "ValueError",
+          "error": "Out of range float values are not JSON compliant: nan"
+        },
+        "directive_pending": true,
+        "completed": 0
+      },
+      {
+        "metric": "Infinity",
+        "constructor_accepted": true,
+        "first_delivery": {
+          "error_type": "ValueError",
+          "error": "Out of range float values are not JSON compliant: inf"
+        },
+        "retry_delivery": {
+          "error_type": "ValueError",
+          "error": "Out of range float values are not JSON compliant: inf"
+        },
+        "directive_pending": true,
+        "completed": 0
+      }
+    ]
+  }
+}

@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 
 from .context import encoded, result_id
+from rsisys.loops.contracts.receipts import receipt_task
 
 
 def archive_available(context, collection):
@@ -20,8 +21,11 @@ def ordered_jobs(context, jobs):
     # New journals persist capture order. Legacy journals use the raw history,
     # never lexical UUID/hash ordering as a substitute for recency.
     positions = {h.task_id: i for i, h in enumerate(context.history) if h.task_id}
-    return sorted(jobs, key=lambda j: (j.get('capture_index', positions.get(
-        j['input']['receipt']['directive']['directive_id'], -1)), j['job_id']))
+    def key(job):
+        task = receipt_task(job['input']['receipt'])
+        ident = task.get('task_id') or task.get('directive_id')
+        return (job.get('capture_index', positions.get(ident, -1)), job['job_id'])
+    return sorted(jobs, key=key)
 
 
 def receipt_needs_protection(receipt):
@@ -321,51 +325,31 @@ def evidence_working_view(context, *, latest=False):
     return replace(context, **projected)
 
 
-def research_working_view(context, jobs, attempts, *, recent=8):
+def research_working_view(context, jobs, attempts, *, recent=8, knowledge=None):
+    """Adapt neutral research knowledge to this harness's archive and receipts.
+
+    Attempt organization and feedback target selection belong to feedback. This
+    adapter only protects execution dependencies and projects duplicate records.
+    """
+    from ..feedback.knowledge import working_memory, WorkingMemoryPolicy
     jobs = ordered_jobs(context, jobs)
-    rank = {j['job_id']: i for i, j in enumerate(jobs)}
     active = {r['decision_id'] for r in context.decision_graph
               if r['status'] not in ('completed', 'failed', 'cancelled')}
     graph = {r['decision_id']: r for r in context.decision_graph}
     live_dependencies, outstanding = live_evidence_ids(context)
-    ranked_attempts = sorted(attempts, key=lambda a: (
-        bool(active.intersection(a['member_decision_ids'])), rank.get(a['provenance']['job_id'], -1), a['attempt_id']))
-    selected = [a for a in ranked_attempts if active.intersection(a['member_decision_ids'])
-                or a in ranked_attempts[-recent:]]
-    # The full membership/revision history remains in feedback_learning_read.
-    attempt_summaries = [{k: deepcopy(a[k]) for k in ('attempt_id', 'title', 'summary', 'revision',
-                         'provenance', 'simulated')} | {
-                             'member_count': len(a['member_decision_ids']),
-                             'source_refs': deepcopy(a['source_refs']),
-                             'authority': 'unverified_interpretation'} for a in selected]
-    chosen_jobs = {a['provenance']['job_id'] for a in selected} | {j['job_id'] for j in jobs[-recent:]}
-    findings = [{'job_id': j['job_id'], 'learned_by': deepcopy(j['model']),
-                 'simulated': j['simulated'], 'authority': 'unverified_interpretation',
-                 'research_context': deepcopy(j['input'].get('research_context', {})),
-                 'source_refs': deepcopy(j['input']['source_refs']),
-                 'proposals': [deepcopy(p) for p in j['proposals'] if p['kind'] == 'memory']}
-                for j in jobs if j['job_id'] in chosen_jobs and j['status'] == 'completed'
-                and any(p['kind'] == 'memory' for p in j['proposals'])]
-    unsettled = [j for j in jobs if j['status'] != 'completed' or j.get('grouping_error')]
-    pending = [j for j in unsettled if j['status'] in ('queued', 'running') or j in unsettled[-recent:]]
     resident_history = resident_evidence_indices(context, 'history')
-    state = {'schema_version': 1, 'authority': 'host_assembled_working_view',
-        'interpretation_authority': 'unverified',
-        'attempts': attempt_summaries, 'findings': findings,
-        'learning_attention': [{'job_id': j['job_id'], 'status': j['status'], 'error': j.get('error'),
-                              'grouping_error': j.get('grouping_error')} for j in pending],
-        'totals': {'attempts': len(attempts), 'learning_jobs': len(jobs), 'learning_attention': len(unsettled)},
-        'read_path': {'operation': 'feedback_learning_read', 'attempt_filter': 'research_attempt_id'},
-        'live_state_fields': ['execution', 'executions', 'outstanding', 'candidate_evaluations',
-                             'candidates', 'run_control', 'last_feedback'],
-        'protected_operation_result_ids': [result_id(asdict(context.operation_results[i]))
+    state = (deepcopy(knowledge) if knowledge is not None else
+             working_memory(jobs, attempts, active_decision_ids=active,
+                            policy=WorkingMemoryPolicy(recent=recent)))
+    state.update(
+        live_state_fields=['execution', 'executions', 'outstanding', 'candidate_evaluations',
+                           'candidates', 'run_control', 'last_feedback'],
+        protected_operation_result_ids=[result_id(asdict(context.operation_results[i]))
             for i in sorted(resident_evidence_indices(context, 'operation_results'))],
-        'protected_history_ids': [h.record_id for i, h in enumerate(context.history)
+        protected_history_ids=[h.record_id for i, h in enumerate(context.history)
             if i in resident_history
             or h.record_id in live_dependencies or h.details.get('decision_id') in live_dependencies
-            or h.task_id in outstanding],
-        'note': 'Working view, not a new instruction or proof of success. Missing summaries are not negative '
-                'results. Consult original evidence and applicability before reusing a finding.'}
+            or h.task_id in outstanding])
     # This digest changes only when semantic learning state changes, not on waits.
     state['revision'] = result_id(state)
     can_read_learning = (archive_available(context, 'memories') and

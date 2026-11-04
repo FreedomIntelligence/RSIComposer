@@ -26,7 +26,8 @@ summary_tokens=4096`。达到 80k 才压缩旧记录，压缩后完整模型请�
 
 最新工具结果、最近两条动作/回执历史和 `last_feedback` 不被移除，但超长正文可替换为
 有界首尾预览和可读的 archive 引用。汇总指标、身份、状态与来源保持精确；逐项大表
-明确标记未读取，不从片段推断总体结论。目标、候选、权限、研究议程和运行控制仍保留。旧 payload 被折叠时轻量 artifact 引用继续可用于 `input_ids`。
+明确标记未读取，不从片段推断总体结论。目标、权限、研究议程和运行控制仍保留。候选及其
+评测/来源在具备归档能力时使用下述工作选择；完整账本不变。旧 payload 被折叠时轻量 artifact 引用继续可用于 `input_ids`。
 证据卡按其原始指标、错误和状态判断是否需要保护，卡片格式本身不是保护理由。
 重复查询只将最近一次匹配回执视为最新观察；旧的同内容回执按指纹一起折叠，恢复后保持一致。
 负结果和执行中的依赖仍受保护，原始查询记录继续可从 archive 读取。
@@ -62,6 +63,17 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 模型身份整理反馈、相关历史和评测。worker 只返回建议，Runner 所在线程写日志与 memory。
 接线与 CPU fixture 见[使用指南](../../../../../README.md#由-decision-整理实验反馈可选)。
 
+反馈角色与 meta-agent 共享当前权重、使用独立上下文。context/memory 整理能力
+必须激活，实现可替换；公开研究轨迹归档默认开启、可关闭或替换，harness 修改是可选提案。轨迹转训练材料由后续 skill/规则定义。
+harness 负责本次视图选择、原文检索及 compact。`subject` 区分 meta-agent 与 lab 的
+改进对象，旧结果保持 unspecified。接口、完整档案及尚未实现的应用/训练流程见[反馈架构](../feedback/README.md)。
+默认 adapter 也观察本地非只读操作的终态回执，接入同一个 `service.observe`；同步操作先记账，
+异步操作在 resume 到终态后整理。观察交付失败只补交同一回执，不重做工具调用。只读导航
+不自动调用反馈模型，反馈读取被拒绝也不会递归产生整理任务。
+默认通过 `WorkingMemoryPolicy(max_bytes=12000, recent=8, summary_characters=600)` 限制
+派生知识的编码字节，完整 job/Attempt 修订不常驻。同一 Attempt 展示最新卡片，关联
+job 的长解释不重复注入。该策略可替换，不是研究实验预算；全请求仍由 harness 计量。
+
 整理输入中的 `research_context` 从已校验的 decision ledger 读取，与监控 API 的
 `research_attempt_id` / `research_attempt_title` 同源。它包含触发反馈的 decision、
 当时同一 attempt 的成员、真实依赖/引用/采纳关系和快照指纹；相关操作回执也可进入
@@ -73,10 +85,17 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 支持 `research_attempt_id` 筛选；memory 与四类建议通过所属 job 保留相同归属。
 这些记录目前供 Decision 查询，不自动在监控主图增加学习节点或展示为已采纳改进。
 
-一次反馈可提出零到六条 memory、training_data、harness_change 或 system_change。
+新组合链路的独立 proposer 只生成可选 harness_change，数据先做轨迹提取；
+主 decision 可以携带 feedback_proposal_ids，执行前核验来源并记录关联，执行回执回流。
+构建/测试任务使用已安装的普通 action，成功不自动代表 harness 已应用。
+接口与工作流见[反馈链路](../../../../../docs/review/feedback-workflow.md)。
+
+旧兼容解释入口一次反馈可提出零到六条 memory、training_data、harness_change 或 system_change。
 训练建议要求明确的 input/target 和 unverified 标记；所有建议包含适用范围、已提供来源
-和验证计划。仅 memory 建议写入现有 Memory store；其指标/状态直接复制原回执，解释
-仍未验证。训练与代码/系统变更不自动执行，`feedback_learning_read` 提供只读查询。
+和验证计划。有效反馈即使没有提案也写入事实 Memory；有 memory 建议时加入未验证解释。
+失败或准入拒绝仍有独立 `/context_memory` 记录，拒绝的模型解释不会写入 Memory。
+`view=trajectories` 提供每份回执的轨迹索引，后续 skill/规则再定义训练材料格式；
+训练与代码/系统变更不自动执行，`feedback_learning_read` 提供只读查询。
 
 后台任务与 Decision 共享串行后端及其原有调用准入；不保证两者推理并行。学习有独立的
 排队、输入、输出和请求预约上限；预约包括 token 预检拒绝，不等于实际生成次数。
@@ -95,7 +114,15 @@ memory 不直接隐藏任何历史；原 compact 负责带来源的归档，并�
 `project_context` 是宿主配置的稳定项目/资源前缀，默认 policy 深拷贝并限制为 32KB JSON。
 它与 learned memory 分离；未知资源不推测，动态配额来自 run_control。项目描述不授予
 新操作权限。旧决策图通过 research_archive/decision_graph 读取；工作视图保留最近、活跃、
-候选来源、attempt 代表和依赖闭包。执行校验与监控仍使用完整账本。
+已选候选来源和最近八个 Attempt 代表；完整递归展开仅用于活跃依赖。已完成历史的边可指向归档。
+执行校验与监控仍使用完整账本。
+
+[working_ledger_context](ledger_context.py) 在请求构造时选择候选、评测、candidate_origins 和
+directive_provenance。保留近期窗口、最近失败/零分反例、最新确认采纳以及当前/活跃引用；
+只在这些集合有授权 archive 入口时缩小显示。`research_agenda.ledger_archives` 给出总数、
+显示数量、指纹与原文入口。ResearchTools 的回调绑定实时 state，恢复更换 state 后仍可读。
+默认/DSH 模型请求共用该选择，但原生会话的 compact 仍由各 harness 管理。
+模型解析与执行校验使用投影前的完整上下文，读取到的旧 ID 不会因为视图省略而变成非法 ID。
 
 ## 模型自管的议程、待办和阶段总结
 
@@ -168,7 +195,7 @@ bindings = {**bindings, **research_tools.bindings}
 
 默认流程为读取目标、全部来源的系统反馈与本地上下文 → policy 选择 Decision → Action Space 校验 → tools 执行本地操作或发布 Directive → 接纳反馈。普通决策与运行中 review 共用 tools 中的操作执行入口：参数校验与授权 → 工具调用 → 结果归一化 → 固定回执记录。Harness 只决定后续等待、继续研究或交付，不再各维护一套调用逻辑。同步准备后可继续推进；发布指令后等待反馈，不能在交付前生成下一条指令。`receive_feedback` 清空本轮准备结果、保留最新反馈，最近一次完全相同的交付可幂等重试。
 
-`DecisionState.candidates` 按 candidate_id 保存历轮已接收候选，`DecisionContext.candidates` 提供其深拷贝 tuple；该字段追加在原上下文字段之后，默认空 tuple，兼容旧位置参数。候选不受 experience_limit / memory_limit 截断，评测等不含候选的反馈不会清空它们。同 ID 同内容去重；同 ID 不同内容（含单次反馈内冲突）在写入 history / Experience 前拒绝。两份反馈记录成功后才更新候选和交付状态，写入失败可用原反馈重试。
+`DecisionState.candidates` 按 candidate_id 保存历轮已接收候选，`DecisionContext.candidates` 在执行校验时提供完整深拷贝 tuple；请求构造时可选择归档工作视图。该字段追加在原上下文字段之后，默认空 tuple，兼容旧位置参数。原始候选不受 experience_limit / memory_limit 截断，评测等不含候选的反馈不会清空它们。同 ID 同内容去重；同 ID 不同内容（含单次反馈内冲突）在写入 history / Experience 前拒绝。两份反馈记录成功后才更新候选和交付状态，写入失败可用原反馈重试。
 
 `DecisionContext.execution` 是探索侧当前模型与进度，`decision_model` 是当前决策模型；`directive_provenance` 保留每条已发出指令当时观察到的两侧模型引用，后续角色更新不改写旧归因。`candidate_evaluations` 按候选提供最近一次评测的协议、输入引用、指标、状态与证据；失败或另一协议的评测也会替换该摘要，完整记录留在 Experience。它们不受短 history 截断，也不推断未知模型版本。
 

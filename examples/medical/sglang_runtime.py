@@ -25,7 +25,7 @@ import time
 from rsisys.loops.contracts.model_service import GenerationResponse, TokenUsage
 from .task import encoded
 from .transformers_runtime import (
-    LocalTransformerServing, _files_identity, _messages, _render, _sha,
+    LocalTransformerServing, _files_identity, _generation_messages, _render, _sha,
 )
 
 
@@ -355,6 +355,7 @@ class SGLangServing(LocalTransformerServing):
 
     def generate(self, request):
         with self._lock:
+            messages = _generation_messages(request)
             if request.role == 'decision_maker':
                 if request.model != self.decision_model:
                     raise ValueError('Controller may only request its bound official base')
@@ -368,7 +369,7 @@ class SGLangServing(LocalTransformerServing):
             self._load()
             adapter = self._ensure_adapter(request.model) if candidate else None
             thinking = request.role == 'decision_maker' and self.decision_thinking
-            prompt = _render(self._tokenizer, _messages(request.prompt, request.system),
+            prompt = _render(self._tokenizer, messages,
                              generation=True, thinking=thinking)
             ids = self._tokenizer(prompt, add_special_tokens=False, truncation=False)['input_ids']
             if len(ids) + request.max_output_tokens > self._limit:

@@ -2,7 +2,9 @@
 
 from dataclasses import asdict, replace
 from hashlib import sha256
+import fcntl
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -156,6 +158,9 @@ def validate_local_application(app, *, ongoing=False):
         raise TypeError('Custom assembly factories need explicit snapshot integration or recovery contract')
     if (type(dm) is not DefaultDecisionHarness and not extension) or type(actor) is not DefaultExplorationHarness:
         raise TypeError('Custom harnesses need explicit snapshot integration')
+    if not extension and (dm._feedback_listeners or dm._receipt_listeners or dm._context_processors
+                          or dm._cleanup_callbacks or dm.feedback_proposal_resolver is not None):
+        raise TypeError('Custom decision hooks need explicit snapshot/recovery integration')
     from rsisys.loops.exploration.harness.environment import EpisodeExecution
     from rsisys.loops.exploration.harness.learner import LearningExecution
     from rsisys.loops.exploration.harness.evaluation import EvaluationExecution
@@ -219,6 +224,9 @@ def validate_local_application(app, *, ongoing=False):
         raise ValueError('Custom policy retry budgets require an explicit recovery contract')
     if not extension and dm.policy.structured_output:
         raise ValueError('Structured policy backends require an explicit recovery contract')
+    from rsisys.loops.decision_making.harness.policy import DecisionPrompts
+    if not extension and (type(dm.policy.prompts) is not DecisionPrompts or not dm.policy.prompts.is_default):
+        raise ValueError('Custom decision prompts require an explicit recovery contract')
     if dm.attempt_contract.required or getattr(getattr(dm.policy, 'attempt_contract', None), 'required', False):
         raise ValueError('Attempt admission requires an explicit recovery contract; refusing to lose validation')
     if not extension and dm.policy.project_context:
@@ -368,6 +376,12 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
         raise ValueError('Invalid restored review tool limit')
     from rsisys.loops.decision_making.action_space.access import ActionPermissions
     permissions = ActionPermissions.from_dict(runtime['action_permissions'])
+    # A checksum establishes byte integrity, not a valid compactor or notebook.
+    # Check both before publishing a workspace or acquiring its live resources.
+    from types import SimpleNamespace
+    from rsisys.loops.decision_making.harness.research import ResearchAgenda
+    agenda = json.loads((directory / 'decision_research.json').read_text())
+    restore_research(SimpleNamespace(research_agenda=ResearchAgenda()), agenda, runtime['context_compactor'])
     # Validate both owners and payloads before creating the restore target.
     DecisionMemory(directory / 'decision_memory.json')
     ExplorationMemory(directory / 'exploration_memory.json')
@@ -377,7 +391,12 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
     config = replace(config, data_dir=target)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix='.restore-', dir=target.parent))
+    app, published, restore_lock = None, False, None
+    directory_identity = staging.stat()
     try:
+        # Retain this exact inode across publication, so failed initialization
+        # can clean up only our workspace and only while holding its lock.
+        restore_lock = (staging / '.lock').open('a+b')
         shutil.copyfile(directory / 'experience.sqlite3', staging / 'experience.sqlite3')
         for name in ('decision_memory.json', 'exploration_memory.json', 'decision_research.json'):
             shutil.copyfile(directory / name, staging / name)
@@ -386,18 +405,41 @@ def restore_snapshot(directory, target, *, run_id: str | None = None):
         atomic_write(staging / 'config.json', json_bytes(config.to_dict()))
         sync_tree(staging)
         staging.rename(target)
+        published = True
         sync_directory(target.parent)
+        app = Application(config, _restore=True, action_permissions=permissions)
+        restore_research(app.runner.decision_making.harness, agenda, runtime['context_compactor'])
+        app.runner.decision_making.harness.state = decision
+        app.runner.exploration.harness.state = actor
+        app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
+        app.runner.decision_making.harness.review_tool_limit = runtime['review_tool_limit']
+        app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
+        app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
+        app.parent_snapshot_id = manifest.snapshot_id
+        return app
+    except BaseException as error:
+        if app is not None:
+            try:
+                app.close()
+            except BaseException as cleanup_error:
+                error.add_note(f'Restored application cleanup also failed: {cleanup_error}')
+        if published:
+            try:
+                fcntl.flock(restore_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                current, lock = target.lstat(), (target / '.lock').lstat()
+                original_lock = os.fstat(restore_lock.fileno())
+                if ((current.st_dev, current.st_ino) != (directory_identity.st_dev, directory_identity.st_ino)
+                        or (lock.st_dev, lock.st_ino) != (original_lock.st_dev, original_lock.st_ino)):
+                    raise RuntimeError('Restore target or workspace lock identity changed; target retained')
+                shutil.rmtree(target)
+                sync_directory(target.parent)
+            except BlockingIOError:
+                error.add_note('Restore target cleanup skipped: another owner holds the workspace lock')
+            except BaseException as cleanup_error:
+                error.add_note(f'Restore target cleanup also failed: {cleanup_error}')
+        raise
     finally:
+        if restore_lock is not None:
+            restore_lock.close()
         if staging.exists():
             shutil.rmtree(staging)
-    app = Application(config, _restore=True, action_permissions=permissions)
-    restore_research(app.runner.decision_making.harness,
-                     json.loads((directory / 'decision_research.json').read_text()), runtime['context_compactor'])
-    app.runner.decision_making.harness.state = decision
-    app.runner.exploration.harness.state = actor
-    app.runner.decision_making.harness.experience_limit = runtime['decision_experience_limit']
-    app.runner.decision_making.harness.review_tool_limit = runtime['review_tool_limit']
-    app.runner.decision_making.harness.memory_limit = runtime['memory_limits']['decision_maker']
-    app.runner.exploration.harness.memory_limit = runtime['memory_limits']['actor']
-    app.parent_snapshot_id = manifest.snapshot_id
-    return app

@@ -1,0 +1,43 @@
+{
+  "base_revision": "b0378aa4ceb1cc12ef40b2ca5aaf15f4a2b96d9c",
+  "scope": "Local working tree including prior uncommitted feedback/context refactor; M01 fixes and foundational Lab/observation integration. Not committed or pushed.",
+  "m01_regressions": {
+    "ran": 18,
+    "skipped": 0,
+    "status": "passed"
+  },
+  "full_suite": {
+    "command": "PYTHONPATH=src /Users/xcx/.local/bin/python3.12 -m unittest discover -s tests -q",
+    "ran": 1288,
+    "seconds": 81.389,
+    "skipped": 18,
+    "status": "passed"
+  },
+  "diff_check": "passed",
+  "validation_limits": [
+    "CPU/mock/temporary fixtures only",
+    "No external model service, real training, accelerator or remote deployment validated",
+    "User architecture confirmation pending",
+    "No cross-Lab default scheduler or durable Lab task index implemented",
+    "No automatic harness proposal application or researcher weight training implemented"
+  ],
+  "sha256": {
+    "src/rsisys/loops/contracts/metrics.py": "3b0f0cea1ce4f9f7598047a7f12dfeb0c702e9048d5839622f0bf4d1108961c1",
+    "src/rsisys/loops/contracts/feedback.py": "f3a944cd1374c8bf82d22cc4af0b5abd79e150ece7e6053bb5bbbf31804cee31",
+    "src/rsisys/loops/contracts/coordination.py": "90c1bb4221ec6b800a7af281a417f313852d0e160402d1c2464e8a36bc0de0bc",
+    "src/rsisys/loops/contracts/lab.py": "b2a31ae7001b6154223738dc1a528ef0d949d5f921f128d1b9817ed2d332c0a1",
+    "src/rsisys/loops/contracts/receipts.py": "d9cdab2b47c52751f09d2fb0b2def377b9b2380e8518da129c4200975ad62297",
+    "src/rsisys/adapters/lab.py": "6682f0012cca7cc7c3a1259cfad0ed42e0dc39884578a7a0a540f10735b61daa",
+    "src/rsisys/loops/decision_making/loop.py": "577a1dc2bbde6e7a439d98e596781b717a57ca9ebbf3dab86e243229809c09c4",
+    "src/rsisys/runtime/runner.py": "ab922d215702b6eb38f557a0216e6e3e478c1e66fe530686902f0558bfb7b503",
+    "src/rsisys/loops/decision_making/harness/engine.py": "705a6d0528ca37bb2fb2fad5ab4b955166dfe42ca53d9cf6b4c079814d11a4aa",
+    "src/rsisys/loops/decision_making/harness/learning_harness.py": "e96f7d5680892c7c56fb43f13cbf801b504907dbbfb3c28b0a71714355f7c877",
+    "src/rsisys/loops/decision_making/harness/research_state.py": "aedb51787274c7c7405445be9b5fa7106d0f41bb4843fa3d5601890d728cb67b",
+    "src/rsisys/loops/decision_making/feedback/service.py": "8780b672e3379301792ab64a431c4e4dea0e363184f4a38ed531b36ab07c9574",
+    "src/rsisys/loops/decision_making/feedback/learning.py": "bce39b7019d62b702c40b8451bed2f68bb1a5153ea495eaf0495e09b5085c204",
+    "src/rsisys/loops/decision_making/feedback/evidence.py": "69bb81b387a681203bfec355493a7b7671eb9abe5416c127c8191a96b51e5700",
+    "src/rsisys/loops/exploration/harness/commands.py": "6f65a5d9026a4bf3500403e3ffb1b88810b90f101e5f58c4dba6e7762d99738d",
+    "src/rsisys/loops/exploration/harness/learner/command.py": "e4fef4743b3c5c4094fd5ee7a97dde53a8df320a9ef7c618c7ba9426ae61cc30",
+    "tests/test_m01_contract_boundaries.py": "d287cb1e3098bae637e93a944a0ea731132c8ffad3cb4266807f3e38cce0549a"
+  }
+}

@@ -8,6 +8,7 @@ from copy import deepcopy
 from math import isfinite
 
 from rsisys.runtime.json_tools import result_id
+from rsisys.loops.contracts.receipts import receipt_task, receipt_facts
 
 
 def candidate_evidence(raw, indices):
@@ -17,7 +18,7 @@ def candidate_evidence(raw, indices):
     omitted evaluation is distinguished from one absent from that snapshot.
     Neither status claims anything about an artifact's unread contents.
     """
-    directive, feedback = raw['receipt']['directive'], raw['receipt']['feedback']
+    directive, feedback = receipt_task(raw['receipt']), receipt_facts(raw['receipt'])
     current = [c['candidate_id'] for c in feedback.get('candidates', ())]
     payload = directive.get('payload')
     payload = payload if isinstance(payload, dict) else {}

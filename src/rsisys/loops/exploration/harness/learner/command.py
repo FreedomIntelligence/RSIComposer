@@ -85,7 +85,7 @@ class ApplyCandidateHandler(CommandHandler):
             )
             state.phase = 'recording'
         harness.experience.record(deepcopy(state.record))
-        return Feedback(
+        return Feedback.from_backend(
             directive.directive_id, ExecutionStatus(state.record.details['status']),
             state.record.summary, state.record.simulated,
             training_metrics=deepcopy(result.metrics),

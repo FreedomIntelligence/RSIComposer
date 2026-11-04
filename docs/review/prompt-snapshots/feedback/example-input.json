@@ -1,0 +1,165 @@
+{
+  "receipt": {
+    "operation": {
+      "name": "execute_code",
+      "arguments": {
+        "code": "print('fixture')"
+      }
+    },
+    "result": {
+      "summary": "Synthetic execution completed",
+      "artifacts": [],
+      "simulated": true,
+      "status": "completed",
+      "error": null,
+      "data": {
+        "stdout": "fixture\n"
+      },
+      "adopted_candidate_ids": []
+    },
+    "task": {
+      "task_id": "review-task",
+      "objective": "Inspect a fixed synthetic coding task",
+      "decision_id": "review-decision",
+      "read_only": false,
+      "issuing_model": {
+        "backend_id": "fixture",
+        "model_id": "meta-agent",
+        "revision": "review-only"
+      },
+      "job": null
+    }
+  },
+  "research_context": {
+    "decision_id": "review-decision",
+    "issuing_decision_model": {
+      "backend_id": "fixture",
+      "model_id": "meta-agent",
+      "revision": "review-only"
+    },
+    "learning_decision_model": {
+      "backend_id": "fixture",
+      "model_id": "meta-agent",
+      "revision": "review-only"
+    }
+  },
+  "evaluations": [],
+  "history": [
+    {
+      "record_id": "review-decision",
+      "kind": "decision",
+      "task_id": null,
+      "summary": "Inspect synthetic output",
+      "simulated": true,
+      "source_refs": [],
+      "details": {}
+    }
+  ],
+  "grouping_context": {
+    "receipt_decision_id": "review-decision",
+    "decisions": [
+      {
+        "decision_id": "review-decision",
+        "proposal": {
+          "simulated": true
+        }
+      }
+    ],
+    "observations": [],
+    "attempts": [],
+    "candidate_origins": {}
+  },
+  "source_refs": [
+    "feedback:81d9ed6190211ed24371ff481206f3652e6eff374435e69e9b21fa7d76f6a96a",
+    "history:review-decision",
+    "decision:review-decision"
+  ],
+  "evidence_packaging": {
+    "version": 1,
+    "authority": "untrusted_evidence",
+    "raw_input_ref": "journal:learning-operation-2d6dec913056621c561b1c3b574f04ba460f92fb936252305822a1be234c55d0/raw_input",
+    "raw_input_digest": "e43ce0affb2a27a6f21f64d7d321f4e9088f914a8ff9a2ce19775016572a8249",
+    "streams": {
+      "/evaluations": {
+        "raw_ref": "/evaluations",
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "total": 0,
+        "supplied": 0,
+        "supplied_indices": [],
+        "authority": "untrusted_evidence",
+        "deduplicated": 0,
+        "omitted": 0
+      },
+      "/history": {
+        "raw_ref": "/history",
+        "sha256": "b9c972f015299b75d6867dc1359d02c5a27b068d30405ddc2eadb95bbd991163",
+        "total": 1,
+        "supplied": 1,
+        "supplied_indices": [
+          0
+        ],
+        "authority": "untrusted_evidence",
+        "deduplicated": 0,
+        "omitted": 0
+      },
+      "/grouping_context/decisions": {
+        "raw_ref": "/grouping_context/decisions",
+        "sha256": "a3bac1e56dbaf43612ea681c5b7af839213f068f4b8f40597ce35058adaba313",
+        "total": 1,
+        "supplied": 1,
+        "supplied_indices": [
+          0
+        ],
+        "authority": "untrusted_evidence",
+        "deduplicated": 0,
+        "omitted": 0
+      },
+      "/grouping_context/observations": {
+        "raw_ref": "/grouping_context/observations",
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "total": 0,
+        "supplied": 0,
+        "supplied_indices": [],
+        "authority": "untrusted_evidence",
+        "deduplicated": 0,
+        "omitted": 0
+      },
+      "/dispatch_attempts": {
+        "raw_ref": "/dispatch_attempts",
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "total": 0,
+        "supplied": 0,
+        "supplied_indices": [],
+        "authority": "model_interpretation",
+        "deduplicated": 0,
+        "omitted": 0
+      },
+      "/grouping_context/candidate_origins": {
+        "raw_ref": "/grouping_context/candidate_origins",
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "total": 0,
+        "supplied": 0,
+        "omitted": 0
+      }
+    },
+    "records": [
+      {
+        "raw_ref": "/receipt",
+        "sha256": "81d9ed6190211ed24371ff481206f3652e6eff374435e69e9b21fa7d76f6a96a",
+        "coverage": "complete",
+        "authority": "untrusted_evidence",
+        "source_ref": "feedback:81d9ed6190211ed24371ff481206f3652e6eff374435e69e9b21fa7d76f6a96a"
+      }
+    ],
+    "digests_identify": "original_evidence_not_excerpts",
+    "read": {
+      "job_id": "learning-operation-2d6dec913056621c561b1c3b574f04ba460f92fb936252305822a1be234c55d0",
+      "path_parameter": "evidence_path",
+      "offset_unit": "characters",
+      "characters_per_limit": 128
+    },
+    "omitted_content_read": false,
+    "dispatch_attempts_ref": "journal:learning-operation-2d6dec913056621c561b1c3b574f04ba460f92fb936252305822a1be234c55d0/dispatch_attempts",
+    "dispatch_attempts_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  }
+}

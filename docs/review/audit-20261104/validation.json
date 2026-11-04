@@ -1,0 +1,93 @@
+{
+  "completed_at_utc": "2026-11-03T16:54:06.392905+00:00",
+  "python": {
+    "started_at_utc": "2026-11-03T16:51:33.595878+00:00",
+    "finished_at_utc": "2026-11-03T16:52:59.427901+00:00",
+    "duration_seconds": 85.83090362499934,
+    "python": "/Users/xcx/Documents/ChatGPT/tiny-rsi/design/RSISys/.local/langmem-validation/bin/python",
+    "command": "PYTHONPATH=src:tests .local/langmem-validation/bin/python (unittest discover tests; verbosity=2)",
+    "tests": 1426,
+    "passed": 1414,
+    "failures": [],
+    "errors": [],
+    "skipped": [
+      {
+        "test": "test_dsh_runtime.DSHRuntimeTests.test_installed_wheel_contains_and_uses_restricted_patch",
+        "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+      },
+      {
+        "test": "test_dsh_runtime.DSHRuntimeTests.test_latest_large_adapter_result_is_user_data_and_is_not_tool_pruned",
+        "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+      },
+      {
+        "test": "test_dsh_runtime.DSHRuntimeTests.test_native_automatic_compaction_uses_checkpoint",
+        "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+      },
+      {
+        "test": "test_dsh_runtime.DSHRuntimeTests.test_restricted_runtime_resume_and_authorized_decisions",
+        "reason": "Install rsisys[dsh] to exercise the real DSH runtime"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_control_complete_schemas_validate_parameters_only",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_directive_refs_methods_origins_and_nullable_checkpoints",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_medical_numeric_recipe_and_full_train_envelope_prepare_only",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_queries_workspace_and_multiline_argv",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_research_notes_exact_chinese_newlines_quotes_and_arrays",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_live_generation.LiveGenerationTests.test_system_adopt_complete_production_spec_validate_only",
+        "reason": "Set BOTH RSISYS_LIVE_BASE_URL and RSISYS_LIVE_MODEL to allow real inference"
+      },
+      {
+        "test": "test_medical_dsh.MedicalDSHProviderTests.test_real_chat_provider_native_compaction_preserves_latest_observation",
+        "reason": "Optional SDK required"
+      },
+      {
+        "test": "test_medical_dsh.MedicalDSHProviderTests.test_real_rc2_chat_completions_provider_is_explicit_and_persistent",
+        "reason": "Optional SDK required"
+      }
+    ],
+    "successful": true,
+    "source_changes_during_run": [],
+    "source_manifest_sha256": "33651ce0f2f8f8afdedc9455343986a8dde80e428fce221d3537ddc3ee03fa49",
+    "source_manifest_canonical_sha256": "00bf689f10c67cab944f109402415d1cbaa9297a87e38f1c7bc0b3fbb56b1125",
+    "log_sha256": "c8b3b902aab4f7a92e1c47692c8f72bf4d88a4153f5e466901a2810dd412facd",
+    "reproduce_command": "PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest discover -s tests -v"
+  },
+  "frontend": {
+    "command": "node --test tests/monitor_frontend/*.test.js",
+    "tests": 140,
+    "passed": 140,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 421.813834,
+    "evidence": "Executed successfully during this audit; console result retained in chat tool output. No standalone Node log captured."
+  },
+  "diff_check": {
+    "command": "git diff --check",
+    "passed": true
+  },
+  "boundaries": {
+    "real_model_calls": false,
+    "real_training": false,
+    "remote_service_changes": false,
+    "packages_installed": false,
+    "commit": false,
+    "push": false
+  },
+  "report_links_valid": true,
+  "final_source_matches_tested_manifest": true
+}

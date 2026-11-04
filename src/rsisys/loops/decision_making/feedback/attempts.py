@@ -81,7 +81,8 @@ def apply_attempt_updates(row, current):
                 entry[key] = list(dict.fromkeys([*previous[key], *entry[key]]))
         entry.update(attempt_id=ident, revision=update['base_revision'] + 1,
             provenance={'job_id': row['job_id'], 'model': deepcopy(row['model']),
-                        'input_digest': result_id(row['input'])}, simulated=row['simulated'])
+                        'input_digest': result_id(row['input'])},
+            simulated=bool(row['simulated'] or previous and previous['simulated']))
         latest[ident] = entry
         owners.update({m: ident for m in entry['member_decision_ids']})
         revisions.append(entry)

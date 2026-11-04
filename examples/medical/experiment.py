@@ -147,6 +147,9 @@ class ExperimentSettings:
     restart_delay_seconds: float = 10.0
     resource_allocation: dict | None = None
     feedback_learning: bool = False
+    memory_provider: str | None = None
+    archive_trajectories: bool = True
+    harness_proposals: bool = False
     decision_max_output_tokens: int = 8192
     decision_response_retries: int = 2
     require_research_attempts: bool = False
@@ -207,6 +210,17 @@ class ExperimentSettings:
         object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
         if type(self.feedback_learning) is not bool:
             raise TypeError('feedback_learning must be boolean')
+        if self.memory_provider not in (None, 'journal', 'langmem'):
+            raise ValueError('memory_provider must be journal or langmem')
+        for name in ('archive_trajectories', 'harness_proposals'):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(name + ' must be boolean')
+
+    @property
+    def effective_memory_provider(self):
+        # The compatibility switch selects the upstream manager, never the old
+        # combined memory/training-data/system-change interpretation prompt.
+        return self.memory_provider or ('langmem' if self.feedback_learning else 'journal')
 
     def context_budget(self):
         return {'trigger_tokens': self.context_trigger_tokens,
@@ -216,7 +230,7 @@ class ExperimentSettings:
 
 
 def build_project_context(settings: ExperimentSettings, task, *, target_model: ModelRef,
-                          decision_model: ModelRef) -> dict:
+                          decision_model: ModelRef, research=None) -> dict:
     """Stable project facts in user context, separate from learned interpretations."""
     declaration = copy_resource_allocation(settings.resource_allocation)
     resources = {
@@ -244,7 +258,13 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
                 'model': asdict(decision_model),
                 'goal': ('Improve hypotheses, experiment design, evidence use, memory and decision quality; '
                          'keep original receipts separate from interpretations and proposed training examples.'),
-                'feedback_learning_enabled': settings.feedback_learning,
+                'feedback_learning_enabled': True,
+                'context_memory_enabled': True,
+                'memory_provider': settings.effective_memory_provider if research is None else research.memory_provider,
+                'model_feedback_enabled': (settings.effective_memory_provider == 'langmem' or settings.harness_proposals)
+                    if research is None else research.requires_model,
+                'trajectory_archive_enabled': settings.archive_trajectories if research is None else
+                    research.trajectory_archive is not None,
             },
         },
         'capabilities': {
@@ -252,11 +272,13 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
                           'are authoritative. This project description installs no executable capability.'),
             'proposal_only_unless_installed': ['harness_changes', 'system_changes', 'decision_model_training'],
             'training': 'Only installed SFT with restart from the fixed initializer; no real RL is installed.',
-            'feedback_learning': ('When enabled, feedback learning produces unverified proposals and a read-only '
-                                  'operation, and incrementally organizes observed decisions into versioned Attempt '
-                                  'interpretations without rewriting execution records. Decisions still specify concrete '
-                                  'actions, parameters and evaluation plans; membership is optional. '
-                                  'Learning does not install changes or train either model.'),
+            'feedback_learning': ('Context/memory organization is active through the selected provider. '
+                                  'Journal memory supplies factual views without model inference; LangMem uses '
+                                  'a separate context with captured meta-agent weights. Public trajectories are '
+                                  'extracted when configured, without generating training targets. Optional harness '
+                                  'proposals are unverified; main decisions choose construction and validation. '
+                                  'Original execution records remain authoritative. Grouping membership is optional. '
+                                  'Feedback does not install changes or train either model.'),
         },
         'resources': resources,
         'scientific_evaluation': {
@@ -399,6 +421,10 @@ class DecisionBackend:
     def supports_response_schema(self):
         return getattr(self.serving, 'supports_response_schema', False) is True
 
+    @property
+    def supports_tool_calling(self):
+        return getattr(self.serving, 'supports_tool_calling', False) is True
+
     def generate(self, request, *, transport=None):
         with self._generation_lock:
             return self._generate_serial(request, transport=transport)
@@ -486,6 +512,10 @@ class FeedbackBackendRoute:
     @property
     def supports_response_schema(self):
         return getattr(self.transport, 'supports_response_schema', False) is True
+
+    @property
+    def supports_tool_calling(self):
+        return getattr(self.transport, 'supports_tool_calling', False) is True
 
     @property
     def token_count_mode(self):
@@ -896,9 +926,9 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         'these envelopes are syntax templates, not a required workflow.')
 
     def __init__(self, backend, model, catalog, space, monitor, learner, train_ref, *, run_mode='researcher',
-                 project_context: dict | None = None, attempt_contract=None):
+                 project_context: dict | None = None, attempt_contract=None, prompts=None):
         super().__init__(backend, model, directives=catalog, max_validation_attempts=1,
-                         project_context=project_context, attempt_contract=attempt_contract)
+                         project_context=project_context, attempt_contract=attempt_contract, prompts=prompts)
         self.space, self.monitor, self.learner = space, monitor, learner
         self.train_ref = train_ref
         self.run_mode = run_mode
@@ -925,9 +955,7 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
             'and the selection rule governs adoption. ')
 
     def _scheduling_instructions(self, context):
-        if self.run_mode == 'time':
-            return 'The serial executor waits for running work; model decisions select invoke or explore actions. '
-        return super()._scheduling_instructions(context)
+        return 'The serial executor waits for running work; model decisions select invoke or explore actions. '
 
     def _decision_request(self, context):
         request = super()._decision_request(context)
@@ -984,7 +1012,7 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
         if name in operations ^ directives:
             if set(payload) - {'kind', 'action', 'mode', 'operation', 'strategy', 'arguments', 'input_ids',
                                'review_after_seconds', 'reason', 'depends_on_decision_ids', 'source_decision_ids',
-                               'research_attempt_id', 'research_attempt_title'}:
+                               'research_attempt_id', 'research_attempt_title', 'feedback_proposal_ids'}:
                 raise ValueError('Unexpected fields in action envelope')
             if name in operations:
                 if payload.get('input_ids', []) != [] or payload.get('review_after_seconds') is not None:
@@ -997,7 +1025,8 @@ class ResearchPolicy(MemoryPrefixDecisionPolicy):
             if 'reason' in payload:
                 normalized['reason'] = payload['reason']
             normalized.update({key: payload[key] for key in ('depends_on_decision_ids', 'source_decision_ids',
-                                                            'research_attempt_id', 'research_attempt_title')
+                                                            'research_attempt_id', 'research_attempt_title',
+                                                            'feedback_proposal_ids')
                                if key in payload})
         if normalized is not None and normalized != payload:
             self.monitor.event('decision_envelope_normalized', original=payload, normalized=normalized)
@@ -1137,7 +1166,7 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         decision_model: ModelRef | None = None, decision_backend: ModelBackend | None = None,
         native_model_kwargs: dict | None = None, decision_harness_factory=None,
         feedback_backend=None, feedback_model=None, feedback_adapter_factory=None,
-        dsh_runtime_factory=None) -> dict:
+        dsh_runtime_factory=None, research=None) -> dict:
     """Run with an optional independent researcher backend and model identity.
 
     Without decision_backend, serving.generate owns researcher routing. With an
@@ -1148,13 +1177,41 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         raise TypeError('decision_model must be a ModelRef or None')
     if decision_backend is not None and not callable(getattr(decision_backend, 'generate', None)):
         raise TypeError('decision_backend must provide generate(request)')
+    if feedback_model is not None and not isinstance(feedback_model, ModelRef):
+        raise TypeError('feedback_model must be a ModelRef or None')
+    if feedback_model is not None and decision_model is not None and feedback_model != decision_model:
+        raise ValueError('Feedback must use the active meta-agent model')
     if settings.decision_harness == 'dsh' and decision_backend is not None:
         raise ValueError('DSH owns its session/provider; configure dsh_config instead of decision_backend')
-    if settings.feedback_learning and decision_harness_factory is not None and feedback_adapter_factory is None:
+    from rsisys.research import ResearchAssembly
+    from rsisys.loops.decision_making.feedback import JournalTrajectoryArchive, ModelHarnessProposer
+    if research is not None and not isinstance(research, ResearchAssembly):
+        raise TypeError('research must be a ResearchAssembly')
+    requires_model = research.requires_model if research is not None else (
+        settings.effective_memory_provider == 'langmem' or settings.harness_proposals)
+    if (settings.feedback_learning or requires_model) and decision_harness_factory is not None and feedback_adapter_factory is None:
         raise ValueError('Custom decision harnesses require an explicit feedback_adapter_factory')
-    if (settings.feedback_learning and decision_backend is None and feedback_backend is None
+    if (requires_model and decision_backend is None and feedback_backend is None
             and settings.decision_harness != 'dsh'):
-        raise ValueError('feedback_learning requires an explicit independent decision_backend or feedback_backend')
+        raise ValueError('Model feedback requires an explicit independent decision_backend or feedback_backend')
+    requires_tools = (getattr(research.memory_processor, 'requires_tool_calling', False)
+                      if research is not None else settings.effective_memory_provider == 'langmem')
+    if requires_tools:
+        transport = feedback_backend if feedback_backend is not None else decision_backend
+        if getattr(transport, 'supports_tool_calling', False) is not True:
+            raise ValueError('LangMem research memory requires an independent backend with native tool calling')
+    if research is None:
+        components = {
+            'trajectory_archive': JournalTrajectoryArchive() if settings.archive_trajectories else None,
+            'harness_proposals': ModelHarnessProposer(settings.run_dir / 'harness_proposals')
+                if settings.harness_proposals else None,
+        }
+        if settings.effective_memory_provider == 'langmem':
+            research = ResearchAssembly.langmem(memory_path=settings.run_dir / 'feedback_memory.sqlite',
+                namespace=('medical', settings.run_dir.resolve().name), **components)
+        else:
+            research = ResearchAssembly(**components)
+    research.validate()
     dsh_config = DSHConfig.load(settings.dsh_config) if settings.decision_harness == 'dsh' else None
     if dsh_config is not None and dsh_config.resume:
         raise ValueError('Medical experiment never resumes; use a fresh DSH session')
@@ -1181,6 +1238,8 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         base = ModelRef('medical-local', identity['model_id'], revision)
         researcher = ((ModelRef('dsh', dsh_config.model, 'provider-managed') if dsh_config else base)
                       if decision_model is None else decision_model)
+        if feedback_model is not None and feedback_model != researcher:
+            raise ValueError('Feedback must use the active meta-agent model')
         write_json(root / 'decision_model.json', asdict(researcher))
         converter = (converter_factory or tokenize_factory)(str(settings.model_path.resolve()),
             max_length=settings.max_seq_length, padding=False, revision=revision if len(revision) == 40 else None)
@@ -1264,14 +1323,15 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         space = ModularDecisionActionSpace((*research_tools.definitions, *operations.definitions),
             directives=assembly.runner.decision_making.action_space.directives, permissions=permissions)
         assembly.runner.decision_making.action_space = space
-        project_context = build_project_context(settings, task, target_model=base, decision_model=researcher)
+        project_context = build_project_context(settings, task, target_model=base, decision_model=researcher,
+                                                research=research)
         write_json(root / 'project-context.json', project_context)
         attempt_contract = AttemptContract(required=settings.require_research_attempts,
             operations=tuple(spec.name for spec in (definition.spec for definition in operations.definitions)
                              if not spec.read_only))
         write_json(root / 'attempt-contract.json', {'required': attempt_contract.required,
             'all_exploration_directives': True, 'required_operations': attempt_contract.operations,
-            'grouping_owner': 'feedback_memory' if settings.feedback_learning else 'optional_explicit',
+            'grouping_owner': 'optional_explicit',
             'historical_membership_inference': False, 'interpretation_only': True})
         def policy_factory(native_backend, model):
             if dsh_config is not None:
@@ -1296,18 +1356,18 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         replacement.attempt_contract = attempt_contract
         replacement.state.operation_results.extend(decision.state.operation_results)
         assembly.runner.decision_making.harness = decision = replacement
-        if settings.feedback_learning:
-            from rsisys.loops.decision_making.harness.learning_harness import enable_feedback_learning
-            learning_transport = feedback_backend
-            if learning_transport is None and dsh_config is not None:
-                from rsisys.loops.decision_making.harness.dsh import DSHFeedbackBackend
-                learning_transport = DSHFeedbackBackend(dsh_config, runtime_factory=dsh_runtime_factory,
-                    on_notification=backend.native_notification)
-            enable_feedback_learning(assembly.runner.decision_making, path=root / 'feedback_learning.json',
-                backend=FeedbackBackendRoute(backend, learning_transport) if learning_transport is not None else None,
-                model=feedback_model,
-                adapter=feedback_adapter_factory(decision) if feedback_adapter_factory else None)
-            decision = assembly.runner.decision_making.harness
+        from rsisys.research import assemble_research
+        learning_transport = feedback_backend
+        if learning_transport is None and dsh_config is not None and research.requires_model:
+            from rsisys.loops.decision_making.harness.dsh import DSHFeedbackBackend
+            learning_transport = DSHFeedbackBackend(dsh_config, runtime_factory=dsh_runtime_factory,
+                on_notification=backend.native_notification)
+        assemble_research(assembly.runner.decision_making, assembly=research,
+            path=root / 'feedback_learning.json',
+            backend=FeedbackBackendRoute(backend, learning_transport) if learning_transport is not None else backend,
+            model=feedback_model, adapter=feedback_adapter_factory(decision) if feedback_adapter_factory else None,
+            max_calls=settings.max_model_calls)
+        decision = assembly.runner.decision_making.harness
         policy = decision.policy
         backend.decision_pending = lambda: getattr(policy, 'future', None) is not None
         commands = assembly.runner.exploration.harness.commands
@@ -1447,15 +1507,22 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
                     {'model': asdict(model), 'metadata': metadata} for model, metadata in serving.weight_metadata.items()])
         except Exception as exc:
             cleanup_errors.append(f'final persistence: {type(exc).__name__}: {exc}')
+        execution_outcome = {key: result[key] for key in ('status', 'reason', 'error') if key in result}
         if cleanup_errors:
-            result.update(status='failed', reason='cleanup_or_persistence_failed', cleanup_errors=cleanup_errors)
+            result.update(status='failed', reason='cleanup_or_persistence_failed', cleanup_errors=cleanup_errors,
+                          execution_outcome=execution_outcome)
         result['research_seconds'] = time.monotonic()-research_started if research_started is not None else 0.0
         result['duration_seconds'] = time.monotonic()-started
         result['trainings_reserved'] = len(learner.ledger) if learner is not None else 0
         result['model_calls'] = backend.calls if backend is not None else 0
         if monitor is not None:
-            monitor.data['result'] = result
-            monitor.stage(result['reason'], status=result['status'])
+            try:
+                monitor.data['result'] = result
+                monitor.stage(result['reason'], status=result['status'])
+            except Exception as exc:
+                cleanup_errors.append(f'final monitor persistence: {type(exc).__name__}: {exc}')
+                result.update(status='failed', reason='cleanup_or_persistence_failed', cleanup_errors=cleanup_errors,
+                              execution_outcome=execution_outcome)
         write_json(root / 'result.json', result)
     return result
 
@@ -1497,7 +1564,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument('--resource-allocation', type=json.loads,
                         help='Explicit bounded JSON allocation declaration; omitted means unknown')
     result.add_argument('--feedback-learning', action='store_true',
-                        help='Opt in to proposal-only feedback learning with the default decision harness')
+                        help='Compatibility switch: select LangMem unless --memory-provider is explicit')
+    result.add_argument('--memory-provider', choices=('journal', 'langmem'), default=None,
+                        help='Active context/memory provider; default journal, or LangMem with --feedback-learning')
+    result.add_argument('--no-trajectory-archive', dest='archive_trajectories', action='store_false',
+                        help='Disable trajectory extraction; keep execution/recovery records')
+    result.add_argument('--harness-proposals', action='store_true',
+                        help='Enable optional proposals; main meta-agent decisions choose construction')
     return result
 
 

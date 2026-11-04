@@ -46,7 +46,15 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False,
                decision_factory: DecisionFactory | None = None,
                exploration_factory: ExplorationFactory | None = None,
                action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
-               cleanup_timeout_seconds: float = 30) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
+               cleanup_timeout_seconds: float = 30, research=None, research_backend=None,
+               feedback_adapter_factory=None) -> tuple[AssemblyRunner, InMemoryExperienceStore]:
+    from rsisys.research import ResearchAssembly
+    if research is not None:
+        if not isinstance(research, ResearchAssembly):
+            raise TypeError('research must be a ResearchAssembly')
+        research.validate()
+    elif research_backend is not None or feedback_adapter_factory is not None:
+        raise ValueError('Research backend/adapter requires a research assembly')
     if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
         raise TypeError('Expected ActionPermissions')
     if any(binding.kind != "mock" for binding in config.backends.values()):
@@ -69,6 +77,10 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False,
     try:
         exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(context)
         decision = (decision_factory if decision_factory is not None else build_default_decision)(context, exploration)
+        if research is not None:
+            from rsisys.research import assemble_research
+            assemble_research(decision, assembly=research, backend=research_backend, owner=context,
+                adapter=feedback_adapter_factory(decision.harness) if feedback_adapter_factory else None)
         return AssemblyRunner(decision, exploration, context, run_policy=run_policy,
                               cleanup_timeout_seconds=cleanup_timeout_seconds), store
     except BaseException as exc:

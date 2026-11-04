@@ -219,7 +219,7 @@ class Runner:
             if self._clock() < self._restart_at:
                 return RunnerStep('waiting', {'run_control': 'restart_wait',
                     'retry_after_seconds': self._restart_at - self._clock()})
-            restart = getattr(self.decision_making, 'restart_research', None)
+            restart = self._control_method('restart_research')
             if not callable(restart):
                 raise NotImplementedError('Continued research requires restart_research(context)')
             if self._restart_context is None:
@@ -229,7 +229,7 @@ class Runner:
             self._researcher_finished = self._decision_finished = False
             self._restart_at = self._restart_context = None
             return RunnerStep('progressed', {'run_control': 'research_restarted', 'research_round': self._research_round})
-        update = getattr(self.decision_making, 'update_run_control', None)
+        update = self._control_method('update_run_control')
         if callable(update) and type(self.run_policy) is not ResearcherRunPolicy:
             update(self._control_context(context))
         try:
@@ -248,6 +248,13 @@ class Runner:
                 self._restart_at = self._clock() + decision.restart_delay_seconds
             return replace(result, kind='waiting', event={**result.event, 'run_control': 'researcher_finished'})
         return result
+
+    def _control_method(self, name):
+        capabilities = getattr(self.decision_making, 'run_control_capabilities', None)
+        if callable(capabilities) and name not in capabilities():
+            return None
+        method = getattr(self.decision_making, name, None)
+        return method if callable(method) else None
 
     def _exploration_pending(self):
         discover = getattr(self.exploration, 'pending', None)

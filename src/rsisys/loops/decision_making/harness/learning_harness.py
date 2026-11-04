@@ -9,6 +9,7 @@ from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.json_tools import EvidencePathError
 
 from ..feedback import FeedbackAdapter, FeedbackEvidence, FeedbackLearningService
+from ..feedback import WorkingMemoryPolicy
 from ..action_space import OperationCall, OperationResult, OperationSpec
 from .context import result_id
 from .engine import DefaultDecisionHarness
@@ -23,15 +24,23 @@ FeedbackLearningHarness = FeedbackLearningService
 
 class DefaultFeedbackAdapter:
     """Translate the built-in execution ledger; the learning service is agnostic."""
-    def __init__(self, harness, model=None):
-        self.harness, self._model = harness, model
+    def __init__(self, harness, model=None, working_memory_policy=None):
+        if model is not None and model != harness.policy.model:
+            raise ValueError('Feedback must use the active meta-agent model')
+        self.harness = harness
+        self.working_memory_policy = (WorkingMemoryPolicy() if working_memory_policy is None
+                                      else working_memory_policy)
+        if not isinstance(self.working_memory_policy, WorkingMemoryPolicy):
+            raise TypeError('working_memory_policy must be a WorkingMemoryPolicy')
         self.service = None
 
     def __getattr__(self, name):
         return getattr(self.harness, name)
 
     def model(self):
-        return self._model or self.harness.policy.model
+        # Resolve for each new capture; an install-time argument must not pin
+        # this role to old weights after the meta-agent changes model version.
+        return self.harness.policy.model
 
     def evidence(self, directive, feedback):
         return FeedbackEvidence(self.memory.history(), tuple(self.state.candidate_evaluations.values()),
@@ -43,21 +52,40 @@ class DefaultFeedbackAdapter:
     def decision_ids(self):
         return tuple(self.state.decision_records)
 
+    def proposal_decisions(self):
+        return tuple({key: deepcopy(row[key]) for key in
+            ('decision_id', 'status', 'kind', 'operation', 'directive_id', 'error', 'feedback_proposal_ids')
+            if key in row} for row in self.state.decision_records.values() if row.get('feedback_proposal_ids'))
+
     def install(self, service):
         self.service = service
         self.harness.add_feedback_listener(service.receive_feedback)
         self.harness.add_context_processor(self.project_context)
         self.harness.add_cleanup(service.close)
+        self.harness.add_receipt_listener(self._receive_operation)
+        self.harness.feedback_proposal_resolver = service.resolve_harness_proposals
         # Read-only compatibility/navigation used by monitor and existing callers.
         self.harness.feedback_learning = service.learning
         self.harness.feedback_service = service
         self.harness.attempt_interpretations = service.attempts
         self.harness.last_working_view = None
 
-    def _grouping_scope(self, directive_id):
+    def _receive_operation(self, receipt):
+        # Denied operations are absent from the authorized catalog, so their
+        # read_only flag may be unknown. Our own navigation must never create
+        # feedback about reading feedback, including denied reads.
+        if not receipt.read_only and receipt.request.get('name') != READ_SPEC.name:
+            return self.service.observe(receipt, evidence=self.receipt_evidence(receipt))
+
+    def receipt_evidence(self, receipt):
+        return FeedbackEvidence(self.memory.history(), tuple(self.state.candidate_evaluations.values()),
+            self._learning_scope(None, decision_id=receipt.decision_id),
+            self._grouping_scope(None, decision_id=receipt.decision_id))
+
+    def _grouping_scope(self, directive_id, *, decision_id=None):
         """Bounded evidence window, independent of canonical execution membership."""
         records = self.state.decision_records
-        ident = self.state.directive_decisions.get(directive_id)
+        ident = decision_id or self.state.directive_decisions.get(directive_id)
         selected = list(records)[-24:]
         if ident in records and ident not in selected:
             selected.append(ident)
@@ -69,6 +97,8 @@ class DefaultFeedbackAdapter:
             directive = proposal.get('directive') or {}
             payload = directive.get('payload') or {}
             candidates = [payload.get('candidate_id')] if isinstance(payload, dict) else []
+            if isinstance(payload, dict) and isinstance(payload.get('candidate'), dict):
+                candidates.append(payload['candidate'].get('candidate_id'))
             for ref in directive.get('input_refs', ()):
                 candidates.append(ref.get('artifact_id'))
             for candidate in candidates:
@@ -107,9 +137,9 @@ class DefaultFeedbackAdapter:
     def attempt_interpretations(self):
         return self.service.attempts()
 
-    def _learning_scope(self, directive_id):
+    def _learning_scope(self, directive_id, *, decision_id=None):
         """Snapshot canonical membership; never infer groups from a proposal/title."""
-        ident = self.state.directive_decisions.get(directive_id)
+        ident = decision_id or self.state.directive_decisions.get(directive_id)
         origin = self.state.decision_records.get(ident, {})
         attempt = origin.get('research_attempt_id')
         members = []
@@ -124,9 +154,10 @@ class DefaultFeedbackAdapter:
                      research_attempt_title=origin.get('research_attempt_title', ''),
                      member_decisions=members, scope='observed_members_at_feedback',
                      attempt_completion='not_reported')
+        scope['feedback_proposal_ids'] = list(origin.get('feedback_proposal_ids', ()))
         provenance = self.state.directive_provenance.get(directive_id)
         scope['issuing_decision_model'] = (asdict(provenance.decision_model)
-            if provenance is not None and provenance.decision_model is not None else None)
+            if provenance is not None and provenance.decision_model is not None else origin.get('decision_model'))
         scope['learning_decision_model'] = asdict(self.model())
         return {**scope, 'snapshot_digest': result_id(scope)}
 
@@ -138,9 +169,21 @@ class DefaultFeedbackAdapter:
             'authority': 'unverified_proposals', 'total': len(jobs),
             'recent': [{'job_id': row['job_id'], 'status': row['status'],
                         'research_attempt_id': row['input'].get('research_context', {}).get('research_attempt_id'),
-                        'kinds': [p['kind'] for p in row['proposals']]} for row in jobs[-6:]]}
+                        'kinds': [p['kind'] for p in row['proposals']],
+                        'products': deepcopy(row.get('products', {}))} for row in jobs[-6:]]}
+        proposals = self.service.proposals()
+        navigation['harness_proposals'] = {'total': len(proposals),
+            'read_path': {'operation': 'feedback_learning_read', 'view': 'proposals', 'target': 'harness'},
+            'construction_owner': 'main_meta_agent_decision',
+            'recent': [{'proposal_id': p['proposal_id'], 'subject': p['subject'],
+                'content_preview': p['proposal']['content'][:200], 'read_path': p['read_path'],
+                'decision_links': p['decision_links'][-4:], 'applied': False} for p in proposals[-6:]]}
         context = replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
-        view = research_working_view(context, jobs, self.attempt_interpretations()['items'])
+        active = {r['decision_id'] for r in context.decision_graph
+                  if r['status'] not in ('completed', 'failed', 'cancelled')}
+        knowledge = self.service.working_memory(active_decision_ids=active,
+                                                policy=self.working_memory_policy)
+        view = research_working_view(context, jobs, self.attempt_interpretations()['items'], knowledge=knowledge)
         self.harness.last_working_view = deepcopy({'research_state': view.research_state,
             'projection': view.research_agenda['working_projection'],
             'scope': 'last assembled view before token-budget compaction',
@@ -150,12 +193,26 @@ class DefaultFeedbackAdapter:
 
 
 READ_SPEC = OperationSpec('feedback_learning_read',
-    'Read feedback-learning job status or its proposed memory/training material/harness/system changes. '
+    'Read feedback jobs or view=attempts/proposals/trajectories. Trajectories archive captured public '
+    'decisions, execution and feedback; they are not training-ready datasets. '
+    'Context/memory organization is active via a replaceable provider; read /context_memory. '
+    'Trajectory archival defaults on but may be disabled/replaced; check trajectory.enabled before /trajectory. '
+    'Read /trajectory_segment to extract captured public material without generating training targets. '
+    'Harness proposals can be referenced by feedback_proposal_ids in a later ordinary decision; '
+    'feedback does not construct or activate them. '
+    'Proposal targets are context_memory, harness, weights '
+    '(legacy system changes stay separate). Attempt views return latest revisions; proposals stay unverified. '
     'These are unverified proposals, never applied changes or training-ready examples. '
     'Omit job_id to list jobs; use next_offset for the next page. '
     'With job_id and evidence_path (JSON pointer, empty for root), read original evidence '
-    'in JSON-text pages; offset counts characters and each limit unit is 128 characters.',
+    'in JSON-text pages; offset counts characters and each limit unit is 128 characters. '
+    '/proposals and /attempt_revisions address interpretation output, not captured evidence. '
+    '/feedback_request and /feedback_response read the recorded feedback model exchange when available. '
+    'Knowledge views also return JSON-text pages; pass sha256 as expected_digest on subsequent pages.',
     {'type': 'object', 'properties': {
+        'view': {'enum': ['jobs', 'attempts', 'proposals', 'trajectories']},
+        'target': {'enum': ['context_memory', 'harness', 'weights', 'system']},
+        'expected_digest': {'type': 'string', 'minLength': 64, 'maxLength': 64},
         'job_id': {'type': 'string', 'minLength': 1},
         'evidence_path': {'type': 'string', 'maxLength': 1000,
                           'description': 'JSON pointer into original evidence; requires job_id.'},
@@ -167,8 +224,22 @@ READ_SPEC = OperationSpec('feedback_learning_read',
 
 
 def _read_arguments(arguments):
-    if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit', 'evidence_path'}:
+    if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit',
+                                                          'evidence_path', 'view', 'target', 'expected_digest'}:
         raise ValueError('Invalid feedback_learning_read arguments')
+    view = arguments.get('view', 'jobs')
+    if view not in ('jobs', 'attempts', 'proposals', 'trajectories'):
+        raise ValueError('Invalid feedback view')
+    if view != 'jobs' and ('job_id' in arguments or 'evidence_path' in arguments):
+        raise ValueError('Knowledge view cannot be combined with job evidence')
+    if 'target' in arguments and (view != 'proposals' or arguments['target'] not in
+                                ('context_memory', 'harness', 'weights', 'system')):
+        raise ValueError('target requires a proposals view')
+    if 'expected_digest' in arguments and (not isinstance(arguments['expected_digest'], str)
+            or len(arguments['expected_digest']) != 64):
+        raise ValueError('Invalid expected_digest')
+    if 'expected_digest' in arguments and view == 'jobs' and 'evidence_path' not in arguments:
+        raise ValueError('expected_digest requires an evidence or knowledge page')
     if 'job_id' in arguments and (not isinstance(arguments['job_id'], str) or not arguments['job_id'].strip()):
         raise ValueError('job_id must be a nonempty string')
     if 'evidence_path' in arguments:
@@ -223,8 +294,9 @@ class LearningTools:
         try:
             data = self.learning.read(**_read_arguments(call.arguments))
         except EvidencePathError as exc:
-            return OperationResult('Feedback evidence path rejected', (), False,
+            return OperationResult('Feedback read rejected', (), False,
                 ExecutionStatus.FAILED, str(exc), data={
+                    'view': call.arguments.get('view', 'jobs'),
                     'job_id': call.arguments.get('job_id'),
                     'evidence_path': call.arguments.get('evidence_path'),
                     'read_operation': READ_SPEC.name})
@@ -247,7 +319,8 @@ def feedback_learning_decision_factory(*, decision_factory=None, backend=None, m
     return build
 
 
-def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None, **options):
+def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None,
+                             working_memory_policy=None, **options):
     """Attach once before execution, retaining harness and compactor identities.
 
     An explicit backend may differ from the decision backend. It must enforce its
@@ -266,7 +339,9 @@ def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, 
         pristine.operation_results = list(base.state.operation_results)
         if base.state != pristine:
             raise ValueError('Install feedback learning before the first decision')
-        adapter = DefaultFeedbackAdapter(base, model=model)
+        adapter = DefaultFeedbackAdapter(base, model=model, working_memory_policy=working_memory_policy)
+    elif working_memory_policy is not None:
+        raise ValueError('Custom adapters select their own working memory policy')
     for method in ('model', 'evidence', 'publish', 'decision_ids', 'install'):
         if not callable(getattr(adapter, method, None)):
             raise TypeError('FeedbackAdapter requires ' + method)

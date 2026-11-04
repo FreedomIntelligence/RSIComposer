@@ -34,10 +34,14 @@ class EvidenceFixture(MockModelBackend):
     def generate(self, request):
         packet = json.loads(request.prompt)
         if 'receipt' in packet:
-            assert packet['receipt']['feedback']['quality_metrics']['accuracy'] == 0
-            payload = {'proposals': [{'kind': 'memory', 'content': 'Fixture receipt: wrong output format.',
-                'applicability': 'This simulated format task only.', 'source_refs': [packet['source_refs'][0]],
-                'validation_plan': 'Check corrected format on a fresh simulated task.'}]}
+            if 'feedback' in packet['receipt']:
+                assert packet['receipt']['feedback']['quality_metrics']['accuracy'] == 0
+                payload = {'proposals': [{'kind': 'memory', 'content': 'Fixture receipt: wrong output format.',
+                    'applicability': 'This simulated format task only.', 'source_refs': [packet['source_refs'][0]],
+                    'validation_plan': 'Check corrected format on a fresh simulated task.'}]}
+            else:
+                assert packet['receipt']['operation']['name'] == 'prepare_data'
+                payload = {'proposals': []}
         elif packet['research_state']['findings']:
             content = packet['research_state']['findings'][0]
             assert packet['last_feedback']['quality_metrics']['accuracy'] == 0
@@ -83,7 +87,7 @@ class OuterLoopFeedbackTests(unittest.TestCase):
                 self.assertEqual(assembly.artifacts.get(latest.artifacts[0]).decode(),
                                  'candidate correction: one legal label')
                 self.assertEqual(loop.harness.state.last_feedback, feedback)
-                self.assertEqual(loop.harness.feedback_learning.state['attempted'], 1)
+                self.assertEqual(loop.harness.feedback_learning.state['attempted'], 2)
                 self.assertEqual(loop.harness.memory.recall()[0].status, 'unverified')
                 archived = json.loads(loop.harness.memory.recall()[0].content)
                 self.assertEqual(archived['receipt_facts']['quality_metrics']['accuracy'], 0)

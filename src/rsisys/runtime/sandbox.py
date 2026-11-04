@@ -14,7 +14,8 @@ class SandboxSpec:
 
     def __post_init__(self):
         import math
-        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+        if (type(self.timeout_seconds) not in (int, float)
+                or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0):
             raise ValueError("sandbox timeout must be positive")
 
 
@@ -29,10 +30,14 @@ class ExecRequest:
     timeout_seconds: int = 30
 
     def __post_init__(self):
-        if not self.argv or not all(isinstance(arg, str) for arg in self.argv):
+        if (not isinstance(self.argv, (list, tuple)) or not self.argv
+                or not all(isinstance(arg, str) and '\0' not in arg for arg in self.argv)
+                or not self.argv[0]):
             raise ValueError("argv must contain strings")
+        object.__setattr__(self, 'argv', tuple(self.argv))
         import math
-        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+        if (type(self.timeout_seconds) not in (int, float)
+                or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0):
             raise ValueError("execution timeout must be positive")
 
 

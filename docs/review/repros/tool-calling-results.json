@@ -1,0 +1,26 @@
+{
+  "recorded_at": "2026-11-03T13:55:04.199527+00:00",
+  "scope": "Native function calling client transport; not a LangMem integration or real serving test",
+  "full_suite": {
+    "command": "PYTHONPATH=src /Users/xcx/.local/bin/python3.12 -m unittest discover -s tests -q",
+    "tests_run": 1314,
+    "passed": 1296,
+    "skipped": 18,
+    "failures": 0,
+    "errors": 0,
+    "duration_seconds": 82.261,
+    "log": "/tmp/rsisys-tool-calling-full-verified.log"
+  },
+  "new_native_http_tests": 12,
+  "external_model_calls": 0,
+  "real_service_tool_calling_verified": false,
+  "langmem_integration_verified": false,
+  "source_sha256": {
+    "src/rsisys/loops/contracts/model_service.py": "3aed98be5dcbc7c23f36a0586cb1a5af9c4108666a65e2d4122ad8d4eb8c4fb2",
+    "src/rsisys/runtime/model.py": "39bdda3f69951e6dcdc221e7879f5f2c4bf12ee9b849e8037948f544a058bce5",
+    "src/rsisys/adapters/serving.py": "1652c7a71e0c7ddcd5c88700602822dd65fc05a1567eedc1e5d86a9310760e14",
+    "tests/test_tool_calling_transport.py": "f5493edd78d43dab9987816e9e2e116cae51be63f0a951383a8ee1015c468219",
+    "tests/test_feedback_required_outputs.py": "999ff4017ddcd25891d40b1d6a619d215f8c1e3f6fa1197e48ec0dd6acc75556"
+  },
+  "compatibility_note": "Feedback request/response archival assertions compare JSON-normalized values so native tuple collections match serialized arrays."
+}

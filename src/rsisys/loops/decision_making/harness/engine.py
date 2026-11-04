@@ -16,6 +16,7 @@ from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.metrics import InvalidMetrics, validated_metrics
 from rsisys.loops.contracts.training import TrainingResult, ModelActivator
 from rsisys.runtime.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
@@ -48,6 +49,8 @@ class DefaultDecisionHarness:
                  max_outstanding: int = 1, feedback_selector=None,
                  context_compactor=None, research_agenda=None, attempt_contract=None):
         self._feedback_listeners, self._context_processors, self._cleanup_callbacks = [], [], []
+        self.feedback_proposal_resolver = None
+        self._receipt_listeners = []
         self.attempt_contract = attempt_contract if attempt_contract is not None else AttemptContract()
         if not isinstance(self.attempt_contract, AttemptContract):
             raise TypeError('attempt_contract must be an AttemptContract')
@@ -76,10 +79,20 @@ class DefaultDecisionHarness:
         research_tools = getattr(tools, 'research_tools', None)
         if isinstance(research_tools, ResearchTools):
             research_tools.decision_graph = self._decision_graph
+            research_tools.ledger_providers.update({name: (lambda name=name:
+                [asdict(row) for row in getattr(self.state, name).values()])
+                for name in ('candidates', 'candidate_evaluations', 'directive_provenance')})
+            research_tools.ledger_providers['candidate_origins'] = lambda: [
+                {'candidate_id': key, 'decision_id': value}
+                for key, value in self.state.candidate_origins.items()]
         self.training = JobBook[DecisionTrainingRequest, TrainingResult](learner)
 
     def add_feedback_listener(self, listener):
         self._feedback_listeners.append(listener)
+
+    def add_receipt_listener(self, listener):
+        """Observe recorded local completions; subscribers never execute tools."""
+        self._receipt_listeners.append(listener)
 
     def add_context_processor(self, processor):
         self._context_processors.append(processor)
@@ -88,8 +101,21 @@ class DefaultDecisionHarness:
         self._cleanup_callbacks.append(callback)
 
     def close(self):
-        for callback in reversed(self._cleanup_callbacks):
-            callback()
+        callbacks, self._cleanup_callbacks = self._cleanup_callbacks, []
+        failed, errors = [], []
+        for callback in reversed(callbacks):
+            try:
+                callback()
+            except BaseException as error:
+                failed.append(callback)
+                errors.append(error)
+        # A timed-out feedback worker may need another close. Retry failed
+        # callbacks only; successful resource releases must not run twice.
+        self._cleanup_callbacks.extend(reversed(failed))
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f'Additional harness cleanup failure: {type(error).__name__}: {error}')
+            raise errors[0]
 
     def _project_context(self, context):
         from .research_state import bounded_evidence_view
@@ -190,7 +216,7 @@ class DefaultDecisionHarness:
             directive = row['proposal'].get('directive')
             if directive:
                 item['mode'] = directive['mode']
-            for key in ('operation', 'depends_on_decision_ids', 'source_decision_ids', 'adopted_candidate_ids',
+            for key in ('operation', 'depends_on_decision_ids', 'source_decision_ids', 'feedback_proposal_ids', 'adopted_candidate_ids',
                         'adopted_decision_ids', 'unresolved_adopted_candidate_ids'):
                 if row.get(key):
                     item[key] = row[key]
@@ -204,7 +230,8 @@ class DefaultDecisionHarness:
         ident = decision.decision_id
         row = self.state.decision_records.get(ident)
         if row is not None:
-            if {'research_attempt_id': None, 'research_attempt_title': '', **row['proposal']} != asdict(decision):
+            if {'research_attempt_id': None, 'research_attempt_title': '',
+                    'feedback_proposal_ids': (), **row['proposal']} != asdict(decision):
                 raise ValueError('Decision ID has different content')
             if row['status'] == 'executing':
                 raise RuntimeError('Decision execution outcome is unknown; refusing to execute it again')
@@ -217,10 +244,14 @@ class DefaultDecisionHarness:
                 operation=decision.operation.name if decision.operation else None,
                 depends_on_decision_ids=decision.depends_on_decision_ids,
                 source_decision_ids=decision.source_decision_ids,
+                feedback_proposal_ids=decision.feedback_proposal_ids,
                 adopted_candidate_ids=(), adopted_decision_ids=(), unresolved_adopted_candidate_ids=(),
                 confirmed_edges=(), error=None, validation_error=None,
                 research_attempt_id=None, research_attempt_title='',
                 proposal=deepcopy(asdict(decision)),
+                objective=context.objective,
+                operation_read_only=next((spec.read_only for spec in context.operations
+                    if decision.operation is not None and spec.name == decision.operation.name), False),
                 decision_model=asdict(context.decision_model) if context.decision_model else None,
                 execution_model=asdict(context.execution.model) if context.execution.model else None)
             for name in ('depends_on_decision_ids', 'source_decision_ids'):
@@ -234,6 +265,10 @@ class DefaultDecisionHarness:
                     break
             if not row['validation_error']:
                 try:
+                    if decision.feedback_proposal_ids:
+                        if not callable(self.feedback_proposal_resolver):
+                            raise ValueError('No feedback proposal provider is installed')
+                        row['feedback_proposals'] = self.feedback_proposal_resolver(decision.feedback_proposal_ids)
                     self.attempt_contract.validate(decision.kind,
                         decision.operation.name if decision.operation else None,
                         decision.research_attempt_id, decision.research_attempt_title)
@@ -316,6 +351,19 @@ class DefaultDecisionHarness:
             if not self.state.decision_records[pending.decision_id].get('authorization_rejected'):
                 self.state.decision_results[pending.decision_id] = LoopStepResult('progressed',
                     operation_result=deepcopy(pending.result), decision_id=pending.decision_id)
+            if self._receipt_listeners:
+                from rsisys.loops.contracts.receipts import ExecutionReceipt
+                row = self.state.decision_records[pending.decision_id]
+                objective = row.get('objective')
+                if objective is not None:
+                    receipt = ExecutionReceipt.from_operation(pending.record_id, objective,
+                        pending.call, pending.result, decision_id=pending.decision_id,
+                        read_only=row.get('operation_read_only', False), job=pending.job,
+                        issuing_model=ModelRef(**row['decision_model']) if row.get('decision_model') else None)
+                    # If observation persistence fails, the existing pending
+                    # record retries the same receipt, without executing again.
+                    for listener in self._receipt_listeners:
+                        listener(receipt)
 
     def _flush_operation_record(self) -> OperationResult:
         pending = self.state.pending_operation_record
@@ -898,11 +946,26 @@ class DefaultDecisionHarness:
         return self.training.submit(request, idempotency_key=idempotency_key)
 
     def poll_learning(self, job: JobRef) -> JobOutcome[TrainingResult]:
-        outcome = self.training.poll(job)
+        outcome = self.training.poll(job, normalize=self._normalize_training_metrics)
         return self._record_learning(outcome)
 
     def cancel_learning(self, job: JobRef) -> JobOutcome[TrainingResult]:
-        return self._record_learning(self.training.cancel(job))
+        return self._record_learning(self.training.cancel(job, normalize=self._normalize_training_metrics))
+
+    def _normalize_training_metrics(self, outcome):
+        result = outcome.result
+        if outcome.status != JobStatus.SUCCEEDED or not isinstance(result, TrainingResult):
+            return outcome
+        request = self.training.request(outcome.job)
+        if result.base != request.base or 'decision_maker' not in result.candidate.affected_roles:
+            return outcome  # Preserve the strict identity/type failure path below.
+        try:
+            validated_metrics(result.metrics, 'training metrics')
+        except InvalidMetrics:
+            return replace(outcome, status=JobStatus.FAILED, result=None,
+                simulated=outcome.simulated or result.simulated,
+                error='Invalid training metrics: expected nonempty names and finite numeric values')
+        return outcome
 
     def _record_learning(self, outcome: JobOutcome[TrainingResult]) -> JobOutcome[TrainingResult]:
         request = self.training.request(outcome.job)

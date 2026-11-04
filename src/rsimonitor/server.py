@@ -258,8 +258,26 @@ def attempt_interpretations(raw):
             projected.append(item)
         return projected
 
+    visible = items(raw.get('items'))
+    visible_ids = {row['attempt_id'] for row in visible}
+    latest = {(row['attempt_id'], row.get('revision')) for row in visible}
+    revisions = raw.get('revisions')
+    eligible = [(index, row) for index, row in enumerate(revisions if isinstance(revisions, list) else [])
+                if isinstance(row, dict) and isinstance(row.get('attempt_id'), str)
+                and row['attempt_id'] in visible_ids and type(row.get('revision')) is int]
+    # The journal is grouped by attempt ID, not by time. Preserve the exact
+    # current revisions of visible attempts before filling their history window;
+    # taking the first 300 entries could hide every recent revision of one idea.
+    selected = {index for index, row in eligible if (row['attempt_id'], row['revision']) in latest}
+    if len(selected) > MAX_ROWS:
+        selected = set(sorted(selected)[-MAX_ROWS:])
+    for index, _ in reversed(eligible):
+        if len(selected) >= MAX_ROWS:
+            break
+        selected.add(index)
+    history = items([row for index, row in eligible if index in selected])
     return {'schema_version': 1, 'authority': 'model_interpretation',
-            'items': items(raw.get('items')), 'revisions': items(raw.get('revisions')),
+            'items': visible, 'revisions': history,
             'ungrouped_decision_ids': strings(raw.get('ungrouped_decision_ids'))}
 
 

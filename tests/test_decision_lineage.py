@@ -364,9 +364,9 @@ class DecisionLineageTests(unittest.TestCase):
                                                                     'kind': 'adopted', 'confirmed': True},)
         with self.assertRaises(ValueError):
             decode(encode(corrupted))
-        self.assertEqual([f.name for f in fields(Decision)][-5:],
+        self.assertEqual([f.name for f in fields(Decision)][-6:],
                          ['decision_id', 'depends_on_decision_ids', 'source_decision_ids',
-                          'research_attempt_id', 'research_attempt_title'])
+                          'research_attempt_id', 'research_attempt_title', 'feedback_proposal_ids'])
 
 
 if __name__ == '__main__':

@@ -8,7 +8,6 @@ import json
 import math
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import time
@@ -19,7 +18,9 @@ from rsisys.loops.contracts.backend import BackendCapabilities, validate_trainin
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, JobProgress
 from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.metrics import validated_metrics
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
+from rsisys.runtime.local_process import _kill_process_group, _wait_for_process_exit
 
 _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
     'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
@@ -128,10 +129,7 @@ def _result(data):
     candidate = dict(data['candidate'])
     candidate['changes'] = {k: ArtifactRef(**v) for k, v in candidate['changes'].items()}
     candidate['affected_roles'] = tuple(candidate['affected_roles'])
-    metrics = data.get('metrics', {})
-    if not isinstance(metrics, dict) or any(type(v) not in (int, float) or not math.isfinite(v)
-                                            for v in metrics.values()):
-        raise ValueError('Training metrics must be finite numeric values')
+    metrics = validated_metrics(data.get('metrics', {}), 'Training metrics')
     if type(data.get('simulated', False)) is not bool:
         raise ValueError('simulated must be boolean')
     return TrainingResult(ModelRef(**data['base']), ModelRef(**data['model']),
@@ -355,15 +353,20 @@ def _supervise(directory):
                     stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, start_new_session=True)
                 state.update(child_pid=process.pid, child_identity=_identity(process.pid))
                 _write(directory / 'state.json', state)
-                while process.poll() is None:
+                while True:
+                    try:
+                        _wait_for_process_exit(process, .05)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
                     if (directory / 'cancel.json').exists():
                         state['status'] = 'cancelled'
                         break
                     if time.monotonic() - started > command['timeout_seconds']:
                         state.update(status='failed', error='Training command timed out')
                         break
-                    time.sleep(.05)
                 if state['status'] == 'running':
+                    _kill_process_group(process)
                     code = process.wait()
                     state.update(status='succeeded' if code == 0 else 'failed', exit_code=code)
                     if code:
@@ -375,8 +378,8 @@ def _supervise(directory):
                 try:
                     # The direct child is still unreaped when running. Never
                     # signal a recycled leader PID after wait/poll reaped it.
-                    if process.returncode is None and _identity(process.pid) == state.get('child_identity'):
-                        os.killpg(process.pid, signal.SIGKILL)
+                    if process.returncode is None:
+                        _kill_process_group(process)
                 except ProcessLookupError:
                     pass
                 process.wait()
@@ -571,7 +574,7 @@ def _train_transformers_peft(directory, payload, config, rows, evidence, argumen
     role = 'decision_maker' if payload['request_type'] == 'DecisionTrainingRequest' else 'actor'
     candidate = Candidate(directory.name, base.revision, {'model': artifact, 'training_evidence': evidence_artifact}, (role,),
                           **({'parent_system': origin['parent_system']} if origin else {}))
-    metrics = {k: v for k, v in trained.metrics.items() if type(v) in (int, float) and math.isfinite(v)}
+    metrics = validated_metrics(trained.metrics, 'Training metrics')
     _write(Path(os.environ['RSISYS_RESULT_FILE']), asdict(TrainingResult(base, model_ref, candidate, metrics)))
 
 

@@ -32,6 +32,16 @@
 
 ## 实现与替换
 
+通用模型提示文本通过 [DecisionPrompts](prompts.py) 装配。九个内置 [prompts](prompts)
+分别包含 research、decision、review、summary、control、scheduling、可选/必需 Attempt 与
+validation_correction。可传入 `prompts=DecisionPrompts({'research': custom_text})` 替换单项；
+`$name` 是模板变量，JSON 花括号无需转义。构造时捕获文本、拒绝未知模板/变量，
+`manifest()` 返回各项 SHA256。最终 request 是实际生效内容的记录。
+MemoryPrefix policy 继承此入口，医疗 ResearchPolicy 支持同一参数并保留领域控制 hook。
+覆盖 prompt 不修改动作 schema、身份检查、权限或执行准入；自定义文本不能借此安装能力。
+默认本地 snapshot 对非默认 prompt bundle 要求显式恢复契约，避免静默丢失指令。
+完整逻辑、模式矩阵及渲染示例见 [M03 审查](../../../../../../docs/review/m03.md)。
+
 同文件的 `ModelDecisionPolicy(backend, model, *, allowed_actions=("echo",), directives=None, max_validation_attempts=1, structured_output=None)` 同步调用 ModelBackend.generate，校验返回的 ModelRef 与请求一致，再解析 JSON。allowed_actions 写入探索指令，限制 Actor 环境动作；directive_modes 描述系统指令模式。模型输出参数为：
 
 - invoke：operation 和 arguments；具体名称与参数由 Decision Action Space 校验。

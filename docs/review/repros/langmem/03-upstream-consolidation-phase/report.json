@@ -1,0 +1,113 @@
+[
+  {
+    "input": "Research feedback: candidate A was evaluated on protocol dev-v1, accuracy=0.25. Candidate B has only been trained, not evaluated or adopted. Do not attribute A metrics to B.",
+    "puts": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "d95e3086-edfe-48aa-a316-c7c2fbc46ae1",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (session 41428c18): Candidate A was evaluated on protocol dev-v1 with accuracy=0.25. Candidate B has only been trained — not yet evaluated or adopted. Do NOT attribute A's metrics to B."
+          }
+        }
+      }
+    ],
+    "calls": 2,
+    "memories": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "d95e3086-edfe-48aa-a316-c7c2fbc46ae1",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (session 41428c18): Candidate A was evaluated on protocol dev-v1 with accuracy=0.25. Candidate B has only been trained — not yet evaluated or adopted. Do NOT attribute A's metrics to B."
+          }
+        },
+        "created_at": "2026-11-03T14:21:55",
+        "updated_at": "2026-11-03T14:21:55",
+        "score": null
+      }
+    ]
+  },
+  {
+    "input": "Research feedback: candidate A was evaluated on protocol dev-v1, accuracy=0.25. Candidate B has only been trained, not evaluated or adopted. This repeats the same observation.",
+    "puts": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "3ee70ee3-b56e-4bc2-8744-7ab2be97dc2d",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (repeated across sessions 41428c18 and eef39307): Candidate A was evaluated on protocol dev-v1 with accuracy=0.25. Candidate B has only been trained — not yet evaluated or adopted. Do NOT attribute A's metrics to B. This is a recurring observation; the user has flagged it as a repeated pattern, suggesting prior confusion or misattribution occurred."
+          }
+        }
+      }
+    ],
+    "calls": 2,
+    "memories": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "3ee70ee3-b56e-4bc2-8744-7ab2be97dc2d",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (repeated across sessions 41428c18 and eef39307): Candidate A was evaluated on protocol dev-v1 with accuracy=0.25. Candidate B has only been trained — not yet evaluated or adopted. Do NOT attribute A's metrics to B. This is a recurring observation; the user has flagged it as a repeated pattern, suggesting prior confusion or misattribution occurred."
+          }
+        },
+        "created_at": "2026-11-03T14:22:01",
+        "updated_at": "2026-11-03T14:22:01",
+        "score": null
+      }
+    ]
+  },
+  {
+    "input": "Correction: candidate A accuracy on protocol dev-v1 was misreported. The exact evaluation record states accuracy=0.21875, not 0.25. Candidate B is still unevaluated and unadopted.",
+    "puts": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "3ee70ee3-b56e-4bc2-8744-7ab2be97dc2d",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (corrected): Candidate A's accuracy on protocol dev-v1 is 0.21875 (previously misreported as 0.25). Candidate B remains unevaluated and unadopted. Do NOT attribute A's metrics to B. This correction addresses a recurring pattern of misattribution or confusion between the two candidates."
+          }
+        }
+      }
+    ],
+    "calls": 2,
+    "memories": [
+      {
+        "namespace": [
+          "native",
+          "default"
+        ],
+        "key": "3ee70ee3-b56e-4bc2-8744-7ab2be97dc2d",
+        "value": {
+          "kind": "Memory",
+          "content": {
+            "content": "Research feedback (corrected): Candidate A's accuracy on protocol dev-v1 is 0.21875 (previously misreported as 0.25). Candidate B remains unevaluated and unadopted. Do NOT attribute A's metrics to B. This correction addresses a recurring pattern of misattribution or confusion between the two candidates."
+          }
+        },
+        "created_at": "2026-11-03T14:22:06",
+        "updated_at": "2026-11-03T14:22:06",
+        "score": null
+      }
+    ]
+  }
+]

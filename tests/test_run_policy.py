@@ -263,10 +263,16 @@ class RunPolicyTests(unittest.TestCase):
         context = RunContext('task', 1, 1, False, (outcome,))
         goal = MetricGoal('score', .8, 'p')
         self.assertTrue(goal(context))
-        for bad in (replace(feedback, simulated=True), replace(feedback, quality_metrics={'score': float('nan')}),
+        for bad in (replace(feedback, simulated=True),
                     replace(feedback, status=ExecutionStatus.FAILED, error='failed')):
             latest = ExperimentOutcome(replace(directive, directive_id='eval2'), replace(bad, directive_id='eval2'))
             self.assertFalse(goal(replace(context, outcomes=(outcome, latest))))
+        # Constructors now reject nonfinite metrics. Keep the goal's defensive
+        # check for a legacy/in-place-corrupted receipt that bypassed admission.
+        corrupted = replace(feedback, directive_id='eval2')
+        corrupted.quality_metrics['score'] = float('nan')
+        latest = ExperimentOutcome(replace(directive, directive_id='eval2'), corrupted)
+        self.assertFalse(goal(replace(context, outcomes=(outcome, latest))))
         self.assertFalse(MetricGoal('score', .8, 'different')(context))
 
     def test_goal_observes_delivered_feedback_and_counts_last_completion(self):

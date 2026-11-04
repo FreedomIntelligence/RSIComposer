@@ -202,6 +202,10 @@ class _ApplyMedical(CommandHandler):
                         raise MedicalApplicationRejected('; '.join(reasons) or 'Rejected by the configured acceptance policy')
                 except (MedicalApplicationRejected, MedicalEvaluationError) as exc:
                     return self._reject(state, str(exc))
+                # Resolve local binding inputs before the externally visible
+                # activation. Failed reads must leave the incumbent untouched.
+                target = self.systems.get(ident)
+                state.data['instructions'] = self.artifacts.get(target.components['prompt']).decode('utf-8')
                 state.data['interpretation'] = interpretation
                 # Activation may take effect before readiness/response is confirmed.
                 # Cancellation after this point must reconcile this exact intent.
@@ -218,7 +222,7 @@ class _ApplyMedical(CommandHandler):
         system = state.data['applied']
         # Binding changes only after the injected activator confirms readiness.
         harness.policy.update_model(system.model)
-        harness.state.instructions = self.artifacts.get(system.components['prompt']).decode()
+        harness.state.instructions = state.data['instructions']
         if 'evidence' not in state.data:
             state.data['evidence'] = self.artifacts.put(encoded({**state.data['interpretation'],
                 'activation_confirmed': True, 'cancel_requested': state.cancel_requested}),

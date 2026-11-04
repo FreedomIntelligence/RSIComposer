@@ -4,7 +4,7 @@ from dataclasses import asdict, replace
 import json
 import unittest
 from unittest.mock import Mock
-from rsisys.loops._memory import HistoryEntry
+from rsisys.loops._memory import HistoryEntry, Memory
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.decision_making.action_space import OperationResult
 from rsisys.loops.decision_making.harness.context import BasicContextCompactor, IdentityContextCompactor, ContextBudgetError, encoded
@@ -55,6 +55,19 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertEqual(source['read_path']['operation'], 'research_archive')
         writer.assert_called_once()
         self.assertEqual(compactor.last_measurement['output_tokens'], measure(projected))
+
+    def test_source_manifest_is_priced_before_failing_or_calling_summarizer(self):
+        raw = context(history=records(), memories=tuple(Memory(str(i), 'episodic', 'x'*200)
+                                                       for i in range(40)))
+        saved = deepcopy(raw)
+        writer = Mock(return_value='Read the original sources before reusing a conclusion.')
+        compactor = BasicContextCompactor(trigger_tokens=22000, target_tokens=8500, summary_tokens=100)
+        projected = compactor.compact(raw, measure=measure, summarize=writer)
+        self.assertLessEqual(measure(projected), 8500)
+        self.assertEqual(projected.history[-2:], raw.history[-2:])
+        self.assertEqual(set(projected.context_summary['sources']), {'history', 'memories'})
+        writer.assert_called_once()
+        self.assertEqual(raw, saved)
 
     def test_after_compaction_new_turns_grow_without_reattaching_old_records(self):
         raw = context(history=records())

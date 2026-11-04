@@ -10,6 +10,7 @@ from ...action_space.capabilities import Capabilities, Capability
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.json_tools import EvidencePathError, evidence_value
 from ..context import encoded, result_id
+from ..ledger_context import LEDGER_COLLECTIONS
 from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, page_limit, page_offset
 
 
@@ -42,7 +43,7 @@ def _archive_arguments(arguments, *, experience=True):
     page_limit(args['limit'])
     if args['collection'] == 'experience' and not experience:
         raise ValueError('Experience archive provider is not bound')
-    if args['collection'] not in ('history', 'memories', 'operation_results', 'decision_graph',
+    if args['collection'] not in ('history', 'memories', 'operation_results', 'decision_graph', *LEDGER_COLLECTIONS,
                                   *(['experience'] if experience else []), 'research_items', 'research_revisions'):
         raise ValueError('Invalid archive collection')
     if args['record_id'] is not None and (not isinstance(args['record_id'], str) or not args['record_id']):
@@ -67,6 +68,7 @@ class ResearchTools:
         self.agenda, self.memory = agenda, memory
         self.experience = experience
         self.decision_graph = None  # Bound to the owning harness's live ledger, never a frozen copy.
+        self.ledger_providers = {}  # Callbacks follow the owning harness across state restoration.
         text = {'type': 'string', 'minLength': 1, 'maxLength': 128, 'pattern': r'\S'}
         refs = {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512,
                                          'pattern': r'\S'}, 'maxItems': 64}
@@ -99,10 +101,10 @@ class ResearchTools:
             'Read revision before retrying conflicts; summaries are model notes, not validated findings.',
             patch_schema), agenda.validate_patch)
         archive = _Definition(OperationSpec('research_archive',
-            'Read archived JSON in byte-bounded 1000-character chunks; follow next_cursor. '
-            'operation_results uses SHA-256 IDs and wraps receipts under /result. '
-            'evidence_path is a JSON Pointer (empty=root); cursors pin records and path.',
-            schema({'collection': {'enum': ['history', 'memories', 'operation_results', 'decision_graph',
+            'Read exact archived JSON in bounded 1000-character chunks; follow next_cursor. '
+            'IDs: candidates/evaluations/origins use candidate_id; provenance uses directive_id; '
+            'operation_results uses SHA-256 and /result. evidence_path is a JSON Pointer.',
+            schema({'collection': {'enum': ['history', 'memories', 'operation_results', 'decision_graph', *LEDGER_COLLECTIONS,
                                             'research_items', 'research_revisions',
                                             *(['experience'] if experience is not None else [])]},
                     'record_id': {'type': ['string', 'null'], 'minLength': 1}, 'cursor': {'type': ['string', 'null']},
@@ -126,7 +128,12 @@ class ResearchTools:
     def _archive(self, arguments):
         args = _archive_arguments(arguments, experience=self.experience is not None)
         collection = args['collection']
-        if collection == 'decision_graph':
+        if collection in LEDGER_COLLECTIONS:
+            provider = self.ledger_providers.get(collection)
+            if provider is None:
+                raise ValueError('Execution ledger archive provider is not bound')
+            rows, identity = deepcopy(list(provider())), LEDGER_COLLECTIONS[collection]
+        elif collection == 'decision_graph':
             if self.decision_graph is None:
                 raise ValueError('Decision ledger archive provider is not bound')
             rows, identity = list(self.decision_graph()), 'decision_id'

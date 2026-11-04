@@ -26,11 +26,17 @@ class Decision:
     source_decision_ids: tuple[str, ...] = ()
     research_attempt_id: str | None = None
     research_attempt_title: str = ''
+    feedback_proposal_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
         validate_attempt_fields(self.research_attempt_id, self.research_attempt_title)
         if not isinstance(self.decision_id, str) or not self.decision_id.strip():
             raise ValueError('decision_id must be a nonempty string')
+        refs = self.feedback_proposal_ids
+        if (not isinstance(refs, tuple) or len(refs) > 16
+                or any(not isinstance(ref, str) or not ref.strip() or len(ref) > 512 for ref in refs)
+                or len(set(refs)) != len(refs)):
+            raise ValueError('feedback_proposal_ids must contain at most 16 distinct proposal IDs')
         for name in ('depends_on_decision_ids', 'source_decision_ids'):
             refs = getattr(self, name)
             if (not isinstance(refs, tuple) or any(not isinstance(ref, str) or not ref.strip() for ref in refs)

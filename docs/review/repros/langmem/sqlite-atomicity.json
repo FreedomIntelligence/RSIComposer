@@ -1,0 +1,10 @@
+{
+  "SqliteStore": {
+    "error": "write fault",
+    "earlier_delete_survived_failed_batch": true
+  },
+  "_AtomicSqliteStore": {
+    "error": "write fault",
+    "earlier_delete_survived_failed_batch": false
+  }
+}

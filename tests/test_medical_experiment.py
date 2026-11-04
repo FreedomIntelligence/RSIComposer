@@ -159,6 +159,11 @@ class FixtureResearcher:
         self.requests, self.contexts = [], []
         self.response_model = model
 
+    def count_tokens(self, request):
+        # This fixture tests identity/dispatch rather than the no-tokenizer
+        # conservative byte bound; include the complete request in its estimate.
+        return len(json.dumps(asdict(request)).encode()) // 4
+
     def generate(self, request):
         if self.process.active_job:
             raise AssertionError('Researcher inference while training is active')

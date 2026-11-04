@@ -256,7 +256,8 @@ class FeedbackLearningIntegrationTests(unittest.TestCase):
                     harness.memory.append(HistoryEntry(ident, 'operation', None, 'Other observation', False))
                 view = harness._context('objective')
                 learning = harness.feedback_learning
-                job = learning.read(research_attempt_id=attempt)['items'][0]['job_id']
+                job = next(item['job_id'] for item in learning.read(research_attempt_id=attempt)['items']
+                           if item['decision_id'] == 'later')
                 row = learning.state['jobs'][job]
                 self.assertEqual(row['status'], 'completed')
                 self.assertIn(negative.record_id, [item['record_id'] for item in row['input']['history']])
@@ -406,7 +407,8 @@ class FeedbackLearningIntegrationTests(unittest.TestCase):
             harness._context('objective')
             learning = harness.feedback_learning
             b_job = learning.read(research_attempt_id=attempt_b)['items'][0]['job_id']
-            a_job = learning.read(research_attempt_id=attempt_a)['items'][0]['job_id']
+            a_job = next(item['job_id'] for item in learning.read(research_attempt_id=attempt_a)['items']
+                         if item['decision_id'] == 'a2')
             b_scope = learning.read(b_job)['research_context']
             a_scope = learning.read(a_job)['research_context']
             self.assertEqual([r['decision_id'] for r in b_scope['member_decisions']], ['b1'])
@@ -429,7 +431,7 @@ class FeedbackLearningIntegrationTests(unittest.TestCase):
             harness.receive_feedback(directive_c, Feedback(directive_c.directive_id,
                 ExecutionStatus.COMPLETED, 'Later fixture evidence', True))
             harness._context('objective')
-            self.assertEqual(learning.read(research_attempt_id=attempt_a)['total'], 2)
+            self.assertEqual(learning.read(research_attempt_id=attempt_a)['total'], 3)
             self.assertEqual(learning.read(a_job)['research_context'], a_scope)
             context.close()
 

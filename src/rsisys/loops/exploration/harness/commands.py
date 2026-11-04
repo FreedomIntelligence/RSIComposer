@@ -351,7 +351,7 @@ class ExplorationCommands:
             except Exception as exc:
                 status, error, application_error = ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}', exc
         records = loop.state.training_record_ids if training else loop.state.evaluation_record_ids
-        self._finish(state, Feedback(
+        self._finish(state, Feedback.from_backend(
             directive.directive_id, status, f'{directive.mode} {status.value}',
             directive.simulated or outcome.simulated or bool(result and result.simulated),
             training_metrics=result.metrics if training and result else {},

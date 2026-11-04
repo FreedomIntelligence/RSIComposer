@@ -54,6 +54,7 @@ class MedicalEvaluator:
         self._jobs, self._keys, self._outputs = {}, {}, {}
         self._failures, self._partial, self._interpretation_failures = {}, {}, {}
         self._states = {}
+        self._measurement_systems = {}
         self._anchor = None
         self.evidence = {}
         self.task.check()
@@ -71,6 +72,12 @@ class MedicalEvaluator:
 
     def advance_measurement(self, system):
         """Prepare serving and infer at most one sample, retaining partial state."""
+        previous = self._measurement_systems.get(system.version)
+        if previous is not None and previous != system:
+            # Reject a conflicting caller without poisoning a valid cached result
+            # or attributing another manifest's partial evidence to this system.
+            raise ValueError('Measurement system identity changed')
+        self._measurement_systems[system.version] = deepcopy(system)
         if system.version in self._failures:
             raise MedicalEvaluationError(self._failures[system.version])
         try:
@@ -179,11 +186,10 @@ class MedicalEvaluator:
             decision = policy(self.task, deepcopy(result), deepcopy(incumbent))
             if not isinstance(decision, dict) or type(decision.get('accepted')) is not bool:
                 raise ValueError('Acceptance policy must return a boolean accepted verdict')
-        return {'kind': 'acceptance_interpretation', 'candidate_id': candidate_id,
+        return {**decision, 'kind': 'acceptance_interpretation', 'candidate_id': candidate_id,
             'incumbent': incumbent.candidate_id, 'fixed_anchor': self._anchor.candidate_id,
             'protocol_ref': self.task.protocol_ref, 'primary_improved': primary,
             'guardrail_passed': guardrail, 'guardrails_enabled': self.task.guardrails,
-            **decision,
             'source_refs': list(result.evidence_refs + incumbent.evidence_refs + self._anchor.evidence_refs)}
 
     def submit(self, request, *, idempotency_key):

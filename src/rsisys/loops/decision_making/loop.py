@@ -43,6 +43,11 @@ class DecisionMakingLoop:
             raise NotImplementedError('This decision harness does not support restart_research')
         return restart(context)
 
+    def run_control_capabilities(self):
+        """Advertise underlying optional hooks, rather than wrapper methods."""
+        return frozenset(name for name in ('restart_research', 'update_run_control')
+                         if callable(getattr(self.harness, name, None)))
+
     def update_run_control(self, context: dict[str, object]) -> None:
         update = getattr(self.harness, 'update_run_control', None)
         if not callable(update):

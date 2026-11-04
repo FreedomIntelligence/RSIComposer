@@ -133,7 +133,14 @@ Runner 每轮重新观察 `pending_research_job()`，仍有引用就继续等待
 
 [model.py](model.py) 提供 MockModelBackend 和 Chat Completions HTTP RemoteModelBackend。policy 决定调用内容与时机；配置方法见[使用指南](../../../README.md#使用指南)。
 
-HTTP 支持非流式 JSON 文本、超时、响应大小和模型身份检查；不支持原生 tool_calls、多模态或流式生成。不跟随重定向，也不自动重试推理请求。密钥仅在调用时从指定环境变量读取，不写入配置或快照。
+HTTP 支持非流式 JSON 文本和原生 function tool calling、超时、响应大小和模型身份检查。
+`GenerationRequest.tools` 配置标准工具声明，`messages` 支持 assistant/tool 多轮历史；
+提供 messages 时将 prompt/system 留空。工具请求不附加旧的 JSON object 输出模式。
+`GenerationResponse.tool_calls` 保留标准调用 ID、函数名和原始 arguments 字符串，
+工具执行由消费方的库/harness 负责；transport 不执行。工具参数 schema 由消费方校验。
+未声明工具的旧 JSON 请求继续拒绝意外 tool_calls；`response_schema` 与原生 tools 互斥。
+尚不支持多模态或流式生成。不跟随重定向，也不自动重试推理请求。
+密钥仅在调用时从指定环境变量读取，不写入配置或快照。
 
 响应缺少 model_revision 时 revision_verified=false；匹配该字段也不能证明权重不可变。TokenUsage 缺失保持未知，缺失次数由各默认 Harness 记录。
 

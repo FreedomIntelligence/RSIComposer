@@ -4,14 +4,59 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import shutil
+import select
 import signal
 import subprocess
 import tempfile
 import threading
+import time
 from uuid import uuid4
 
 from rsisys.loops.contracts.jobs import JobStatus
 from .sandbox import SandboxSpec, SandboxRef, ExecRequest, ProcessRef, ProcessState, SandboxCapabilities
+
+
+def _kill_process_group(process):
+    """Caller serializes with wait/poll; only an unreaped leader reserves its PGID."""
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # Darwin reports EPERM when a group contains only zombies. A genuine
+        # permission failure with live members must still fail cleanup.
+        rows = subprocess.check_output(['ps', '-axo', 'pgid=,stat='], text=True, timeout=5)
+        for row in rows.splitlines():
+            group, status = row.split()
+            if int(group) == process.pid and not status.startswith('Z'):
+                raise
+
+
+def _wait_for_process_exit(process, timeout):
+    """Observe exit without reaping, so the owned group cannot be recycled."""
+    pid = process.pid
+    if hasattr(os, 'waitid'):
+        deadline = time.monotonic() + timeout
+        while os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            time.sleep(min(.01, remaining))
+    else:
+        queue = select.kqueue()
+        try:
+            try:
+                queue.control([select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT)], 0, 0)
+            except ProcessLookupError:
+                return  # Already exited, but still unreaped by this owner.
+            if not queue.control(None, 1, timeout):
+                raise subprocess.TimeoutExpired(process.args, timeout)
+        finally:
+            queue.close()
 
 
 @dataclass
@@ -32,6 +77,8 @@ class LocalProcessBackend:
     def __init__(self, root, *, max_output_bytes: int = 1024 * 1024):
         if type(max_output_bytes) is not int or max_output_bytes < 1:
             raise ValueError('max_output_bytes must be positive')
+        if not hasattr(os, 'waitid') and not hasattr(select, 'kqueue'):
+            raise NotImplementedError('Local process cleanup requires waitid or kqueue exit observation')
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_output_bytes = max_output_bytes
@@ -92,10 +139,8 @@ class LocalProcessBackend:
 
     @staticmethod
     def _kill(entry: _Process):
-        try:
-            os.killpg(entry.process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        with entry.lock:
+            _kill_process_group(entry.process)
 
     def _watch(self, entry: _Process):
         readers = [threading.Thread(target=self._drain, args=(stream, target, entry), daemon=True)
@@ -104,14 +149,15 @@ class LocalProcessBackend:
             reader.start()
         try:
             try:
-                code = entry.process.wait(timeout=entry.timeout)
+                _wait_for_process_exit(entry.process, entry.timeout)
             except subprocess.TimeoutExpired:
                 with entry.lock:
                     entry.timed_out = True
+            # A command owns its child processes; background children are not retained.
+            # Signal before wait() reaps the group leader, including normal exit.
+            with entry.lock:
                 self._kill(entry)
                 code = entry.process.wait()
-            # A command owns its child processes; background children are not retained.
-            self._kill(entry)
             for reader in readers:
                 reader.join(timeout=2)
             with entry.lock:

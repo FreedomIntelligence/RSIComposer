@@ -1,6 +1,8 @@
 """Public lifecycle boundaries; no concrete loop or backend imports."""
 
 from dataclasses import dataclass, field
+from copy import deepcopy
+import json
 import math
 from typing import Protocol, Literal
 
@@ -11,6 +13,7 @@ from .directive import Directive
 from .feedback import Feedback
 from .jobs import JobRef, JobProgress
 from .model_service import ModelRef, TokenUsage
+from .metrics import validated_metrics
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,8 @@ class OperationResult:
     adopted_candidate_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
+        if not isinstance(self.status, ExecutionStatus):
+            raise TypeError('Operation status must be a terminal ExecutionStatus')
         if (not isinstance(self.adopted_candidate_ids, tuple)
                 or any(not isinstance(ident, str) or not ident.strip() for ident in self.adopted_candidate_ids)
                 or len(set(self.adopted_candidate_ids)) != len(self.adopted_candidate_ids)):
@@ -38,11 +43,16 @@ class OperationResult:
             raise ValueError('Only completed operation receipts may confirm adoption')
         if not isinstance(self.data, dict):
             raise TypeError('Operation result data must be a dict')
+        for name in ('quality_metrics', 'training_metrics', 'execution_metrics'):
+            if name in self.data:
+                validated_metrics(self.data[name], 'data.' + name)
+        json.dumps(self.data, allow_nan=False)
+        object.__setattr__(self, 'data', deepcopy(self.data))
         if self.status not in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED):
             raise ValueError("An operation result must be terminal")
         if self.status == ExecutionStatus.FAILED and not self.error:
             raise ValueError("A failed operation requires an error")
-        if self.status == ExecutionStatus.COMPLETED and self.error:
+        if self.status == ExecutionStatus.COMPLETED and self.error is not None:
             raise ValueError("A completed operation cannot carry an error")
 
 
@@ -129,10 +139,18 @@ class DecisionEndpoint(Protocol):
     def receive_feedback(self, directive: Directive, feedback: Feedback) -> None: ...
 
 
-class ResearchCycleDecisionEndpoint(DecisionEndpoint, Protocol):
-    """Optional explicit research cycles and external hints, independent of the objective."""
-    def restart_research(self, context: dict[str, object]) -> None: ...
+class RunControlHintsEndpoint(DecisionEndpoint, Protocol):
+    """Optional hints; the host enforces its limits even without this endpoint."""
     def update_run_control(self, context: dict[str, object]) -> None: ...
+
+
+class ResearchRestartEndpoint(DecisionEndpoint, Protocol):
+    """Optional restart of a finished research session."""
+    def restart_research(self, context: dict[str, object]) -> None: ...
+
+
+class ResearchCycleDecisionEndpoint(RunControlHintsEndpoint, ResearchRestartEndpoint, Protocol):
+    """Compatibility name for endpoints implementing both optional capabilities."""
 
 
 class PendingResearchJobEndpoint(DecisionEndpoint, Protocol):

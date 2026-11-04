@@ -1,8 +1,36 @@
 # Framework boundaries
 
 These optional adapters run trusted native jobs and call an existing vLLM API.
-Importing them needs only the standard library. Install neither frameworks nor
+The core adapters need only the standard library; the LangChain bridge described
+below explicitly needs its optional extra. Install neither frameworks nor
 services through the adapter. Harnesses continue to own policy and role binding.
+
+## LangChain model bridge
+
+`langchain_model.BackendChatModel` bridges library-owned native tool workflows
+such as LangMem to the existing host backend. It retains model identity and
+usage, and does not pick a provider, execute tools, retry inference, or unwrap
+the host's admission gate. Install the `langmem` extra for this integration;
+ordinary package imports do not load it. The feedback gateway records every
+internal call and admits the complete request, including native tool schemas.
+See the [adoption review](../../../docs/review/feedback-oss-adoption.md).
+
+## Lab task bridge
+
+`ExplorationLab(spec, exploration)` in [lab.py](lab.py) adapts the public exploration
+endpoint to [LabSpec / LabTask / Lab](../loops/contracts/lab.py). The spec declares
+a fixed objective, installed directive modes and optional system version. Each
+task retains its decision/Lab/task identities, idempotency key and known issuer.
+Submit, advance, inspect, cancel, result and acknowledge preserve the exact
+directive; `result` returns a terminal ExecutionReceipt for an independent
+feedback observer. Acknowledgement requires a matching terminal result.
+
+Duplicate successful submit inspects the same task; changed content under the
+same task or key is rejected. The task/key index is process-local, and the
+underlying endpoint must uphold its existing submission idempotency contract.
+Durable recovery requires explicit integration. This bridge adds no code agent,
+budget management, training capability or isolation guarantee. The default Runner
+continues to use the exploration endpoint rather than a cross-Lab scheduler.
 
 ## Training
 
@@ -163,9 +191,39 @@ cluster resources. CANN and device visibility are preserved by the process
 adapter; optional frameworks remain imported only inside the worker.
 
 `VLLMBackend.count_tokens(request)` 调用服务根路径 `/tokenize`，使用相同 model alias、
-messages 和 chat_template_kwargs，计数包含 generation prompt。原生 tokenizer 不可用或返回无效
+messages、tools 和 chat template 参数，计数包含 generation prompt。
+原生 tokenizer 不可用或返回无效
 count 时明确报错；实现其他服务的 adapter 时，可提供同名计数方法。计数调用不产生模型决策，
 但消耗正常运行时间。模型生成、摘要调用仍由原有预算管理。
+
+### Native function tool calling
+
+`RemoteModelBackend` 和 `VLLMBackend` 声明 `supports_tool_calling=True`。
+调用方通过 `GenerationRequest.tools` 提供 Chat Completions function 声明；
+`tool_choice` 支持 auto / none / required / 指定函数，`parallel_tool_calls` 可显式配置。
+多轮历史使用 `messages`，其中保留 assistant tool_calls 和 tool 结果的 tool_call_id：
+
+```python
+request = GenerationRequest('decision_maker', model, '',
+    messages=({'role': 'user', 'content': 'Organize the new feedback.'},),
+    tools=({'type': 'function', 'function': {
+        'name': 'remember', 'description': 'Save a memory',
+        'parameters': {'type': 'object', 'properties': {'content': {'type': 'string'}},
+                       'required': ['content']}}},),
+    tool_choice='auto')
+response = backend.generate(request)
+# response.tool_calls contains standard ID/name/arguments records.
+# The consuming library/harness validates and handles them, then supplies tool results.
+```
+
+工具请求自动省略 binding.json_mode 的旧 JSON object 约束，接受 content=null 的调用响应。
+传输检查模型身份、声明的函数名、调用 ID、arguments 的 JSON object 格式和完整响应；
+不执行工具，也不校验业务参数 schema。截断或非法响应明确报错，不自动重试。
+旧文本请求继续拒绝未请求的工具调用。原生 tools 与 request.response_schema、显式的
+generation_options 输出约束/工具配置冲突时，在 HTTP 调用前报错。
+本地 HTTP 测试只验证传输；另有 Qwen3.8-27B 真实服务调用和可选 LangMem 接入证据，
+见采用记录。当前仍未通过记忆语义的默认替换验收。服务配置和版本要求参考
+[vLLM tool calling](https://docs.vllm.ai/en/latest/features/tool_calling/)。
 
 `VLLMBackend.supports_response_schema` advertises native structured-output
 transport. `GenerationRequest.response_schema` becomes `response_format` with

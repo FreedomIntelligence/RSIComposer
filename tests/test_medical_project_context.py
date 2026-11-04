@@ -51,8 +51,10 @@ class MedicalProjectContextTests(unittest.TestCase):
         self.assertEqual(resources['external_read_only_services'], [])
         self.assertNotIn('physical_devices', resources)
         self.assertNotIn('logical_devices', resources)
-        self.assertFalse(project['scope']['decision_improvement']['feedback_learning_enabled'])
-        self.assertNotIn('feedback_learning_read', [spec['name'] for spec in context['operations']])
+        self.assertTrue(project['scope']['decision_improvement']['context_memory_enabled'])
+        self.assertEqual(project['scope']['decision_improvement']['memory_provider'], 'journal')
+        self.assertFalse(project['scope']['decision_improvement']['model_feedback_enabled'])
+        self.assertIn('feedback_learning_read', [spec['name'] for spec in context['operations']])
         self.assertEqual(project['scientific_evaluation']['selection_rule'], 'pareto')
         self.assertEqual(project['scientific_evaluation']['development'],
                          [{'benchmark_id': 'medqa', 'role': 'primary', 'legal_labels': list('ABCD')}])
@@ -107,7 +109,8 @@ class MedicalProjectContextTests(unittest.TestCase):
         model = ModelRef('fixture-remote', 'independent-researcher', 'pinned')
         researcher = fixture.FixtureResearcher(model, self.process, [
             {'kind': 'invoke', 'operation': 'feedback_learning_read', 'arguments': {}}, fixture.FINISH])
-        result = self.execute([], feedback_learning=True, decision_model=model, decision_backend=researcher)
+        result = self.execute([], feedback_learning=True, memory_provider='journal',
+                              decision_model=model, decision_backend=researcher)
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(result['model_calls'], 2)
         self.assertEqual(result['trainings_reserved'], 0)
@@ -145,7 +148,8 @@ class MedicalProjectContextTests(unittest.TestCase):
             return original_event(monitor, event, **details)
         model = ModelRef('fixture-remote', 'independent', 'pinned')
         with patch.object(JournalMonitor, 'event', owner_event):
-            result = self.execute([], feedback_learning=True, decision_model=model,
+            result = self.execute([], feedback_learning=True, memory_provider='journal', harness_proposals=True,
+                                  decision_model=model,
                                   decision_backend=SimpleNamespace(generate=generate,
                                       count_tokens=lambda request: len(request.prompt.encode()) // 4))
         self.assertEqual(result['status'], 'completed', result)
@@ -204,6 +208,10 @@ class MedicalProjectSettingsTests(unittest.TestCase):
 
     def test_feedback_learning_defaults_and_dsh_configuration(self):
         self.assertFalse(self.settings().feedback_learning)
+        self.assertEqual(self.settings().effective_memory_provider, 'journal')
+        self.assertEqual(self.settings(feedback_learning=True).effective_memory_provider, 'langmem')
+        self.assertTrue(self.settings().archive_trajectories)
+        self.assertFalse(self.settings().harness_proposals)
         with self.assertRaisesRegex(TypeError, 'feedback_learning must be boolean'):
             self.settings(feedback_learning=1)
         self.assertTrue(self.settings(feedback_learning=True, decision_harness='dsh',

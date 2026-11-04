@@ -84,6 +84,7 @@ src/rsisys/
 ├── adapters/              # 可替换的具体训练 / serving 接入，位于 Harness 外
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
+├── research.py            # 研究任务的统一组件装配与配置校验
 ├── application.py         # 本地持久化装配
 ├── config.py              # 内存演示装配
 ├── cli.py                 # 命令逻辑
@@ -103,6 +104,11 @@ src/rsisys/
 Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](src/rsisys/loops/decision_making/harness/policy/README.md) 选择操作、系统指令、等待或结束；Exploration Policy 即现有 [ActorPolicy.act](src/rsisys/loops/exploration/harness/policy/README.md)，只选择环境动作。Harness 组织执行与结果处理，Action Space 定义可用操作/动作及约束。
 
 默认长程上下文、研究议程与可选 DSH 的配置见[默认长程研究能力](#默认长程研究能力)和[使用 DSH Harness](#使用-dsh-harness)。
+
+研究任务通过 `research.py` 的 `ResearchAssembly / assemble_research` 组合必需的
+context/memory、默认轨迹提取与可选 harness 提案。主 meta-agent
+在正式 decision 中引用提案并选择构建/验证，回执继续进入反馈；装配入口、workflow 和
+当前验收边界见[Feedback 链路](docs/review/feedback-workflow.md)。
 
 `runtime/recovery.py` 保存运行中协同状态；空闲 `snapshot/` 负责独立可移交快照。前者在同一工作目录继续，后者恢复到新目录。运行恢复按意图 / 回执边界处理，中断且结果不明时要求核对，不假设所有外部副作用都可重放。默认仅串行内置组合，外部组件显式实现恢复契约。
 
@@ -560,7 +566,47 @@ attempt 代表及它们的依赖/引用/采纳关系；旧节点通过 `research
 集合分页或按 ID 读取。只在该只读能力可用时投影，不删除原始节点或推断 attempt 完成。
 过大的活跃状态仍明确报预算错误，不以丢弃最新反馈或扩大预算处理。
 
-### 由 Decision 整理实验反馈（可选）
+### 统一研究任务装配
+
+`ResearchAssembly` 声明三类产物：必须激活的 context/memory、默认开启且可替换/关闭的轨迹
+提取、可选 harness 提案。Application、Demo 的 `research=` 参数和医疗控制器最终都调用
+`assemble_research`；模型仍只选择 decision，调用和训练准入由宿主控制。
+
+```python
+from rsisys.application import Application
+from rsisys.research import ResearchAssembly
+from rsisys.loops.decision_making.feedback import ModelHarnessProposer
+
+research = ResearchAssembly.langmem(
+    memory_path=config.data_dir / 'feedback_memory.sqlite',
+    namespace=('research', config.run_id),
+    harness_proposals=ModelHarnessProposer(config.data_dir / 'harness_proposals'),
+)
+with Application(config, research=research) as app:
+    app.run()
+```
+
+LangMem 需要显式安装的 optional 依赖及支持 native tool calling 的 backend；缺少时启动报错，
+不会回退成另一套 memory。组件配置本身不创建 run 或数据库。只需事实视图时使用
+`ResearchAssembly()`：内置 JournalContextMemory 保持激活，不额外调用模型；
+`trajectory_archive=None` 可关闭轨迹产物，`context_memory=None` 会被拒绝。
+外部整理器用 `context_memory=provider, memory_processor=processor` 替换，第三方 harness
+通过 `feedback_adapter_factory` 接入。Demo 同样支持 `build_demo(config, research=research)`。
+
+医疗任务始终经过统一入口，默认 journal memory、轨迹提取开启、harness 提案关闭。
+`--memory-provider langmem` 选择上游整理，`--harness-proposals` 独立启用提案，
+`--no-trajectory-archive` 只关闭派生轨迹。旧 `--feedback-learning` 作为选择 LangMem 的兼容
+开关保留，显式 `--memory-provider` 优先；新任务不再调用旧的组合解释 prompt。
+
+有运行目录时，启动即将选择写入 `research_assembly.json` 和 feedback journal；恢复必须提供原组件配置，
+不自动迁移旧 journal。反馈 journal 的恢复不等于完整 Runner 的恢复；启用 research 的
+Application 若使用 durable，必须提供显式 recovery_contract，内置 snapshot 仍拒绝此组合。
+基础 `Application(config)` / `build_demo(config)` 保留底层循环构建行为，不自动安装研究组件。
+本次未迁移默认 Runner 的跨 Lab 调度；完整 workflow 见[装配文档](docs/review/feedback-workflow.md)。
+
+### 底层反馈接口与兼容路径
+
+以下底层入口及组合解释 prompt 保留给旧调用方；新研究任务使用上一节的统一入口。
 
 ```python
 from rsisys.loops.decision_making.harness.learning_harness import feedback_learning_decision_factory
@@ -570,6 +616,12 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
 ```
 
 反馈学习位于独立的 `decision_making/feedback/` 包，不导入默认 harness 实现。
+做决策的模型统一称 meta-agent，decision 是研究动作/任务；固定目标下由 data/model/harness
+组成的研究执行环境称 lab。反馈分身负责整理和路由，meta-agent harness 负责上下文选择与
+compact。当前实现映射、Lab 接口迁移范围和三类产物边界见[反馈架构](src/rsisys/loops/decision_making/feedback/README.md)。
+基础 `LabSpec / LabTask / Lab` 和 `ExplorationLab` 已提供；默认 Runner 仍走兼容 exploration
+端口。`ExecutionReceipt` 统一本地与 Lab 任务的终态观察，默认 adapter 自动整理本地非只读
+操作的实际完成，异步提交与只读导航不会被当作新的完成任务。
 由 `FeedbackLearningService` 管理，`FeedbackAdapter` 只负责模型身份、
 证据快照、发布结果及生命周期接入。默认适配器读取内置执行账本，也可用于 DSH；
 第三方 harness 提供自己的适配器，不需要继承默认 harness 或使用它的 policy/state。
@@ -581,17 +633,30 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
 反馈创建独立会话，不把整理任务写进 Decision 的会话历史。独立后端必须接入宿主的
 统一准入与预算；医疗示例已提供这层接线，不因替换 harness 重置预算。
 
-该装配先接纳完整反馈，再由接收时的 Decision 模型异步提出 memory、训练样本、harness
-改进或系统改进。建议可兼有多种形式，也可为空；训练样本含未验证的 input/target，
-不会自动训练、修改代码或应用候选。事实指标直接复制回执，解释带来源且保持 unverified。
+反馈职能共享 meta-agent 当前权重，使用另一份上下文；每次新捕获读取当前 ModelRef，
+不会被安装时的 model 参数固定在旧版本。context/memory 整理能力必须激活，具体实现可替换；
+轨迹归档默认开启、可关闭或替换，harness 修改按需提出。零改进提案或反馈失败不会抹掉原始执行事实。
+装配参数 `context_memory=...` 替换整理器，显式 `None` 会被拒绝；
+`trajectory_archive=...` 替换轨迹组件，显式 `None` 关闭研究轨迹产物。执行/交付 journal 仍用于事实查询与恢复。
+轨迹后续可通过 skill/整理规则转换为训练材料；现有 input/target 提案仅兼容为未验证草稿。
+事实指标直接复制回执，解释带来源且保持 unverified。
+新输出用 subject 区分 meta_agent、lab、unspecified，避免混淆双方 harness。
+旧输出不补造归属；proposal 视图保留其原始内容、反馈模型及轨迹快照入口。
 有候选证据时，建议和 Attempt 整理需提供 `evaluation_claims`（无指标声明则为空）；
 每条声明校验候选、评测来源、协议、指标和 simulated 是否与回执一致。
 训练完成不代表已评测；缺失评测与输入未包含评测分开标记。发布前再次校验，
 包括恢复后尚未发布的旧结果。此校验不证明自由文本正确，也不自动改写已发布历史。
 `feedback_learning_read` 可分页查看任务或读取某个任务的建议；指定 `job_id` 和
 `evidence_path`（JSON Pointer）可分页读取原始证据，返回内容指纹与下一页位置。
+`view=attempts` 读取最新解释，`view=proposals,target=context_memory|harness|weights|system`
+分类读取提案；`/proposals` 与 `/attempt_revisions` 单独读取解释输出。后续页用
+expected_digest 固定内容版本，不能将变化前后的页拼接为同一条证据。
+`view=trajectories` 查看每次捕获的轨迹索引；指定 job 的 `/context_memory`、`/trajectory`
+读取已启用的产物；`trajectory.enabled` 标记轨迹是否开启。
+`/feedback_request`、`/feedback_response` 读取实际反馈模型交换。当前索引
+不声称覆盖完整 meta-agent 会话；原决策模型交换的通用捕获仍需补齐。
 
-Attempt 可由反馈整理模型把已观察到的 Decision 和回执增量组织成研究想法；
+兼容解释路径中的 Attempt 可由反馈整理模型把已观察到的 Decision 和回执增量组织成研究想法；
 Decision 仍说明具体行动、参数与验证计划，不必填写归属。整理沿用反馈学习调用，
 独立保存成员引用、摘要、模型来源、输入摘要哈希和修订历史，不改写执行账本。
 `feedback_learning_read` 可查看整理及错误，并按整理后的 `research_attempt_id` 查询。
@@ -600,7 +665,10 @@ Decision 仍说明具体行动、参数与验证计划，不必填写归属。�
 没有开启反馈学习时不自动归组，旧显式归属仍兼容，历史记录不会自动补写。
 
 启用反馈学习时，`research_state` 将最新 Attempt 解释、带适用条件的发现及学习异常
-组织成下一次决策的工作前缀。固定项目约束仍由宿主维护；当前模型、候选、预算和
+组织成下一次决策的工作前缀。独立反馈模块派生知识视图，默认限制编码后 12KB；
+同一 Attempt 不重复注入旧 job 长文，完整成员/来源和旧版本按需读取。
+Harness 在具备 archive 入口时也选择候选/评测/来源窗口，执行校验仍使用完整账本。
+固定项目约束仍由宿主维护；当前模型、候选、预算和
 未完成任务仍使用原始执行字段，不由摘要重写。每次调用前（含运行中 review）重新
 装配工作视图，普通等待不会重写未变化的研究摘要，也不新增整理模型调用。
 

@@ -1,0 +1,15 @@
+1 validation error for Memory
+content
+  String should have at most 3000 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_too_long
+1 validation error for Memory
+content
+  String should have at most 3000 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_too_long
+1 validation error for Memory
+  Value error, Memory cites an unsupplied evidence source [type=value_error, input_value={'content': 'One correcte...'evaluation_claims': []}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/value_error
+----------------------------------------------------------------------
+Ran 12 tests in 0.612s
+
+OK

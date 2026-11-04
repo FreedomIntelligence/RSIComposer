@@ -1,0 +1,47 @@
+1 validation error for Memory
+content
+  String should have at most 3000 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_too_long
+1 validation error for Memory
+content
+  String should have at most 3000 characters [type=string_too_long, input_value='xxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxx', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_too_long
+1 validation error for Memory
+  Value error, Memory cites an unsupplied evidence source [type=value_error, input_value={'content': 'One correcte...'evaluation_claims': []}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/value_error
+{"event": "controller_error", "error_type": "TimeoutError", "error_summary": "Controller step budget exhausted"}
+{"event": "controller_error", "error_type": "RemoteDisconnected", "error_summary": "Remote end closed connection without response"}
+{"event": "controller_error", "error_type": "RemoteDisconnected", "error_summary": "Remote end closed connection without response"}
+{"event": "controller_error", "error_type": "TimeoutError", "error_summary": "timed out"}
+{"event": "controller_error", "error_type": "TimeoutError", "error_summary": "Controller deadline exceeded"}
+{"event": "controller_error", "error_type": "RemoteDisconnected", "error_summary": "Remote end closed connection without response"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "ValueError", "error_summary": "Unknown decision operation: not_installed", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"not_installed\", \"arguments\": {}}"}
+{"event": "decision_validation_error", "attempt": 2, "error_type": "ValueError", "error_summary": "Unknown decision operation: not_installed", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"not_installed\", \"arguments\": {}}"}
+{"event": "controller_error", "error_type": "TimeoutError", "error_summary": "Researcher model-call budget exhausted"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "decision_validation_error", "attempt": 2, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "decision_validation_error", "attempt": 3, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Model failed bounded decision validation attempts"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "PermissionError", "error_summary": "Operation is not permitted during decision: query_exploration_model", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"query_exploration_model\", \"arguments\": {}}"}
+{"event": "decision_validation_error", "attempt": 2, "error_type": "PermissionError", "error_summary": "Operation is not permitted during decision: query_exploration_model", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"query_exploration_model\", \"arguments\": {}}"}
+{"event": "decision_validation_error", "attempt": 3, "error_type": "PermissionError", "error_summary": "Operation is not permitted during decision: query_exploration_model", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"query_exploration_model\", \"arguments\": {}}"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Model failed bounded decision validation attempts"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Requested verification requires a real training review"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Inference revision mismatch"}
+{"event": "controller_error", "error_type": "TimeoutError", "error_summary": "Controller step budget exhausted"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "decision_validation_error", "attempt": 2, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "decision_validation_error", "attempt": 3, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: train", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses train\", \"mode\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}, \"review_after_seconds\": 2}"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Model failed bounded decision validation attempts"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: execute", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses execute\", \"mode\": \"execute\"}"}
+{"event": "decision_validation_error", "attempt": 2, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: execute", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses execute\", \"mode\": \"execute\"}"}
+{"event": "decision_validation_error", "attempt": 3, "error_type": "ValueError", "error_summary": "Disallowed exploration mode: execute", "response_excerpt": "{\"kind\": \"explore\", \"strategy\": \"Fixture chooses execute\", \"mode\": \"execute\"}"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Model failed bounded decision validation attempts"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Worker does not support the requested round count"}
+{"event": "decision_validation_error", "attempt": 1, "error_type": "ValueError", "error_summary": "Unknown decision operation: train", "response_excerpt": "{\"kind\": \"invoke\", \"operation\": \"train\", \"arguments\": {\"recipe_ref\": \"toy-lora\", \"method\": \"sft\"}}"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Inference revision mismatch"}
+{"event": "controller_error", "error_type": "ValueError", "error_summary": "Candidate inference failed the JSON smoke test"}
+----------------------------------------------------------------------
+Ran 1325 tests in 83.168s
+
+OK (skipped=12)

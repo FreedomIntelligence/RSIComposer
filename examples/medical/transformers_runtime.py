@@ -68,6 +68,15 @@ def _messages(prompt, system):
         {'role': 'user', 'content': prompt}]
 
 
+def _generation_messages(request):
+    if request.tools or request.response_schema is not None:
+        raise NotImplementedError('Local medical generation does not implement native tools or response_schema')
+    messages = request.chat_messages()
+    if any(message['role'] == 'tool' or message.get('tool_calls') for message in messages):
+        raise NotImplementedError('Local medical generation does not implement native tool history')
+    return messages
+
+
 def _render(tokenizer, messages, *, generation, thinking=False):
     if not tokenizer.chat_template:
         raise ValueError('An official chat_template is required; no plain-text fallback')
@@ -337,6 +346,7 @@ class LocalTransformerServing:
 
     def generate(self, request: GenerationRequest) -> GenerationResponse:
         with self._lock:
+            messages = _generation_messages(request)
             if request.role == 'decision_maker':
                 if request.model != self.decision_model:
                     raise ValueError('Controller may only request its bound official base')
@@ -353,7 +363,7 @@ class LocalTransformerServing:
                 self._model.set_adapter(adapter)
             context = self._model.disable_adapter() if self._has_adapters and not candidate else nullcontext()
             thinking = request.role == 'decision_maker' and self.decision_thinking
-            prompt = _render(self._tokenizer, _messages(request.prompt, request.system),
+            prompt = _render(self._tokenizer, messages,
                              generation=True, thinking=thinking)
             inputs = self._tokenizer(prompt, add_special_tokens=False, truncation=False, return_tensors='pt')
             count = inputs['input_ids'].shape[-1]

@@ -38,11 +38,39 @@ Directive 由 decision policy 或外部系统发给 Exploration Harness，不是
 
 Feedback 构造时要求 `ExecutionStatus`，拒绝 `JobStatus.RUNNING` 等作业状态；failed 必须含 error，completed 不得含 error。`ExplorationProgress` 表达在途阶段、作业引用、可选的实时指标与耗时，只有包含合法 Feedback 才表示终态。未知指标留空，不推测后端训练进度。
 
+三组 metrics 共用 [validated_metrics](metrics.py)：要求非空字符串键及有限 int/float，拒绝
+bool、字符串、NaN/Infinity，构造时复制输入。后端适配可用 `Feedback.from_backend` 将异常测量
+转换为可持久交付的 failed 回执，保留有效指标、错误与证据引用，清除采纳声明；不把异常值
+替换为零。原始后端输出由提供方归档。`OperationResult` 同样严格要求 ExecutionStatus，
+验证 data 的三组 metrics 及 JSON 可持久性，completed 只接受 error=None。
+
 [coordination.py](coordination.py) 定义 DecisionEndpoint、ExplorationEndpoint、ExplorationProgress、LoopStepResult 和 OperationResult。DecisionEndpoint 统一通过 receive_feedback(directive, feedback) 接收反馈；它们是 Runtime 协调的公开边界，结果类型不依赖具体 Harness，可直接用于自定义端点和运行时类型反射。
 
 可选端口 `RecoverableExplorationEndpoint.pending()` 返回当前未 acknowledge 的进度；`ObservableExplorationEndpoint.execution_view()` 返回 `ExecutionView(model, progress)`；`ReviewingDecisionEndpoint` 接收该视图并提供 `review(objective, progress)`。不要求外部 Harness 暴露 policy、memory 或后端实例。
 
+`RunControlHintsEndpoint.update_run_control` 与 `ResearchRestartEndpoint.restart_research` 是
+两个独立可选能力；兼容 ResearchCycleDecisionEndpoint 表示二者兼有。DecisionMakingLoop
+通过 `run_control_capabilities` 声明实际底层能力；Runner 不因 wrapper 的方法存在就推定支持。
+缺少提示接口仍可推进定时研究，宿主继续独立执行截止检查；需要重启时才检查重启能力。
+
 Directive 可指定正数 `review_after_seconds`（默认 None，不复查）。`ReviewDecision` 只允许 continue / cancel，`next_review_seconds` 设定下一次复查间隔；None 停止自动复查。进展是当前执行事实，选定的复查事件进入 Experience，不另建 history/memory 系统。任务最终结果仍只通过 Feedback 交付。
+
+## Lab 与统一执行观察
+
+[LabSpec / LabTask / Lab](lab.py) 声明固定目标、已安装能力及可选系统版本，任务保留 decision、
+Lab、task、幂等键及可选 run/agent/发起模型。当前 LabTask 复用 Directive，task_id 与
+directive_id 一致；Lab 提供提交、推进、查询、取消、读取终态结果和确认。
+[ExplorationLab](../../adapters/lab.py) 适配已有 handlers，其任务索引只在当前进程有效。
+默认 Runner 仍使用 ExplorationEndpoint；该契约不等于已实现跨 Lab 调度或通用代码环境。
+
+[ExecutionReceipt](receipts.py) 让本地 OperationResult 和 exploration Feedback 共用观察入口，
+保留原始请求/结果和来源身份。它是事实 envelope，不是解释或应用授权。反馈服务可独立调用
+`observe(receipt, evidence=...)`，不要求默认 harness 的 memory/state。默认适配器观察非只读
+本地操作的实际完成；异步提交不等于完成。通用工具指标不会自动绑定某候选/评测协议。
+反馈职能共享 active meta-agent 模型版本、使用独立上下文；可替换的整理器负责每份已观察
+回执的 context/memory，该能力必须激活；公开轨迹归档默认开启、可关闭或替换。
+是否有 harness 或训练草稿提案不影响 context/memory 整理。归档片段并不
+等于完整会话或可训练数据，后续 skill/规则负责数据转换与质量约束。
 
 ## 作业与版本
 

@@ -24,29 +24,37 @@ class IdentityContextCompactor:
 def working_decision_graph(graph, candidate_origins, *, recent=32):
     """Bound the working ledger view; original identities/relations are archived.
 
-    Keep every active decision, candidate producer, one representative per attempt,
-    and the transitive dependencies/sources/adoptions of retained nodes. Large live
-    graphs still fail the budget explicitly; no active dependency is truncated.
+    Keep every active decision and its transitive dependencies, selected candidate
+    producers, recent decisions and recent Attempt representatives. Historical
+    completed edges can point into the archive instead of pinning entire chains.
+    Large live graphs still fail explicitly; no active dependency is truncated.
     """
     if len(graph) <= recent * 2:
         return tuple(deepcopy(graph))
     indexed = {row['decision_id']: row for row in graph}
     keep = {row['decision_id'] for row in graph[-recent:]} | set(candidate_origins.values())
     attempts = {}
+    active = set()
     for row in graph:
         if row['status'] not in ('completed', 'failed', 'cancelled'):
-            keep.add(row['decision_id'])
+            active.add(row['decision_id'])
         if row.get('research_attempt_id'):
+            attempts.pop(row['research_attempt_id'], None)
             attempts[row['research_attempt_id']] = row['decision_id']
-    keep.update(attempts.values())
-    pending = list(keep)
+    keep.update(list(attempts.values())[-8:])
+    keep.update(active)
+    pending = list(active)
+    visited = set()
     while pending:
-        row = indexed.get(pending.pop(), {})
+        ident = pending.pop()
+        if ident in visited:
+            continue
+        visited.add(ident)
+        row = indexed.get(ident, {})
         for name in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_decision_ids'):
             for ident in row.get(name, ()):
-                if ident not in keep:
-                    keep.add(ident)
-                    pending.append(ident)
+                keep.add(ident)
+                pending.append(ident)
     return tuple(deepcopy(row) for row in graph if row['decision_id'] in keep)
 
 
@@ -63,7 +71,7 @@ def with_working_decision_graph(context):
         'total': len(context.decision_graph), 'visible': len(graph),
         'sha256': result_id(context.decision_graph),
         'note': 'Working view only. Read archived decision_id or paginated ledger for older decisions. '
-                'Missing from this view does not mean nonexistent or failed.'}
+                'Historical edges may reference archived nodes. Missing from this view does not mean nonexistent or failed.'}
     return replace(context, decision_graph=graph,
                    research_agenda={**context.research_agenda, 'decision_graph_archive': navigation})
 
@@ -154,7 +162,9 @@ class BasicContextCompactor:
         if type(recent_limit) is not int or recent_limit < 1:
             raise ValueError('recent_limit must be positive')
         from .research_state import bounded_evidence_view
+        from .ledger_context import working_ledger_context
         context = bounded_evidence_view(context)
+        context = working_ledger_context(context)
         context = with_working_decision_graph(context)
         meter = measure or (lambda c: len(encoded(asdict(c)).encode('utf-8')))
         def count(view):
@@ -189,6 +199,7 @@ class BasicContextCompactor:
             protected['operation_results'].add(len(raw['operation_results'])-1)
         kept = {name: {i for i, key in enumerate(fingerprints[name])
                        if key not in self._folded[name] or i in protected[name]} for name in self.streams}
+        previous_summary = self._summary or context.context_summary
 
         def view(indices, summary):
             projected = {name: tuple(deepcopy(row) for i, row in enumerate(rows) if i in indices[name])
@@ -205,17 +216,17 @@ class BasicContextCompactor:
             refs = tuple(OperationResult('Archived operation artifact references', tuple(group), simulated)
                          for simulated, group in by_simulation.items() if group)
             projected['operation_results'] = (*refs, *projected['operation_results'])
-            working = replace(context, **projected, context_summary=deepcopy(summary or context.context_summary))
+            working = replace(context, **projected, context_summary=deepcopy(summary))
             return evidence_working_view(working) if project_evidence else working
 
-        current = view(kept, self._summary)
+        current = view(kept, previous_summary)
         before = count(current)
         self.last_measurement = {'input_tokens': before, 'trigger_tokens': self.trigger_tokens,
                                  'target_tokens': target_tokens, 'compacted': False}
         if before < self.trigger_tokens:
             return current
         project_evidence = True
-        current = view(kept, self._summary)
+        current = view(kept, previous_summary)
         after = count(current)
         if after <= target_tokens:
             self._project_evidence = True
@@ -232,7 +243,10 @@ class BasicContextCompactor:
                     groups.setdefault((name, fingerprints[name][i]), []).append(i)
         removable = list(groups.items())
         minimal = {name: indices & protected[name] for name, indices in kept.items()}
-        minimal_view = view(minimal, self._summary)
+        # The rolling summary is an input to its replacement, not an
+        # irreducible fact. Price resident records without the old summary;
+        # the new summary and its provenance are priced before committing.
+        minimal_view = view(minimal, {})
         minimum_tokens = count(minimal_view)
         self.last_measurement.update(minimum_input_tokens=minimum_tokens,
             protected_records={name: len(indices) for name, indices in minimal.items()})
@@ -254,38 +268,49 @@ class BasicContextCompactor:
         lo, hi = 0, len(removable)
         while lo < hi:
             mid = (lo+hi)//2
-            if count(view(after_removing(mid), self._summary)) <= desired:
+            if count(view(after_removing(mid), {})) <= desired:
                 hi = mid
             else:
                 lo = mid+1
-        chosen = after_removing(lo)
-        removed = {name: [asdict(raw[name][i]) for i in sorted(kept[name]-chosen[name])]
-                   for name in self.streams}
         def label(name, row):
             ident = result_id(row) if name == 'operation_results' else row.get('record_id', row.get('memory_id'))
             return f'{name}:{ident}'
-        sources = {name: {'omitted_count': len(rows), 'sha256': result_id(rows),
-                          'first_omitted': label(name, rows[0]), 'last_omitted': label(name, rows[-1]),
-                          'read_path': {'operation': 'research_archive', 'collection': name,
-                                        'record_id': 'source label after collection prefix'}}
-                   for name, rows in removed.items() if rows}
-        if not sources:
-            raise ContextBudgetError('No old records can be compacted without losing latest feedback')
-        summary = {'kind': 'rolling_context_summary', 'authority': 'unverified_summary',
-                   'note': 'Older measurements and failures may be archived. Absence here is not evidence of '
-                           'success or of an unevaluated candidate. Consult raw research_archive sources '
-                           'for original receipts and qualifications.',
-                   'text': '', 'sources': sources, 'compaction': self.compactions+1}
+        def draft(indices):
+            removed = {name: [asdict(raw[name][i]) for i in sorted(kept[name]-indices[name])]
+                       for name in self.streams}
+            sources = {name: {'omitted_count': len(rows), 'sha256': result_id(rows),
+                              'first_omitted': label(name, rows[0]), 'last_omitted': label(name, rows[-1]),
+                              'read_path': {'operation': 'research_archive', 'collection': name,
+                                            'record_id': 'source label after collection prefix'}}
+                       for name, rows in removed.items() if rows}
+            return removed, {'kind': 'rolling_context_summary', 'authority': 'unverified_summary',
+                'note': 'Older measurements and failures may be archived. Absence here is not evidence of '
+                        'success or of an unevaluated candidate. Consult raw research_archive sources '
+                        'for original receipts and qualifications.',
+                'text': '', 'sources': sources, 'compaction': self.compactions+1}
         # Fixed facts may leave less than the configured summary allowance.
-        # Price provenance too before asking the model to write the summary.
-        available = target_tokens - count(view(chosen, summary))
+        # The initial reserve is a heuristic, not the size of the actual source
+        # manifest. Fold additional eligible records if provenance itself needs
+        # more room, before failing or making a summarizer call. Increasing
+        # steps bound the number of full-request meter calls on long histories.
+        extra = 1
+        while True:
+            chosen = after_removing(lo)
+            removed, summary = draft(chosen)
+            if not summary['sources']:
+                raise ContextBudgetError('No old records can be compacted without losing latest feedback')
+            available = target_tokens - count(view(chosen, summary))
+            if available > 64 or lo == len(removable):
+                break
+            lo = min(len(removable), lo + extra)
+            extra *= 2
         summary_limit = min(self.summary_tokens, available - 64)
         self.last_measurement['summary_token_limit'] = max(0, summary_limit)
         if summary_limit < 1:
             raise ContextBudgetError('Required facts and summary provenance leave no summary budget; '
                                      'no compaction state was committed')
         if summarize is not None:
-            text = summarize(deepcopy(removed), deepcopy(self._summary), summary_limit)
+            text = summarize(deepcopy(removed), deepcopy(previous_summary), summary_limit)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError('Context summarizer must return nonempty text')
         else:
@@ -293,7 +318,7 @@ class BasicContextCompactor:
             # summarizer; sources are navigation, never verified scientific truth.
             excerpts = [{'stream': name, 'source': result_id(row), 'record': row}
                         for name, rows in removed.items() for row in rows[-2:]]
-            text = encoded({'previous': self._summary.get('text', ''), 'recent_sources': excerpts})
+            text = encoded({'previous': previous_summary.get('text', ''), 'recent_sources': excerpts})
             text = text.encode('utf-8')[:summary_limit].decode('utf-8', errors='ignore')
         summary['text'] = text
         projected = view(chosen, summary)

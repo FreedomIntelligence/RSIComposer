@@ -14,7 +14,7 @@ from uuid import uuid4
 from rsisys.loops.contracts.backend import DeploymentRef, DeploymentState, DeploymentStatus
 from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse, TokenUsage
 from rsisys.loops.contracts.training import ModelActivationPending
-from rsisys.runtime.model import RemoteModelBackend, ModelResponseError, ModelTransportError
+from rsisys.runtime.model import RemoteModelBackend, ModelResponseError, ModelTransportError, parse_tool_response
 from .training import _json, _write, _lock
 
 
@@ -104,21 +104,20 @@ class VLLMBackend(RemoteModelBackend):
     def generate(self, request):
         return self.generate_with_response_observer(request, None)
 
-    def generate_with_response_observer(self, request, observer):
-        """Observer persists bounded wire evidence before parsing or validation.
-
-        The observer is scoped to this call (never shared mutable adapter state).
-        A failed evidence write aborts the call; no result reaches the executor.
-        """
+    def _generation_payload(self, request):
         if request.model.backend_id != self.binding.backend_id:
             raise ValueError('Generation request does not match this backend')
         alias = self._alias(request.model)
-        messages = ([{'role': 'system', 'content': request.system}] if request.system else [])
-        messages.append({'role': 'user', 'content': request.prompt})
         payload = {'max_tokens': request.max_output_tokens}
-        if self.binding.json_mode:
+        if self.binding.json_mode and not request.tools:
             payload['response_format'] = {'type': 'json_object'}
         payload.update(self.generation_options)
+        if request.tools:
+            conflicts = {'response_format', 'structured_outputs', 'guided_json', 'guided_regex',
+                         'guided_grammar', 'tools', 'tool_choice', 'parallel_tool_calls'} & self.generation_options.keys()
+            if conflicts:
+                raise ValueError('Request tools conflict with native generation options: ' + ', '.join(sorted(conflicts)))
+            payload.update(request.chat_tools())
         if request.response_schema is not None:
             conflicts = {'response_format', 'structured_outputs', 'guided_json', 'guided_regex',
                          'guided_grammar', 'tools', 'tool_choice'} & self.generation_options.keys()
@@ -129,7 +128,17 @@ class VLLMBackend(RemoteModelBackend):
                 'schema': self.native_response_schema(request.response_schema)}}
         payload['max_tokens'] = min(request.max_output_tokens,
                                    self.generation_options.get('max_tokens', request.max_output_tokens))
-        payload.update(model=alias, messages=messages, stream=False)
+        payload.update(model=alias, messages=request.chat_messages(), stream=False)
+        return payload
+
+    def generate_with_response_observer(self, request, observer):
+        """Observer persists bounded wire evidence before parsing or validation.
+
+        The observer is scoped to this call (never shared mutable adapter state).
+        A failed evidence write aborts the call; no result reaches the executor.
+        """
+        payload = self._generation_payload(request)
+        alias = payload['model']
         data = (self._request('chat/completions', payload, response_observer=observer)
                 if observer is not None else self._request('chat/completions', payload))
         finish_reason = None
@@ -155,14 +164,19 @@ class VLLMBackend(RemoteModelBackend):
                 reject('malformed_message', retryable=True)
             if message.get('refusal'):
                 reject('refusal')
-            if message.get('tool_calls'):
+            tool_calls = ()
+            if request.tools:
+                text, tool_calls = parse_tool_response(request, message, finish_reason, provider_model)
+            elif message.get('tool_calls'):
                 reject('unexpected_tool_calls')
-            if finish_reason not in ('stop', 'length'):
-                reject('unexpected_finish_reason')
-            if request.response_schema is not None and finish_reason == 'length':
-                reject('output_truncated', retryable=True)
-            if not isinstance(message.get('content'), str) or not message['content'].strip():
-                reject('empty_or_invalid_content', retryable=True)
+            else:
+                if finish_reason not in ('stop', 'length'):
+                    reject('unexpected_finish_reason')
+                if request.response_schema is not None and finish_reason == 'length':
+                    reject('output_truncated', retryable=True)
+                if not isinstance(message.get('content'), str) or not message['content'].strip():
+                    reject('empty_or_invalid_content', retryable=True)
+                text = message['content']
             if request.response_schema is not None:
                 def unique_object(pairs):
                     result = {}
@@ -183,20 +197,21 @@ class VLLMBackend(RemoteModelBackend):
             raise
         except (KeyError, IndexError, TypeError, AttributeError, ValueError):
             reject('malformed_response_fields', retryable=True)
-        return GenerationResponse(message['content'], request.model, False, usage, alias,
-                                  revision_verified=data.get('model_revision') is not None)
+        return GenerationResponse(text, request.model, False, usage, alias,
+                                  revision_verified=data.get('model_revision') is not None,
+                                  tool_calls=tool_calls, finish_reason=finish_reason)
 
     token_count_mode = 'provider_tokenizer'
 
     def count_tokens(self, request):
         """Price the actual chat template at vLLM's root /tokenize endpoint."""
-        if request.model.backend_id != self.binding.backend_id:
-            raise ValueError('Token request does not match backend')
-        messages = ([{'role': 'system', 'content': request.system}] if request.system else [])
-        messages.append({'role': 'user', 'content': request.prompt})
-        payload = {'model': self._alias(request.model), 'messages': messages,
+        generation = self._generation_payload(request)
+        payload = {'model': generation['model'], 'messages': generation['messages'],
                    'add_generation_prompt': True, 'return_tokens': False,
                    'chat_template_kwargs': self.generation_options.get('chat_template_kwargs', {})}
+        for key in ('tools', 'chat_template'):
+            if key in generation:
+                payload[key] = generation[key]
         result = self._request('tokenize', payload)
         count = result.get('count')
         if type(count) is not int or count < 0:

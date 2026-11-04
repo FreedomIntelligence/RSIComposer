@@ -84,7 +84,7 @@ class RequiredAttemptTests(unittest.TestCase):
         self.assertEqual(record['status'], 'failed')
         self.assertIsNone(record['research_attempt_id'])
 
-    def test_new_medical_settings_leave_grouping_to_feedback(self):
+    def test_new_medical_settings_do_not_require_model_grouping(self):
         settings = ExperimentSettings(Path('task'), Path('run'), Path('model'))
         self.assertFalse(settings.require_research_attempts)
 
@@ -154,7 +154,8 @@ class RequiredAttemptIntegrationTests(unittest.TestCase):
         backend = SimpleNamespace(generate=generate, supports_response_schema=True,
                                   count_tokens=lambda request: len(request.prompt.encode()) // 4)
         result = self.case.execute([], decision_model=MODEL, decision_backend=backend,
-                                   feedback_learning=True, require_research_attempts=True)
+                                   memory_provider='journal', harness_proposals=True,
+                                   require_research_attempts=True)
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(len(scopes), 2)
         self.assertTrue(scopes[0]['research_attempt_id'])

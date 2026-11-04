@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-03",
+  "git_head": "b0378aa4ceb1cc12ef40b2ca5aaf15f4a2b96d9c",
+  "working_tree": "Includes pre-existing uncommitted architecture changes; no commit or push in this task.",
+  "full_suite": {
+    "tests_run": 1341,
+    "skipped": 12,
+    "passed": 1329,
+    "seconds": 83.472,
+    "log": "feedback-pipeline-full.log",
+    "log_sha256": "419f2bf0da644b5c84969d23a1fe1ef4ee847fbc152b2313adce18afd037fa6e"
+  },
+  "cpu_workflow_fixture": {
+    "simulated": true,
+    "execution_receipts": 2,
+    "proposal_linked_decisions": 1,
+    "trajectory_mode": "extraction_only",
+    "harness_activation_verified": false,
+    "status": "fixture_passed"
+  },
+  "native_library_integration": "Real LangMem/Trustcall/SQLite; fixture inference, including combined memory and proposer.",
+  "real_model_calls_in_this_change": 0,
+  "real_training_jobs_in_this_change": 0,
+  "memory_quality_optimization": "Deferred; earlier semantic/retention gaps remain.",
+  "trajectory_coverage": "Captured public segments; complete original meta-agent exchanges are not captured by this observer.",
+  "source_sha256": {
+    "src/rsisys/loops/decision_making/feedback/pipeline.py": "8ac807fecad60d97a86d03ca717a81f08d026e696c943f7c103f094012ccb859",
+    "src/rsisys/loops/decision_making/feedback/proposals.py": "a604d626fc0788a5618799c7ca83a2b18e47a05a61d72eb83b98d00ebe580499",
+    "src/rsisys/loops/decision_making/feedback/prompts/harness_proposals.txt": "4f39f037f7df45de1bbb02f5ad806045607da54cc3a9d4616dbaa90c1b1cdfe9",
+    "src/rsisys/loops/decision_making/feedback/components.py": "19138cc12e3a23df3e55e78329063b824f1b6a968964dca12b413e4380336c55",
+    "src/rsisys/loops/decision_making/feedback/knowledge.py": "1d1642ba1452771fa6e74b90f83042cba3867b87b2dcb5b18029c64b393970f8",
+    "src/rsisys/loops/decision_making/feedback/langmem.py": "5753ea063d47a1115f30424852ed3b792a21fc1a3a2ca26170bc21c5cd6ec43d",
+    "src/rsisys/loops/decision_making/feedback/learning.py": "e69b3b235fed5d82c71b68fadef327761899ba4cfc7bad88009fa942efe65b81",
+    "src/rsisys/loops/decision_making/feedback/service.py": "98aeb519bea06efa296eb0953590b5eac7f92841236e45830f48b8d07efd1763",
+    "src/rsisys/loops/decision_making/feedback/__init__.py": "dc470e9d360df0121921acc90e934ae1c54322b478709fea20c5bb49c71a205a",
+    "src/rsisys/loops/decision_making/harness/decision.py": "6eaf339971a33a884b8f656a915ab587d047c8dc5c98e7ce6181ac354671edc2",
+    "src/rsisys/loops/decision_making/harness/engine.py": "c57fa4ee52f5790dd5f67c7e9d1b6dc40dc626b69c0ef4413b74ed40053d314d",
+    "src/rsisys/loops/decision_making/harness/learning_harness.py": "3b0f83ac9d60e13a0fb4287fedfe08b1d204655ef93b0b3301000a93bd97b358",
+    "src/rsisys/loops/decision_making/harness/policy/__init__.py": "1d7c7ef62e7a938301107060d9927e5f3d54e0ee33d5707753cdfe667b3a7b6a",
+    "src/rsisys/loops/decision_making/harness/state.py": "1b57e5e43fb8e0b370fbee5eac61ee5b665920b5e4305d7627595f154c7230e5",
+    "src/rsisys/snapshot/codec.py": "f008f879409d83909fa6d3c2906a2139626248f877bf6b7d85dbd20581b7dcaf",
+    "tests/test_feedback_pipeline.py": "d2877a262e0d1598c43fe78324f09fa50a6f3b448a045689ca7e45a1edfc4865",
+    "tests/test_langmem_feedback.py": "a77729cdbc48c7292ead2302f0509619d02bac07204b00b5a504b917b151fba3",
+    "tests/test_decision_lineage.py": "43d4d04d1eb3d7bd313b063eb9347ec48b8a78b1419e7bb87b28eac0d9afe2bc",
+    "examples/feedback_pipeline.py": "0f473d11b99605a975789657954a71b719507528b91a130363df916873823e83",
+    "docs/review/feedback-workflow.md": "cfd884aba3ed544cb3f37d73c97e9563f19bf3eb48be73303a967bd1baec6285"
+  }
+}

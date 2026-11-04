@@ -1,0 +1,27 @@
+{
+  "kind": "synthetic_prompt_review_snapshot",
+  "date": "2026-11-03",
+  "source": "current local working tree",
+  "external_model_calls": 0,
+  "not_a_real_experiment_or_model_response": true,
+  "example_conditions": {
+    "grouping_context": true,
+    "candidate_evidence": false,
+    "native_response_schema": true
+  },
+  "base_system_characters": 2665,
+  "source_sha256": {
+    "src/rsisys/loops/decision_making/feedback/learning.py": "0d569b730d15d60280231ef2cf1cb94f8ff3f7ad9baf7f0d0fe1db6817e9fd37",
+    "src/rsisys/loops/decision_making/feedback/components.py": "3c206183786b5fa505666e932b60a8fab9a7946326da3f00ef90d57cf852383e",
+    "src/rsisys/loops/decision_making/feedback/knowledge.py": "0035f94f907d022c67632dd1cbd1ae280b13b0e84e2e40da0370dac09814876c",
+    "src/rsisys/loops/decision_making/feedback/service.py": "d2d8d87d75f269176299867738fcb448fb00afda9bba2f41e1bf347208dee94b"
+  },
+  "snapshot_sha256": {
+    "base-system.txt": "5ee0dcd5a63ead9ffe4ec28c01d5f47a49aeb852a98a5fd1d2400f6a4425c9f8",
+    "candidate-addon.txt": "ab394d1c357a2fe185532cdc9b7ced4b57f6138800811cd971569468ce734fdb",
+    "example-input.json": "fa7f4125a05f0e6ffeda2fbccdc586b524bcae4bc24cc28a73f5c9110221bd95",
+    "example-output.json": "b17923280f4898d9cfda840fd8efbeee2d074d3bdab5b14d44e33bd9a5cbc6ad",
+    "example-request.json": "fcef81adee59ecdc06393b87ed1b7785d9eeeaf5b47dccd1537a2425390838ae",
+    "example-schema.json": "a20c0daeb8e384c759af5de9ad0e492a2143bdbef2582562b54f28f5f3ba8fa4"
+  }
+}

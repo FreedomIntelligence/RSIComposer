@@ -54,7 +54,7 @@ ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus, ResumeMode)}
 # rejecting unknown fields and missing pre-existing fields on every state type.
 LINEAGE_DEFAULTS = {
     'Decision': {'decision_id', 'depends_on_decision_ids', 'source_decision_ids',
-                 'research_attempt_id', 'research_attempt_title'},
+                 'research_attempt_id', 'research_attempt_title', 'feedback_proposal_ids'},
     'DecisionContext': {'decision_graph', 'candidate_origins'},
     'DecisionState': {'decision_records', 'directive_decisions', 'candidate_origins',
                       'pending_operation_decision_id', 'pending_decision', 'decision_results', 'operation_receipts'},

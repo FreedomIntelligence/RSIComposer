@@ -293,7 +293,7 @@ class DurableRecovery:
             if self.intervention is not None:
                 raise RecoveryRequired('Interrupted mutation requires reconciliation: ' + str(self.intervention))
             # Reject uncontracted component swaps before allowing another external effect.
-            encode(self.contract.capture(self.app))
+            json_bytes(encode(self.contract.capture(self.app)))
             policy_state(self.app.runner.run_policy, external=type(self.contract) is not BuiltinRecovery)
             generation = self.generation + 1
             intent = {'generation': generation, 'status': 'started', 'operation': operation,

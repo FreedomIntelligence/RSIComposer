@@ -52,7 +52,7 @@ class LedgerWindowTests(unittest.TestCase):
         graph[4].update(source_decision_ids=['decision-0003'])
         graph[3].update(depends_on_decision_ids=['decision-0002'])
         graph[7].update(research_attempt_id='idea-1', research_attempt_title='Investigate data')
-        graph[-1].update(source_decision_ids=['decision-0004'])
+        graph[1].update(source_decision_ids=['decision-0004'])
         view = working_decision_graph(graph, {'candidate': 'decision-0000'})
         ids = {row['decision_id'] for row in view}
         self.assertTrue({'decision-0000', 'decision-0001', 'decision-0002',

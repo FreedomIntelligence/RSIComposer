@@ -169,7 +169,7 @@ class DecisionState:
                     if requested_title != title or attempt_id in attempt_origins:
                         raise ValueError('Research attempt requires one explicit title-only origin')
                     attempt_origins.add(attempt_id)
-            for name in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_candidate_ids', 'adopted_decision_ids',
+            for name in ('depends_on_decision_ids', 'source_decision_ids', 'feedback_proposal_ids', 'adopted_candidate_ids', 'adopted_decision_ids',
                          'unresolved_adopted_candidate_ids'):
                 refs = record.get(name, ())
                 if (not isinstance(refs, tuple) or any(not isinstance(ref, str) or not ref.strip() for ref in refs)

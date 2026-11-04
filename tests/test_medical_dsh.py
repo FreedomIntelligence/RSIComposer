@@ -56,6 +56,7 @@ class MedicalDSHTests(unittest.TestCase):
         settings = ExperimentSettings(self.task, root, self.root/'fixture-model', decision_harness=kind,
             dsh_config=config_path if kind == 'dsh' else None, max_model_calls=max_model_calls,
             require_research_attempts=require_research_attempts, feedback_learning=feedback_learning,
+            memory_provider='journal', harness_proposals=feedback_learning,
             run_mode=run_mode, restart_delay_seconds=.001)
         serving_box = []
         def serve(path, **kwargs):

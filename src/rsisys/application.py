@@ -91,7 +91,17 @@ class Application:
                  exploration_factory: ExplorationFactory | None = None,
                  action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
                  cleanup_timeout_seconds: float = 30, durable: bool = False,
-                 recovery_contract=None, _restore: bool = False, _resume: bool = False):
+                 recovery_contract=None, research=None, research_backend=None,
+                 feedback_adapter_factory=None, _restore: bool = False, _resume: bool = False):
+        from rsisys.research import ResearchAssembly
+        if research is not None:
+            if not isinstance(research, ResearchAssembly):
+                raise TypeError('research must be a ResearchAssembly')
+            research.validate()
+            if durable and recovery_contract is None:
+                raise ValueError('Research assembly requires an explicit recovery_contract for durable=True')
+        elif research_backend is not None or feedback_adapter_factory is not None:
+            raise ValueError('Research backend/adapter requires a research assembly')
         if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         if type(durable) is not bool:
@@ -127,6 +137,8 @@ class Application:
             if contents and not _restore:
                 raise ValueError('Workspace is not empty; use Application.resume for durable runs or restore a snapshot')
             if _restore:
+                if (root / 'research_assembly.json').exists() and research is None:
+                    raise ValueError('Supply the original research assembly when restoring this workspace')
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
                     raise ValueError('Restored run identity does not match configuration')
@@ -152,6 +164,11 @@ class Application:
             self._resources.callback(self.assembly.close)
             exploration = (exploration_factory if exploration_factory is not None else build_default_exploration)(self.assembly)
             decision = (decision_factory if decision_factory is not None else build_default_decision)(self.assembly, exploration)
+            if research is not None:
+                from rsisys.research import assemble_research
+                assemble_research(decision, assembly=research, path=root / 'feedback_learning.json',
+                    backend=research_backend, owner=self.assembly,
+                    adapter=feedback_adapter_factory(decision.harness) if feedback_adapter_factory else None)
             self.runner = Runner(decision, exploration, run_policy=run_policy,
                                  cleanup_timeout_seconds=cleanup_timeout_seconds)
             if not _restore:
@@ -174,7 +191,8 @@ class Application:
 
     @classmethod
     def resume(cls, data_dir, *, decision_factory=None, exploration_factory=None,
-               recovery_contract=None, run_policy=None):
+               recovery_contract=None, run_policy=None, research=None, research_backend=None,
+               feedback_adapter_factory=None):
         """Reopen the same durable workspace; uncertain effects remain blocked.
 
         Factories must reconstruct resources without starting work. The workspace
@@ -186,6 +204,8 @@ class Application:
             raise ValueError('Resume uses the original workspace; recovery is not a portable snapshot')
         return cls(config, decision_factory=decision_factory, exploration_factory=exploration_factory,
                    recovery_contract=recovery_contract, run_policy=run_policy,
+                   research=research, research_backend=research_backend,
+                   feedback_adapter_factory=feedback_adapter_factory,
                    durable=True, _restore=True, _resume=True)
 
     def run(self, *, rounds: int | None = None, max_decision_steps: int | None = None):

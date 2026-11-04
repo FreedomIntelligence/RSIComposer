@@ -1,0 +1,18 @@
+{
+  "temporary_tunnel_exited": true,
+  "api_8000": {
+    "http_status": 200,
+    "models": [
+      "Qwen3.8-27B",
+      "Qwen/Qwen3.8-27B"
+    ]
+  },
+  "api_8001": {
+    "http_status": 200,
+    "models": [
+      "Qwen3.5-9B",
+      "Qwen/Qwen3.5-9B"
+    ]
+  },
+  "scope": "Read-only /v1/models checks over SSH after validation. No training run or model process launched, stopped, or reconfigured."
+}
