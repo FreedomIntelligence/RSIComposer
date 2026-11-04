@@ -22,6 +22,7 @@ class BackendChatModel(BaseChatModel):
     backend: Any = Field(exclude=True)
     model_ref: ModelRef
     max_output_tokens: int = Field(default=4096, gt=0)
+    parallel_tool_calls: bool | None = None
 
     @property
     def _llm_type(self):
@@ -40,6 +41,8 @@ class BackendChatModel(BaseChatModel):
             tool_choice = 'none'
         elif isinstance(tool_choice, str) and tool_choice not in ('auto', 'required', 'none'):
             tool_choice = {'type': 'function', 'function': {'name': tool_choice}}
+        if self.parallel_tool_calls is not None:
+            kwargs.setdefault('parallel_tool_calls', self.parallel_tool_calls)
         return self.bind(tools=declarations, tool_choice=tool_choice, **kwargs)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):

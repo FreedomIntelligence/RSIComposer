@@ -131,6 +131,38 @@ class LangMemFeedbackTests(unittest.TestCase):
         self.assertEqual(learning.state['attempted'], 3)
         self.assertIn('PatchFunctionErrors', [t['function']['name'] for t in self.backend.requests[1].tools])
 
+    def test_native_repairs_in_both_phases_fit_the_accounted_call_allowance(self):
+        class TwoPhaseRepair(NativeFixture):
+            def __init__(self):
+                super().__init__()
+                self.invalid_first = True
+                self.patched_phase = False
+
+            def generate(self, request):
+                response = super().generate(request)
+                call = deepcopy(response.tool_calls[0])
+                if call['function']['name'] == 'PatchDoc' and not self.patched_phase:
+                    self.patched_phase = True
+                    args = json.loads(call['function']['arguments'])
+                    args['patches'] = [{'op': 'replace', 'path': '/source_refs', 'value': ['unsupplied']}]
+                    call['function']['arguments'] = json.dumps(args)
+                    return replace(response, tool_calls=(call,))
+                return response
+        self.backend = TwoPhaseRepair()
+        learning = self.learning()
+        ident = self.capture(learning, 'two-phase-repair')
+        row = learning.state['jobs'][ident]
+        self.assertEqual(row['status'], 'completed', row.get('error'))
+        self.assertLessEqual(len(self.backend.requests), self.provider.max_calls_per_job)
+        self.assertEqual(learning.state['attempted'], len(self.backend.requests))
+
+    def test_serial_memory_tools_remain_native_and_accounted(self):
+        learning = self.learning()
+        self.provider.parallel_tool_calls = False
+        ident = self.capture(learning, 'serial-native')
+        self.assertEqual(learning.state['jobs'][ident]['status'], 'completed')
+        self.assertTrue(all(r.tools and r.parallel_tool_calls is False for r in self.backend.requests))
+
     def test_native_phase_retains_an_unchanged_ephemeral_memory_with_evidence_fields(self):
         learning = self.learning()
         self.backend.emit_second = True

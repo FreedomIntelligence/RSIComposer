@@ -293,7 +293,10 @@ def main(argv=None):
         'prompts/langmem_research.txt').read_text()
     assembly = ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
         namespace=('rsisys', args.run_id), memory_options={'max_calls_per_job': 6, 'max_steps': 1,
+            'parallel_tool_calls': False,
             'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
+                'Make one focused tool call per reply. Keep each memory to a few sentences; '
+                'do not copy code, complete prompts or unchanged environment descriptions into memory. '
                 'Distinguish program outputs from validated evaluations and adoption. '
                 'Absence from the supplied snapshot does not prove absence from the full history.'})
     modules = ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
@@ -331,7 +334,12 @@ def main(argv=None):
                     try:
                         step = app.runner.step(objective)
                     except HostAdmissionStop:
-                        result.update(status='host_limit_reached')
+                        if backend.stop_requested:
+                            result.update(status='completed', stop='host_signal')
+                        elif backend.deadline is not None and time.monotonic() >= backend.deadline:
+                            result.update(status='completed', stop='host_deadline')
+                        else:
+                            result.update(status='host_limit_reached', stop='inference_admission_limit')
                         break
                     append(root / 'steps.jsonl', {'at': time.time(), 'step': asdict(step)})
                     monitor.update(app.runner.decision_making.harness, backend, compactor, step)

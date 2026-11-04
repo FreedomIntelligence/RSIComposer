@@ -50,6 +50,15 @@ ownership belong to the deployment. Local model configuration and shard sizes
 are recorded; a full weight digest is not inferred from a serving alias. Each
 controller directory is claimed once, with no automatic replay after failure.
 
+For an absolute end time, set `--deadline-epoch` to the UTC Unix timestamp.
+Initialization and replacement runs cannot extend it. `--max-jobs` and
+`--program-timeout` configure host admission; SIGTERM closes admission and lets
+the application cancel its owned programs before exit. `--revision` records the
+frozen source identity in the public `monitor.json`, which a separate rsimonitor
+server can read. This launcher uses serial native memory tool calls to keep a
+single feedback reply focused; the provider default remains replaceable. Native
+validation retries stay within the accounted host inference allowance.
+
 ## Local format and read-only preparation
 
 The example owns this UTF-8 JSONL schema, with exactly these fields per line:

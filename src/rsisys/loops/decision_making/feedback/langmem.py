@@ -156,7 +156,8 @@ class LangMemContextMemory:
     requires_tool_calling = True
 
     def __init__(self, path, *, namespace, max_calls_per_job=6, max_steps=1,
-                 query_limit=8, consolidate=True, additional_instructions=None):
+                 query_limit=8, consolidate=True, additional_instructions=None,
+                 parallel_tool_calls=None):
         self.path = Path(path).resolve()
         self.namespace = tuple(namespace)
         if (not self.namespace or any(not isinstance(x, str) or not x or '.' in x
@@ -171,6 +172,9 @@ class LangMemContextMemory:
         if type(consolidate) is not bool:
             raise TypeError('consolidate must be a boolean')
         self.consolidate = consolidate
+        if parallel_tool_calls is not None and type(parallel_tool_calls) is not bool:
+            raise TypeError('parallel_tool_calls must be a boolean or None')
+        self.parallel_tool_calls = parallel_tool_calls
         self.query_limit = query_limit
         self.additional_instructions = (resources.files(__package__).joinpath(
             'prompts/langmem_research.txt').read_text() if additional_instructions is None
@@ -195,6 +199,7 @@ class LangMemContextMemory:
             'namespace': list(self.namespace), 'max_calls_per_job': self.max_calls_per_job,
             'max_steps': self.max_steps, 'query_limit': self.query_limit,
             'consolidate': self.consolidate,
+            **({'parallel_tool_calls': self.parallel_tool_calls} if self.parallel_tool_calls is not None else {}),
             'consolidation_input': 'current_feedback_and_retrieved_memories',
             'additional_instructions_digest': result_id(self.additional_instructions),
             'retrieval': 'recent',
@@ -253,7 +258,8 @@ class LangMemContextMemory:
                     staged = _StagedStore(store, self._memory_ns, schema)
                     extraction_audit = _ExtractionAudit()
                     chat = BackendChatModel(backend=gateway, model_ref=ModelRef(**job['model']),
-                        max_output_tokens=limits['max_output_tokens'], cache=False)
+                        max_output_tokens=limits['max_output_tokens'], cache=False,
+                        parallel_tool_calls=self.parallel_tool_calls)
                     upstream = signature(create_memory_store_manager).parameters['instructions'].default
                     manager = create_memory_store_manager(chat, schemas=[schema],
                         instructions=upstream + '\n\n' + self.additional_instructions,
@@ -266,7 +272,10 @@ class LangMemContextMemory:
                                if self.consolidate else None)
                     changes = manager.invoke({'messages': [{'role': 'user',
                         'content': json_bytes(job['input']).decode()}], 'max_steps': self.max_steps},
-                        config={'recursion_limit': 16, 'max_concurrency': 1,
+                        # A Trustcall validation repair spans several graph nodes
+                        # per inference. The gateway owns the finite call limit;
+                        # a fixed 16-node graph cut it off before that allowance.
+                        config={'recursion_limit': max(32, limits['max_calls'] * 8 + 16), 'max_concurrency': 1,
                                 'callbacks': [extraction_audit]})
                     if extraction_audit.rejected:
                         raise ValueError('Native memory extraction discarded invalid tool calls after validation')
