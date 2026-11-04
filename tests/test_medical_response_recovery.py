@@ -6,9 +6,10 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from examples.medical.experiment import BudgetExhausted, DecisionBackend
+from examples.medical.open_lab_experiment import RecordedBackend, HostAdmissionStop
 from rsisys.adapters.serving import VLLMBackend
 from rsisys.loops.contracts.model_service import BackendBinding, GenerationRequest, ModelRef
 from rsisys.runtime.model import ModelResponseError, ModelTransportError
@@ -62,6 +63,65 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
 
     def rows(self, name):
         return [json.loads(line) for line in (self.root/name).read_text().splitlines()]
+
+    def open_backend(self, max_calls=10):
+        tokenizer = Mock()
+        tokenizer.apply_chat_template.return_value = list(range(42))
+        return RecordedBackend(self.serving, tokenizer, self.root, max_calls=max_calls)
+
+    def test_open_lab_recovers_actual_invalid_json_without_changing_action_contract(self):
+        self.responses = [reply('{"kind":"invoke","arguments":{"timeout_seconds”:60}}'), reply()]
+        backend = self.open_backend()
+        self.assertEqual(json.loads(backend.generate(self.request).text)['kind'], 'finish')
+        self.assertEqual(backend.calls, 2)
+        for key in ('model', 'response_format', 'max_tokens'):
+            self.assertEqual(self.requests[0][key], self.requests[1][key])
+        self.assertEqual(self.requests[0]['messages'][-1], self.requests[1]['messages'][-1])
+        self.assertIn('complete valid JSON', self.requests[1]['messages'][0]['content'])
+        self.assertEqual([x['call'] for x in self.rows('model_responses.jsonl')], [2])
+        self.assertEqual(self.rows('model_errors.jsonl')[0]['reason'], 'invalid_json')
+        self.assertEqual([x['response_attempt'] for x in self.rows('model_requests.jsonl')], [1, 2])
+        self.assertEqual(len(self.rows('model_wire.jsonl')), 2)
+
+    def test_open_lab_format_recovery_is_bounded_and_rechecks_call_admission(self):
+        self.responses = [reply('bad')] * 3
+        backend = self.open_backend()
+        with self.assertRaises(ModelResponseError):
+            backend.generate(self.request)
+        self.assertEqual(backend.calls, 3)
+        backend = self.open_backend(max_calls=1)
+        self.responses = [reply('bad')]
+        with self.assertRaises(HostAdmissionStop):
+            backend.generate(self.request)
+        self.assertEqual(backend.calls, 1)
+
+    def test_open_lab_recovery_does_not_retry_identity_transport_or_native_feedback(self):
+        cases = [(reply(model='different'), self.request, ModelResponseError),
+                 ((400, {'error': 'fixture'}), self.request, ModelTransportError),
+                 (reply('bad', 'length'), replace(self.request, response_schema=None, tools=(
+                     {'type': 'function', 'function': {'name': 'record',
+                         'parameters': {'type': 'object'}}},)), ModelResponseError)]
+        for response, request, error in cases:
+            with self.subTest(error=error.__name__, tools=bool(request.tools)):
+                backend = self.open_backend()
+                self.responses = [response]
+                before = len(self.requests)
+                with self.assertRaises(error):
+                    backend.generate(request)
+                self.assertEqual(len(self.requests) - before, 1)
+
+    def test_open_lab_recovery_rechecks_deadline_before_second_call(self):
+        import time
+        backend = self.open_backend()
+        observe = self.serving.generate_with_response_observer
+        def expire(request, observer):
+            backend.deadline = time.monotonic() - 1
+            return observe(request, observer)
+        self.responses = [reply('bad')]
+        with patch.object(self.serving, 'generate_with_response_observer', side_effect=expire):
+            with self.assertRaises(HostAdmissionStop):
+                backend.generate(self.request)
+        self.assertEqual(backend.calls, 1)
 
     def test_truncation_recovery_preserves_wire_identity_schema_and_budget(self):
         self.responses = [reply('{"kind":"invoke",', 'length'), reply()]

@@ -30,6 +30,7 @@ from rsisys.loops.decision_making.harness.policy.prompts import DecisionPrompts
 from rsisys.research import ResearchAssembly
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.local_process import LocalProcessBackend
+from rsisys.runtime.model import ModelResponseError
 from rsisys.runtime.run_policy import TimeRunPolicy, RunDecision
 
 
@@ -111,6 +112,25 @@ class RecordedBackend:
 
     def generate(self, request):
         with self.lock:
+            original = request
+            for attempt in range(3):
+                try:
+                    return self._generate(request, response_attempt=attempt + 1)
+                except ModelResponseError as exc:
+                    # Native memory tools own their validation/recovery lifecycle.
+                    # Only retry rejected decision JSON, before any action exists.
+                    if (not exc.retryable or attempt == 2 or original.tools
+                            or original.role != 'decision_maker' or original.response_schema is None):
+                        raise
+                    correction = ('The previous response exceeded the output limit. Return a shorter, complete JSON object.'
+                                  if exc.reason == 'output_truncated' else
+                                  'The previous response failed format validation. Return one complete valid JSON object.')
+                    request = replace(original, system=original.system + '\n' + correction +
+                        ' Preserve the required schema and evidence; do not execute or assume any previous action.')
+            raise AssertionError('Unreachable response recovery loop')
+
+    def _generate(self, request, *, response_attempt):
+        with self.lock:
             if self.stop_requested or self.calls >= self.max_calls or (self.deadline is not None and time.monotonic() >= self.deadline):
                 raise HostAdmissionStop('Host inference admission closed')
             count = self.count_tokens(request)
@@ -119,17 +139,23 @@ class RecordedBackend:
             self.calls += 1
             ident = self.calls
             append(self.root / 'model_requests.jsonl', {'call': ident, 'at': time.time(),
+                'response_attempt': response_attempt,
                 'input_tokens': count, 'request': asdict(request),
                 'wire_request': self.transport._generation_payload(request)})
             write(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.max_calls})
             try:
                 response = self.transport.generate_with_response_observer(request,
-                    lambda wire: append(self.root / 'model_wire.jsonl', {'call': ident, **wire}))
+                    lambda wire: append(self.root / 'model_wire.jsonl', {
+                        'call': ident, 'response_attempt': response_attempt, **wire}))
                 append(self.root / 'model_responses.jsonl', {'call': ident, 'at': time.time(),
                     'response': asdict(response)})
                 return response
             except BaseException as exc:
                 append(self.root / 'model_errors.jsonl', {'call': ident, 'at': time.time(),
+                    'response_attempt': response_attempt,
+                    **({'reason': exc.reason, 'retryable': exc.retryable,
+                        'finish_reason': exc.finish_reason, 'provider_model': exc.provider_model}
+                       if isinstance(exc, ModelResponseError) else {}),
                     'error': f'{type(exc).__name__}: {exc}'})
                 raise
 
@@ -285,10 +311,14 @@ def main(argv=None):
     lab_endpoint = os.environ.get('RSISYS_LAB_ENDPOINT', args.endpoint)
     project = {'scenario': 'medical', 'python': args.python, 'model_path': args.model_path,
         'endpoint': lab_endpoint, 'served_model': model.model_id, 'task': 'data/task.json',
-        'available_data': data_manifest, 'editable_reference': 'reference_eval.py',
+        'path_base': 'lab_workspace', 'data_root': 'data',
+        'available_data': [{**entry, 'path': str(Path('data') / entry['path'])}
+                           for entry in data_manifest],
+        'editable_reference': 'reference_eval.py',
         'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16, '
                          'attn_implementation=sdpa; use local_files_only=True. PEFT is installed.',
         'scientific_contract': 'Train only from task.train; development is for evaluation. '
+            'Paths in task.json are relative to data_root; available_data paths are relative to the Lab workspace. '
             'Do not read or search for private/heldout data, install packages, or change external services. '
             'Lab code sees only the GPUs assigned to generated programs. '
             'The host separately allocates meta-agent and baseline inference services. '

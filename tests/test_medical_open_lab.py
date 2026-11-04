@@ -1,21 +1,27 @@
 """Deployment boundaries: timed decisions, exact admission, allocated child devices."""
 import json
+import hashlib
 from collections import UserDict
 from pathlib import Path
+import os
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from examples.medical.open_lab_experiment import (
     AllocatedProcessBackend, HostAdmissionStop, RecordedBackend, TimedOpenPolicy,
     AbsoluteHostPolicy,
     sglang_template_tools,
 )
+from examples.medical import open_lab_experiment
 from rsisys.loops.contracts.model_service import ModelRef, GenerationRequest, GenerationResponse
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.loops.decision_making.harness.state import DecisionContext
 from rsisys.runtime.sandbox import SandboxSpec, ExecRequest
 from rsisys.runtime.run_policy import RunContext
+from rsisys.runtime.artifacts import InMemoryArtifactStore
 
 
 MODEL = ModelRef('meta', 'fixture', 'revision')
@@ -41,6 +47,62 @@ class Transport:
 
 
 class MedicalOpenLabTests(unittest.TestCase):
+    def test_first_prompt_data_paths_resolve_in_the_seeded_workspace(self):
+        class FixtureStop(Exception):
+            pass
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / 'inputs'
+            inputs.mkdir()
+            task = {'train': 'train.jsonl', 'development': [
+                {'path': 'nested/dev.jsonl', 'benchmark_id': 'fixture'}]}
+            (inputs / 'nested').mkdir()
+            (inputs / 'task.json').write_text(json.dumps(task))
+            for name in ('train.jsonl', 'nested/dev.jsonl'):
+                (inputs / name).write_text('{"id":"fixture"}\n')
+            model = root / 'model'
+            model.mkdir()
+            (model / 'config.json').write_text('{}')
+
+            def inspect_application(config, *, modules, **options):
+                cleanups = []
+                context = SimpleNamespace(data_dir=config.data_dir, artifacts=InMemoryArtifactStore(),
+                                          add_owned_cleanup=cleanups.append)
+                lab = modules.lab_factory(context)
+                try:
+                    project = json.loads((lab.workspace / 'lab_config.json').read_text())
+                    policy = TimedOpenPolicy(Transport(), MODEL, project_context=project)
+                    prompt = json.loads(policy._decision_request(
+                        DecisionContext('fixture', (), (), ())).prompt)
+                    advertised = prompt['project_context']
+                    for entry in advertised['available_data']:
+                        path = lab.workspace / entry['path']
+                        self.assertTrue(path.is_file(), f'Advertised data path missing: {entry["path"]}')
+                        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), entry['sha256'])
+                    seeded_task = json.loads((lab.workspace / advertised['task']).read_text())
+                    self.assertEqual(seeded_task, task)
+                    self.assertEqual((lab.workspace / advertised['data_root'] / task['train']).read_bytes(),
+                                     (inputs / task['train']).read_bytes())
+                    self.assertEqual(advertised['path_base'], 'lab_workspace')
+                finally:
+                    lab.close()
+                    for cleanup in reversed(cleanups):
+                        cleanup()
+                raise FixtureStop()
+
+            transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
+                from_pretrained=lambda *args, **kwargs: Tokenizer()))
+            with patch.dict(sys.modules, {'transformers': transformers}), \
+                 patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': '0', 'CUDA_DEVICE_ORDER': 'PCI_BUS_ID'}), \
+                 patch.object(open_lab_experiment.ResearchAssembly, 'langmem',
+                              return_value=open_lab_experiment.ResearchAssembly()), \
+                 patch.object(open_lab_experiment, 'Application', side_effect=inspect_application), \
+                 self.assertRaises(FixtureStop):
+                open_lab_experiment.main(['--root', str(root / 'run'), '--task', str(inputs / 'task.json'),
+                    '--model-path', str(model), '--python', sys.executable,
+                    '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture'])
+
     def test_no_idle_envelopes_and_no_host_budget_in_context(self):
         policy = TimedOpenPolicy(Transport(), MODEL, directives=DirectiveDefinitions(()))
         context = DecisionContext('objective', (), (), (), directive_modes=(),
