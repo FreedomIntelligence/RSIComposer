@@ -143,7 +143,10 @@ class LocalProcessLab:
                 raise PermissionError('Host job admission limit reached')
             active = sum(self.backend.poll(ref).status not in TERMINAL_STATUSES for ref, _ in self._jobs.values())
             if active >= self.max_parallel:
-                raise PermissionError('Host parallel execution limit reached')
+                # A busy slot is temporary backpressure, not a permission
+                # denial. No process or key is reserved until admission succeeds.
+                raise LabToolError('Host parallel execution slots are busy; use lab_poll or lab_cancel '
+                                   'on an existing job, then retry after a slot is released')
             try:
                 ref = self.backend.exec(self.session, request)
             except OSError as exc:

@@ -130,6 +130,34 @@ class LocalLabDeliveryTests(unittest.TestCase):
         self.assertEqual(self.lab._jobs, {})
         self.assertEqual(self.lab._keys, {})
 
+    def test_parallel_slot_busy_returns_feedback_then_same_submission_can_retry(self):
+        self.lab.max_parallel = 1
+        code = 'from pathlib import Path\nimport time\nwhile not Path("release").exists(): time.sleep(.01)\n'
+        first = self.invoke('lab_start', key='first', argv=[sys.executable, '-c', code])
+        ident = first.event['operation_result']['data']['job_id']
+        args = {'key': 'second', 'argv': [sys.executable, '-c',
+            'from pathlib import Path; Path("counter").open("a").write("x")']}
+        busy = self.invoke('lab_start', **args)
+        self.assertEqual(busy.kind, 'progressed')
+        self.assertEqual(busy.event['operation_result']['status'], ExecutionStatus.FAILED)
+        self.assertIn('LabToolError', busy.event['operation_result']['error'])
+        self.assertIn('lab_poll', busy.event['operation_result']['error'])
+        self.assertEqual(len(self.lab._jobs), 1)
+        self.assertNotIn('second', self.lab._keys)
+        self.assertFalse((self.lab.workspace / 'counter').exists())
+        self.assertEqual(self.lab.backend.active_count, 1)
+        self.invoke('lab_poll', job_id=ident)
+        self.assertIn('parallel execution', self.requests[-1].prompt)
+        self.invoke('lab_write_file', path='release', content='go')
+        self.lab.backend.wait(self.lab._jobs[ident][0])
+        second = self.invoke('lab_start', **args)
+        next_id = second.event['operation_result']['data']['job_id']
+        self.lab.backend.wait(self.lab._jobs[next_id][0])
+        self.invoke('lab_start', **args)
+        self.assertEqual((self.lab.workspace / 'counter').read_text(), 'x')
+        self.assertEqual(len(self.lab._jobs), 2)
+        self.assertEqual(self.lab.max_parallel, 1)
+
     def test_permissions_identity_and_infrastructure_errors_still_raise_to_host(self):
         self.start()
         with self.assertRaisesRegex(ValueError, 'different arguments'):
