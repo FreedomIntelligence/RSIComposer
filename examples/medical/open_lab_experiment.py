@@ -56,21 +56,53 @@ class AbsoluteHostPolicy:
         return self.timed.evaluate(context)
 
 
+def sglang_template_tools(request):
+    """Mirror the deployed SGLang 0.5.20 Tool.model_dump() before rendering.
+
+    The server adds function.strict=False and tool.defer_loading=None; counting
+    the raw wire declarations undercounts their rendered schema. This belongs
+    to this deployment, rather than every interchangeable model backend.
+    """
+    if request.tool_choice == 'none':
+        return []
+    tools = request.chat_tools().get('tools', [])
+    if isinstance(request.tool_choice, dict):
+        name = request.tool_choice['function']['name']
+        tools = [tool for tool in tools if tool['function']['name'] == name]
+    normalized = []
+    for tool in tools:
+        raw = tool['function']
+        function = {'description': raw.get('description'), 'name': raw['name'],
+                    'parameters': raw.get('parameters'), 'strict': raw.get('strict', False)}
+        deferred = raw.get('defer_loading')
+        if deferred is None:
+            deferred = tool.get('defer_loading')
+        if deferred is not None:
+            function['defer_loading'] = deferred
+        normalized.append({'type': tool['type'], 'function': function,
+                           'defer_loading': tool.get('defer_loading')})
+    return normalized
+
+
 class RecordedBackend:
     """One account for decisions, feedback, summaries and rejected responses."""
     supports_tool_calling = True
     supports_response_schema = True
     token_count_mode = 'local_official_chat_template'
 
-    def __init__(self, transport, tokenizer, root, *, max_calls, max_input_tokens=56000):
+    def __init__(self, transport, tokenizer, root, *, max_calls, max_input_tokens=56000,
+                 template_tool_normalizer=None):
         self.transport, self.tokenizer, self.root = transport, tokenizer, Path(root)
+        self.template_tool_normalizer = template_tool_normalizer
         self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
         self.calls, self.deadline = 0, None
         self.stop_requested = False
         self.lock = threading.RLock()
 
     def count_tokens(self, request):
-        kwargs = {'tools': list(request.tools)} if request.tools else {}
+        tools = (self.template_tool_normalizer(request) if self.template_tool_normalizer
+                 else list(request.tools))
+        kwargs = {'tools': tools} if tools else {}
         tokens = self.tokenizer.apply_chat_template(request.chat_messages(), tokenize=True,
             add_generation_prompt=True, enable_thinking=False, **kwargs)
         # Transformers 5 returns BatchEncoding (a Mapping, not a dict). Its
@@ -210,7 +242,8 @@ def main(argv=None):
     model = ModelRef('meta', 'rsisys-meta-qwen35-9b', 'lion-local-qwen35-9b')
     transport = VLLMBackend(binding, generation_options={
         'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}, native_schema_mode='portable')
-    backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls)
+    backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls,
+                              template_tool_normalizer=sglang_template_tools)
     from .open_lab_monitor import OpenLabMonitor
     monitor = OpenLabMonitor(root, args.run_id, model, args.revision)
     previous_handlers = {}

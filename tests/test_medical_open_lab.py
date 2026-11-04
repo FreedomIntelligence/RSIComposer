@@ -9,6 +9,7 @@ import unittest
 from examples.medical.open_lab_experiment import (
     AllocatedProcessBackend, HostAdmissionStop, RecordedBackend, TimedOpenPolicy,
     AbsoluteHostPolicy,
+    sglang_template_tools,
 )
 from rsisys.loops.contracts.model_service import ModelRef, GenerationRequest, GenerationResponse
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
@@ -69,6 +70,29 @@ class MedicalOpenLabTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             backend = RecordedBackend(Transport(), BatchTokenizer(), directory, max_calls=1)
             self.assertEqual(backend.count_tokens(GenerationRequest('decision_maker', MODEL, 'long')), 54075)
+
+    def test_sglang_tool_template_uses_provider_defaults_without_mutating_wire_tools(self):
+        tools = ({'type': 'function', 'function': {'name': 'record', 'parameters': {'type': 'object'}}},
+                 {'type': 'function', 'function': {'name': 'edit', 'strict': True,
+                    'parameters': {'type': 'object'}}, 'defer_loading': True})
+        request = GenerationRequest('feedback', MODEL, 'observe', tools=tools)
+        with TemporaryDirectory() as directory:
+            tokenizer = Tokenizer()
+            backend = RecordedBackend(Transport(), tokenizer, directory, max_calls=1,
+                                      template_tool_normalizer=sglang_template_tools)
+            self.assertEqual(backend.count_tokens(request), 102)
+            rendered = tokenizer.seen[1]['tools']
+            self.assertEqual(rendered[0], {'type': 'function', 'defer_loading': None, 'function': {
+                'name': 'record', 'description': None, 'parameters': {'type': 'object'}, 'strict': False}})
+            self.assertTrue(rendered[1]['function']['strict'])
+            self.assertTrue(rendered[1]['function']['defer_loading'])
+            self.assertNotIn('strict', request.tools[0]['function'])
+            self.assertNotIn('defer_loading', request.tools[0])
+            for choice in ('none', {'type': 'function', 'function': {'name': 'edit'}}):
+                selected = GenerationRequest('feedback', MODEL, 'observe', tools=tools, tool_choice=choice)
+                backend.count_tokens(selected)
+                self.assertEqual([t['function']['name'] for t in tokenizer.seen[1].get('tools', [])],
+                                 [] if choice == 'none' else ['edit'])
 
     def test_host_signal_closes_admission_before_another_request(self):
         with TemporaryDirectory() as directory:

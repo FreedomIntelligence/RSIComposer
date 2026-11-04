@@ -137,7 +137,8 @@ class LocalProcessLab:
         if key in self._keys:
             ident, previous = self._keys[key]
             if previous != request:
-                raise ValueError('Submission key was already used for different arguments')
+                raise LabToolError('Submission key was already used for different arguments; '
+                                   'use a new key for changed arguments. The original submission is unchanged')
         else:
             if len(self._jobs) >= self.max_jobs:
                 raise PermissionError('Host job admission limit reached')

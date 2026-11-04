@@ -158,10 +158,27 @@ class LocalLabDeliveryTests(unittest.TestCase):
         self.assertEqual(len(self.lab._jobs), 2)
         self.assertEqual(self.lab.max_parallel, 1)
 
-    def test_permissions_identity_and_infrastructure_errors_still_raise_to_host(self):
+    def test_conflicting_submission_is_rejected_without_rebinding_and_can_use_new_key(self):
+        first = self.start(code='from pathlib import Path; Path("counter").open("a").write("a")')
+        original = self.lab._keys['one']
+        changed = [sys.executable, '-c', 'from pathlib import Path; Path("counter").open("a").write("b")']
+        failed = self.invoke('lab_start', key='one', argv=changed)
+        self.assertEqual(failed.kind, 'progressed')
+        self.assertEqual(failed.event['operation_result']['status'], ExecutionStatus.FAILED)
+        self.assertIn('use a new key', failed.event['operation_result']['error'])
+        self.assertEqual(self.lab._keys['one'], original)
+        self.assertEqual(len(self.lab._jobs), 1)
+        self.assertEqual((self.lab.workspace / 'counter').read_text(), 'a')
+        repaired = self.invoke('lab_start', key='two', argv=changed)
+        second = repaired.event['operation_result']['data']['job_id']
+        self.lab.backend.wait(self.lab._jobs[second][0])
+        self.assertEqual((self.lab.workspace / 'counter').read_text(), 'ab')
+        self.assertEqual(self.lab._keys['one'], original)
+        self.assertNotEqual(first, second)
+        self.assertIn('different arguments', self.requests[-1].prompt)
+
+    def test_permissions_and_infrastructure_errors_still_raise_to_host(self):
         self.start()
-        with self.assertRaisesRegex(ValueError, 'different arguments'):
-            self.invoke('lab_start', key='one', argv=[sys.executable, '-c', 'print(2)'])
         self.lab.max_jobs = 1
         with self.assertRaisesRegex(PermissionError, 'admission limit'):
             self.invoke('lab_start', key='two', argv=[sys.executable, '-c', 'print(2)'])
