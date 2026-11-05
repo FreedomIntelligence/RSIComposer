@@ -110,8 +110,10 @@ class LatestEvidenceTests(unittest.TestCase):
         self.assertEqual(archive_text(tools, **args), entry.summary)
         view = bounded_evidence_view(replace(raw, operation_results=(first,)))
         self.assertEqual(view.operation_results[0], first)
-        with self.assertRaises(ValueError):
-            tools._archive({**args, 'evidence_path': '/details/other', 'cursor': first.data['next_cursor']})
+        rejected = tools._archive({**args, 'evidence_path': '/details/other', 'cursor': first.data['next_cursor']})
+        self.assertEqual(rejected.status, ExecutionStatus.FAILED)
+        self.assertNotIn('items', rejected.data)
+        self.assertIsNone(rejected.data['read_path']['cursor'])
         with self.assertRaises(ValueError):
             tools._archive({'collection': 'history', 'evidence_path': '/summary'})
 

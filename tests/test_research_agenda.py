@@ -12,6 +12,7 @@ from rsisys.experience.records import ExperienceRecord
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops._memory import HistoryEntry, Memory
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace, OperationCall, OperationResult
 from rsisys.loops.decision_making.action_space.access import authorized_space
 from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
@@ -21,7 +22,7 @@ from rsisys.loops.decision_making.harness.decision import Decision
 from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
 from rsisys.loops.decision_making.harness.research import ResearchAgenda
-from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+from rsisys.loops.decision_making.harness.tools import BoundDecisionTools, execute_operation
 from rsisys.loops.decision_making.harness.tools.research import ResearchTools
 
 
@@ -161,14 +162,83 @@ class ResearchToolTests(unittest.TestCase):
         self.memory.remember(Memory('memo', 'semantic', 'x' * 8000, ('history:source',)))
         first = self.invoke('research_archive', {'collection': 'memories', 'record_id': 'memo', 'limit': 1})
         self.memory.remember(Memory('memo', 'semantic', 'changed'))
-        with self.assertRaisesRegex(ValueError, 'cursor'):
-            self.invoke('research_archive', {'collection': 'memories', 'record_id': 'memo',
-                                             'cursor': first.data['next_cursor']})
+        rejected = self.invoke('research_archive', {'collection': 'memories', 'record_id': 'memo',
+                                                   'cursor': first.data['next_cursor']})
+        self.assertEqual(rejected.status, ExecutionStatus.FAILED)
+        self.assertIn('cursor', rejected.error)
+        self.assertIsNone(rejected.data['read_path']['cursor'])
         change(self.agenda, [{'id': 's', 'kind': 'stage_summary', 'text': 'x' * 15000}])
         first = self.invoke('research_archive', {'collection': 'research_revisions', 'record_id': '1', 'limit': 1})
         self.assertIsNotNone(first.data['next_cursor'])
         self.assertLessEqual(len(first.data['items'][0]['text']), 1000)
         self.assertEqual(first.data['items'][0]['record_id'], '1')
+
+    def test_bad_archive_cursors_are_failed_receipts_and_do_not_change_originals(self):
+        self.memory.append(HistoryEntry('raw', 'operation', None, 'original', False,
+                                       details={'payload': '原始证据' * 1800}))
+        first = self.invoke('research_archive', {'collection': 'history', 'limit': 1})
+        valid = first.data['next_cursor']
+        original = self.memory.export()
+        for arguments in (
+            {'cursor': 'invalid'},
+            {'cursor': 'history:all:999:wrong:1'},
+            {'cursor': valid, 'record_id': 'source label after collection prefix'},
+            {'cursor': valid, 'record_id': 'raw'},
+            {'cursor': valid, 'evidence_path': '/details', 'record_id': 'raw'},
+            {'cursor': valid.rsplit(':', 1)[0] + ':-1'},
+        ):
+            with self.subTest(arguments=arguments):
+                rejected = self.invoke('research_archive', arguments)
+                self.assertEqual(rejected.status, ExecutionStatus.FAILED)
+                self.assertIn('cursor', rejected.error)
+                self.assertNotIn('items', rejected.data)
+                self.assertIsNone(rejected.data['read_path']['cursor'])
+                self.assertEqual(self.memory.export(), original)
+        cursor, chunks = None, []
+        while True:
+            restarted = self.invoke('research_archive', {'record_id': 'raw', 'limit': 32, 'cursor': cursor})
+            self.assertEqual(restarted.status, ExecutionStatus.COMPLETED)
+            chunks.extend(x['text'] for x in restarted.data['items'])
+            cursor = restarted.data['next_cursor']
+            if cursor is None:
+                break
+        self.assertEqual(json.loads(''.join(chunks)),
+                         json.loads(json.dumps(original['history'][0])))
+
+    def test_archive_provider_fault_still_marks_execution_as_host_error(self):
+        self.provider.ledger_providers['candidates'] = Mock(side_effect=ValueError('Corrupt ledger'))
+        execution = execute_operation(self.tools, self.space,
+                                      OperationCall('research_archive', {'collection': 'candidates'}))
+        self.assertIsInstance(execution.error, ValueError)
+        self.assertIn('Corrupt ledger', execution.outcome.error)
+
+    def test_model_can_continue_after_stale_archive_cursor(self):
+        self.memory.append(HistoryEntry('raw', 'operation', None, 'original', False,
+                                       details={'payload': 'exact archived evidence'}))
+        model = ModelRef('backend', 'model', '1')
+        seen = []
+        class Backend:
+            def generate(_, request):
+                seen.append(json.loads(request.prompt))
+                if len(seen) == 1:
+                    payload = {'kind': 'invoke', 'operation': 'research_archive', 'arguments': {
+                        'collection': 'history', 'record_id': 'missing',
+                        'cursor': 'history:all:1089:stale:5', 'limit': 32}}
+                else:
+                    payload = {'kind': 'invoke', 'operation': 'research_archive', 'arguments': {
+                        'collection': 'history', 'record_id': 'raw', 'limit': 32}}
+                return GenerationResponse(json.dumps(payload), model, False)
+        harness = DefaultDecisionHarness(ModelDecisionPolicy(Backend(), model), self.tools,
+            BasicExperienceSystem(InMemoryExperienceStore()), memory=self.memory, research_agenda=self.agenda)
+        first = harness.step('Read original evidence', self.space)
+        self.assertEqual(first.kind, 'progressed')
+        self.assertEqual(first.operation_result.status, ExecutionStatus.FAILED)
+        second = harness.step('Read original evidence', self.space)
+        self.assertEqual(second.operation_result.status, ExecutionStatus.COMPLETED)
+        receipt = next(row for row in seen[1]['operation_results'] if row['status'] == 'failed')
+        self.assertIn('cursor', receipt['error'])
+        self.assertEqual(json.loads(second.operation_result.data['items'][0]['text'])['details'],
+                         {'payload': 'exact archived evidence'})
 
     def test_compaction_sources_resolve_full_operation_and_experience_records(self):
         experience = BasicExperienceSystem(InMemoryExperienceStore())

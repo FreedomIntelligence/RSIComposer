@@ -127,6 +127,15 @@ class ResearchTools:
 
     def _archive(self, arguments):
         args = _archive_arguments(arguments, experience=self.experience is not None)
+        def reject_cursor(message):
+            # A model cursor can become stale or refer to another selection.
+            # This read has no external effect: return actionable native feedback,
+            # while unexpected provider/storage faults still propagate normally.
+            return OperationResult('Archive cursor rejected; restart pagination', (), False,
+                ExecutionStatus.FAILED, message, data={
+                    'collection': args['collection'], 'record_id': args['record_id'],
+                    'evidence_path': args['evidence_path'],
+                    'read_path': {'operation': 'research_archive', **args, 'cursor': None}})
         collection = args['collection']
         if collection in LEDGER_COLLECTIONS:
             provider = self.ledger_providers.get(collection)
@@ -168,10 +177,13 @@ class ResearchTools:
         if args['cursor'] is not None:
             parts = args['cursor'].rsplit(':', 3)
             if len(parts) != 4 or not parts[1].isascii() or not parts[1].isdecimal():
-                raise ValueError('Invalid archive cursor')
-            count = int(parts[1])
+                return reject_cursor('Invalid archive cursor; restart pagination')
+            try:
+                count = int(parts[1])
+            except ValueError:
+                return reject_cursor('Invalid archive cursor; restart pagination')
             if count > len(rows):
-                raise ValueError('Stale archive cursor; restart pagination')
+                return reject_cursor('Stale archive cursor; restart pagination')
             rows = rows[:count]
         # Fingerprint only the selected records so an exact-ID read remains stable
         # while the harness appends receipts for the read operations themselves.
@@ -184,7 +196,10 @@ class ResearchTools:
         if pointer is not None:
             revision = result_id({'archive': revision, 'evidence_path': pointer})
         scope = f'{collection}:{args["record_id"] or "all"}:{count}:{revision}'
-        start = page_offset(args['cursor'], scope)
+        try:
+            start = page_offset(args['cursor'], scope)
+        except ValueError as exc:
+            return reject_cursor(str(exc))
         chunks, offset, total = [], 0, 0
         page_full = False
         for row in rows:

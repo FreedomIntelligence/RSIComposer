@@ -32,3 +32,19 @@ directory records the separate full lion regression and frozen source manifest.
 This repair does not validate model-written summary prose, make malformed
 LangMem patches succeed, or establish training/evaluation/adoption correctness.
 The prior run's semantic audit and bounded feedback failures remain evidence.
+
+## Archive cursor rejection (2026-11-06)
+
+The single-meta six-hour run stopped after 552 calls when `research_archive`
+combined a cursor from the full history with a different, nonexistent record ID.
+The stale cursor raised `ValueError` inside the handler and escaped the decision
+loop, despite being a correctable read request with no external effect. All
+owned processes exited and both cleanup receipts confirmed teardown.
+
+Archive cursor syntax, selection mismatch and changed-record checks now return
+a native failed receipt with an explicit `read_path` whose cursor is null. They
+never silently restart or mix pages from different selections. Original records
+stay unchanged. The next decision can inspect the error and choose a new read.
+Provider/storage exceptions still propagate as host failures. Regressions cover
+the original fatal path through the decision harness, malformed/stale cursors,
+exact pagination after rejection, unchanged originals and real provider errors.
