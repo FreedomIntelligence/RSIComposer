@@ -136,6 +136,7 @@ class LocalLabDeliveryTests(unittest.TestCase):
             ('lab_start', {'key': 'missing', 'argv': [str(self.root / 'missing-program')]}),
             ('lab_poll', {'job_id': 'unknown'}),
             ('lab_read_file', {'path': 123}),
+            ('lab_read_file', {'path': str(self.root / 'absolute-file')}),
             ('lab_read_file', {'path': 'missing-parent/file'}),
         ):
             with self.subTest(name=name, args=args):

@@ -239,8 +239,11 @@ class LocalProcessLab:
     def _parent(self, path, *, create=False):
         if not isinstance(path, str) or not path or '\x00' in path:
             raise LabToolError('Expected a nonempty workspace file path')
-        if Path(path).is_absolute() or '..' in Path(path).parts or not Path(path).name:
+        if '..' in Path(path).parts or not Path(path).name:
             raise ValueError('Expected a relative workspace file path without ..')
+        if Path(path).is_absolute():
+            raise LabToolError('Expected a relative workspace file path. Absolute paths cannot be used '
+                               'with Lab file tools; use a workspace-relative path for the next action')
         parts = Path(path).parts
         if not parts:
             raise ValueError('Expected a file path')
