@@ -28,6 +28,6 @@ def producer_delivery(observation, jobs, *, archive_only):
         if previous['result_digest'] != event['result_digest']:
             raise ValueError('Feedback producer event identity reused for a different result')
         if (original is None and not row.get('capture_archive_only', row.get('archive_only', False))
-                and not row.get('duplicate_of')):
+                and not row.get('duplicate_of') and row.get('admission', {}).get('organize') is not False):
             original = row['job_id']
     return event, None if archive_only or delivery.reprocess else original

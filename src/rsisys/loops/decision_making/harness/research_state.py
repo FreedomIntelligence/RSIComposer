@@ -56,6 +56,32 @@ def evidence_needs_protection(entry):
     return receipt_needs_protection(entry.details)
 
 
+def archived_operation_result_ids(context):
+    """Recognize recorded receipts after their history rows become cards too.
+
+    A history-card digest identifies the entire history row, not its nested
+    result. Keep that nested identity explicitly so a projected history cannot
+    make an already archived result appear unrecorded and permanently resident.
+    Legacy cards without this identity remain conservative.
+    """
+    recorded = set()
+    for row in context.history:
+        if row.kind != 'operation':
+            continue
+        result = row.details.get('result')
+        if isinstance(result, dict):
+            recorded.add(result_id(result))
+        card = row.details.get('evidence_card', {})
+        if (isinstance(card, dict) and card.get('schema_version') == 1
+                and isinstance(card.get('read_path'), dict)
+                and card['read_path'].get('collection') == 'history'
+                and card['read_path'].get('record_id') == row.record_id):
+            digest = card.get('operation_result_sha256')
+            if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
+                recorded.add(digest)
+    return recorded
+
+
 def resident_evidence_indices(context, collection, *, recent=2):
     """Keep recent measurements and failures, not every past receipt forever.
 
@@ -84,8 +110,7 @@ def resident_evidence_indices(context, collection, *, recent=2):
     if collection == 'operation_results':
         # The tool archive reconstructs receipts from history. Merely advertising
         # an archive does not make an unrecorded result recoverable.
-        recorded = {result_id(h.details['result']) for h in context.history
-                    if isinstance(h.details.get('result'), dict)}
+        recorded = archived_operation_result_ids(context)
         for i in measured:
             row = rows[i]
             card = row.data.get('evidence_card', {})
@@ -242,8 +267,7 @@ def evidence_working_view(context, *, latest=False):
     latest_feedback = context.last_feedback.directive_id if context.last_feedback else None
     live_results = {result_id(h.details['result']) for h in context.history
                     if h.record_id in full and isinstance(h.details.get('result'), dict)}
-    archived_results = {result_id(h.details['result']) for h in context.history
-                        if h.kind == 'operation' and isinstance(h.details.get('result'), dict)}
+    archived_results = archived_operation_result_ids(context)
     projected = {}
     feedback = context.last_feedback
     if (latest and feedback is not None and archive_available(context, 'history')
@@ -307,6 +331,12 @@ def evidence_working_view(context, *, latest=False):
                         'read_path': {'operation': 'research_archive', 'collection': collection,
                                       'record_id': ident}},
                     'facts': facts}
+            if collection == 'history' and row.kind == 'operation' and isinstance(row.details.get('result'), dict):
+                card['evidence_card']['operation_result_sha256'] = result_id(row.details['result'])
+                operation = row.details.get('operation') or {}
+                route = (operation.get('arguments') or {}).get('feedback_route')
+                if route in ('context', 'memory'):
+                    card['evidence_card']['feedback_route'] = route
             if latest:
                 card['evidence_card'].update(omitted_content_read=False, bulk_payload_omitted=True,
                     omissions=omissions)

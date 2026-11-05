@@ -18,6 +18,7 @@ import time
 import traceback
 
 from rsisys.adapters.local_lab_memory import LocalLabMemoryAdmission
+from rsisys.adapters.local_lab_feedback import RoutedLab, ContextOrMemoryAdmission, ImmediateFeedbackWindow
 from .fixed_evaluation import FixedMedicalLab, PROTOCOL
 from rsisys.adapters.serving import VLLMBackend
 from rsisys.application import Application, ApplicationConfig
@@ -93,15 +94,20 @@ class RecordedBackend:
     token_count_mode = 'local_official_chat_template'
 
     def __init__(self, transport, tokenizer, root, *, max_calls, max_input_tokens=56000,
-                 template_tool_normalizer=None):
+                 template_tool_normalizer=None, provider_token_counter=False):
         self.transport, self.tokenizer, self.root = transport, tokenizer, Path(root)
         self.template_tool_normalizer = template_tool_normalizer
+        self.provider_token_counter = provider_token_counter
+        if provider_token_counter:
+            self.token_count_mode = 'provider_tokenizer'
         self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
         self.calls, self.deadline = 0, None
         self.stop_requested = False
         self.lock = threading.RLock()
 
     def count_tokens(self, request):
+        if self.provider_token_counter:
+            return self.transport.count_tokens(request)
         tools = (self.template_tool_normalizer(request) if self.template_tool_normalizer
                  else list(request.tools))
         kwargs = {'tools': tools} if tools else {}
@@ -187,11 +193,12 @@ class TimedOpenPolicy(ModelDecisionPolicy):
 
 class AllocatedProcessBackend(LocalProcessBackend):
     """Explicit host device/environment injection into scrubbed Lab children."""
-    def __init__(self, root, environment):
+    def __init__(self, root, environment, *, device_type='cuda'):
         super().__init__(root, max_output_bytes=128000)
         self.environment = dict(environment)
-        if not self.environment.get('CUDA_VISIBLE_DEVICES'):
-            raise ValueError('An explicit allocated CUDA device mapping is required')
+        device_key = {'cuda': 'CUDA_VISIBLE_DEVICES', 'npu': 'ASCEND_RT_VISIBLE_DEVICES'}.get(device_type)
+        if device_key is None or not self.environment.get(device_key):
+            raise ValueError('An explicit allocated device mapping is required')
         if any(not isinstance(k, str) or not isinstance(v, str) or '=' in k or '\x00' in k + v
                for k, v in self.environment.items()):
             raise ValueError('Invalid host environment')
@@ -228,8 +235,15 @@ def main(argv=None):
     parser.add_argument('--root', required=True)
     parser.add_argument('--task', required=True)
     parser.add_argument('--model-path', required=True)
-    parser.add_argument('--python', required=True, help='Installed CUDA/Transformers Python for generated programs')
+    parser.add_argument('--python', required=True, help='Installed accelerator/Transformers Python for generated programs')
     parser.add_argument('--endpoint', required=True)
+    parser.add_argument('--model-id', default='rsisys-meta-qwen35-9b')
+    parser.add_argument('--model-revision', default='lion-local-qwen35-9b')
+    parser.add_argument('--lab-model-id', help='Candidate inference alias; defaults to the decision alias')
+    parser.add_argument('--lab-model-path', help='Candidate base weights; defaults to the decision weights')
+    parser.add_argument('--device-type', choices=('cuda', 'npu'), default='cuda')
+    parser.add_argument('--template-family', choices=('sglang', 'vllm'), default='sglang')
+    parser.add_argument('--feedback-routing', choices=('legacy', 'context_or_memory'), default='context_or_memory')
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--max-calls', type=int, default=128)
     parser.add_argument('--deadline-epoch', type=float, help='Absolute host UTC deadline, never extended by initialization or restart')
@@ -247,11 +261,12 @@ def main(argv=None):
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True, trust_remote_code=False)
     binding = BackendBinding('meta', 'chat_completions', args.endpoint, timeout_seconds=120)
-    model = ModelRef('meta', 'rsisys-meta-qwen35-9b', 'lion-local-qwen35-9b')
+    model = ModelRef('meta', args.model_id, args.model_revision)
     transport = VLLMBackend(binding, generation_options={
         'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}, native_schema_mode='portable')
     backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls,
-                              template_tool_normalizer=sglang_template_tools)
+        template_tool_normalizer=sglang_template_tools if args.template_family == 'sglang' else None,
+        provider_token_counter=args.template_family == 'vllm')
     from .open_lab_monitor import OpenLabMonitor
     monitor = OpenLabMonitor(root, args.run_id, model, args.revision)
     previous_handlers = {}
@@ -278,33 +293,41 @@ def main(argv=None):
         data_manifest.append({'path': name, 'sha256': hashlib.sha256(content).hexdigest(),
             'rows': len([line for line in content.splitlines() if line.strip()])})
     write(root / 'data-manifest.json', data_manifest)
-    model_path = Path(args.model_path).resolve()
-    weight_identity = {'model_path': str(model_path), 'config_sha256': hashlib.sha256(
-        (model_path / 'config.json').read_bytes()).hexdigest(),
-        'weight_shards': [{'name': p.name, 'bytes': p.stat().st_size} for p in sorted(model_path.glob('*.safetensors'))],
-        'binding': 'local_config_and_weight_inventory; full_weight_digest_not_verified'}
-    environment = {k: os.environ[k] for k in ('CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER')}
-    if os.environ.get('LD_LIBRARY_PATH'):
-        environment['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
+    def inventory(path):
+        model_path = Path(path).resolve()
+        return {'model_path': str(model_path), 'config_sha256': hashlib.sha256(
+            (model_path / 'config.json').read_bytes()).hexdigest(),
+            'weight_shards': [{'name': p.name, 'bytes': p.stat().st_size}
+                              for p in sorted(model_path.glob('*.safetensors'))],
+            'binding': 'local_config_and_weight_inventory; full_weight_digest_not_verified'}
+    weight_identity = inventory(args.model_path)
+    actor_weight_identity = inventory(args.lab_model_path or args.model_path)
+    device_keys = ('CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER') if args.device_type == 'cuda' else (
+        'ASCEND_RT_VISIBLE_DEVICES', 'ASCEND_HOME_PATH', 'ASCEND_OPP_PATH', 'ASCEND_AICPU_PATH')
+    environment = {k: os.environ[k] for k in (*device_keys, 'LD_LIBRARY_PATH', 'TORCH_DEVICE_BACKEND_AUTOLOAD')
+                   if k in os.environ}
     environment.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false',
         OMP_NUM_THREADS='4', PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'src') + ':' +
         str(Path(__file__).resolve().parents[2]))
     write(root / 'backend-environment.json', environment)
     lab_endpoint = os.environ.get('RSISYS_LAB_ENDPOINT', args.endpoint)
-    project = {'scenario': 'medical', 'python': args.python, 'model_path': args.model_path,
-        'endpoint': lab_endpoint, 'served_model': model.model_id, 'task': 'data/task.json',
+    project = {'scenario': 'medical', 'python': args.python,
+        'model_path': args.lab_model_path or args.model_path, 'device_type': args.device_type,
+        'endpoint': lab_endpoint, 'served_model': args.lab_model_id or model.model_id, 'task': 'data/task.json',
         'path_base': 'lab_workspace', 'data_root': 'data',
         'available_data': [{**entry, 'path': str(Path('data') / entry['path'])}
                            for entry in data_manifest],
         'candidate_reference': 'candidate.py',
+        'feedback_routing': args.feedback_routing,
         'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': PROTOCOL,
                              'owner': 'medical_lab', 'scoring_editable': False},
-        'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16, '
-                         'attn_implementation=sdpa; use local_files_only=True. PEFT is installed.',
+        'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16; '
+                         'use local_files_only=True and inspect installed accelerator support. '
+                         'For NPU import torch_npu and use npu:0 within the assigned visible device mapping.',
         'scientific_contract': 'Train only from task.train; development is for evaluation. '
             'Paths in task.json are relative to data_root; available_data paths are relative to the Lab workspace. '
             'Do not read or search for private/heldout data, install packages, or change external services. '
-            'Lab code sees only the GPUs assigned to generated programs. '
+            'Lab code uses only the accelerators assigned to generated programs. '
             'The host separately allocates meta-agent and baseline inference services. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
             'Formal evaluation uses medical_evaluate with fixed data, inputs, gold, parsing and scoring. '
@@ -315,7 +338,8 @@ def main(argv=None):
             'do not equate a program succeeding, a proposal, or unvalidated stdout with adoption. '
             'Development accuracy is not medical generalization.'}
     def make_lab(context):
-        allocated = AllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment)
+        allocated = AllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment,
+                                            device_type=args.device_type)
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
@@ -332,8 +356,8 @@ def main(argv=None):
             shutil.copyfile(task_path.parent / name, target)
         shutil.copyfile(task_path, lab.workspace / 'data/task.json')
         (lab.workspace / 'candidate.py').write_text(CANDIDATE)
-        write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': weight_identity})
-        return lab
+        write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
+        return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
     def make_decision(context, exploration):
         context.project_context = project
         context.backends = {'meta': backend}
@@ -341,12 +365,15 @@ def main(argv=None):
         loop.harness.policy = TimedOpenPolicy(backend, model, allowed_actions=(),
             directives=DirectiveDefinitions(()), max_validation_attempts=3, structured_output=True,
             context_compactor=compactor, project_context=project, prompts=prompts)
+        if args.feedback_routing == 'context_or_memory':
+            loop.harness.add_context_processor(ImmediateFeedbackWindow())
         return loop
     from importlib import resources
     memory_instructions = resources.files('rsisys.loops.decision_making.feedback').joinpath(
         'prompts/langmem_research.txt').read_text()
     assembly = ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
-        namespace=('rsisys', args.run_id), admission=LocalLabMemoryAdmission(),
+        namespace=('rsisys', args.run_id), admission=(ContextOrMemoryAdmission()
+            if args.feedback_routing == 'context_or_memory' else LocalLabMemoryAdmission()),
         memory_options={'max_calls_per_job': 6, 'max_steps': 1,
             'parallel_tool_calls': False,
             'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
@@ -364,7 +391,8 @@ def main(argv=None):
     config = ApplicationConfig(objective, root / 'application', {'meta': binding}, {'decision_maker': model},
         execution='local_process', experience_limit=12, memory_limit=8, run_id=args.run_id)
     result = {'run_id': args.run_id, 'status': 'initializing', 'simulated': False,
-        'weight_identity': weight_identity, 'memory_provider': 'langmem', 'started_at': None,
+        'weight_identity': weight_identity, 'actor_weight_identity': actor_weight_identity,
+        'memory_provider': 'langmem', 'feedback_routing': args.feedback_routing, 'started_at': None,
         'note': 'Model decisions and native program results are evidence; experiment/training counts require review.'}
     started = time.monotonic()
     try:
