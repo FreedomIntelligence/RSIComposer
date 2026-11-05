@@ -6,6 +6,7 @@ transactional delivery. It does not implement a memory consolidation algorithm.
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import replace
 import fcntl
 from importlib import metadata, resources
 from inspect import signature
@@ -15,7 +16,7 @@ from threading import RLock
 
 from langmem import create_memory_store_manager
 from langchain_core.callbacks import BaseCallbackHandler
-from langgraph.store.base import BaseStore, PutOp
+from langgraph.store.base import BaseStore, PutOp, SearchOp
 from langgraph.store.sqlite import SqliteStore
 from langsmith import tracing_context
 from pydantic import BaseModel, Field, model_validator
@@ -26,7 +27,7 @@ from rsisys.runtime.json_tools import result_id
 from rsisys.runtime.files import json_bytes
 from .evidence import admitted_candidate_evidence, validate_claims, claim_schema
 from .knowledge import context_record, WorkingMemoryPolicy
-from .model_gateway import FeedbackModelGateway
+from .model_gateway import FeedbackModelGateway, NativeAdmissionAbort
 
 
 class _AtomicSqliteStore(SqliteStore):
@@ -63,15 +64,25 @@ class _StagedStore(BaseStore):
     so a failed background write cannot be reported as a completed feedback job.
     Read/search still use the original upstream store.
     """
-    def __init__(self, store, namespace, schema):
+    def __init__(self, store, namespace, schema, *, max_retrieval_bytes=None):
         self.store, self.namespace, self.schema = store, namespace, schema
         self.puts, self.errors, self.lock = [], [], RLock()
+        self.max_retrieval_bytes = max_retrieval_bytes
 
     def batch(self, ops):
         result = []
         for op in ops:
             if not isinstance(op, PutOp):
-                result.extend(self.store.batch([op]))
+                values = self.store.batch([op])
+                if isinstance(op, SearchOp) and self.max_retrieval_bytes is not None:
+                    selected, used = [], 0
+                    for item in values[0]:
+                        size = len(json_bytes(item.value))
+                        if used + size <= self.max_retrieval_bytes:
+                            selected.append(item)
+                            used += size
+                    values = [selected]
+                result.extend(values)
                 continue
             try:
                 if op.namespace != self.namespace:
@@ -203,6 +214,8 @@ class LangMemContextMemory:
             'consolidation_input': 'current_feedback_and_retrieved_memories',
             'additional_instructions_digest': result_id(self.additional_instructions),
             'retrieval': 'recent',
+            'native_admission': 'complete_request_with_source_backed_evidence_projection',
+            'retrieval_budget': 'whole_memories_up_to_one_input_token_limit_in_bytes',
             'versions': {p: metadata.version(p) for p in (
                 'langmem', 'trustcall', 'langgraph', 'langchain-core', 'langgraph-checkpoint-sqlite')}}
 
@@ -242,7 +255,7 @@ class LangMemContextMemory:
                     raise ValueError('Memory job already committed; use recovery instead of inference replay')
                 gateway = FeedbackModelGateway(backend, ModelRef(**job['model']),
                     max_calls=limits['max_calls'], max_input_tokens=limits['max_input_tokens'],
-                    path=exchange_path)
+                    path=exchange_path, request_candidates=self._request_candidates(job))
                 with self._store() as store, tracing_context(enabled=False):
                     current = admitted_candidate_evidence(job)
                     catalog = [item.value for item in self._scan(store, self._sources_ns)]
@@ -255,11 +268,12 @@ class LangMemContextMemory:
                     simulated_refs = {ref for c in catalog if c.get('simulated', False)
                                       for ref in c['source_refs']}
                     schema = _research_schema(refs, evidence, simulated_refs)
-                    staged = _StagedStore(store, self._memory_ns, schema)
+                    staged = _StagedStore(store, self._memory_ns, schema,
+                        max_retrieval_bytes=limits['max_input_tokens'])
                     extraction_audit = _ExtractionAudit()
                     chat = BackendChatModel(backend=gateway, model_ref=ModelRef(**job['model']),
                         max_output_tokens=limits['max_output_tokens'], cache=False,
-                        parallel_tool_calls=self.parallel_tool_calls)
+                        parallel_tool_calls=self.parallel_tool_calls, abort_on_capacity=True)
                     upstream = signature(create_memory_store_manager).parameters['instructions'].default
                     manager = create_memory_store_manager(chat, schemas=[schema],
                         instructions=upstream + '\n\n' + self.additional_instructions,
@@ -297,13 +311,44 @@ class LangMemContextMemory:
                               'model': job['model'], 'configuration': self.configuration(),
                               'input_digest': result_id(job['input']), 'result': result})])
                     return result
-        except Exception as exc:
-            return {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}',
+        except (Exception, NativeAdmissionAbort) as exc:
+            return {'status': 'input_too_large' if isinstance(exc, NativeAdmissionAbort) else 'failed',
+                'error': f'{type(exc).__name__}: {exc}',
                 'charged_calls': gateway.attempted if gateway is not None else (
                     limits['max_calls'] if exchange_path.exists() else 0),
                 'proposals': [], 'attempt_updates': [],
                 'response': {'provider': 'langmem', 'exchanges_ref': str(gateway.path)
                               if gateway is not None else None}}
+
+    @staticmethod
+    def _request_candidates(job):
+        """Shrink only the captured evidence embedded in complete native calls.
+
+        Upstream messages/tools, retrieved memories and patch conversations keep
+        their identity. Every candidate is counted after native assembly; excess
+        retrieval/repair content that cannot fit ends this job without inference.
+        The original capture and read paths remain in the journal.
+        """
+        from .learning import _evidence_packet
+        original = json_bytes(job['input']).decode()
+
+        def candidates(request):
+            yield request
+            for count, text_limit in ((16, 256), (8, 192), (4, 128), (2, 96), (1, 64), (0, 0)):
+                packet, _ = _evidence_packet(job, count, text_limit, preview_feedback=True)
+                replacement = json_bytes(packet).decode()
+                if len(replacement) >= len(original):
+                    continue
+                messages = request.chat_messages()
+                changed = False
+                for message in messages:
+                    content = message.get('content')
+                    if isinstance(content, str) and original in content:
+                        message['content'] = content.replace(original, replacement)
+                        changed = True
+                if changed:
+                    yield replace(request, messages=messages)
+        return candidates
 
     def record(self, job):
         result = context_record(job)

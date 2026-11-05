@@ -449,7 +449,7 @@ class FeedbackLearning:
                  max_input_bytes=64000, executor=None,
                  context_memory=_DEFAULT_COMPONENT, trajectory_archive=_DEFAULT_COMPONENT,
                  processor=None, assembly_configuration=None, scheduler=None,
-                 max_concurrent_jobs=1, failure_policy=None, legacy_interpreter=None):
+                 max_concurrent_jobs=1, failure_policy=None, legacy_interpreter=None, admission=None):
         binding = FeedbackStageBinding(processor)
         if backend is None and (processor is None or binding.max_calls > 0):
             raise ValueError('Feedback inference requires a model backend')
@@ -470,6 +470,9 @@ class FeedbackLearning:
         processor_config = self._processor_binding.configuration() if processor is not None else None
         self.scheduler = FifoFeedbackScheduler() if scheduler is None else scheduler
         validate_scheduler(self.scheduler)
+        if admission is not None and not callable(getattr(admission, 'admit', None)):
+            raise TypeError('Feedback admission requires admit(event, pending)')
+        self.admission = admission
         if type(max_concurrent_jobs) is not int or max_concurrent_jobs < 1:
             raise ValueError('Host concurrency must be a positive integer')
         self.max_concurrent_jobs = max_concurrent_jobs
@@ -481,6 +484,8 @@ class FeedbackLearning:
                           'failure_policy': asdict(self.failure_policy),
                           'legacy_interpreter': component_configuration(self.legacy_interpreter)
                                                 if processor is None else None}
+        if admission is not None:
+            runtime_config['admission'] = component_configuration(admission)
         self.backend, self.path = backend, Path(path) if path is not None else None
         self.limits = dict(max_calls=max_calls, max_pending=max_pending, max_input_tokens=max_input_tokens,
                            max_output_tokens=max_output_tokens, max_input_bytes=max_input_bytes)
@@ -614,13 +619,35 @@ class FeedbackLearning:
         if duplicate_of is not None:
             row['duplicate_of'] = duplicate_of
         admitted = self._bound_input(row)
+        state = deepcopy(self.state)
+        admission = self.admission
+        if admission is not None:
+            if not archive_only and duplicate_of is None:
+                from rsisys.loops.contracts.feedback_modules import FeedbackAdmission
+                pending = tuple(PendingFeedback(feedback_context_event(item), item['capture_index'])
+                    for item in state['jobs'].values() if item['status'] == 'queued')
+                choice = admission.admit(feedback_context_event(row), pending)
+                eligible = {item.event.event_id for item in pending}
+                if (not isinstance(choice, FeedbackAdmission) or type(choice.organize) is not bool
+                        or not isinstance(choice.coalesce, tuple) or not isinstance(choice.reason, str)
+                        or len(set(choice.coalesce)) != len(choice.coalesce)
+                        or not set(choice.coalesce) <= eligible or (choice.coalesce and not choice.organize)):
+                    raise ValueError('Invalid feedback admission or nonqueued coalescing target')
+                row['admission'] = asdict(choice)
+                if not choice.organize:
+                    row.update(status='archived', organization_skipped=True, published=True)
+                elif admitted:
+                    for prior in choice.coalesce:
+                        state['jobs'][prior].update(status='archived', organization_skipped=True,
+                            coalesced_into=ident, published=True)
         if archive_only or duplicate_of is not None:
             row.update(status='archived', archive_only=True, published=True)
+        elif row.get('organization_skipped'):
+            pass
         elif not admitted:
             row.update(status='input_too_large', error='Indivisible learning evidence exceeds byte budget')
-        elif sum(item['status'] in ('queued', 'running') for item in self.state['jobs'].values()) >= self.limits['max_pending']:
+        elif sum(item['status'] in ('queued', 'running') for item in state['jobs'].values()) >= self.limits['max_pending']:
             row.update(status='queue_full', error='Learning queue limit reached; raw feedback remains available')
-        state = deepcopy(self.state)
         state['jobs'][ident] = row
         self._commit(state)
         return ident

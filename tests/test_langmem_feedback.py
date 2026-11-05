@@ -299,7 +299,8 @@ class LangMemFeedbackTests(unittest.TestCase):
                 setattr(self.backend, failure, True)
                 learning = self.learning()
                 ident = self.capture(learning, 'failure')
-                self.assertEqual(learning.state['jobs'][ident]['status'], 'failed')
+                self.assertEqual(learning.state['jobs'][ident]['status'],
+                                 'input_too_large' if failure == 'huge_tokens' else 'failed')
                 self.assertEqual(learning.state['attempted'], 1)
                 self.assertEqual(len(self.backend.requests), int(failure == 'wrong_identity'))
                 self.assertEqual(learning.working_memory()['memories'], [])

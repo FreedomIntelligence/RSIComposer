@@ -13,11 +13,16 @@ Use Python 3.12+ from the RSISys directory with `PYTHONPATH=src:.`.
 ## Open Lab with a real meta-agent
 
 `open_lab_experiment.py` uses the unified `ModuleAssembly` entry, programmable
-`LocalProcessLab`, native-tool LangMem memory and the default trajectory archive.
-The meta-agent chooses code edits and arbitrary installed programs; no SFT/RL/
-evaluation action menu is installed. Its separate feedback context uses the same
-captured model identity. The editable HTTP evaluator is an optional reference,
-and runs inference only when the meta-agent invokes it.
+`FixedMedicalLab`, native-tool LangMem memory and the default trajectory archive.
+The meta-agent chooses code edits and arbitrary installed training/inference
+programs. Its separate feedback context uses the same captured model identity.
+Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
+development data, question/options, gold, parsing and accuracy. The editable
+`candidate.py` consumes JSON inputs on stdin and returns predictions on stdout;
+the included candidate calls the existing HTTP endpoint. Collect the submitted
+job with `lab_poll` / `lab_result`; submission is not a score or adoption.
+Self-written evaluation output remains an exploratory observation. See the
+[repair and interface review](../../docs/review/lion-followup-repair-20261105.md).
 
 Provision an owned Qwen3.5-9B SGLang endpoint named `rsisys-meta-qwen35-9b` with
 native tool calling and JSON-schema responses before launching. Install the

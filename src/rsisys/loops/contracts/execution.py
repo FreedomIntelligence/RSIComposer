@@ -15,6 +15,20 @@ class LabToolError(ValueError):
     identity conflicts, accounting and infrastructure failures must not use it.
     """
 
+    def __init__(self, message, *, data=None):
+        super().__init__(message)
+        self.data = deepcopy({} if data is None else data)
+
+
+class ExecutionContext(Protocol):
+    """Optional fresh, bounded provider text for the next decision.
+
+    The provider owns its vocabulary and status schema. This read-only view is
+    refreshed independently of memory/history and grants no execution authority.
+    Labs implementing only describe/execute remain valid.
+    """
+    def runtime_context(self) -> str: ...
+
 
 class LabInfrastructureError(RuntimeError):
     """Host failure carrying an archived execution result, not a correctable tool error."""

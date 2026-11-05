@@ -9,6 +9,7 @@ from rsisys.loops.contracts.execution import LabExecution, LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.decision_making.action_space.capabilities import Capability, Capabilities
 from rsisys.loops.decision_making.harness.tools import BoundDecisionTools
+from rsisys.runtime.capabilities import optional_method
 
 
 def _arguments(name, arguments):
@@ -49,7 +50,14 @@ class LabExecutionTools(BoundDecisionTools):
             return self.lab.execute(call)
         except LabToolError as exc:
             return OperationResult('Lab tool failed; use this feedback to choose the next action', (),
-                False, ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}')
+                False, ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}', data=exc.data)
+
+    def runtime_context(self):
+        read = optional_method(self.lab, 'runtime_context')
+        value = read() if read is not None else ''
+        if not isinstance(value, str):
+            raise TypeError('Lab runtime_context() must return text')
+        return value
 
 
 class OperationOnlyExploration:

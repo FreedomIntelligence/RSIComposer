@@ -148,6 +148,15 @@ class DefaultDecisionHarness:
         context = bounded_evidence_view(context)
         for processor in self._context_processors:
             context = processor(context)
+        read = optional_method(self.tools, 'runtime_context')
+        if read is not None:
+            value = read()
+            if not isinstance(value, str):
+                raise TypeError('runtime_context() must return text')
+            agenda = {key: item for key, item in context.research_agenda.items() if key != 'runtime_context'}
+            if value:
+                agenda['runtime_context'] = value
+            context = replace(context, research_agenda=agenda)
         return context
 
     @staticmethod

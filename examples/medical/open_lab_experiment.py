@@ -17,7 +17,8 @@ import threading
 import time
 import traceback
 
-from rsisys.adapters.local_lab import LocalProcessLab
+from rsisys.adapters.local_lab_memory import LocalLabMemoryAdmission
+from .fixed_evaluation import FixedMedicalLab, PROTOCOL
 from rsisys.adapters.serving import VLLMBackend
 from rsisys.application import Application, ApplicationConfig
 from rsisys.assembly import ModuleAssembly, build_default_decision
@@ -200,45 +201,26 @@ class AllocatedProcessBackend(LocalProcessBackend):
         return super().exec(sandbox, replace(request, argv=argv))
 
 
-EVALUATOR = r'''"""Editable reference: real HTTP inference, fixed development data, no training."""
-import argparse, concurrent.futures, hashlib, json, re, time
+CANDIDATE = r'''"""Editable candidate; fixed evaluation supplies the questions and owns scoring."""
+import concurrent.futures, json, sys
 from pathlib import Path
 from urllib.request import Request, urlopen
-p=argparse.ArgumentParser()
-p.add_argument('--system', default='Choose the best answer. Return exactly one option letter, with no explanation.')
-p.add_argument('--output', default='baseline-evaluation.json')
-a=p.parse_args()
 cfg=json.loads(Path('lab_config.json').read_text())
-task=json.loads(Path('data/task.json').read_text())
-def predict(row):
-    prompt=row['question']+''.join('\n'+k+'. '+v for k,v in row['options'].items())
-    body={'model':cfg['served_model'], 'messages':[{'role':'system','content':a.system},
-        {'role':'user','content':prompt}], 'max_tokens':32, 'temperature':0,
+payload=json.load(sys.stdin)
+def predict(item):
+    body={'model':cfg['served_model'], 'messages':item['messages'], 'max_tokens':32, 'temperature':0,
         'chat_template_kwargs':{'enable_thinking':False}}
     with urlopen(Request(cfg['endpoint']+'/chat/completions',data=json.dumps(body).encode(),
-            headers={'Content-Type':'application/json'}),timeout=120) as r:
-        result=json.load(r)
+            headers={'Content-Type':'application/json'}),timeout=120) as response:
+        result=json.load(response)
     if result['model'] != cfg['served_model']: raise ValueError('Provider identity mismatch')
-    answer=result['choices'][0]['message']['content'].strip()
-    match=re.fullmatch(r'([A-J])[.\s]*',answer)
-    return {'id':row['id'],'gold':row['gold'],'prediction':match.group(1) if match else answer,
-        'correct':bool(match and match.group(1)==row['gold']), 'usage':result.get('usage')}
-metrics={}; predictions={}; inputs={}
-for group in task['development']:
-    path=Path('data')/group['path']; content=path.read_bytes()
-    rows=[json.loads(line) for line in content.decode().splitlines() if line.strip()]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        values=list(pool.map(predict, rows))
-    name=group['benchmark_id']; metrics[name]={'accuracy':sum(v['correct'] for v in values)/len(values),'n':len(values)}
-    predictions[name]=values; inputs[name]=hashlib.sha256(content).hexdigest()
-record={'kind':'development_evaluation','simulated':False,'at':time.time(),
-    'candidate_id':'prompt:'+hashlib.sha256(a.system.encode()).hexdigest(),
-    'base_model':cfg['model_path'],'weight_identity':cfg['weight_identity'],
-    'protocol':'exact-option-letter-v1','system_prompt':a.system,'metrics':metrics,
-    'dataset_sha256':inputs,'predictions':predictions,'adopted':False}
-Path(a.output).write_text(json.dumps(record,indent=2))
-print(json.dumps({k:v for k,v in record.items() if k!='predictions'}),flush=True)
+    return {'benchmark_id':item['benchmark_id'],'id':item['id'],
+        'text':result['choices'][0]['message']['content']}
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    predictions=list(pool.map(predict,payload['items']))
+print(json.dumps({'predictions':predictions}),flush=True)
 '''
+
 
 
 def main(argv=None):
@@ -314,7 +296,9 @@ def main(argv=None):
         'path_base': 'lab_workspace', 'data_root': 'data',
         'available_data': [{**entry, 'path': str(Path('data') / entry['path'])}
                            for entry in data_manifest],
-        'editable_reference': 'reference_eval.py',
+        'candidate_reference': 'candidate.py',
+        'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': PROTOCOL,
+                             'owner': 'medical_lab', 'scoring_editable': False},
         'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16, '
                          'attn_implementation=sdpa; use local_files_only=True. PEFT is installed.',
         'scientific_contract': 'Train only from task.train; development is for evaluation. '
@@ -323,7 +307,9 @@ def main(argv=None):
             'Lab code sees only the GPUs assigned to generated programs. '
             'The host separately allocates meta-agent and baseline inference services. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
-            'The editable evaluator is optional and runs actual model inference. '
+            'Formal evaluation uses medical_evaluate with fixed data, inputs, gold, parsing and scoring. '
+            'Edit candidate.py or write any candidate program implementing its JSON stdin/stdout interface. '
+            'Self-written evaluation scripts produce exploratory observations, not formal comparable scores. '
             'Preserve candidate identity, protocol, dataset identity and exact metrics. '
             'Pareto adoption requires primary improvement without guardrail regression; '
             'do not equate a program succeeding, a proposal, or unvalidated stdout with adoption. '
@@ -331,8 +317,13 @@ def main(argv=None):
     def make_lab(context):
         allocated = AllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment)
         context.add_owned_cleanup(allocated.close_all)
-        lab = LocalProcessLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
-                              max_jobs=args.max_jobs, max_parallel=1)
+        manifest = {entry['path']: entry for entry in data_manifest}
+        lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
+            max_jobs=args.max_jobs, max_parallel=1, python=args.python,
+            evaluation_root=context.data_dir / 'fixed-evaluations',
+            evaluation_groups=[{'benchmark_id': group['benchmark_id'],
+                'path': str(task_path.parent / group['path']), 'sha256': manifest[group['path']]['sha256']}
+                for group in task['development']])
         # Seed assets before construction returns. No research programs are started.
         (lab.workspace / 'data').mkdir()
         for name in relative_files:
@@ -340,7 +331,7 @@ def main(argv=None):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(task_path.parent / name, target)
         shutil.copyfile(task_path, lab.workspace / 'data/task.json')
-        (lab.workspace / 'reference_eval.py').write_text(EVALUATOR)
+        (lab.workspace / 'candidate.py').write_text(CANDIDATE)
         write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': weight_identity})
         return lab
     def make_decision(context, exploration):
@@ -355,7 +346,8 @@ def main(argv=None):
     memory_instructions = resources.files('rsisys.loops.decision_making.feedback').joinpath(
         'prompts/langmem_research.txt').read_text()
     assembly = ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
-        namespace=('rsisys', args.run_id), memory_options={'max_calls_per_job': 6, 'max_steps': 1,
+        namespace=('rsisys', args.run_id), admission=LocalLabMemoryAdmission(),
+        memory_options={'max_calls_per_job': 6, 'max_steps': 1,
             'parallel_tool_calls': False,
             'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
                 'Make one focused tool call per reply. Keep each memory to a few sentences; '

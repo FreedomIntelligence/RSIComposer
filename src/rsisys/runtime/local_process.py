@@ -1,6 +1,7 @@
 """Local process execution for trusted tasks. This is NOT a security sandbox."""
 
 from dataclasses import dataclass, field
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -73,17 +74,24 @@ class _Process:
     truncated: bool = False
     error: str | None = None
     readers: list[threading.Thread] = field(default_factory=list)
+    logs: dict = field(default_factory=dict)
 
 
 class LocalProcessBackend:
-    def __init__(self, root, *, max_output_bytes: int = 1024 * 1024):
+    def __init__(self, root, *, max_output_bytes: int = 1024 * 1024,
+                 max_log_bytes: int = 64 * 1024 * 1024):
         if type(max_output_bytes) is not int or max_output_bytes < 1:
             raise ValueError('max_output_bytes must be positive')
+        if type(max_log_bytes) is not int or max_log_bytes < 1:
+            raise ValueError('max_log_bytes must be positive')
         if not hasattr(os, 'waitid') and not hasattr(select, 'kqueue'):
             raise NotImplementedError('Local process cleanup requires waitid or kqueue exit observation')
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_output_bytes = max_output_bytes
+        self.max_log_bytes = max_log_bytes
+        self.log_root = self.root / 'logs'
+        self.log_root.mkdir(mode=0o700, exist_ok=True)
         self._sessions: dict[SandboxRef, tuple[Path, float]] = {}
         self._processes: dict[ProcessRef, _Process] = {}
 
@@ -120,11 +128,25 @@ class LocalProcessBackend:
         timeout = min(request.timeout_seconds, self._sessions[sandbox][1])
         # Do not inherit credential environment variables into model-generated commands.
         environment = {'PATH': os.environ.get('PATH', os.defpath), 'HOME': str(root),
-                       'TMPDIR': str(root), 'LANG': 'C.UTF-8'}
-        process = subprocess.Popen(request.argv, cwd=root, env=environment, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                       'TMPDIR': str(root), 'LANG': 'C.UTF-8', 'PYTHONUNBUFFERED': '1'}
         ref = ProcessRef(uuid4().hex, sandbox)
-        entry = _Process(process, timeout)
+        directory = Path(tempfile.mkdtemp(prefix=ref.process_id + '-', dir=self.log_root))
+        logs = {}
+        try:
+            for name in ('stdout', 'stderr'):
+                path, tail = directory / (name + '.bin'), directory / (name + '.tail.bin')
+                logs[name] = {'path': path, 'tail_path': tail,
+                    'file': path.open('x+b', buffering=0), 'tail_file': tail.open('x+b', buffering=0),
+                    'observed': 0, 'stored': 0, 'tail': bytearray(), 'sha256': None}
+            process = subprocess.Popen(request.argv, cwd=root, env=environment, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        except BaseException:
+            for log in logs.values():
+                log['file'].close()
+                log['tail_file'].close()
+            shutil.rmtree(directory)
+            raise
+        entry = _Process(process, timeout, logs=logs)
         self._processes[ref] = entry
         try:
             threading.Thread(target=self._watch, args=(entry,), daemon=True).start()
@@ -137,16 +159,32 @@ class LocalProcessBackend:
             raise
         return ref
 
-    def _drain(self, stream, target: bytearray, entry: _Process):
+    def _drain(self, stream, target: bytearray, entry: _Process, name):
         try:
             # Buffered read(size) can wait for size bytes or EOF, hiding short
             # flushed logs throughout a running program. read1 drains what is
             # available from the pipe without waiting to fill the buffer.
             while block := stream.read1(8192):
                 with entry.lock:
-                    room = max(0, self.max_output_bytes - len(target))
-                    target.extend(block[:room])
-                    entry.truncated = entry.truncated or len(block) > room
+                    log = entry.logs[name]
+                    log['observed'] += len(block)
+                    room = max(0, self.max_log_bytes - log['stored'])
+                    if room:
+                        kept = block[:room]
+                        log['file'].write(kept)
+                        log['stored'] += len(kept)
+                    log['tail'].extend(block)
+                    del log['tail'][:-self.max_output_bytes]
+                    log['tail_file'].seek(0)
+                    log['tail_file'].write(log['tail'])
+                    log['tail_file'].truncate()
+                    # Bounded head + tail for ordinary receipts. Full byte
+                    # windows come from the durable log, not this preview.
+                    target.extend(block)
+                    if len(target) > self.max_output_bytes:
+                        head = self.max_output_bytes // 2
+                        del target[head:len(target) - (self.max_output_bytes - head)]
+                        entry.truncated = True
         except Exception as exc:
             self._record_error(entry, exc)
         finally:
@@ -168,8 +206,9 @@ class LocalProcessBackend:
 
     def _watch(self, entry: _Process):
         try:
-            for stream, target in ((entry.process.stdout, entry.stdout), (entry.process.stderr, entry.stderr)):
-                reader = threading.Thread(target=self._drain, args=(stream, target, entry), daemon=True)
+            for name, stream, target in (('stdout', entry.process.stdout, entry.stdout),
+                                         ('stderr', entry.process.stderr, entry.stderr)):
+                reader = threading.Thread(target=self._drain, args=(stream, target, entry, name), daemon=True)
                 reader.start()
                 entry.readers.append(reader)
             try:
@@ -204,6 +243,16 @@ class LocalProcessBackend:
         for stream in (entry.process.stdout, entry.process.stderr)[len(entry.readers):]:
             stream.close()
         with entry.lock:
+            if any(reader.is_alive() for reader in entry.readers):
+                raise TimeoutError('Owned log readers did not finish; retain ownership for cleanup retry')
+            for log in entry.logs.values():
+                if not log['file'].closed:
+                    os.fsync(log['file'].fileno())
+                    os.fsync(log['tail_file'].fileno())
+                    log['file'].close()
+                    log['tail_file'].close()
+                    with log['path'].open('rb') as saved:
+                        log['sha256'] = hashlib.file_digest(saved, 'sha256').hexdigest()
             status = (JobStatus.FAILED if entry.error else
                       JobStatus.CANCELLED if entry.cancelled else
                       JobStatus.FAILED if entry.timed_out or code != 0 else JobStatus.SUCCEEDED)
@@ -211,7 +260,9 @@ class LocalProcessBackend:
             if entry.timed_out:
                 stderr += '\nExecution timed out'
             if entry.truncated:
-                stderr += '\nOutput was truncated at the configured byte limit'
+                stderr += '\nOutput was truncated in the preview; read durable logs for retained byte windows'
+            if any(log['observed'] > log['stored'] for log in entry.logs.values()):
+                stderr += '\nDurable log quota reached; retained head/tail coverage is explicit in logs'
             if entry.error:
                 stderr += '\n' + entry.error
             entry.state = ProcessState(status, entry.stdout.decode('utf-8', errors='replace'),
@@ -224,6 +275,43 @@ class LocalProcessBackend:
         if ref not in self._processes:
             raise ValueError('Unknown process reference')
         return self._processes[ref]
+
+    def log_info(self, ref: ProcessRef):
+        entry = self._get(ref)
+        with entry.lock:
+            return {name: {'path': str(log['path']), 'tail_path': str(log['tail_path']),
+                'observed_bytes': log['observed'], 'stored_bytes': log['stored'],
+                'tail_offset': log['observed'] - len(log['tail']), 'tail_bytes': len(log['tail']),
+                'quota_bytes': self.max_log_bytes, 'quota_exceeded': log['observed'] > log['stored'],
+                'tail_sha256': hashlib.sha256(log['tail']).hexdigest(),
+                'sha256': log['sha256'], 'complete': entry.state is not None}
+                for name, log in entry.logs.items()}
+
+    def read_log(self, ref: ProcessRef, stream, *, offset=None, max_bytes=8192):
+        if (stream not in ('stdout', 'stderr') or type(max_bytes) is not int or max_bytes < 1
+                or (offset is not None and (type(offset) is not int or offset < 0))):
+            raise ValueError('Invalid log stream or byte window')
+        entry = self._get(ref)
+        with entry.lock:
+            log = entry.logs[stream]
+            total, stored = log['observed'], log['stored']
+            tail_offset = total - len(log['tail'])
+            offset = max(0, total - max_bytes) if offset is None else offset
+            gap = None
+            if offset < stored:
+                with log['path'].open('rb') as saved:
+                    saved.seek(offset)
+                    raw = saved.read(min(max_bytes, stored - offset))
+            elif offset >= tail_offset:
+                raw = bytes(log['tail'][max(0, offset - tail_offset):max(0, offset - tail_offset) + max_bytes])
+            else:
+                raw = b''
+                gap = {'start': stored, 'end': tail_offset, 'next_retained_offset': tail_offset}
+            return {'stream': stream, 'offset': offset,
+                'next_offset': tail_offset if gap is not None else offset + len(raw),
+                'content': raw.decode('utf-8', errors='replace'), 'bytes': len(raw),
+                'observed_bytes': total, 'gap': gap, 'eof': offset + len(raw) >= total,
+                'complete': entry.state is not None, 'reference': self.log_info(ref)[stream]}
 
     def poll(self, ref: ProcessRef) -> ProcessState:
         entry = self._get(ref)

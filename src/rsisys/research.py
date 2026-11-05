@@ -17,7 +17,7 @@ from rsisys.loops.decision_making.feedback.pipeline import FeedbackPipeline
 from rsisys.loops.decision_making.feedback.context_memory import validate_context_memory
 from rsisys.loops.decision_making.feedback.archive import validate_archive
 from rsisys.loops.decision_making.feedback.scheduling import validate_scheduler
-from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer
+from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer, FeedbackAdmissionPolicy
 from rsisys.runtime.files import atomic_write, json_bytes
 
 
@@ -55,6 +55,7 @@ class ResearchAssembly:
     scheduler: FeedbackScheduler | None = None
     proposal_requires_memory: bool = False
     failure_policy: FeedbackFailurePolicy = field(default_factory=FeedbackFailurePolicy)
+    admission: FeedbackAdmissionPolicy | None = None
 
     def __post_init__(self):
         self.validate()
@@ -64,6 +65,8 @@ class ResearchAssembly:
         validate_archive(self.trajectory_archive)
         if self.scheduler is not None:
             validate_scheduler(self.scheduler)
+        if self.admission is not None and not callable(getattr(self.admission, 'admit', None)):
+            raise TypeError('Feedback admission requires admit(event, pending)')
         if not isinstance(self.failure_policy, FeedbackFailurePolicy):
             raise TypeError('failure_policy must be a FeedbackFailurePolicy')
         FeedbackPipeline(memory_processor=self.memory_processor, harness_proposals=self.harness_proposals,
@@ -86,7 +89,8 @@ class ResearchAssembly:
         return 'journal' if type(self.context_memory) is JournalContextMemory else 'custom'
 
     def configuration(self):
-        return {'schema_version': 4, 'entrypoint': 'rsisys.research.assemble_research',
+        return {**({'admission': _component(self.admission)} if self.admission is not None else {}),
+            'schema_version': 4, 'entrypoint': 'rsisys.research.assemble_research',
             'context_protocol': 'text-v1', 'context_delivery': 'replace_current_view',
             'archive_protocol': 'raw-event-v1', 'processor_protocol': 'product-v1',
             'proposal_protocol': 'product-v1', 'scheduler_protocol': 'selection-v1',
@@ -129,7 +133,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     assembly.validate()
     reserved = {'context_memory', 'processor', 'trajectory_archive', 'assembly_configuration',
                 'memory_processor', 'harness_proposals', 'improvement_proposals',
-                'scheduler', 'proposal_requires_memory', 'failure_policy'}
+                'scheduler', 'proposal_requires_memory', 'failure_policy', 'admission'}
     if reserved.intersection(learning_options):
         raise ValueError('Configure research products through ResearchAssembly')
     if getattr(loop, 'feedback_service', None) is not None:
@@ -150,7 +154,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     enable_feedback_learning(loop, path=path, backend=backend, model=model, model_provider=model_provider,
         adapter=adapter,
         context_memory=assembly.context_memory, trajectory_archive=assembly.trajectory_archive,
-        scheduler=assembly.scheduler, failure_policy=assembly.failure_policy,
+        scheduler=assembly.scheduler, failure_policy=assembly.failure_policy, admission=assembly.admission,
         processor=FeedbackPipeline(memory_processor=assembly.memory_processor,
                                    harness_proposals=assembly.harness_proposals,
                                    improvement_proposals=assembly.improvement_proposals,

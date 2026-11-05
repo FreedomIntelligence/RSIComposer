@@ -56,6 +56,23 @@ class PendingFeedback:
     capture_index: int
 
 
+@dataclass(frozen=True)
+class FeedbackAdmission:
+    """Organization decision only; original events/context are never discarded."""
+    organize: bool = True
+    coalesce: tuple[str, ...] = ()
+    reason: str = ''
+
+
+class FeedbackAdmissionPolicy(Protocol):
+    """Optional pre-queue policy, independent of the memory implementation.
+
+    coalesce names only queued events represented by this new organization job.
+    No running job, original receipt, archive or model allowance can be changed.
+    """
+    def admit(self, event: FeedbackContextEvent, pending: tuple[PendingFeedback, ...]) -> FeedbackAdmission: ...
+
+
 class FeedbackScheduler(Protocol):
     """Choose one pending event, or None to defer until a later host refresh.
 

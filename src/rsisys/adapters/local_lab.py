@@ -71,6 +71,13 @@ class LocalProcessLab:
              ['key', 'argv'], False),
             ('lab_poll', 'Observe a known owned job without delivering a research result. When terminal, use lab_result for feedback/memory. Native stdout/stderr are not automatically validated metrics or adoption.',
              {'job_id': text}, ['job_id'], True),
+            ('lab_status', 'Read current owned jobs and recent terminal jobs, independently of remembered history.',
+             {}, [], True),
+            ('lab_read_log', 'Read durable stdout/stderr by byte offset. Omit offset for the latest tail. Returns exact retained coverage and any quota gap.',
+             {'job_id': text, 'stream': {'enum': ['stdout', 'stderr']},
+              'offset': {'type': 'integer', 'minimum': 0},
+              'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': self.max_file_bytes}},
+             ['job_id', 'stream'], True),
             ('lab_result', 'Collect terminal evidence for feedback. Repeated collection is archived but organizes memory once per result event. Set reprocess=true to explicitly organize the same result again, without rerunning the program. Inspect lab_poll first; collection does not validate evaluation or adoption.',
              {'job_id': text, 'reprocess': {'type': 'boolean'}}, ['job_id'], False),
             ('lab_cancel', 'Request cancellation of a known owned job. Poll to confirm exit; acknowledgement is not completion.',
@@ -97,6 +104,20 @@ class LocalProcessLab:
             raise RuntimeError('Lab is shutting down; new work is closed')
         if call.name == 'lab_start':
             return self._start(args)
+        if call.name == 'lab_status':
+            return OperationResult('Current owned Lab state', (), False, data=self._status())
+        if call.name == 'lab_read_log':
+            ident = args['job_id']
+            if not isinstance(ident, str) or ident not in self._jobs:
+                raise LabToolError('Unknown owned Lab job')
+            maximum = args.get('max_bytes', min(8192, self.max_file_bytes))
+            offset = args.get('offset')
+            if (args['stream'] not in ('stdout', 'stderr') or type(maximum) is not int
+                    or not 1 <= maximum <= self.max_file_bytes
+                    or (offset is not None and (type(offset) is not int or offset < 0))):
+                raise LabToolError('Invalid log stream or byte window')
+            data = self.backend.read_log(self._jobs[ident][0], args['stream'], offset=offset, max_bytes=maximum)
+            return OperationResult('Owned process log window', (), False, data={'job_id': ident, **data})
         if call.name in ('lab_poll', 'lab_result', 'lab_cancel'):
             ident = args['job_id']
             if not isinstance(ident, str) or ident not in self._jobs:
@@ -139,15 +160,20 @@ class LocalProcessLab:
             if previous != request:
                 raise LabToolError('Submission key was already used for different arguments; '
                                    'use a new key for changed arguments. The original submission is unchanged')
+            state = self.backend.poll(self._jobs[ident][0])
+            return OperationResult('Existing submission; no program was started again', (), False,
+                data={'job_id': ident, 'state': state.status.value, 'argv': list(request.argv),
+                      'replayed': True})
         else:
             if len(self._jobs) >= self.max_jobs:
                 raise PermissionError('Host job admission limit reached')
-            active = sum(self.backend.poll(ref).status not in TERMINAL_STATUSES for ref, _ in self._jobs.values())
-            if active >= self.max_parallel:
+            active = self._status()['active_jobs']
+            if len(active) >= self.max_parallel:
                 # A busy slot is temporary backpressure, not a permission
                 # denial. No process or key is reserved until admission succeeds.
                 raise LabToolError('Host parallel execution slots are busy; use lab_poll or lab_cancel '
-                                   'on an existing job, then retry after a slot is released')
+                                   'on an existing job, then retry after a slot is released',
+                                   data={'reason': 'execution_busy', 'active_jobs': active})
             try:
                 ref = self.backend.exec(self.session, request)
             except OSError as exc:
@@ -162,7 +188,22 @@ class LocalProcessLab:
         # The action completed submission, not the program/experiment. Always
         # report the submission separately, even when the process exited fast.
         return OperationResult('Command submitted; program completion is not confirmed', (), False,
-                               data={'job_id': ident, 'state': 'submitted', 'argv': list(request.argv)})
+                               data={'job_id': ident, 'state': 'submitted', 'argv': list(request.argv),
+                                     'replayed': False})
+
+    def _status(self):
+        active, terminal = [], []
+        for ident, (ref, request) in self._jobs.items():
+            state = self.backend.poll(ref)
+            row = {'job_id': ident, 'state': state.status.value,
+                   'poll': {'operation': 'lab_poll', 'job_id': ident},
+                   'logs': {'operation': 'lab_read_log', 'job_id': ident}}
+            (terminal if state.status in TERMINAL_STATUSES else active).append(row)
+        return {'active_jobs': active, 'recent_terminal_jobs': terminal[-8:],
+                'terminal_jobs_total': len(terminal), 'accepting': self._accepting}
+
+    def runtime_context(self):
+        return json.dumps(self._status(), ensure_ascii=False, separators=(',', ':'))
 
     def _observe(self, ident):
         if ident in self._terminal:
@@ -172,6 +213,7 @@ class LocalProcessLab:
         data = {'job_id': ident, 'state': state.status.value, 'argv': list(request.argv),
                 'stdout': state.stdout, 'stderr': state.stderr, 'exit_code': state.exit_code,
                 'failure_origin': state.failure_origin}
+        data['logs'] = self.backend.log_info(ref)
         terminal = state.status in TERMINAL_STATUSES
         status = (ExecutionStatus.FAILED if state.status == JobStatus.FAILED else
                   ExecutionStatus.CANCELLED if state.status == JobStatus.CANCELLED else ExecutionStatus.COMPLETED)

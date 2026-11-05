@@ -1,5 +1,11 @@
 # Meta-agent 的反馈整理与路由
 
+可选入队策略 `FeedbackAdmissionPolicy.admit(event, pending)` 可在昂贵整理前跳过或合并
+排队事件；原始回执、即时 context、context observer 和轨迹仍保留，running 任务与预算不可修改。
+不配置时保留原行为。医疗默认实现跳过 busy/提交确认等重复状态，优先整理终态证据。
+LangMem 在完整原生请求组装后计量，容量错误结束该 job，不进入 patch 修复循环。
+详见[夜间实测修复](../../../../../docs/review/lion-followup-repair-20261105.md)。
+
 这里负责记录 decision / Lab 原始回执，并整理研究记忆及可选改进提案。
 Context / Memory 的公开出口已收敛为 `context(query) -> str`；
 [接口、SDK 适配与实际请求接线](../../../../../docs/review/feedback-context-window-20261104.md)

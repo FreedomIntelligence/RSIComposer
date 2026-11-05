@@ -63,6 +63,13 @@ can implement and revise training/evaluation themselves. `lab_poll` observations
 are query archives; `lab_result` collects terminal evidence into the ordinary
 feedback/memory path. Stdout is retained as native output, not verified metrics.
 Start keys prevent duplicate jobs within this process; submission is not completion.
+Optional `runtime_context() -> str` supplies a fresh provider view to the default
+harness under `research_agenda.runtime_context`, independently of memory and
+history compaction. No common native job schema is required. The local provider
+also exposes `lab_status` and byte-window `lab_read_log`; busy failures carry
+current owners and exact-key replay carries current state with `replayed=true`.
+Log references survive workspace cleanup, with explicit head/tail coverage when
+the host's durable stream quota is exceeded.
 Temporary parallel saturation and changed arguments under an existing start key
 return failed tool feedback. Neither starts work or changes the original binding;
 decision must free a slot or choose a new key before trying a valid submission.

@@ -14,6 +14,7 @@ from pydantic import Field
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
 from rsisys.runtime.model import ModelResponseError, parse_tool_response
+from rsisys.loops.decision_making.feedback.model_gateway import FeedbackCapacityError, NativeAdmissionAbort
 
 
 class BackendChatModel(BaseChatModel):
@@ -23,6 +24,7 @@ class BackendChatModel(BaseChatModel):
     model_ref: ModelRef
     max_output_tokens: int = Field(default=4096, gt=0)
     parallel_tool_calls: bool | None = None
+    abort_on_capacity: bool = False
 
     @property
     def _llm_type(self):
@@ -58,7 +60,12 @@ class BackendChatModel(BaseChatModel):
             max_output_tokens=self.max_output_tokens)
         # The backend wrapper owns admission, exact-request counting and audit.
         # Never unwrap it to call a provider SDK or a forwarded observer method.
-        response = self.backend.generate(request)
+        try:
+            response = self.backend.generate(request)
+        except FeedbackCapacityError as exc:
+            if self.abort_on_capacity:
+                raise NativeAdmissionAbort(str(exc)) from exc
+            raise
         if response.model != request.model:
             raise ModelResponseError('Memory model identity mismatch', reason='model_identity_mismatch')
         calls = response.tool_calls
