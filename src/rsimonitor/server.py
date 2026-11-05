@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+SHA256 = re.compile(r"[A-Fa-f0-9]{64}\Z")
 MAX_BYTES = 4 * 1024 * 1024
 MAX_ROWS = 300
 MAX_METRIC_HISTORY = 1000
@@ -35,16 +36,16 @@ DETAIL_KEYS = {"job_id", "candidate_id", "model_id", "revision", "base_revision"
                "review_status", "total_steps", "elapsed_seconds", "completed_directives",
                "selection", "applied", "answer_correct", "training_review_count"}
 WORKFLOW_FIELDS = ("phase", "round", "rounds", "completed_directives", "elapsed_seconds")
-CURRENT_FIELDS = ("directive_id", "mode", "status", "phase", "strategy", "decision_revision", "actor_revision",
+CURRENT_FIELDS = ("directive_id", "mode", "status", "state", "phase", "strategy", "decision_revision", "actor_revision",
                   "job_id", "elapsed_seconds", "review_after_seconds", "next_review_seconds", "review_status",
                   "step", "total_steps")
 DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
-                   "strategy", "reason", "status", "decision_revision", "actor_revision", "job_id", "candidate_id",
+                   "strategy", "reason", "status", "state", "decision_revision", "actor_revision", "job_id", "candidate_id",
                    "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation", "parent_decision_id",
                    "feedback_summary", "error")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
-JOB_FIELDS = ("job_id", "kind", "status", "role", "candidate_id", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
+JOB_FIELDS = ("job_id", "kind", "status", "state", "role", "candidate_id", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
 PRIVATE_KEY = re.compile(r"secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|response|payload|sample|dataset|training_data", re.I)
 
 
@@ -119,6 +120,86 @@ def metric_history_only(value):
 def metric_text(value, limit=200):
     """Validate public metric text without truncating names or identities."""
     return isinstance(value, str) and 0 < len(value) <= limit and bool(value.strip())
+
+
+def reported_text(source, fields, limit=1000):
+    """Optional public text; reject malformed identities instead of truncating them."""
+    if not isinstance(source, dict):
+        return {}
+    return {key: source[key] for key in fields if metric_text(source.get(key), limit)}
+
+
+def feedback_state_only(source):
+    """Archiving raw feedback and updating memory are separate reported states."""
+    result = reported_text(source, ("archive_status", "memory_status"))
+    if isinstance(source, dict) and source.get("feedback_route") in ("context", "memory"):
+        result["feedback_route"] = source["feedback_route"]
+    return result
+
+
+def lifecycle_only(source):
+    if not isinstance(source, dict):
+        return {}
+    result = reported_text(source, ("finished_at", "stop_reason"))
+    cleanup = source.get("cleanup")
+    if isinstance(cleanup, dict) and type(cleanup.get("confirmed")) is bool:
+        result["cleanup"] = {"confirmed": cleanup["confirmed"]}
+    return result
+
+
+def history_window_only(source):
+    if not isinstance(source, dict):
+        return {}
+    result = {key: source[key] for key in ("limit", "total")
+              if type(source.get(key)) is int and source[key] >= 0 and scalar(source[key]) is not None}
+    if type(source.get("truncated")) is bool:
+        result["truncated"] = source["truncated"]
+    return result
+
+
+def evaluations_only(source):
+    """Reported evaluation records, never reconstructed from actions or summaries."""
+    if not isinstance(source, list):
+        return []
+    result, seen = [], set()
+    # Prefer the most recent report of an explicit immutable identity. Rows
+    # without identity remain separate even when their scores happen to match.
+    for row in reversed(source[-MAX_ROWS:]):
+        if not isinstance(row, dict) or row.get("verified") is False:
+            continue
+        item = reported_text(row, ("evaluation_id", "job_id", "decision_id", "candidate_id", "protocol", "role"))
+        for key in ("record_sha256", "dataset_sha256", "evaluator_sha256"):
+            if isinstance(row.get(key), str) and SHA256.fullmatch(row[key]):
+                item[key] = row[key]
+        datasets = row.get("dataset_sha256")
+        if isinstance(datasets, dict):
+            digests = {name: digest for name, digest in list(datasets.items())[:100]
+                       if metric_text(name, 100) and not PRIVATE_KEY.search(name)
+                       and isinstance(digest, str) and SHA256.fullmatch(digest)}
+            if digests:
+                item["dataset_sha256"] = digests
+        if "metrics" in row:
+            item["metrics"] = metrics_only(row["metrics"])
+        if type(row.get("adopted")) is bool:
+            item["adopted"] = row["adopted"]
+        identity = row.get("weight_identity")
+        if metric_text(identity, 1000):
+            item["weight_identity"] = identity
+        elif isinstance(identity, dict):
+            weight = reported_text(identity, ("kind", "status", "backend_id", "model_id",
+                                              "revision", "sha256", "digest"))
+            if weight:
+                item["weight_identity"] = weight
+        key = (("record_sha256", item["record_sha256"].lower()) if "record_sha256" in item
+               else ("evaluation_id", item["evaluation_id"]) if "evaluation_id" in item
+               else ("job_id", item["job_id"]) if "job_id" in item else None)
+        if key is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        if item:
+            result.append(item)
+    return list(reversed(result))
 
 
 def metric_definitions_only(value):
@@ -286,10 +367,18 @@ def project_snapshot(raw, run_id):
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
     result = pick(raw, ("objective", "status", "updated_at"))
     result.update(schema_version=1, run_id=run_id, experiment_name=experiment_name(raw, run_id))
+    if type(raw.get("weight_applied")) is bool:
+        result["weight_applied"] = raw["weight_applied"]
     if isinstance(raw.get("parent_run_id"), str):
         result["parent_run_id"] = raw["parent_run_id"][:128]
     if isinstance(raw.get("source_run_ids"), list):
         result["source_run_ids"] = [v[:128] for v in raw["source_run_ids"][:100] if isinstance(v, str)]
+    for key, projection in (("lifecycle", lifecycle_only), ("history_window", history_window_only)):
+        value = projection(raw.get(key))
+        if value:
+            result[key] = value
+    if isinstance(raw.get("evaluations"), list):
+        result["evaluations"] = evaluations_only(raw["evaluations"])
     interpreted = attempt_interpretations(raw.get("research_attempts"))
     if interpreted is not None:
         result["research_attempts"] = interpreted
@@ -308,6 +397,7 @@ def project_snapshot(raw, run_id):
                         for key in ("decision_maker", "actor")} if isinstance(raw.get("models"), dict) else {}
     result["workflow"] = pick(raw.get("workflow"), WORKFLOW_FIELDS)
     result["current"] = pick(raw.get("current"), CURRENT_FIELDS)
+    result["current"].update(feedback_state_only(raw.get("current")))
     if isinstance(raw.get("current"), dict) and "metrics" in raw["current"]:
         result["current"]["metrics"] = metrics_only(raw["current"]["metrics"])
     for key, fields in (("jobs", JOB_FIELDS),
@@ -329,6 +419,8 @@ def project_snapshot(raw, run_id):
                 item["details"] = pick(row.get("details"), DETAIL_KEYS)
             if key == "jobs" and "metric_history" in row:
                 item["metric_history"] = metric_history_only(row["metric_history"])
+            if key == "jobs":
+                item.update(reported_text(row, ("observed_at", "decision_id")))
             if key == "decisions" and isinstance(row.get("changes"), list):
                 # Explicit public action summaries only; never expose arbitrary payloads.
                 item["changes"] = []
@@ -340,6 +432,7 @@ def project_snapshot(raw, run_id):
                     if values:
                         item["changes"].append({"field": change["field"][:100], **values})
             if key == "decisions":
+                item.update(feedback_state_only(row))
                 attempt_id, title = row.get("research_attempt_id"), row.get("research_attempt_title")
                 if (isinstance(attempt_id, str) and 0 < len(attempt_id) <= 200 and attempt_id.strip()
                         and isinstance(title, str) and title.strip()):

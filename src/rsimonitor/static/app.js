@@ -19,6 +19,7 @@ const labels = {
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
+  lab_status: "查看实验状态", lab_start: "启动程序", lab_poll: "查看任务进度", lab_result: "读取任务结果", lab_cancel: "取消任务", lab_read_file: "读取文件", lab_read_log: "读取任务日志", lab_write_file: "写入文件", lab_export: "保存产物", lab_program: "实验程序", medical_evaluate: "提交固定评测",
   system_adopt: "合并采用改动", configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案", read_artifact: "查阅资料", preview_training_data: "预览训练数据",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
   evaluate: "验证改动效果", evaluation: "验证改动效果", candidate_evaluation: "验证改动效果", select: "选择版本", apply_candidate: "采用改动", execute: "执行任务",
@@ -27,6 +28,7 @@ const actionLabels = {
   search: "搜索资料", read: "读取资料", web_search: "搜索网页", fetch: "获取资料", query_jobs: "查询任务", query_candidates: "查询候选", query_metrics: "查询指标", inspect_job: "查看任务", inspect_candidate: "查看候选", list_jobs: "查看任务列表", list_candidates: "查看候选列表",
 };
 const metricLabels = {
+  model_calls: "模型调用", compactions: "上下文压缩",
   loss: "损失", train_loss: "训练损失", "train.loss": "训练损失", "train/loss": "训练损失", eval_loss: "评测损失", learning_rate: "学习率", lr: "学习率", "train/learning_rate": "学习率",
   nll: "负对数似然", base_nll: "基线 NLL", candidate_nll: "候选 NLL", delta_nll: "上报 NLL 差值", heldout_nll_delta: "验证 NLL 差值", eval_samples: "评测样本数", num_samples: "样本数", sample_count: "样本数", accuracy: "准确率", score: "得分", grad_norm: "梯度范数", epoch: "训练轮数", runtime: "耗时", train_runtime: "训练耗时", total_flos: "浮点运算量",
 };
@@ -47,6 +49,12 @@ const ratioMetric=(key,value)=>/(?:^|[./])(?:accuracy|macro_f1|f1)$/.test(key)&&
 const metricNumber=(key,value)=>ratioMetric(key,value)?`${Number((value*100).toFixed(2))}%`:fmt(value);
 function el(tag, className = "", text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = asText(text); return e; }
 function badge(v) { const k = statusKey(v); return el("span", `badge ${FAILED.has(k) || REJECTED.has(k) ? "failure" : DONE.has(k) || ACCEPTED.has(k) ? "success" : ACTIVE.has(k) ? "active" : ""}`, statusText(v)); }
+function runTerminal(s) { const k=statusKey(s?.status);return DONE.has(k)||FAILED.has(k)||["stopped","host_limit_reached","deadline_reached_before_start"].includes(k); }
+function observedBadge(value,s) {
+  if(runTerminal(s)&&ACTIVE.has(statusKey(value)))return el("span","badge last-observed",t("最后观测：{p0}",{p0:statusText(value)}));
+  return badge(value);
+}
+function runBadge(value) { return DONE.has(statusKey(value))?el("span","badge",t("已结束")):badge(value); }
 function empty(text) { return el("p", "subtle-empty", text); }
 function dateText(v, withDate = true) { if (!v) return t("时间未报告"); const d = new Date(v); if (Number.isNaN(d.getTime())) return t("时间未报告"); return new Intl.DateTimeFormat(RSII18n.getLanguage() === "zh" ? "zh-CN" : "en-US", { ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d); }
 function secondsText(v) { if (!number(v) || v < 0) return t("未报告"); if (v > 0 && v < 1) return t("不足 1 秒"); const s = Math.floor(v); return [s >= 3600 ? t("{p0} 小时", {p0: Math.floor(s / 3600)}) : "", s >= 60 ? t("{p0} 分", {p0: Math.floor(s % 3600 / 60)}) : "", t("{p0} 秒", {p0: s % 60})].filter(Boolean).join(" "); }
@@ -83,7 +91,7 @@ function progressView(step, total) {
 function decisionAction(row) { if (row.kind === "review") return row.action || row.mode; if (row.kind === "operation") return row.operation || row.action || row.mode; return row.mode || row.action || (["finish","wait"].includes(row.kind) ? row.kind : undefined); }
 function decisionTitle(row) {
   const action=decisionAction(row);
-  if(Object.hasOwn(actionLabels,action))return actionText(action);
+  if(Object.hasOwn(actionLabels,action)||["invoke","explore"].includes(row.kind))return actionText(action);
   const strategy=typeof row.strategy==="string"?row.strategy.trim():"";
   if(strategy&&[...strategy].length<=80&&strategy!==action&&/\p{L}/u.test(strategy)&&!/^[\w.:/\\-]+$/.test(strategy)&&!/[\r\n]/.test(strategy))return strategy;
   return actionText(action);
@@ -132,7 +140,7 @@ function feedbackFor(row, s) {
   else if (decisionAction(row) === "finish") text = t("模型提出结束本轮研究。");
   else if (FAILED.has(statusKey(status))) text = t("执行失败或已取消。");
   else if (DONE.has(statusKey(status))) text = t("执行已完成。");
-  else if (ACTIVE.has(statusKey(status))) text = t("执行中，等待最终反馈。");
+  else if (ACTIVE.has(statusKey(status))) text = runTerminal(s)?t("实验已结束，终态未报告。"):t("执行中，等待最终反馈。");
   else if (status === "proposed") text = t("已提出，尚未报告执行结果。");
   else text = t("尚未报告执行反馈。");
   if (candidate && row.kind !== "review" && decisionAction(row) !== "train") text += t(" 候选{p0}（当前快照）。", {p0: ACCEPTED.has(statusKey(candidate.status)) ? t("已采纳") : REJECTED.has(statusKey(candidate.status)) ? t("未采纳") : t("状态尚未确定")});
@@ -207,6 +215,14 @@ function comparisonView(metrics) {
   for (const name of [t("指标"),t("基线"),t("新版本"),t("新版本 − 基线")]) {const th=el("th","",name);th.scope="col";hr.append(th);}head.append(hr);
   for (const m of pairs) { const row=el("tr"), delta=number(m.base)&&number(m.next)?m.next-m.base:undefined;row.append(el("td","",metricText(m.name)),el("td","",metricNumber(m.name,m.base)),el("td","",metricNumber(m.name,m.next)),el("td","",number(delta)?`${delta>0?"+":""}${ratioMetric(m.name,m.base)&&ratioMetric(m.name,m.next)?`${Number((delta*100).toFixed(2))} pp`:fmt(delta)}`:"—"));body.append(row); }table.append(head,body);wrap.append(table);if(Object.keys(extra).length)wrap.append(metricStrip(extra));return wrap;
 }
+function formalEvaluations(s) {
+  const seen=new Set(),rows=[];
+  for(const row of list(s.evaluations).slice().reverse()){
+    const key=identifier(row.record_sha256)?`record:${row.record_sha256.toLowerCase()}`:identifier(row.evaluation_id)?`evaluation:${row.evaluation_id}`:identifier(row.job_id)?`job:${row.job_id}`:null;
+    if(key&&seen.has(key))continue;if(key)seen.add(key);rows.push(row);
+  }
+  return rows.reverse();
+}
 function dashboardData(s) {
   const definitions={...object(s.metric_definitions)},points=[];
   const evaluations=RSIDecisions.layout(list(s.decisions)).nodes.filter(n=>n.row&&n.row.kind!=="review"&&["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(n.row))).map(n=>n.row);
@@ -214,18 +230,19 @@ function dashboardData(s) {
   if(explicit){
     for(const point of list(s.metric_points))if(identifier(point.metric)&&number(point.value))points.push({...point});
   }else{
-    evaluations.forEach((row,index)=>{
+    const measured=Array.isArray(s.evaluations)?formalEvaluations(s):evaluations;
+    measured.forEach((row,index)=>{
       const metrics=flattenMetrics({...object(row.metrics),...object(object(row.feedback).metrics)});
-      for(const [metric,value] of Object.entries(metrics))points.push({metric,value,evaluation:index+1,decision_id:row.decision_id,attempt_id:row.research_attempt_id});
+      for(const [metric,value] of Object.entries(metrics))points.push({metric,value,evaluation:index+1,task_id:row.job_id,decision_id:row.decision_id,attempt_id:row.research_attempt_id});
     });
     for(const job of list(s.jobs).filter(job=>job.role!=="baseline"&&job.job_id!=="evaluation:initial")){
       for(const point of historyRows(job))for(const [metric,value] of Object.entries(flattenMetrics(point.metrics)))points.push({metric,value,step:point.step,elapsed_seconds:point.elapsed_seconds,task_id:job.job_id});
-      for(const [metric,value] of Object.entries(flattenMetrics(job.metrics)))if(!points.some(point=>point.metric===metric&&number(point.evaluation)))points.push({metric,value,step:job.step,elapsed_seconds:job.elapsed_seconds,task_id:job.job_id});
+      for(const [metric,value] of Object.entries(flattenMetrics(job.metrics)))if(!Array.isArray(s.evaluations)&&!points.some(point=>point.metric===metric&&number(point.evaluation)))points.push({metric,value,step:job.step,elapsed_seconds:job.elapsed_seconds,task_id:job.job_id});
     }
   }
   const keys=[...new Set([...Object.keys(definitions),...points.map(p=>p.metric)])];
   for(const key of keys)if(!definitions[key])definitions[key]={label:metricText(key),unit:!explicit&&/(?:^|[./])(?:accuracy|macro_f1|f1)$/.test(key)?"percent":"number",direction:"neutral"};
-  return {definitions,points,keys,evaluationCount:explicit?0:evaluations.length};
+  return {definitions,points,keys,evaluationCount:explicit?0:Array.isArray(s.evaluations)?formalEvaluations(s).length:evaluations.length};
 }
 function dashboardYConfig(value) {
   if(!value||typeof value!=="object"||Array.isArray(value))return undefined;
@@ -289,7 +306,8 @@ function dashboardPanel(panel,data,s) {
   const card=el("article","benchmark-card dashboard-panel"),heading=el("div","detail-heading"),series=dashboardSeries(panel,data,s),content=el("div","dashboard-chart-body");
   heading.append(el("h5","",panel.title||t("未命名面板")));card.append(heading,content);
   const baseline=metric=>{
-    const matches=list(s.jobs).filter(j=>j.role==="baseline"||(j.job_id==="evaluation:initial"&&!present(j.directive_id))).map(j=>flattenMetrics(j.metrics)[metric]).filter(number);
+    const formal=formalEvaluations(s).filter(j=>j.role==="baseline"&&number(flattenMetrics(j.metrics)[metric]));
+    const matches=(formal.length?formal:list(s.jobs)).filter(j=>j.role==="baseline"||(j.job_id==="evaluation:initial"&&!present(j.directive_id))).map(j=>flattenMetrics(j.metrics)[metric]).filter(number);
     return matches.length===1?matches[0]:undefined;
   };
   if(panel.type==="scalar"){
@@ -529,13 +547,39 @@ function concreteFeedback(row) {
   if(normalized===`${decisionAction(row)} completed`.toLowerCase())return "";
   return /^(?:执行已完成[。.]?|执行完成[。.]?|completed[.!]?|done[.!]?|success[.!]?|configure_prompt completed)$/i.test(summary.trim())?"":summary;
 }
+function feedbackRouting(row) {
+  const parts=[];
+  if(row.feedback_route==="context")parts.push(t("即时上下文"));
+  if(row.feedback_route==="memory")parts.push(t("记忆整理请求"));
+  if(row.archive_status==="archived")parts.push(t("已归档"));
+  const memory={requested:"记忆整理请求",queued:"记忆整理排队中",pending:"记忆整理排队中",running:"记忆整理中",processing:"记忆整理中",completed:"记忆整理完成",failed:"记忆整理失败"}[row.memory_status];
+  if(memory)parts.push(t(memory));
+  return parts.length?el("p","feedback-routing",[...new Set(parts)].join(" · ")):null;
+}
+function runObservations(s) {
+  const section=el("section","run-observations"),metrics=metricStrip(object(s.current).metrics);if(metrics.childElementCount)section.append(metrics);
+  if(present(s.lifecycle?.stop_reason))section.append(el("p","run-stop",t({host_deadline_or_signal:"到达宿主截止时间或收到停止信号",host_deadline:"到达设定时间",host_signal:"收到停止信号",inference_admission_limit:"达到模型调用额度"}[s.lifecycle.stop_reason])||s.lifecycle.stop_reason));
+  const state=el("dl","observation-summary");
+  const entry=(label,value)=>{const pair=el("div");pair.append(el("dt","",t(label)),el("dd","",value));state.append(pair);};
+  if(list(s.decisions).some(row=>["invoke","explore"].includes(row.kind))){
+    entry("正式评测",Array.isArray(s.evaluations)?t("{p0} 次已报告",{p0:formalEvaluations(s).length}):t("未报告"));
+    entry("训练指标",list(s.jobs).some(j=>historyRows(j).some(p=>Object.keys(flattenMetrics(p.metrics)).some(key=>lossKeys.includes(key)))||Object.keys(flattenMetrics(j.metrics)).some(key=>lossKeys.includes(key)))?t("已报告"):t("未报告"));
+    const evaluated=formalEvaluations(s),adopted=evaluated.some(row=>row.adopted===true)||list(s.candidates).some(row=>ACCEPTED.has(statusKey(row.status)));
+    entry("结果采纳",adopted?t("已报告采纳"):evaluated.length&&evaluated.every(row=>row.adopted===false)?t("未采纳"):t("未报告"));
+    entry("权重应用",typeof s.weight_applied==="boolean"?t(s.weight_applied?"已报告应用":"未应用"):t("未报告"));
+    if(runTerminal(s))entry("资源清理",typeof s.lifecycle?.cleanup?.confirmed==="boolean"?t(s.lifecycle.cleanup.confirmed?"已确认":"未确认"):t("未报告"));
+  }
+  if(state.childElementCount)section.append(state);
+  if(s.history_window?.truncated===true)section.append(el("p","quiet-note history-window",t("显示最近 {p0} 条决策，共 {p1} 条。",{p0:list(s.decisions).length,p1:s.history_window.total??t("未报告")})));
+  return section;
+}
 function decisionStep(row,s,index) {
   const f=feedbackFor(row,s);
   const step=el("li","flow-step"),marker=el("span","flow-index",String(index+1).padStart(2,"0"));
   const decision=el("div","flow-decision"),feedback=el("div","flow-feedback"),metrics=el("div","flow-metrics");
   const meta=el("p","quiet-note",`${dateText(row.timestamp)}${number(row.round)?t(" · 第 {p0} 轮", {p0: row.round}):""}`);
   const title=decisionTitle(row);decision.append(el("h4","",title),meta);
-  if(present(row.reason))decision.append(el("p","flow-label",t("决策理由")),el("p","decision-reason",row.reason));
+  if(present(row.reason))decision.append(el("p","flow-label",t(["invoke","explore"].includes(row.kind)?"模型判断":"决策理由")),el("p","decision-reason",row.reason));
   if(present(row.strategy)&&row.strategy!==row.reason&&row.strategy!==decisionAction(row)&&asText(row.strategy,"").trim()!==title)decision.append(el("p","decision-reason",row.strategy));
   const changes=changesView(row,s);if(changes)decision.append(changes);
   if(["evaluate","evaluation","candidate_evaluation"].includes(decisionAction(row))){
@@ -544,8 +588,9 @@ function decisionStep(row,s,index) {
     decision.append(el("p","evaluation-purpose",prompt?t("检验新提示词的效果。"):t("检验待验证版本的效果。")));
   }
   const explicit=concreteFeedback(row),error=object(row.feedback).error||row.error;
-  if(explicit||error){feedback.append(el("p","flow-label",t("实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
+  if(explicit||error){feedback.append(el("p","flow-label",t(["invoke","explore"].includes(row.kind)?"即时结果":"实际结果")));if(explicit)feedback.append(el("p","result-summary",explicit));if(error&&error!==explicit)feedback.append(el("p","result-error",error));}
   else if(!DONE.has(statusKey(f.status))||row.kind==="review"||decisionAction(row)==="finish")feedback.append(el("p","",f.text));
+  const routing=feedbackRouting(row);if(routing)feedback.append(routing);
   if(row.kind==="review"&&f.job)feedback.append(el("p","quiet-note",t("关联任务当前{p0}；不代表复查当时状态。", {p0: statusText(f.job.status)})));
   if(row.kind!=="review"&&f.job&&present(f.job.step))feedback.append(progressView(f.job.step,f.job.total_steps));
   if(Object.keys(flattenMetrics(f.metrics)).length)metrics.append(el("p","flow-label",row.kind==="review"?t("复查时指标"):t("指标")),comparisonView(f.metrics));
@@ -584,7 +629,7 @@ function experimentLogs(s,scope,projection) {
   };
   for(const [index,record] of records.entries()){
     const item=el("article","experiment-log-item"),button=el("button","experiment-log-record"),body=el("ol","flow-steps log-record-body");button.type="button";button.dataset.key=record.key;
-    button.append(el("span","log-number",String(index+1).padStart(2,"0")),el("time","log-time",dateText(record.row.timestamp)),el("span","log-title",decisionTitle(record.row)));if(present(record.row.status))button.append(badge(record.row.status));
+    button.append(el("span","log-number",String(index+1).padStart(2,"0")),el("time","log-time",dateText(record.row.timestamp)),el("span","log-title",decisionTitle(record.row)));if(present(record.row.status))button.append(observedBadge(record.row.status,s));
     button.addEventListener("click",()=>{scope.logSelected.set(s.run_id,scope.logSelected.get(s.run_id)===record.key?null:record.key);fill();});item.append(button,body);buttons.append(item);items.push({record,button,body});
   }
   fill();content.append(buttons);
@@ -675,9 +720,9 @@ function executionSequence(s, scope) {
   const logs=experimentLogs(s,scope,projection);if(logs)section.append(logs);
   return section;
 }
-function jobRecord(job, compact=false) {
+function jobRecord(job, compact=false, snapshot={}) {
   const card=el("article",compact?"job-record active-job":"job-record"),heading=el("div","detail-heading");
-  heading.append(el("h4","",actionText(job.kind)),badge(job.status));card.append(heading);
+  heading.append(el("h4","",actionText(job.kind)),observedBadge(job.status,snapshot));card.append(heading);
   if(present(job.step))card.append(progressView(job.step,job.total_steps));
   if(number(job.elapsed_seconds))card.append(el("p","quiet-note",t("耗时 {p0}",{p0:secondsText(job.elapsed_seconds)})));
   if(!compact&&present(job.error))card.append(el("p","result-error",job.error));
@@ -688,7 +733,7 @@ function runDetail(node, scope) {
   const entry=scope.cache.get(node.runId),s=entry?.snapshot,box=el("div","run-detail"); scope.flowOpen ||= new Set();
   const heading=el("div","detail-heading"),identity=el("div");
   identity.append(el("h3","",t("研究脉络")),el("p","quiet-note",t("{p0} 次决策",{p0:list(s?.decisions).length})));
-  heading.append(identity,badge(s?.status||node.row.status));box.append(heading);
+  heading.append(identity,runBadge(s?.status||node.row.status));box.append(heading);
   if(present(s?.error))box.append(el("p","result-error",s.error));
   if(entry?.status==="pending"&&!s)box.append(el("p","load-message",t("正在读取决策与反馈…")));
   if(entry?.status==="error"){
@@ -696,14 +741,15 @@ function runDetail(node, scope) {
     const retry=el("button","",t("重试读取"));retry.addEventListener("click",()=>loadRun(node.runId,scope,true));box.append(retry);
   }
   if(s){
-    const jobs=list(s.jobs),runStatus=statusKey(s.status||node.row.status),terminal=DONE.has(runStatus)||FAILED.has(runStatus)||runStatus==="stopped";
+    const jobs=list(s.jobs),terminal=runTerminal(s);
     const active=terminal?[]:jobs.filter(j=>ACTIVE.has(statusKey(j.status)));
     if(active.length){
       const overview=el("section","active-jobs");overview.setAttribute("aria-label",t("当前任务"));
       overview.append(el("h4","",t("当前任务 · {p0}",{p0:active.length})));
-      const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true));overview.append(cards);box.append(overview);
+      const cards=el("div","active-job-list");for(const job of active)cards.append(jobRecord(job,true,s));overview.append(cards);box.append(overview);
     }
-    if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("运行已结束；部分任务仍报告活动状态，请查看关联节点或关联诊断。")));
+    if(terminal&&jobs.some(j=>ACTIVE.has(statusKey(j.status))))box.append(el("p","quiet-note stale-job-warning",t("实验已结束；未刷新的任务仅保留最后观测状态。")));
+    box.append(runObservations(s));
     const benchmarks=metricDashboard(s,scope);if(benchmarks)box.append(benchmarks);
     box.append(executionSequence(s,scope));
     const unlinkedCandidates=list(s.candidates).filter(c=>!list(s.decisions).some(d=>relatedResults(d,s).some(r=>r.type==="candidate"&&r.row===c)));
@@ -713,12 +759,12 @@ function runDetail(node, scope) {
     }
     const baselines=jobs.filter(j=>j.role==="baseline" || (j.job_id==="evaluation:initial" && !present(j.directive_id)));
     if(baselines.length){
-      const records=el("div");for(const job of baselines)records.append(jobRecord(job));
+      const records=el("div");for(const job of baselines)records.append(jobRecord(job,false,s));
       box.append(retainedDetails(JSON.stringify([node.runId,"baseline"]),scope.flowOpen,t("实验基线"),records));
     }
     const unlinked=jobs.filter(j=>!active.includes(j)&&!baselines.includes(j)&&!list(s.decisions).some(d=>linkedJob(d,s)===j));
     if(unlinked.length){
-      const history=el("div","unlinked-job-history");for(const job of unlinked)history.append(jobRecord(job));
+      const history=el("div","unlinked-job-history");for(const job of unlinked)history.append(jobRecord(job,false,s));
       box.append(retainedDetails(JSON.stringify([node.runId,"unlinked-jobs"]),scope.flowOpen,t("关联诊断 · {p0}",{p0:unlinked.length}),history));
     }
   }
@@ -798,7 +844,7 @@ function renderSelectors() {
     const grid=el("div","experiment-grid");
     for(const row of runRows(project)){
       const card=el("a","experiment-card");card.href=`?project=${encodeURIComponent(project.project_id)}&run=${encodeURIComponent(row.run_id)}`;
-      const head=el("div","experiment-card-heading");head.append(el("h3","",experimentName(row)),badge(row.status));card.append(head);
+      const head=el("div","experiment-card-heading");head.append(el("h3","",experimentName(row)),runBadge(row.status));card.append(head);
       card.append(el("p","quiet-note",dateText(row.updated_at)));
       if(row.counts?.decisions!==undefined)card.append(el("p","",t("{p0} 次决策",{p0:row.counts.decisions})));
       card.addEventListener("click",event=>{if(event?.metaKey||event?.ctrlKey||event?.shiftKey||event?.altKey)return;event?.preventDefault();selectRun(row.run_id);});grid.append(card);

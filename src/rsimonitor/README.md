@@ -93,23 +93,52 @@ wheel 内含五个运行资源（HTML、CSS、三个 JavaScript 文件），无�
 
 Use **中 / EN** to switch the interface. The preference persists locally. Switching reuses cached data and preserves the current page, selected experiment and decision, graph scroll and expanded records. Reported model text and logs stay verbatim.
 
+## 开放 Lab 监控语义
+
+看板面向人类，只读消费 `monitor.json` 的公开投影，不参与模型动作、等待、预算或反馈路由。
+已知 Lab 动作显示简洁名称，`invoke` / `explore` 中未知动作保留原名；不要求注册到旧训练算法菜单。
+模型理由显示为「模型判断」，执行结果另列为「即时结果」。研究尝试只使用显式身份与关联，不按动作名补分组。
+
+`schema_version=1` 新增以下可选字段，缺失即未报告，旧快照继续兼容：
+
+- `decisions[]` / `current`：`feedback_route` 为 `context` 或 `memory`；`archive_status` 和
+  `memory_status` 独立表达实际状态。记忆整理请求、处理中、完成、失败分别呈现；原始轨迹归档不等于长期记忆写入。
+- `evaluations[]`：正式评测的 `evaluation_id`、`job_id`、`candidate_id`、`protocol`、
+  `record_sha256`、数值 `metrics`，以及显式 `role`、`adopted`、`weight_identity` 等证据。
+  优先按记录摘要，其次评测 ID、任务 ID 去重重复查询；没有身份的记录不擅自合并。
+  `candidate.py` 等文件名不建立版本身份。只有宿主验证的结构化评测结果写入此集合；
+  提交成功、程序退出成功和模型总结均不产生准确率。该集合存在时优先于旧决策指标回退。
+- `jobs[]`：可补 `observed_at`、`decision_id`，原始任务状态保留。实验终态后旧活动状态显示为「最后观测」，
+  不再列入当前执行；不会因此改成成功或失败。实验「已结束」不表示研究目标成功。
+- `weight_applied`：可选布尔值，只有明确的权重应用记录才能发布；不从结果采纳推断。
+- `lifecycle`：可补 `finished_at`、`stop_reason`、`cleanup: {"confirmed": true | false}`。
+  仅明确清理确认才能显示资源已清理，不能从实验结束推断。未报告的确认显示为未报告。
+- `history_window: {"limit": 300, "total": 401, "truncated": true}`：显式报告公开决策窗口。
+  API 每类记录最多 300 条；窗口内条数不代表整个研究历史。
+
+固定评测分数、训练步数与损失、权重应用和结果采纳是不同证据。看板不会从自由文字提取这些事实，
+也不读取 `result.json`、SQLite 或任意内部文件。`current.metrics` 中实际发布的计数可显示，未发布统计不补算。
+浏览器刷新与模型调用 `lab_poll` 互不控制。历史快照不会因升级被回填或重写。
+
 ## 统一监控入口
 
-正式入口统一为 **`http://127.0.0.1:18777/`**，通过 SSH 访问 modelmate 的
-`127.0.0.1:8877`。旧地址 `http://localhost:8767/` 的兼容隧道已停用，不能作为入口。
+正式入口为 **`http://127.0.0.1:18777/`**。2026-11-05 核验的 launchd
+`com.xcx.rsisys-dashboard-tunnel` 转发至 modelmate 的 **`127.0.0.1:8878`**；
+旧 8877 服务保留，不作为本入口。旧地址 `http://localhost:8767/` 不再使用。
 
-modelmate 部署使用安装 wheel 的包目录 `RSISys/monitor-ui/package`，数据目录是 `RSISys/runs/`。
-前端与服务端源码均以本仓库 `src/rsimonitor/` 为准；发布时构建并安装 wheel 到该目录，
-使用其中的 `rsimonitor.server:main`，参数为 `--runs-dir /path/to/RSISys/runs --port 8877`。
-例如 `python3.12 -m pip install --upgrade --target /path/to/RSISys/monitor-ui/package /path/to/rsimonitor-0.1.0-py3-none-any.whl`
-（wheel 文件名使用实际构建产物），然后从已安装目录启动：
+源码位于 `src/rsimonitor/`，发布为独立 wheel，安装到
+`RSISys/monitor-ui/releases/<release>/package`，不安装 `rsisys`，不修改冻结研究目录。
+数据目录仍为 `RSISys/runs/`。从安装目录启动：
 
 ```sh
-PYTHONPATH=/path/to/RSISys/monitor-ui/package python3.12 -m rsimonitor.server --runs-dir /path/to/RSISys/runs --port 8877
+PYTHONPATH=/path/to/release/package python3.12 -m rsimonitor.server --runs-dir /path/to/RSISys/runs --port 8878
 ```
 
-服务或静态资源变化时只重启该监控进程。`monitor-ui/version.json` 记录来源版本与文件摘要，
-`monitor-ui/process.json` 记录实际 PID；重启前核验身份并保留旧包备份。
+本入口的发布清单保存在 `monitor-ui/openlab-version.json`，记录包来源和文件摘要；
+进程身份保存在 `.local/modelmate-bringup-20261105T044026Z/dashboard-spawn.json`
+（PID、UID、create_time）。更新前核验全部身份与命令行，保留旧包及回滚信息，
+只替换 8878 的监控进程；不沿用旧 8877 的 `monitor-ui/process.json` 管理新入口。
+研究数据、模型服务和运行时预算都不由看板更新。
 
 lion 的 17 条历史实验监控记录已汇总到 modelmate，每条导入记录附有
 `monitor-import.json`，保留原始主机、目录和文件摘要。这是历史监控元数据的导入，

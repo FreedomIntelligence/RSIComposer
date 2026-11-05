@@ -348,3 +348,13 @@ body:has(.dashboard-dialog[open]) { overflow: hidden; }
 .dashboard-y-range > span, .dashboard-range-error { grid-column: 1 / -1; font-size: 13px; }
 .dashboard-y-range > span { color: var(--muted); }
 .dashboard-range-error { color: var(--red); margin: 0; }
+
+/* Public observations remain distinct from research conclusions. */
+.run-observations { margin: 0 0 22px; }
+.run-observations > .metric-strip { margin-bottom: 14px; }
+.observation-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 12px 0; }
+.observation-summary > div { display: flex; gap: 10px; align-items: baseline; }
+.observation-summary dt, .feedback-routing, .run-stop { color: var(--muted); font-size: 13px; }
+.observation-summary dd { margin: 0; font-size: 14px; }
+.badge.last-observed { color: var(--muted); background: transparent; }
+.feedback-routing { margin: 12px 0 0; }
