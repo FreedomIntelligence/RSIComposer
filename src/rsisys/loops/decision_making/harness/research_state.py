@@ -193,6 +193,50 @@ def factual_fields(value, path=''):
 MAX_EVIDENCE_BYTES = 8192
 
 
+def previous_feedback_view(context):
+    """Deliver the previous native operation before archive/card projection.
+
+    One replacing window, never a memory log. Large originals use a mechanical
+    UTF-8 page with an exact archive address, not a model-written interpretation.
+    """
+    if not context.operation_results:
+        return None
+    card = context.operation_results[-1].data.get('evidence_card')
+    projected = isinstance(card, dict) and card.get('schema_version') == 1
+    original = context.operation_results[-1].payload()
+    ident = card.get('sha256') if projected else result_id(original)
+    source = next((row for row in reversed(context.history)
+        if row.kind == 'operation' and isinstance(row.details.get('result'), dict)
+        and result_id(row.details['result']) == ident), None)
+    if projected:
+        # A refreshed context can contain an already projected result alongside
+        # its original history. Never relabel the evidence card as native data.
+        if source is not None:
+            original = source.details['result']
+        else:
+            previous = context.research_agenda.get('previous_feedback')
+            return deepcopy(previous) if previous and previous.get('source_sha256') == ident else None
+    operation = deepcopy(source.details.get('operation')) if source else None
+    if not operation or not operation.get('name', '').startswith(('lab_', 'medical_')):
+        return None
+    if operation and (operation.get('arguments') or {}).get('feedback_route') == 'memory':
+        return None
+    value = {'source_sha256': ident, 'operation': operation,
+        'delivery': 'previous_operation_only; raw_observation_not_memory', 'complete': True}
+    raw = encoded(original).encode('utf-8')
+    can_read = (source is not None and archive_available(context, 'operation_results')
+                and ident in archived_operation_result_ids(context))
+    if len(raw) <= 16384 or not can_read:
+        value['result'] = deepcopy(original)
+    else:
+        content = raw[:16384].decode('utf-8', errors='ignore')
+        value.update(complete=False, raw_json_page={'content': content, 'offset': 0,
+            'end_offset': len(content.encode('utf-8')), 'total_bytes': len(raw), 'eof': False},
+            read_path={'operation': 'research_archive', 'collection': 'operation_results',
+                       'record_id': ident, 'evidence_path': '/result'})
+    return value
+
+
 def _preview(text, limit=512):
     if not isinstance(text, str) or len(text) <= limit:
         return text

@@ -255,43 +255,53 @@ def allocated_resources(environment, device_type, declaration=None):
             'do not stop, reload, reconfigure or train on their reserved devices.'}
 
 
-CANDIDATE = r'''"""Implement inference here; fixed evaluation supplies inputs and owns scoring.
+CANDIDATE_ADAPTER = r'''import importlib.util, json
+from pathlib import Path
+cfg = json.loads(Path('lab_config.json').read_text())
+adapter_path = cfg['candidate_input_adapter']['path']
+spec = importlib.util.spec_from_file_location('medical_candidate_adapter', adapter_path)
+adapter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(adapter)
+'''
+
+CANDIDATE = r'''"""Implement infer(request); the host adapter owns protocol/IDs/input receipts.
 
 Read lab_config.json for model paths, installed Python and allocated devices.
 Choose direct inference or deploy your own service using Lab-owned programs.
 For a persistent service, submit it with lab_start and collect its logs; run
 medical_evaluate as a separate job, then stop the service with lab_cancel.
-Stdout must contain only {"predictions": [{"benchmark_id": ..., "id": ..., "text": ...}]}.
+Use request.render(tokenizer, enable_thinking=False) for local inference; tokenize
+that returned text. For a service use request.chat_messages() as its messages.
+Both preserve the user question/options. Never extract messages[0]: it is system.
+Optional infer_batch(requests) may prepare requests then generate them together.
+Run medical_diagnose with the SAME argv before spending a full evaluation.
 There is no predeployed candidate endpoint and no answer/scoring implementation.
 """
-import json, sys
-
-def predict(items):
+''' + CANDIDATE_ADAPTER + r'''
+# Load/cache the model and tokenizer once, or deploy your own Lab-owned service.
+def infer(request):
+    # prompt = request.render(tokenizer, enable_thinking=False)
+    # Tokenize prompt, generate, and return only the newly generated answer text.
     raise NotImplementedError('Implement model inference or deploy a Lab-owned inference service first')
 
-payload = json.load(sys.stdin)
-print(json.dumps({'predictions': predict(payload['items'])}), flush=True)
+if __name__ == '__main__':
+    adapter.run(infer)  # For batching: adapter.run(infer_batch=infer_batch)
 '''
 
 
-EXTERNAL_CANDIDATE = r'''"""Explicit external-service example; fixed evaluation owns inputs and scoring."""
-import concurrent.futures, json, sys
-from pathlib import Path
+EXTERNAL_CANDIDATE = r'''"""Explicit external-service example; shared standard input adapter."""
+''' + CANDIDATE_ADAPTER + r'''
 from urllib.request import Request, urlopen
-cfg=json.loads(Path('lab_config.json').read_text())
-payload=json.load(sys.stdin)
-def predict(item):
-    body={'model':cfg['served_model'], 'messages':item['messages'], 'max_tokens':32, 'temperature':0,
+def infer(request):
+    body={'model':cfg['served_model'], 'messages':request.chat_messages(), 'max_tokens':32, 'temperature':0,
         'chat_template_kwargs':{'enable_thinking':False}}
     with urlopen(Request(cfg['endpoint']+'/chat/completions',data=json.dumps(body).encode(),
             headers={'Content-Type':'application/json'}),timeout=120) as response:
         result=json.load(response)
     if result['model'] != cfg['served_model']: raise ValueError('Provider identity mismatch')
-    return {'benchmark_id':item['benchmark_id'],'id':item['id'],
-        'text':result['choices'][0]['message']['content']}
-with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-    predictions=list(pool.map(predict,payload['items']))
-print(json.dumps({'predictions':predictions}),flush=True)
+    return result['choices'][0]['message']['content']
+if __name__ == '__main__':
+    adapter.run(infer)
 '''
 
 
@@ -467,6 +477,13 @@ def run(args):
                            for entry in data_manifest],
         'candidate_reference': 'candidate.py',
         'feedback_routing': args.feedback_routing,
+        'candidate_input_adapter': {'path': str(Path(__file__).with_name('candidate_adapter.py').resolve()),
+            'sha256': hashlib.sha256(Path(__file__).with_name('candidate_adapter.py').read_bytes()).hexdigest(),
+            'contract': 'medical-input-adapter-v1', 'required': True,
+            'interface': 'infer(request) or infer_batch(requests); use request.render(tokenizer,...) '
+                         'for local inference or request.chat_messages() in the actual HTTP request',
+            'diagnose_operation': 'medical_diagnose',
+            'scope': 'Input adapter boundary only; backend consumption and weights are not attested'},
         'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': PROTOCOL,
                              'owner': 'medical_lab', 'scoring_editable': False},
         'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16; '
@@ -479,7 +496,9 @@ def run(args):
             'The host supplies the meta-agent service; deployment of Lab inference is your choice. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
             'Formal evaluation uses medical_evaluate with fixed data, inputs, gold, parsing and scoring. '
-            'Edit candidate.py or write any candidate program implementing its JSON stdin/stdout interface. '
+            'Edit candidate.py using the standard input adapter; it owns stdin/stdout and prediction IDs. '
+            'Use medical_diagnose with the SAME candidate argv for synthetic input checks; '
+            'it reads no development data, reports no accuracy, and shares the formal inference path. '
             'Self-written evaluation scripts produce exploratory observations, not formal comparable scores. '
             'Preserve candidate identity, protocol, dataset identity and exact metrics. '
             'Pareto adoption requires primary improvement without guardrail regression; '
@@ -494,7 +513,7 @@ def run(args):
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
             max_jobs=args.max_jobs, max_parallel=args.max_parallel, python=args.python,
-            evaluation_root=context.data_dir / 'fixed-evaluations',
+            evaluation_root=context.data_dir / 'fixed-evaluations', require_input_contract=True,
             defer_session=args.resume,
             evaluation_groups=[{'benchmark_id': group['benchmark_id'],
                 'path': str(task_path.parent / group['path']), 'sha256': manifest[group['path']]['sha256']}

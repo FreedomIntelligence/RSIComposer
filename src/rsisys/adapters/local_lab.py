@@ -23,6 +23,7 @@ from rsisys.loops.contracts.jobs import JobStatus, TERMINAL_STATUSES
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.local_process import LocalProcessBackend
 from rsisys.runtime.run_policy import positive
+from rsisys.runtime.json_tools import encoded
 from rsisys.runtime.sandbox import SandboxSpec, ExecRequest
 
 
@@ -63,8 +64,11 @@ class LocalProcessLab:
         tools = (
             ('lab_write_file', 'Write or replace a UTF-8 code/config file. You choose the implementation, including SFT, RL and evaluation.',
              {'path': path, 'content': {'type': 'string'}}, ['path', 'content'], False),
-            ('lab_read_file', 'Read a bounded UTF-8 file window; offset and next_offset count bytes.',
+            ('lab_read_file', 'Read one context-sized UTF-8 page. Follow next_offset until eof; offsets count bytes. '
+             'Pass the returned file_version as expected_version on subsequent pages to detect edits. '
+             'A large max_bytes never returns an invisible whole-file evidence card.',
              {'path': path, 'offset': {'type': 'integer', 'minimum': 0},
+              'expected_version': text,
               'max_bytes': {'type': 'integer', 'minimum': 1, 'maximum': self.max_file_bytes}}, ['path'], True),
             ('lab_export', 'Preserve a workspace file in the host artifact store before workspace cleanup.',
              {'path': path}, ['path'], True),
@@ -306,11 +310,23 @@ class LocalProcessLab:
             except FileNotFoundError as exc:
                 raise LabToolError('Workspace file does not exist: ' + path) from exc
             try:
-                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode):
                     raise LabToolError('Only regular files are readable')
                 with os.fdopen(fd, 'rb', closefd=False) as stream:
+                    version = hashlib.sha256(encoded([info.st_dev, info.st_ino, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns]).encode()).hexdigest()
+                    if args.get('expected_version', version) != version:
+                        raise LabToolError('File changed between pages; restart at offset=0 with the new version')
+                    file_sha = None
+                    if name == 'lab_read_file' and info.st_size <= self.max_file_bytes:
+                        file_sha = hashlib.file_digest(stream, 'sha256').hexdigest()
                     stream.seek(offset)
-                    content = stream.read(limit + 1)
+                    content = stream.read((min(limit, 4096) if name == 'lab_read_file' else limit) + 1)
+                    after = os.fstat(fd)
+                    if (after.st_mtime_ns, after.st_ctime_ns, after.st_size) != (
+                            info.st_mtime_ns, info.st_ctime_ns, info.st_size):
+                        raise LabToolError('File changed during read; retry the read at its current version')
             finally:
                 os.close(fd)
         more, content = len(content) > limit, content[:limit]
@@ -320,9 +336,34 @@ class LocalProcessLab:
             ref = self.artifacts.put(content, kind='lab_file')
             return OperationResult('Workspace file exported', (ref,), False, data={
                 'path': path, 'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()})
-        return OperationResult('Workspace file window', (), False, data={
-            'path': path, 'offset': offset, 'content': content.decode('utf-8', errors='replace'),
-            'next_offset': offset + len(content) if more else None, 'truncated': more})
+        # Budget the serialized receipt, including JSON escapes, before the
+        # evidence projector sees it. Trim only at UTF-8 character boundaries.
+        content = content[:min(limit, 4096)]
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            if exc.reason != 'unexpected end of data' or exc.start == 0:
+                raise LabToolError('File window must start/end on UTF-8 boundaries; increase max_bytes '
+                                   'or use the preceding next_offset') from exc
+            text = content[:exc.start].decode('utf-8')
+        def page(text):
+            raw = text.encode('utf-8')
+            more = offset + len(raw) < info.st_size
+            return OperationResult('Workspace file page; follow next_offset while eof=false', (), False, data={
+                'path': path, 'offset': offset, 'content': text, 'bytes': len(raw),
+                'next_offset': offset + len(raw) if more else None, 'truncated': more, 'eof': not more,
+                'file_bytes': info.st_size, 'file_version': version, 'file_sha256': file_sha,
+                'page_sha256': hashlib.sha256(raw).hexdigest()})
+        low, high = 0, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if len(encoded(page(text[:middle]).payload()).encode()) <= 5500:
+                low = middle
+            else:
+                high = middle - 1
+        if not low and text:
+            raise LabToolError('File page metadata exceeds the context budget; use a shorter workspace path')
+        return page(text[:low])
 
     def shutdown(self, mode):
         if mode not in ('drain', 'cancel'):

@@ -144,7 +144,12 @@ class DefaultDecisionHarness:
             raise errors[0]
 
     def _project_context(self, context):
-        from .research_state import bounded_evidence_view
+        from .research_state import bounded_evidence_view, previous_feedback_view
+        previous = previous_feedback_view(context)
+        agenda = {key: value for key, value in context.research_agenda.items() if key != 'previous_feedback'}
+        if previous is not None:
+            agenda['previous_feedback'] = previous
+        context = replace(context, research_agenda=agenda)
         context = bounded_evidence_view(context)
         for processor in self._context_processors:
             context = processor(context)

@@ -120,8 +120,23 @@ class ImmediateFeedbackWindow:
                         'read_path': {'operation': 'research_archive', 'collection': 'operation_results', 'record_id': digest}}))
             elif digest in retained or digest not in archived or index == len(context.operation_results) - 1:
                 results.append(row)
-        return replace(context, history=tuple(history), operation_results=tuple(results),
-            research_agenda={**context.research_agenda, 'instant_feedback_window': {
+        agenda = {**context.research_agenda, 'instant_feedback_window': {
                 'recent_operation_limit': self.recent, 'raw_history_unchanged': True,
                 'older_observations': {'operation': 'research_archive', 'collection': 'history'},
-                'memory_route': 'organization_request_only; consult feedback status and retrieved memory'}})
+                'memory_route': 'organization_request_only; consult feedback status and retrieved memory'}}
+        recent_reads = rows[-3:]
+        pages = [((row.details.get('result') or {}).get('data') or {}) for row in recent_reads]
+        if (len(pages) == 3 and all((row.details.get('operation') or {}).get('name') == 'lab_read_file'
+                                   for row in recent_reads)
+                and pages[0].get('page_sha256') and all(
+                    tuple(page.get(k) for k in ('path', 'offset', 'file_version', 'page_sha256')) ==
+                    tuple(pages[0].get(k) for k in ('path', 'offset', 'file_version', 'page_sha256'))
+                    for page in pages[1:])):
+            page = pages[-1]
+            agenda['instant_feedback_window']['repeated_read'] = {
+                'observation': 'The same unchanged file page was read three times; no new content was obtained.',
+                'path': page['path'], 'offset': page['offset'], 'eof': page['eof'],
+                'next_page': ({'operation': 'lab_read_file', 'arguments': {'path': page['path'],
+                    'offset': page['next_offset'], 'expected_version': page['file_version']}}
+                    if page['next_offset'] is not None else None)}
+        return replace(context, history=tuple(history), operation_results=tuple(results), research_agenda=agenda)
