@@ -139,6 +139,74 @@ class ResearchToolTests(unittest.TestCase):
     def invoke(self, name, args):
         return self.tools.execute(self.space.validate(OperationCall(name, args)))
 
+    def test_semantic_patch_rejections_are_failed_receipts_and_atomic(self):
+        change(self.agenda, [{'id': 'existing', 'kind': 'todo', 'text': 'Keep original'}])
+        before = self.agenda.export()
+        cases = (
+            (0, [{'id': 'existing', 'text': 'must not leak'}], [], 'Stale revision'),
+            (1, [{'id': 'existing', 'text': 'must not leak'}, {'id': 'new', 'kind': 'todo'}], [], 'New items require'),
+            (1, [{'id': 'existing', 'text': 'must not leak'}, {'id': 'new', 'text': 'missing kind'}], [], 'New items require'),
+            (1, [{'id': 'existing', 'text': 'must not leak'}], ['missing'], 'unknown ID'),
+        )
+        for revision, upserts, removals, error in cases:
+            with self.subTest(error=error, upserts=upserts):
+                result = self.invoke('research_patch', dict(expected_revision=revision,
+                    upserts=upserts, remove_ids=removals, reason='Synthetic validation', evidence_refs=[]))
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertIn(error, result.error)
+                self.assertEqual(result.data['revision'], 1)
+                self.assertEqual(result.data['read_path']['operation'], 'research_read')
+                self.assertEqual(self.agenda.export(), before)
+
+    def test_stale_notebook_read_returns_restart_feedback(self):
+        change(self.agenda, [{'id': 'a', 'kind': 'todo', 'text': 'A'},
+                             {'id': 'b', 'kind': 'todo', 'text': 'B'}])
+        first = self.invoke('research_read', {'limit': 1})
+        change(self.agenda, [{'id': 'a', 'status': 'done'}])
+        rejected = self.invoke('research_read', {'limit': 1, 'cursor': first.data['next_cursor']})
+        self.assertEqual(rejected.status, ExecutionStatus.FAILED)
+        self.assertIsNone(rejected.data['read_path']['cursor'])
+        self.assertEqual(rejected.data['revision'], 2)
+
+    def test_notebook_storage_faults_are_not_model_input_rejections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            agenda = ResearchAgenda(Path(directory) / 'agenda.json')
+            provider = ResearchTools(agenda, self.memory)
+            tools = BoundDecisionTools(provider.bindings)
+            args = dict(expected_revision=0, upserts=[{'id': 'new', 'kind': 'todo', 'text': 'Original'}],
+                        remove_ids=[], reason='Synthetic validation', evidence_refs=[])
+            with patch('rsisys.loops.decision_making.harness.research.atomic_write',
+                       side_effect=ValueError('storage encoding failure')):
+                execution = execute_operation(tools, self.space, OperationCall('research_patch', args))
+            self.assertIsInstance(execution.error, ValueError)
+            self.assertEqual(agenda.revision, 0)
+            self.assertFalse(agenda.path.exists())
+
+    def test_model_corrects_missing_new_item_fields_after_native_failure(self):
+        model = ModelRef('backend', 'model', '1')
+        seen = []
+        class Backend:
+            def generate(_, request):
+                seen.append(json.loads(request.prompt))
+                upsert = {'id': 'new', 'kind': 'todo'}
+                if len(seen) > 1:
+                    upsert['text'] = 'Corrected from exact validation feedback'
+                return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': 'research_patch',
+                    'arguments': {'expected_revision': 0, 'upserts': [upsert], 'remove_ids': [],
+                                  'reason': 'Synthetic validation', 'evidence_refs': []}}), model, False)
+        harness = DefaultDecisionHarness(ModelDecisionPolicy(Backend(), model), self.tools,
+            BasicExperienceSystem(InMemoryExperienceStore()), memory=self.memory, research_agenda=self.agenda)
+        first = harness.step('Keep research notes', self.space)
+        self.assertEqual(first.kind, 'progressed')
+        self.assertEqual(first.operation_result.status, ExecutionStatus.FAILED)
+        self.assertEqual(self.agenda.revision, 0)
+        second = harness.step('Keep research notes', self.space)
+        self.assertEqual(second.operation_result.status, ExecutionStatus.COMPLETED)
+        self.assertEqual(self.agenda.revision, 1)
+        canonical_failure = json.loads(json.dumps(first.operation_result.payload()))
+        canonical_failure['feedback_delivery'] = None
+        self.assertIn(canonical_failure, seen[1]['operation_results'])
+
     def test_capabilities_permissions_and_complete_raw_pagination_during_appends(self):
         review = authorized_space(self.space, 'review')
         self.assertEqual({spec.name for spec in review.describe()}, {'research_read', 'research_archive'})

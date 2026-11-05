@@ -11,7 +11,7 @@ from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.json_tools import EvidencePathError, evidence_value
 from ..context import encoded, result_id
 from ..ledger_context import LEDGER_COLLECTIONS
-from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, page_limit, page_offset
+from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, ResearchInputRejected, page_limit, page_offset
 
 
 class _Definition:
@@ -119,11 +119,25 @@ class ResearchTools:
         return tuple(self.capabilities)
 
     def _read(self, arguments):
-        return OperationResult('Model-owned research notes', (), False,
-                               data=self.agenda.read(**_read_arguments(arguments)))
+        args = _read_arguments(arguments)
+        try:
+            data = self.agenda.read(**args)
+        except ResearchInputRejected as exc:
+            return OperationResult('Research cursor rejected; restart pagination', (), False,
+                ExecutionStatus.FAILED, str(exc), data={
+                    'revision': self.agenda.revision,
+                    'read_path': {'operation': 'research_read', **args, 'cursor': None}})
+        return OperationResult('Model-owned research notes', (), False, data=data)
 
     def _patch(self, arguments):
-        return OperationResult('Research patch recorded', (), False, data=self.agenda.patch(**arguments))
+        try:
+            data = self.agenda.patch(**arguments)
+        except ResearchInputRejected as exc:
+            return OperationResult('Research patch rejected; read notes and correct the patch', (), False,
+                ExecutionStatus.FAILED, str(exc), data={
+                    'revision': self.agenda.revision, 'changed_ids': [], 'removed_ids': [],
+                    'read_path': {'operation': 'research_read', 'view': 'items', 'cursor': None}})
+        return OperationResult('Research patch recorded', (), False, data=data)
 
     def _archive(self, arguments):
         args = _archive_arguments(arguments, experience=self.experience is not None)

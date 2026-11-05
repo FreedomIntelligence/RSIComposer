@@ -10,6 +10,10 @@ KINDS = ('agenda', 'todo', 'stage_summary')
 MAX_PATCH_CHANGES = 32
 
 
+class ResearchInputRejected(ValueError):
+    """Expected notebook state/input conflict, safe to return to the model."""
+
+
 def _text(value, name, maximum=16000):
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(f'{name} must be nonempty text of at most {maximum} characters')
@@ -93,20 +97,20 @@ class ResearchAgenda:
         arguments = self.validate_patch(dict(expected_revision=expected_revision, upserts=upserts,
             remove_ids=remove_ids, reason=reason, evidence_refs=evidence_refs))
         if expected_revision != self.revision:
-            raise ValueError(f'Stale revision: expected {expected_revision}, current {self.revision}')
+            raise ResearchInputRejected(f'Stale revision: expected {expected_revision}, current {self.revision}')
         items = deepcopy(self._items)
         revision = self.revision + 1
         for patch in arguments['upserts']:
             ident = patch['id']
             if ident not in items and not {'kind', 'text'} <= set(patch):
-                raise ValueError('New items require kind and text')
+                raise ResearchInputRejected('New items require kind and text')
             item = items.get(ident, {'status': 'open', 'evidence_refs': []})
             item.update(patch)
             item['revision'] = revision
             items[ident] = item
         for ident in arguments['remove_ids']:
             if ident not in items:
-                raise ValueError(f'Cannot remove unknown ID: {ident}')
+                raise ResearchInputRejected(f'Cannot remove unknown ID: {ident}')
             del items[ident]
         revisions = [*self._revisions, dict(revision=revision, **arguments)]
         payload = {'version': 1, 'items': list(items.values()), 'revisions': revisions}
@@ -124,7 +128,10 @@ class ResearchAgenda:
             raise ValueError('kind is only supported for items')
         # Bind cursor to both the revision and selected view/filter.
         scope = f'{self.revision}:{view}:{kind or "all"}'
-        offset = page_offset(cursor, scope)
+        try:
+            offset = page_offset(cursor, scope)
+        except ValueError as exc:
+            raise ResearchInputRejected(str(exc)) from exc
         rows = list(self._items.values()) if view == 'items' else self._revisions
         rows = [row for row in rows if kind is None or row['kind'] == kind]
         end = offset + limit
