@@ -27,7 +27,32 @@ training/inference programs. The meta-agent (organization side) uses the same
 captured model identity in a separate context when organization is requested.
 Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
 development data, question/options, gold, parsing and accuracy. The editable
-`candidate.py` consumes JSON inputs on stdin and returns predictions on stdout.
+`candidate.py` implements `infer(request)` or `infer_batch(requests)` using the
+host's `candidate_adapter.py`, whose frozen path is in `lab_config.json`.
+The adapter owns stdin/stdout, sample IDs and input receipts. For direct inference,
+use `request.render(tokenizer, ...)` and tokenize the returned text. For a service,
+put `request.chat_messages()` in the actual HTTP request. Both preserve the fixed
+user question/options; `messages[0]` is the system instruction. Candidate code may
+choose the model, generation settings, batching and deployment.
+
+`medical_diagnose(key, candidate_id, argv)` runs the **same argv and adapter** on
+two public synthetic inputs. It reads no development data or gold and reports
+no accuracy or adoption. Collect its native result, repair input errors, then use
+the same candidate path for `medical_evaluate`. Open Lab requires adapter receipts
+on formal runs; older explicitly configured integrations can retain the legacy
+stdin protocol with input consumption marked `unverified_legacy`.
+Adapter receipts attest to the adapter boundary only. They do not prove that
+arbitrary candidate internals use the input, identify loaded weights, or attest
+to what an external backend consumed. Constant answers can pass the input check;
+their correctness is still scored against the original gold without relaxation.
+
+Code reads return context-sized UTF-8 pages even when a larger `max_bytes` is
+requested. Follow `next_offset` until `eof`, carrying `file_version` as
+`expected_version` to detect edits between pages. Each complete serialized receipt
+fits below the individual evidence limit, including JSON escapes. Repeating the
+same page three times adds a transient navigation hint; it does not replay work
+or write memory.
+
 The default scaffold requires the meta-agent to implement inference: it chooses
 direct model loading or deploys its own inference service on assigned Lab devices.
 The host supplies local model paths, the installed Python and explicit resources;
@@ -823,3 +848,5 @@ SIGINT/SIGTERM 请求在当前决策边界后暂停；确认 `result.status=paus
 未确定的外部副作用保持阻塞，原未启用 durable 的历史运行不能直接续跑。
 训练 optimizer checkpoint 由具体 Lab 程序管理。
 见[恢复接口与验证范围](../../docs/review/open-lab-recovery-20261105.md)。
+
+The next meta-agent decision also receives `research_agenda.previous_feedback`, a replacing window of the previous native operation result, independent of LangMem. Results up to 16 KiB are delivered verbatim before evidence-card projection. Larger archived results expose a literal UTF-8 JSON page, `complete=false`, and the exact original archive address; they are not replaced by model-written summaries. Explicit memory-routed results omit this immediate body. The complete request still obeys the host token limit.

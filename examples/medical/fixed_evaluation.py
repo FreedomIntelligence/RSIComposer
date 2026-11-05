@@ -20,6 +20,10 @@ from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.files import atomic_write, json_bytes
+try:
+    from .candidate_adapter import CONTRACT, CandidateInputError, digest as input_digest, validate_receipts
+except ImportError:  # Executed by filename in the installed training environment.
+    from candidate_adapter import CONTRACT, CandidateInputError, digest as input_digest, validate_receipts
 
 
 PROTOCOL = 'exact-option-letter-v1'
@@ -74,7 +78,16 @@ def score_predictions(predictions, gold):
     return {name: {'accuracy': correct / n, 'n': n} for name, (correct, n) in counts.items()}, scored
 
 
-def run_candidate(argv, payload):
+def diagnostic_inputs():
+    """Public synthetic inputs; no dataset access, gold or diagnostic-only branch."""
+    return {'protocol': PROTOCOL, 'items': [
+        {'benchmark_id': 'synthetic-input-contract', 'id': str(index), 'messages': [
+            {'role': 'system', 'content': SYSTEM},
+            {'role': 'user', 'content': f'Synthetic input marker {marker}.\nA. alpha\nB. beta'}]}
+        for index, marker in enumerate(('CANARY_ORANGE_41', 'CANARY_PURPLE_73'))]}
+
+
+def run_candidate(argv, payload, *, require_input_contract=False, return_contract=False):
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     errors = []
     def feed():
@@ -95,9 +108,16 @@ def run_candidate(argv, payload):
         if writer.is_alive() or errors or code != 0:
             raise ValueError('Candidate failed to consume inputs or return predictions successfully')
         result = json.loads(output)
-        if not isinstance(result, dict) or set(result) != {'predictions'}:
+        if (not isinstance(result, dict) or 'predictions' not in result
+                or set(result) - {'predictions', 'input_receipts'}):
             raise ValueError('Candidate stdout must be a predictions JSON object')
-        return result['predictions']
+        contract = (validate_receipts(result['input_receipts'], payload) if 'input_receipts' in result else
+                    {'contract': CONTRACT, 'status': 'unverified_legacy',
+                     'binding': 'candidate_input_consumption_not_verified'})
+        if require_input_contract and contract['status'] != 'adapter_verified':
+            raise CandidateInputError('Missing standard input adapter receipts; use the supplied '
+                'adapter and request.render(...) or request.chat_messages(). Run medical_diagnose first')
+        return (result['predictions'], contract) if return_contract else result['predictions']
     finally:
         if process.poll() is None:
             process.kill()
@@ -113,31 +133,47 @@ def run_candidate(argv, payload):
 
 class FixedMedicalLab(LocalProcessLab):
     """Add one fixed evaluation capability to the otherwise open local Lab."""
-    def __init__(self, *args, evaluation_groups, evaluation_root, python, **kwargs):
+    def __init__(self, *args, evaluation_groups, evaluation_root, python,
+                 require_input_contract=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.evaluation_groups = deepcopy(evaluation_groups)
         self.evaluation_root = Path(evaluation_root).resolve()
         self.evaluation_root.mkdir(parents=True, exist_ok=True)
         self.evaluation_python = str(python)
+        if type(require_input_contract) is not bool:
+            raise TypeError('require_input_contract must be a bool')
+        self.require_input_contract = require_input_contract
         self.evaluator_path = Path(__file__).resolve()
         self.evaluator_sha256 = hashlib.sha256(self.evaluator_path.read_bytes()).hexdigest()
+        self.adapter_path = self.evaluator_path.with_name('candidate_adapter.py')
+        self.adapter_sha256 = hashlib.sha256(self.adapter_path.read_bytes()).hexdigest()
         self._evaluations = {}
 
     def describe(self):
         text = {'type': 'string', 'minLength': 1}
+        arguments = {'type': 'object', 'properties': {'key': text, 'candidate_id': text,
+                'argv': {'type': 'array', 'minItems': 1, 'items': text}},
+             'required': ['key', 'candidate_id', 'argv'], 'additionalProperties': False}
+        contract = (' Use the supplied candidate adapter: implement infer(request) or infer_batch(requests). '
+            'For local inference tokenize request.render(tokenizer,...); for HTTP put '
+            'request.chat_messages() in the actual request. messages[0] is system; the question/options '
+            'are in the user message. Input receipts verify the adapter boundary, not backend consumption.')
         return (*super().describe(), OperationSpec('medical_evaluate',
             'Run the fixed medical development protocol against your candidate program. '
-            'Candidate receives JSON {protocol,items:[{benchmark_id,id,messages}]} on stdin, '
-            'with fixed questions/options and no gold in the request. Return only JSON '
-            '{predictions:[{benchmark_id,id,text}]} on stdout; send diagnostics to stderr. '
+            'The supplied adapter consumes JSON {protocol,items:[{benchmark_id,id,messages}]} on stdin, '
+            'with fixed questions/options and no gold. It writes JSON '
+            '{predictions:[{benchmark_id,id,text}],input_receipts:[...]} on stdout; '
+            'send diagnostics to stderr. '
             'The Lab owns datasets, gold, parsing and accuracy. Submission is not a score; '
-            'use lab_poll then lab_result. Candidate code, weights and inference remain your choice.',
-            {'type': 'object', 'properties': {'key': text, 'candidate_id': text,
-                'argv': {'type': 'array', 'minItems': 1, 'items': text}},
-             'required': ['key', 'candidate_id', 'argv'], 'additionalProperties': False}))
+            'use lab_poll then lab_result. Candidate code, weights and inference remain your choice.' + contract,
+            arguments), OperationSpec('medical_diagnose',
+            'Run the SAME candidate argv and input adapter on two public synthetic questions. '
+            'No development data or gold is read and no accuracy/adoption is reported. '
+            'Use lab_poll then lab_result; inspect input_diagnosis and stderr for missing user input. '
+            'Do not add a separate candidate diagnosis path.' + contract, deepcopy(arguments)))
 
     def execute(self, call):
-        if call.name != 'medical_evaluate':
+        if call.name not in ('medical_evaluate', 'medical_diagnose'):
             return super().execute(call)
         if self._closed or not self._accepting:
             raise RuntimeError('Lab is shutting down; new work is closed')
@@ -150,15 +186,23 @@ class FixedMedicalLab(LocalProcessLab):
             raise LabToolError('Invalid fixed evaluation arguments')
         if hashlib.sha256(self.evaluator_path.read_bytes()).hexdigest() != self.evaluator_sha256:
             raise PermissionError('Host evaluator code identity changed')
+        if hashlib.sha256(self.adapter_path.read_bytes()).hexdigest() != self.adapter_sha256:
+            raise PermissionError('Host candidate adapter code identity changed')
         # Use deterministic configuration in the submission fingerprint. A replay
         # must not generate a new nonce/output path and conflict with its own key.
         ident = self._keys.get(args['key'], (None,))[0]
         previous = self._evaluations.get(ident)
-        if previous is not None and previous['arguments'] == args:
+        mode = 'diagnose' if call.name == 'medical_diagnose' else 'evaluate'
+        if (previous is not None and previous['arguments'] == args
+                and previous['config'].get('mode', 'evaluate') == mode):
             return self._start({'key': args['key'], 'argv': previous['command']})
+        output_root = self.evaluation_root / 'diagnostics' if mode == 'diagnose' else self.evaluation_root
+        output_root.mkdir(exist_ok=True)
         config = {'groups': self.evaluation_groups, 'candidate_id': args['candidate_id'],
             'candidate_argv': args['argv'], 'evaluator_sha256': self.evaluator_sha256,
-            'output': str(self.evaluation_root / (uuid4().hex + '.json'))}
+            'adapter_sha256': self.adapter_sha256, 'mode': mode,
+            'require_input_contract': self.require_input_contract or mode == 'diagnose',
+            'output': str(output_root / (uuid4().hex + '.json'))}
         command = [self.evaluation_python, str(self.evaluator_path), json.dumps(config)]
         result = self._start({'key': args['key'], 'argv': command})
         self._evaluations[result.data['job_id']] = {'arguments': deepcopy(args),
@@ -169,20 +213,40 @@ class FixedMedicalLab(LocalProcessLab):
         result = super()._observe(ident)
         binding = self._evaluations.get(ident)
         if (binding is None or result.data['state'] != 'succeeded'
-                or 'fixed_evaluation' in result.data or 'fixed_evaluation_error' in result.data):
+                or 'fixed_evaluation' in result.data or 'fixed_evaluation_error' in result.data
+                or 'input_diagnosis' in result.data):
             return result
         config = binding['config']
         try:
             raw = Path(config['output']).read_bytes()
             record = json.loads(raw)
-            _, gold, datasets = fixed_inputs(self.evaluation_groups)
+            if config.get('mode') == 'diagnose':
+                payload = diagnostic_inputs()
+                contract = validate_receipts(record['input_contract']['receipts'], payload)
+                if (record['kind'] != 'synthetic_input_diagnosis' or record['candidate_id'] != config['candidate_id']
+                        or record['candidate_argv'] != config['candidate_argv']
+                        or record['input_payload_sha256'] != input_digest(payload)
+                        or record['input_contract'] != contract
+                        or record['evaluator_sha256'] != self.evaluator_sha256
+                        or record['adapter_sha256'] != self.adapter_sha256):
+                    raise ValueError('Input diagnosis identity differs from source evidence')
+                artifact = self.artifacts.put(raw, kind='medical_input_diagnosis')
+                result = replace(result, artifacts=(*result.artifacts, artifact), data={**result.data,
+                    'input_diagnosis': {**record, 'record_sha256': hashlib.sha256(raw).hexdigest()}})
+                self._terminal[ident] = result
+                return result
+            payload, gold, datasets = fixed_inputs(self.evaluation_groups)
+            if config.get('require_input_contract'):
+                if record['input_contract'] != validate_receipts(record['input_contract']['receipts'], payload):
+                    raise ValueError('Candidate input contract differs from fixed source inputs')
             predictions = [{key: row[key] for key in ('benchmark_id', 'id', 'text')}
                            for row in record['predictions']]
             metrics, scored = score_predictions(predictions, gold)
             if (record['protocol'] != PROTOCOL or record['candidate_id'] != config['candidate_id']
                     or record['candidate_argv'] != config['candidate_argv']
                     or record['dataset_sha256'] != datasets or record['metrics'] != metrics
-                    or record['predictions'] != scored or record['evaluator_sha256'] != self.evaluator_sha256):
+                    or record['predictions'] != scored or record['evaluator_sha256'] != self.evaluator_sha256
+                    or record['adapter_sha256'] != self.adapter_sha256):
                 raise ValueError('Fixed evaluation identity or score differs from source evidence')
             artifact = self.artifacts.put(raw, kind='fixed_medical_evaluation')
         except Exception as exc:
@@ -198,6 +262,8 @@ class FixedMedicalLab(LocalProcessLab):
             'fixed_evaluation': {'protocol': PROTOCOL, 'candidate_id': config['candidate_id'],
                 'metrics': metrics, 'dataset_sha256': datasets, 'evaluator_sha256': self.evaluator_sha256,
                 'record_sha256': hashlib.sha256(raw).hexdigest(), 'adopted': False,
+                'input_contract': {key: value for key, value in record.get('input_contract', {}).items()
+                                   if key != 'receipts'},
                 'weight_identity': 'not_verified_by_prediction_protocol'}})
         self._terminal[ident] = result
         return result
@@ -208,15 +274,38 @@ def main():
     digest = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     if digest != config['evaluator_sha256']:
         raise ValueError('Fixed evaluator source identity changed')
+    adapter_sha = hashlib.sha256(Path(__file__).with_name('candidate_adapter.py').read_bytes()).hexdigest()
+    if config.get('adapter_sha256', adapter_sha) != adapter_sha:
+        raise ValueError('Candidate input adapter source identity changed')
+    if config.get('mode') == 'diagnose':
+        payload = diagnostic_inputs()
+        predictions, contract = run_candidate(config['candidate_argv'], payload,
+            require_input_contract=True, return_contract=True)
+        # Shape/identity only: no gold, accuracy, capability or improvement claim.
+        expected = {(i['benchmark_id'], i['id']) for i in payload['items']}
+        if (not isinstance(predictions, list) or len(predictions) != len(expected)
+                or {(p.get('benchmark_id'), p.get('id')) for p in predictions} != expected):
+            raise CandidateInputError('Synthetic prediction IDs differ from the adapter inputs')
+        record = {'kind': 'synthetic_input_diagnosis', 'candidate_id': config['candidate_id'],
+            'candidate_argv': config['candidate_argv'], 'evaluator_sha256': digest,
+            'adapter_sha256': adapter_sha, 'input_payload_sha256': input_digest(payload),
+            'input_contract': contract, 'synthetic': True, 'adopted': False}
+        atomic_write(Path(config['output']), json_bytes(record))
+        print(json.dumps(record), flush=True)
+        return
     payload, gold, datasets = fixed_inputs(config['groups'])
-    predictions = run_candidate(config['candidate_argv'], payload)
+    predictions, contract = run_candidate(config['candidate_argv'], payload,
+        require_input_contract=config.get('require_input_contract', False), return_contract=True)
     metrics, scored = score_predictions(predictions, gold)
     record = {'kind': 'fixed_development_evaluation', 'protocol': PROTOCOL,
         'candidate_id': config['candidate_id'], 'candidate_argv': config['candidate_argv'],
         'dataset_sha256': datasets, 'evaluator_sha256': digest,
-        'metrics': metrics, 'predictions': scored, 'adopted': False}
+        'metrics': metrics, 'predictions': scored, 'adopted': False,
+        'input_contract': contract, 'adapter_sha256': adapter_sha}
     atomic_write(Path(config['output']), json_bytes(record))
-    print(json.dumps({key: value for key, value in record.items() if key != 'predictions'}), flush=True)
+    summary = {key: value for key, value in record.items() if key not in ('predictions', 'input_contract')}
+    summary['input_contract'] = {key: value for key, value in contract.items() if key != 'receipts'}
+    print(json.dumps(summary), flush=True)
 
 
 if __name__ == '__main__':

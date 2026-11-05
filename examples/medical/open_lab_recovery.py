@@ -26,7 +26,8 @@ def digest(value):
 def example_identity():
     root = Path(__file__).parent
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-        for name in ('open_lab_experiment.py', 'open_lab_recovery.py', 'fixed_evaluation.py')}
+        for name in ('open_lab_experiment.py', 'open_lab_recovery.py', 'fixed_evaluation.py',
+                     'candidate_adapter.py')}
 
 
 @contextmanager
@@ -171,6 +172,7 @@ def state_ports(context, decision, exploration, *, lab, backend):
         'lab_execution': LocalLabState(lab, capture_extra=lambda: deepcopy(lab._evaluations),
             restore_extra=lambda state: setattr(lab, '_evaluations', deepcopy(state)),
             configuration={'evaluator_sha256': lab.evaluator_sha256,
+                'adapter_sha256': lab.adapter_sha256, 'require_input_contract': lab.require_input_contract,
                 'groups': lab.evaluation_groups, 'python': lab.evaluation_python})}
 
 
