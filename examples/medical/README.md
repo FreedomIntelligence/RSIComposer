@@ -27,8 +27,12 @@ training/inference programs. The meta-agent (organization side) uses the same
 captured model identity in a separate context when organization is requested.
 Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
 development data, question/options, gold, parsing and accuracy. The editable
-`candidate.py` consumes JSON inputs on stdin and returns predictions on stdout;
-the included candidate calls the existing HTTP endpoint. Collect the submitted
+`candidate.py` consumes JSON inputs on stdin and returns predictions on stdout.
+The default scaffold requires the meta-agent to implement inference: it chooses
+direct model loading or deploys its own inference service on assigned Lab devices.
+The host supplies local model paths, the installed Python and explicit resources;
+it starts no candidate service and makes no implicit fallback to its meta-agent API.
+Collect the submitted
 job with `lab_poll` / `lab_result`; submission is not a score or adoption.
 Self-written evaluation output remains an exploratory observation. See the
 [repair and interface review](../../docs/review/lion-followup-repair-20261105.md).
@@ -38,8 +42,17 @@ native tool calling and JSON-schema responses before launching. Install the
 `rsisys[langmem]` dependencies in an isolated controller environment. Inside a
 scheduler-owned allocation, pass only the GPUs reserved for generated Lab
 programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
-`RSISYS_LAB_ENDPOINT` can route development inference to a separately allocated
-baseline service; the default uses the meta-agent endpoint.
+For an explicitly provided external service, opt in with `--lab-endpoint` and
+`--lab-model-id`; this seeds an HTTP candidate example with inference-only access.
+`RSISYS_LAB_ENDPOINT` no longer implicitly chooses a service.
+
+The default `--max-parallel 2` allows a Lab-owned persistent service started with
+`lab_start` and a separate `medical_evaluate` program to coexist. Each service
+occupies a program slot. The meta-agent chooses its backend, parallelism, batching,
+readiness checks and cleanup with `lab_cancel`; the host still owns device and
+process limits. Pause, timeout and shutdown terminate owned process groups.
+Recovery retains receipts and configuration, and does not silently restart services.
+The meta-agent may instead run direct inference entirely inside one evaluation job.
 
 Open Lab exposes the explicit child device mapping as `project_context.resources`
 and in `lab_config.json`, including the device count and logical-to-physical IDs.

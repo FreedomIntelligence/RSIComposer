@@ -255,7 +255,26 @@ def allocated_resources(environment, device_type, declaration=None):
             'do not stop, reload, reconfigure or train on their reserved devices.'}
 
 
-CANDIDATE = r'''"""Editable candidate; fixed evaluation supplies the questions and owns scoring."""
+CANDIDATE = r'''"""Implement inference here; fixed evaluation supplies inputs and owns scoring.
+
+Read lab_config.json for model paths, installed Python and allocated devices.
+Choose direct inference or deploy your own service using Lab-owned programs.
+For a persistent service, submit it with lab_start and collect its logs; run
+medical_evaluate as a separate job, then stop the service with lab_cancel.
+Stdout must contain only {"predictions": [{"benchmark_id": ..., "id": ..., "text": ...}]}.
+There is no predeployed candidate endpoint and no answer/scoring implementation.
+"""
+import json, sys
+
+def predict(items):
+    raise NotImplementedError('Implement model inference or deploy a Lab-owned inference service first')
+
+payload = json.load(sys.stdin)
+print(json.dumps({'predictions': predict(payload['items'])}), flush=True)
+'''
+
+
+EXTERNAL_CANDIDATE = r'''"""Explicit external-service example; fixed evaluation owns inputs and scoring."""
 import concurrent.futures, json, sys
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -287,7 +306,8 @@ def main(argv=None):
     parser.add_argument('--endpoint')
     parser.add_argument('--model-id', default='rsisys-meta-qwen35-9b')
     parser.add_argument('--model-revision', default='lion-local-qwen35-9b')
-    parser.add_argument('--lab-model-id', help='Candidate inference alias; defaults to the decision alias')
+    parser.add_argument('--lab-endpoint', help='Optional external read-only candidate endpoint; default: meta-agent deploys its own inference')
+    parser.add_argument('--lab-model-id', help='Explicit served model alias required with --lab-endpoint')
     parser.add_argument('--lab-model-path', help='Candidate base weights; defaults to the decision weights')
     parser.add_argument('--device-type', choices=('cuda', 'npu'), default='cuda')
     parser.add_argument('--resource-allocation', type=json.loads,
@@ -298,6 +318,8 @@ def main(argv=None):
     parser.add_argument('--max-calls', type=int, default=128)
     parser.add_argument('--deadline-epoch', type=float, help='Absolute host UTC deadline, never extended by initialization or restart')
     parser.add_argument('--max-jobs', type=int, default=1024)
+    parser.add_argument('--max-parallel', type=int, default=2,
+                        help='Host program slots, including any persistent Lab-owned inference services')
     parser.add_argument('--program-timeout', type=int, default=1800)
     parser.add_argument('--revision', default='unreported')
     parser.add_argument('--run-id')
@@ -338,8 +360,10 @@ def main(argv=None):
                     parser.error('--' + name.replace('_', '-') + ' is required for a new run')
             if path.exists() or (root / 'application').exists():
                 raise ValueError('Run directory is not fresh; use its explicit recovery path')
-            if min(args.seconds, args.max_calls, args.max_jobs, args.program_timeout) < 1:
+            if min(args.seconds, args.max_calls, args.max_jobs, args.program_timeout, args.max_parallel) < 1:
                 parser.error('Host limits must be positive')
+            if args.lab_endpoint and not args.lab_model_id:
+                parser.error('--lab-endpoint requires an explicit --lab-model-id')
             args.root = str(root)
             for name in ('task', 'model_path', 'python', 'lab_model_path'):
                 if getattr(args, name):
@@ -426,11 +450,18 @@ def run(args):
     persist_identity('backend-environment.json', environment)
     resources = allocated_resources(environment, args.device_type, args.resource_allocation)
     persist_identity('resource-allocation.json', resources)
-    lab_endpoint = os.environ.get('RSISYS_LAB_ENDPOINT', args.endpoint)
     project = {'scenario': 'medical', 'python': args.python,
         'model_path': args.lab_model_path or args.model_path, 'device_type': args.device_type,
         'resources': resources,
-        'endpoint': lab_endpoint, 'served_model': args.lab_model_id or model.model_id, 'task': 'data/task.json',
+        'task': 'data/task.json',
+        'inference': {'owner': 'external_read_only' if args.lab_endpoint else 'meta_agent',
+            'initial_service': 'external' if args.lab_endpoint else 'none',
+            'program_slots': args.max_parallel,
+            'deployment': 'Choose local inference or deploy services with lab_start on assigned devices. '
+                'A persistent service occupies a program slot; leave another slot for medical_evaluate. '
+                'Readiness and configuration are your responsibility. Stop owned services with lab_cancel; '
+                'pause, timeout and host shutdown clean up their process groups. '
+                'A stopped service is not automatically relaunched on recovery.'},
         'path_base': 'lab_workspace', 'data_root': 'data',
         'available_data': [{**entry, 'path': str(Path('data') / entry['path'])}
                            for entry in data_manifest],
@@ -445,7 +476,7 @@ def run(args):
             'Paths in task.json are relative to data_root; available_data paths are relative to the Lab workspace. '
             'Do not read or search for private/heldout data, install packages, or change external services. '
             'Lab code uses only the accelerators assigned to generated programs. '
-            'The host separately allocates meta-agent and baseline inference services. '
+            'The host supplies the meta-agent service; deployment of Lab inference is your choice. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
             'Formal evaluation uses medical_evaluate with fixed data, inputs, gold, parsing and scoring. '
             'Edit candidate.py or write any candidate program implementing its JSON stdin/stdout interface. '
@@ -454,13 +485,15 @@ def run(args):
             'Pareto adoption requires primary improvement without guardrail regression; '
             'do not equate a program succeeding, a proposal, or unvalidated stdout with adoption. '
             'Development accuracy is not medical generalization.'}
+    if args.lab_endpoint:
+        project.update(endpoint=args.lab_endpoint, served_model=args.lab_model_id)
     def make_lab(context):
         allocated = RetainedAllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment,
                                             device_type=args.device_type)
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
-            max_jobs=args.max_jobs, max_parallel=1, python=args.python,
+            max_jobs=args.max_jobs, max_parallel=args.max_parallel, python=args.python,
             evaluation_root=context.data_dir / 'fixed-evaluations',
             defer_session=args.resume,
             evaluation_groups=[{'benchmark_id': group['benchmark_id'],
@@ -476,7 +509,7 @@ def run(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(task_path.parent / name, target)
         shutil.copyfile(task_path, lab.workspace / 'data/task.json')
-        (lab.workspace / 'candidate.py').write_text(CANDIDATE)
+        (lab.workspace / 'candidate.py').write_text(EXTERNAL_CANDIDATE if args.lab_endpoint else CANDIDATE)
         write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
         return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
     def make_decision(context, exploration):

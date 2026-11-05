@@ -5,6 +5,7 @@ from collections import UserDict
 from pathlib import Path
 import os
 import sys
+import time
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -77,6 +78,17 @@ class MedicalOpenLabTests(unittest.TestCase):
                     prompt = json.loads(policy._decision_request(
                         DecisionContext('fixture', (), (), ())).prompt)
                     advertised = prompt['project_context']
+                    self.assertEqual(advertised['inference']['program_slots'], 2)
+                    if mode == 'managed':
+                        self.assertEqual(advertised['inference']['owner'], 'meta_agent')
+                        self.assertNotIn('endpoint', advertised)
+                        self.assertNotIn('served_model', advertised)
+                        self.assertEqual((lab.workspace/'candidate.py').read_text(), open_lab_experiment.CANDIDATE)
+                    else:
+                        self.assertEqual(advertised['inference']['owner'], 'external_read_only')
+                        self.assertEqual(advertised['endpoint'], 'http://explicit.invalid/v1')
+                        self.assertEqual(advertised['served_model'], 'explicit-candidate')
+                        self.assertEqual((lab.workspace/'candidate.py').read_text(), open_lab_experiment.EXTERNAL_CANDIDATE)
                     for entry in advertised['available_data']:
                         path = lab.workspace / entry['path']
                         self.assertTrue(path.is_file(), f'Advertised data path missing: {entry["path"]}')
@@ -107,17 +119,72 @@ class MedicalOpenLabTests(unittest.TestCase):
 
             transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
                 from_pretrained=lambda *args, **kwargs: Tokenizer()))
-            with patch.dict(sys.modules, {'transformers': transformers}), \
-                 patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,9,10,11,13,14,15'}), \
-                 patch.object(open_lab_experiment.ResearchAssembly, 'langmem',
-                              return_value=open_lab_experiment.ResearchAssembly()), \
-                 patch.object(open_lab_experiment, 'Application', side_effect=inspect_application), \
-                 self.assertRaises(FixtureStop):
-                open_lab_experiment.main(['--root', str(root / 'run'), '--task', str(inputs / 'task.json'),
-                    '--model-path', str(model), '--python', sys.executable,
-                    '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
-                    '--resource-allocation', json.dumps({'physical_devices': [8,9,10,11,13,14,15],
-                        'memory_availability': {'capacity_mib_per_device': 65536}})])
+            for mode in ('managed', 'external'):
+                with self.subTest(mode=mode), patch.dict(sys.modules, {'transformers': transformers}), \
+                     patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,9,10,11,13,14,15',
+                                            'RSISYS_LAB_ENDPOINT': 'http://implicit.invalid/v1'}), \
+                     patch.object(open_lab_experiment.ResearchAssembly, 'langmem',
+                                  return_value=open_lab_experiment.ResearchAssembly()), \
+                     patch.object(open_lab_experiment, 'Application', side_effect=inspect_application), \
+                     self.assertRaises(FixtureStop):
+                    extra = ['--lab-endpoint', 'http://explicit.invalid/v1', '--lab-model-id', 'explicit-candidate'] if mode == 'external' else []
+                    open_lab_experiment.main(['--root', str(root / ('run-'+mode)), '--task', str(inputs / 'task.json'),
+                        '--model-path', str(model), '--python', sys.executable,
+                        '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
+                        '--resource-allocation', json.dumps({'physical_devices': [8,9,10,11,13,14,15],
+                            'memory_availability': {'capacity_mib_per_device': 65536}}), *extra])
+
+    def test_owned_inference_service_and_fixed_evaluation_run_together_and_clean_up(self):
+        from examples.medical.fixed_evaluation import FixedMedicalLab
+        from rsisys.loops.contracts.decision import OperationCall
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / 'fixture.jsonl'
+            data.write_text(json.dumps({'id':'one', 'question':'fixture', 'options':{'A':'a','B':'b'}, 'gold':'A'})+'\n')
+            backend = open_lab_experiment.RetainedAllocatedProcessBackend(root/'executor', {'CUDA_VISIBLE_DEVICES':'0',
+                'PYTHONPATH': str(Path(__file__).resolve().parents[1]/'src')})
+            lab = FixedMedicalLab(backend, InMemoryArtifactStore(), max_parallel=2, timeout_seconds=10,
+                python=sys.executable, evaluation_root=root/'evaluations', evaluation_groups=[{
+                    'benchmark_id':'fixture','path':str(data),'sha256':hashlib.sha256(data.read_bytes()).hexdigest()}])
+            try:
+                lab.execute(OperationCall('lab_write_file', {'path':'server.py', 'content': '''import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        p=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        b=json.dumps({'predictions':[{'benchmark_id':i['benchmark_id'],'id':i['id'],'text':'A'} for i in p['items']]}).encode()
+        self.send_response(200);self.end_headers();self.wfile.write(b)
+    def log_message(self,*args): pass
+server=HTTPServer(('127.0.0.1',0),Handler)
+Path('port.txt').write_text(str(server.server_port))
+server.serve_forever()
+'''}))
+                service = lab.execute(OperationCall('lab_start', {'key':'owned-service','argv':[sys.executable,'server.py']})).data['job_id']
+                until = time.monotonic()+5
+                while not (lab.workspace/'port.txt').exists() and time.monotonic()<until:
+                    time.sleep(.01)
+                self.assertTrue((lab.workspace/'port.txt').is_file())
+                lab.execute(OperationCall('lab_write_file', {'path':'client.py', 'content': '''import sys
+from pathlib import Path
+from urllib.request import Request,urlopen
+port=Path('port.txt').read_text()
+with urlopen(Request('http://127.0.0.1:'+port,data=sys.stdin.buffer.read(),headers={'Content-Type':'application/json'}),timeout=3) as r:
+    sys.stdout.buffer.write(r.read())
+'''}))
+                ident = lab.execute(OperationCall('medical_evaluate', {'key':'evaluation','candidate_id':'owned-fixture',
+                    'argv':[sys.executable,'client.py']})).data['job_id']
+                completed = backend.wait(lab._jobs[ident][0])
+                self.assertEqual(completed.exit_code, 0, completed.stderr)
+                receipt = lab.execute(OperationCall('lab_result', {'job_id':ident}))
+                self.assertEqual(receipt.data['fixed_evaluation']['metrics']['fixture'], {'accuracy':1.0,'n':1})
+                self.assertEqual(lab.execute(OperationCall('lab_poll', {'job_id':service})).data['state'], 'running')
+                lab.execute(OperationCall('lab_cancel', {'job_id':service}))
+                backend.wait(lab._jobs[service][0])
+            finally:
+                lab.close()
+                backend.close_all()
+            self.assertEqual(backend.active_count, 0)
 
     def test_conflicting_resource_declarations_fail_before_lab_execution(self):
         environment = {'ASCEND_RT_VISIBLE_DEVICES': '8,9'}
