@@ -149,6 +149,7 @@ class LocalProcessBackend:
         entry = _Process(process, timeout, logs=logs)
         self._processes[ref] = entry
         try:
+            self._process_started(ref, request, entry)
             threading.Thread(target=self._watch, args=(entry,), daemon=True).start()
         except Exception as exc:
             self._record_error(entry, exc)
@@ -158,6 +159,9 @@ class LocalProcessBackend:
                 entry.done.set()
             raise
         return ref
+
+    def _process_started(self, ref, request, entry):
+        """Optional explicit persistence integration, before starting supervision."""
 
     def _drain(self, stream, target: bytearray, entry: _Process, name):
         try:

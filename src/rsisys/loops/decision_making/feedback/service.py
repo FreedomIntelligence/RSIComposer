@@ -224,3 +224,9 @@ class FeedbackLearningService:
         self.learning.notify_archive()
         self.learning.close(timeout=timeout)
         self._publish()
+
+    def pause(self, *, timeout=30):
+        """Settle submitted work, preserve queued work, and stop admissions."""
+        self.learning.notify_archive()
+        self.learning.close(timeout=timeout, preserve_queued=True)
+        self._publish()

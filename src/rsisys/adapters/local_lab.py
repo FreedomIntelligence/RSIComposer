@@ -34,7 +34,8 @@ class LocalProcessLab:
     closes its own session, never other sessions/services sharing the backend.
     """
     def __init__(self, backend: LocalProcessBackend, artifacts, *, timeout_seconds=300,
-                 max_jobs=1024, max_parallel=4, max_file_bytes=1024 * 1024):
+                 max_jobs=1024, max_parallel=4, max_file_bytes=1024 * 1024,
+                 defer_session=False):
         if not isinstance(backend, LocalProcessBackend):
             raise TypeError('LocalProcessLab requires an explicit LocalProcessBackend')
         positive(timeout_seconds, 'timeout_seconds')
@@ -48,7 +49,9 @@ class LocalProcessLab:
         self.max_parallel, self.max_file_bytes = max_parallel, max_file_bytes
         self._jobs, self._keys, self._terminal = {}, {}, {}
         self._accepting, self._closed = True, False
-        self.session = backend.create(SandboxSpec('local', timeout_seconds))
+        # A state adapter attaches the original session during restore. Factory
+        # construction must not allocate or overwrite a replacement workspace.
+        self.session = None if defer_session else backend.create(SandboxSpec('local', timeout_seconds))
 
     @property
     def workspace(self):

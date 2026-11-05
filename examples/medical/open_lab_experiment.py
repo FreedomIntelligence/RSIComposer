@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import sys
 import threading
 import time
 import traceback
@@ -32,6 +33,7 @@ from rsisys.loops.decision_making.harness.policy.prompts import DecisionPrompts
 from rsisys.research import ResearchAssembly
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.local_process import LocalProcessBackend
+from rsisys.adapters.local_lab_state import RetainedLocalProcessBackend
 from rsisys.runtime.model import ModelResponseError
 from rsisys.runtime.run_policy import TimeRunPolicy, RunDecision
 
@@ -94,7 +96,7 @@ class RecordedBackend:
     token_count_mode = 'local_official_chat_template'
 
     def __init__(self, transport, tokenizer, root, *, max_calls, max_input_tokens=56000,
-                 template_tool_normalizer=None, provider_token_counter=False):
+                 template_tool_normalizer=None, provider_token_counter=False, resume=False):
         self.transport, self.tokenizer, self.root = transport, tokenizer, Path(root)
         self.template_tool_normalizer = template_tool_normalizer
         self.provider_token_counter = provider_token_counter
@@ -103,7 +105,16 @@ class RecordedBackend:
         self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
         self.calls, self.deadline = 0, None
         self.stop_requested = False
+        self.pause_requested = False
         self.lock = threading.RLock()
+        if resume:
+            ledger = json.loads((self.root / 'model_calls.json').read_text())
+            if (ledger['limit'] != max_calls or type(ledger['attempted']) is not int
+                    or not 0 <= ledger['attempted'] <= max_calls):
+                raise ValueError('Cannot change or reset the recovered model-call budget')
+            self.calls = ledger['attempted']
+        else:
+            write(self.root / 'model_calls.json', {'attempted': 0, 'limit': max_calls})
 
     def count_tokens(self, request):
         if self.provider_token_counter:
@@ -208,6 +219,10 @@ class AllocatedProcessBackend(LocalProcessBackend):
         return super().exec(sandbox, replace(request, argv=argv))
 
 
+class RetainedAllocatedProcessBackend(AllocatedProcessBackend, RetainedLocalProcessBackend):
+    """The same explicit device routing, with retained local executor state."""
+
+
 CANDIDATE = r'''"""Editable candidate; fixed evaluation supplies the questions and owns scoring."""
 import concurrent.futures, json, sys
 from pathlib import Path
@@ -231,12 +246,13 @@ print(json.dumps({'predictions':predictions}),flush=True)
 
 
 def main(argv=None):
+    from .open_lab_recovery import controller_lock, example_identity, inspect_recovery
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
-    parser.add_argument('--task', required=True)
-    parser.add_argument('--model-path', required=True)
-    parser.add_argument('--python', required=True, help='Installed accelerator/Transformers Python for generated programs')
-    parser.add_argument('--endpoint', required=True)
+    parser.add_argument('--task')
+    parser.add_argument('--model-path')
+    parser.add_argument('--python', help='Installed accelerator/Transformers Python for generated programs')
+    parser.add_argument('--endpoint')
     parser.add_argument('--model-id', default='rsisys-meta-qwen35-9b')
     parser.add_argument('--model-revision', default='lion-local-qwen35-9b')
     parser.add_argument('--lab-model-id', help='Candidate inference alias; defaults to the decision alias')
@@ -250,14 +266,70 @@ def main(argv=None):
     parser.add_argument('--max-jobs', type=int, default=1024)
     parser.add_argument('--program-timeout', type=int, default=1800)
     parser.add_argument('--revision', default='unreported')
-    parser.add_argument('--run-id', required=True)
-    args = parser.parse_args(argv)
-    if min(args.seconds, args.max_calls, args.max_jobs, args.program_timeout) < 1:
-        parser.error('Host limits must be positive')
+    parser.add_argument('--run-id')
+    parser.add_argument('--resume', action='store_true', help='Resume the same durable run using its saved configuration')
+    parser.add_argument('--inspect-recovery', action='store_true', help='Read recovery status without constructing or executing modules')
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments)
+    root = Path(args.root).resolve()
+    if args.inspect_recovery:
+        result = inspect_recovery(root)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+        return result
+    with controller_lock(root, resume=args.resume):
+        path = root / 'recovery-launch.json'
+        if args.resume:
+            for action in parser._actions:
+                if action.dest in ('root', 'resume', 'help'):
+                    continue
+                if any(word == flag or word.startswith(flag + '=')
+                       for word in arguments for flag in action.option_strings):
+                    parser.error('--resume uses the saved configuration; supply only --root and --resume')
+            if not path.is_file():
+                raise ValueError('This run has no durable launch state; legacy runs cannot be resumed in place')
+            saved = json.loads(path.read_text())
+            if saved['schema'] != 1 or saved['source'] != example_identity():
+                raise ValueError('Resume requires the same Open Lab launcher/evaluator source')
+            for name in saved['required_files']:
+                if not (root / name).is_file():
+                    raise ValueError('Required recovery state is missing: ' + name)
+            if (root / 'result.json').exists():
+                previous = json.loads((root / 'result.json').read_text())
+                if previous['status'] in ('completed', 'host_limit_reached', 'deadline_reached_before_start'):
+                    raise ValueError('This run is terminal; resuming cannot extend its deadline or budget')
+            args = argparse.Namespace(**saved['arguments'], resume=True, inspect_recovery=False)
+        else:
+            for name in ('task', 'model_path', 'python', 'endpoint', 'run_id'):
+                if not getattr(args, name):
+                    parser.error('--' + name.replace('_', '-') + ' is required for a new run')
+            if path.exists() or (root / 'application').exists():
+                raise ValueError('Run directory is not fresh; use its explicit recovery path')
+            if min(args.seconds, args.max_calls, args.max_jobs, args.program_timeout) < 1:
+                parser.error('Host limits must be positive')
+            args.root = str(root)
+            for name in ('task', 'model_path', 'python', 'lab_model_path'):
+                if getattr(args, name):
+                    setattr(args, name, str(Path(getattr(args, name)).resolve()))
+            # Fix the wall deadline once, including setup and future downtime.
+            args.deadline_epoch = min(args.deadline_epoch or float('inf'), time.time() + args.seconds)
+            saved_args = {k: v for k, v in vars(args).items() if k not in ('resume', 'inspect_recovery')}
+            write(path, {'schema': 1, 'source': example_identity(), 'arguments': saved_args,
+                'required_files': ['application/config.json', 'application/run.json',
+                    'application/recovery/checkpoint.json', 'application/recovery/journal.json',
+                    'application/decision_memory.json', 'application/experience.sqlite3',
+                    'application/feedback_learning.json', 'application/module_assembly.json',
+                    'application/research_assembly.json', 'application/lab_execution.json',
+                    'application/allocated-workspaces/process-recovery.json',
+                    'memory.sqlite3', 'model_calls.json']})
+        write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),
+            'resume': args.resume, 'at': time.time()})
+        return run(args)
+
+
+def run(args):
+    from .open_lab_recovery import state_ports, pause_at_boundary
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    with (root / 'controller.claim').open('x') as stream:
-        stream.write(str(os.getpid()))
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True, trust_remote_code=False)
     binding = BackendBinding('meta', 'chat_completions', args.endpoint, timeout_seconds=120)
@@ -266,14 +338,14 @@ def main(argv=None):
         'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}, native_schema_mode='portable')
     backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls,
         template_tool_normalizer=sglang_template_tools if args.template_family == 'sglang' else None,
-        provider_token_counter=args.template_family == 'vllm')
+        provider_token_counter=args.template_family == 'vllm', resume=args.resume)
     from .open_lab_monitor import OpenLabMonitor
-    monitor = OpenLabMonitor(root, args.run_id, model, args.revision)
+    monitor = None
     previous_handlers = {}
     def request_stop(signum, frame):
-        backend.stop_requested = True
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        previous_handlers[sig] = signal.signal(sig, request_stop)
+        # Finish the current decision boundary, then pause safely. The absolute
+        # deadline and call limits still independently stop inference admission.
+        backend.pause_requested = True
     compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
         max_target_tokens=40000, target_increment_tokens=12000)
     prompts = DecisionPrompts({
@@ -292,7 +364,14 @@ def main(argv=None):
         content = path.read_bytes()
         data_manifest.append({'path': name, 'sha256': hashlib.sha256(content).hexdigest(),
             'rows': len([line for line in content.splitlines() if line.strip()])})
-    write(root / 'data-manifest.json', data_manifest)
+    def persist_identity(name, value):
+        path = root / name
+        if args.resume:
+            if not path.is_file() or json.loads(path.read_text()) != value:
+                raise ValueError('Recovered deployment identity changed: ' + name)
+        else:
+            write(path, value)
+    persist_identity('data-manifest.json', data_manifest)
     def inventory(path):
         model_path = Path(path).resolve()
         return {'model_path': str(model_path), 'config_sha256': hashlib.sha256(
@@ -302,6 +381,7 @@ def main(argv=None):
             'binding': 'local_config_and_weight_inventory; full_weight_digest_not_verified'}
     weight_identity = inventory(args.model_path)
     actor_weight_identity = inventory(args.lab_model_path or args.model_path)
+    persist_identity('model-inventory.json', {'decision': weight_identity, 'actor': actor_weight_identity})
     device_keys = ('CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER') if args.device_type == 'cuda' else (
         'ASCEND_RT_VISIBLE_DEVICES', 'ASCEND_HOME_PATH', 'ASCEND_OPP_PATH', 'ASCEND_AICPU_PATH')
     environment = {k: os.environ[k] for k in (*device_keys, 'LD_LIBRARY_PATH', 'TORCH_DEVICE_BACKEND_AUTOLOAD')
@@ -309,7 +389,7 @@ def main(argv=None):
     environment.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false',
         OMP_NUM_THREADS='4', PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'src') + ':' +
         str(Path(__file__).resolve().parents[2]))
-    write(root / 'backend-environment.json', environment)
+    persist_identity('backend-environment.json', environment)
     lab_endpoint = os.environ.get('RSISYS_LAB_ENDPOINT', args.endpoint)
     project = {'scenario': 'medical', 'python': args.python,
         'model_path': args.lab_model_path or args.model_path, 'device_type': args.device_type,
@@ -338,17 +418,21 @@ def main(argv=None):
             'do not equate a program succeeding, a proposal, or unvalidated stdout with adoption. '
             'Development accuracy is not medical generalization.'}
     def make_lab(context):
-        allocated = AllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment,
+        allocated = RetainedAllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment,
                                             device_type=args.device_type)
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
             max_jobs=args.max_jobs, max_parallel=1, python=args.python,
             evaluation_root=context.data_dir / 'fixed-evaluations',
+            defer_session=args.resume,
             evaluation_groups=[{'benchmark_id': group['benchmark_id'],
                 'path': str(task_path.parent / group['path']), 'sha256': manifest[group['path']]['sha256']}
                 for group in task['development']])
-        # Seed assets before construction returns. No research programs are started.
+        native_labs.append(lab)
+        if args.resume:
+            return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
+        # Seed only new workspaces. Restore never overwrites edited code/data.
         (lab.workspace / 'data').mkdir()
         for name in relative_files:
             target = lab.workspace / 'data' / name
@@ -362,6 +446,7 @@ def main(argv=None):
         context.project_context = project
         context.backends = {'meta': backend}
         loop = build_default_decision(context, exploration)
+        loop.harness.context_compactor = compactor
         loop.harness.policy = TimedOpenPolicy(backend, model, allowed_actions=(),
             directives=DirectiveDefinitions(()), max_validation_attempts=3, structured_output=True,
             context_compactor=compactor, project_context=project, prompts=prompts)
@@ -381,7 +466,10 @@ def main(argv=None):
                 'do not copy code, complete prompts or unchanged environment descriptions into memory. '
                 'Distinguish program outputs from validated evaluations and adoption. '
                 'Absence from the supplied snapshot does not prove absence from the full history.'})
+    native_labs = []
     modules = ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
+        state_factory=lambda context, decision, exploration: state_ports(
+            context, decision, exploration, lab=native_labs[0], backend=backend),
         research_backend=backend, feedback_options={'max_calls': args.max_calls, 'max_pending': 8,
             'max_input_tokens': 24000, 'max_output_tokens': 4096})
     objective = ('Improve the medical Lab using real evidence. Choose your own hypotheses and implement, '
@@ -397,22 +485,41 @@ def main(argv=None):
     started = time.monotonic()
     try:
         remaining = min(args.seconds, args.deadline_epoch - time.time()) if args.deadline_epoch else args.seconds
-        if remaining <= 0 or backend.stop_requested:
+        if not args.resume and (remaining <= 0 or backend.stop_requested):
             result.update(status='deadline_reached_before_start')
             return result
         backend.deadline = time.monotonic() + remaining
-        with Application(config, modules=modules, run_policy=AbsoluteHostPolicy(backend, args.seconds, args.deadline_epoch),
-                         cleanup_timeout_seconds=40) as app:
+        policy = AbsoluteHostPolicy(backend, args.seconds, args.deadline_epoch)
+        application = (Application.resume(config.data_dir, modules=modules, run_policy=policy) if args.resume else
+                       Application(config, modules=modules, run_policy=policy,
+                                   cleanup_timeout_seconds=40, durable=True))
+        with application as app:
+            if app.recovery.intervention is not None:
+                from rsisys.runtime.recovery import RecoveryRequired
+                raise RecoveryRequired('Interrupted mutation requires evidence-backed reconciliation; '
+                    'inspect with --root <run> --inspect-recovery. No action was replayed')
+            monitor = OpenLabMonitor(root, args.run_id, model, args.revision)
+            if args.resume:
+                monitor.update(app.runner.decision_making.harness, backend, compactor, None)
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                previous_handlers[sig] = signal.signal(sig, request_stop)
             started = time.monotonic()
             result['started_at'] = time.time()
             remaining = min(args.seconds, args.deadline_epoch - time.time()) if args.deadline_epoch else args.seconds
-            write(root / 'research-started.json', {'started_at': result['started_at'], 'seconds': remaining,
-                'absolute_deadline_epoch': args.deadline_epoch})
+            if not args.resume:
+                write(root / 'research-started.json', {'started_at': result['started_at'], 'seconds': remaining,
+                    'absolute_deadline_epoch': args.deadline_epoch})
+            append(root / 'controller-lifecycle.jsonl', {'event': 'resumed' if args.resume else 'started',
+                'at': time.time(), 'model_calls': backend.calls, 'deadline_epoch': args.deadline_epoch})
             backend.deadline = started + max(0, remaining)
             try:
                 while True:
                     if backend.stop_requested or time.monotonic() >= backend.deadline:
                         result.update(status='completed', stop='host_deadline_or_signal')
+                        break
+                    if backend.pause_requested:
+                        pause_at_boundary(app)
+                        result.update(status='paused', stop='host_pause', resumable=True)
                         break
                     try:
                         step = app.runner.step(objective)
@@ -439,8 +546,12 @@ def main(argv=None):
                         raise TimeoutError('Owned Lab work did not stop')
                     time.sleep(0.1)
                 # Retain generated programs/results/weights remotely; bundles may omit large/private files.
-                shutil.copytree(lab.workspace, root / 'retained-workspace', symlinks=True,
-                    ignore=lambda directory, names: {'data', '.cache'} & set(names))
+                if result['status'] != 'paused':
+                    app.runner.decision_making.feedback_service.close()
+                    if app.recovery.intervention is None:
+                        app.recovery.mutate('shutdown', (), lambda: None)
+                write(root / 'retained-workspace.json', {'path': str(lab.workspace),
+                    'mode': 'same_directory_recovery', 'resumable': result['status'] == 'paused'})
                 write(root / 'controller-cleanup.json', {'owned_lab_closed': True, 'at': time.time()})
     except BaseException as exc:
         result.update(status='failed', error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc())
@@ -449,7 +560,10 @@ def main(argv=None):
         result.update(ended_at=time.time(), elapsed_seconds=time.monotonic() - started,
             model_calls=backend.calls, compactions=compactor.compactions)
         write(root / 'context-audit.json', compactor.last_measurement)
-        monitor.finish(result)
+        if monitor is not None:
+            monitor.finish(result)
+        if (root / 'result.json').exists():
+            append(root / 'result-history.jsonl', json.loads((root / 'result.json').read_text()))
         write(root / 'result.json', result)
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)

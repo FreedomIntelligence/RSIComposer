@@ -780,3 +780,13 @@ shared run budget and separate learning limits.
 `research_working_state.json` 保存最近一次装配的工作视图与投影数量（位于 token
 compact 之前）；实际发出的请求仍以 `model_requests.jsonl` 为准。没有已授权的
 原始 history/memories archive 能力时保留原视图，不静默移除上下文。
+
+## Open Lab 暂停与恢复
+
+新版 `examples.medical.open_lab_experiment` 默认启用原目录 durable 恢复。
+SIGINT/SIGTERM 请求在当前决策边界后暂停；确认 `result.status=paused` 后，可以用
+`python -m examples.medical.open_lab_experiment --root /absolute/run --resume` 续跑。
+仅复用原配置与绝对 deadline，累计模型调用不重置；`--inspect-recovery` 只读核对状态。
+未确定的外部副作用保持阻塞，原未启用 durable 的历史运行不能直接续跑。
+训练 optimizer checkpoint 由具体 Lab 程序管理。
+见[恢复接口与验证范围](../../docs/review/open-lab-recovery-20261105.md)。

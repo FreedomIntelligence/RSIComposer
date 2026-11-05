@@ -1148,7 +1148,7 @@ class FeedbackLearning:
                            'kinds': [p['kind'] for p in r['proposals']]} for r in rows[offset:offset+limit]],
                 'next_offset': offset+limit if offset+limit < len(rows) else None}
 
-    def close(self, *, timeout=30):
+    def close(self, *, timeout=30, preserve_queued=False):
         """Stop admissions; preserve uncertain calls, never claim cancellation.
 
         Python cannot kill a running backend call. A timed-out close reports failure;
@@ -1156,6 +1156,9 @@ class FeedbackLearning:
         """
         self._assert_owner()
         self._closed = True
+        # A host pause retains unsubmitted work for the next process. Repeated
+        # resource cleanup must not convert those reservations to cancellation.
+        self._preserve_queued = getattr(self, '_preserve_queued', False) or preserve_queued
         self.poll(dispatch=False)
         if self._futures:
             _, pending = wait(tuple(self._futures.values()), timeout=timeout)
@@ -1164,7 +1167,7 @@ class FeedbackLearning:
                 raise TimeoutError('Feedback inference still running; transport cancellation not confirmed')
         state = deepcopy(self.state)
         for row in state['jobs'].values():
-            if row['status'] == 'queued':
+            if row['status'] == 'queued' and not self._preserve_queued:
                 row.update(status='cancelled', error='Closed before model submission')
         self._commit(state)
         if self._executor is not None and self._owns_executor:
