@@ -95,8 +95,11 @@ class ModelDecisionPolicy:
         self.backend = wrap(self.backend)
         return self.backend
 
-    def _research_instructions(self):
-        return self.prompts.render('research') + ' '
+    def _research_instructions(self, context=None):
+        text = self.prompts.render('research')
+        if context is not None and context.research_agenda.get('agent_memory', {}).get('organization_owner') == 'acting_meta_agent':
+            text += '\n' + self.prompts.render('agent_memory')
+        return text + ' '
 
     def _context_inputs(self, context):
         inputs = asdict(context)
@@ -268,7 +271,7 @@ class ModelDecisionPolicy:
             "decision_maker", self.model, json.dumps(inputs, separators=(',', ':')),
             system=self.prompts.render('decision', scheduling=self._scheduling_instructions(context),
                 control=self._control_instructions(context), attempt=self._attempt_instructions(),
-                research=self._research_instructions()),
+                research=self._research_instructions(context)),
             **({'response_schema': self.decision_schema(context)} if self.structured_output else {}),
         )
 
@@ -332,10 +335,11 @@ class ModelDecisionPolicy:
         compactor, recent_limit = (self._context_runtime if self._context_runtime is not None
                                   else (self.context_compactor, 32))
         if isinstance(compactor, BasicContextCompactor):
+            single_meta = context.research_agenda.get('agent_memory', {}).get('organization_owner') == 'acting_meta_agent'
             projected = compactor.compact(context, recent_limit=recent_limit,
                 measure=lambda view: self._count_request(build(view)),
-                summarize=lambda records, previous, limit: self._summarize_context(
-                    records, previous, limit, current_state=self._summary_current_state(context)))
+                summarize=(None if single_meta else lambda records, previous, limit: self._summarize_context(
+                    records, previous, limit, current_state=self._summary_current_state(context))))
             compactor.last_measurement['count_method'] = self.context_token_count_mode
         else:
             projected = compactor.compact(context, recent_limit=recent_limit)
@@ -459,7 +463,7 @@ class ModelDecisionPolicy:
         return GenerationRequest(
             "decision_maker", model, json.dumps(self._context_inputs(context)),
             system=self.prompts.render('review', attempt=self._attempt_instructions(),
-                research=self._research_instructions()),
+                research=self._research_instructions(context)),
             **({'response_schema': self.review_schema(context)} if self.structured_output else {}),
         )
 

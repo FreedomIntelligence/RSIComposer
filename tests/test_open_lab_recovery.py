@@ -161,7 +161,6 @@ class OpenLabRecoveryTests(unittest.TestCase):
         finally:
             resumed.close()
 
-    @unittest.skipUnless(importlib.util.find_spec('langmem'), 'pinned LangMem environment required')
     def test_launcher_signal_pause_resume_preserves_state_memory_budget_and_deadline(self):
         inputs, model, run = self.root / 'inputs', self.root / 'model', self.root / 'run'
         inputs.mkdir()
@@ -200,7 +199,6 @@ class OpenLabRecoveryTests(unittest.TestCase):
             patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,13'}),
             patch.object(launcher, 'VLLMBackend', Transport)]
         from examples.medical.open_lab_monitor import OpenLabMonitor
-        from rsisys.loops.decision_making.feedback.langmem import LangMemContextMemory
         original_update = OpenLabMonitor.update
         def update(monitor, harness, backend, compactor, step):
             if backend.calls == 1 and not compact_state:
@@ -209,12 +207,12 @@ class OpenLabRecoveryTests(unittest.TestCase):
                 state['compactions'] = 3
                 compactor.restore_state(state)
                 compact_state.append(state)
-                provider = LangMemContextMemory(run / 'memory.sqlite3',
-                    namespace=('rsisys', 'recovery-fixture'))
-                with provider._store() as store:
-                    store.put(provider._memory_ns, 'retained-memory', {'content': {
-                        'content': 'fixture reusable observation', 'source_refs': ['fixture-source'],
-                        'evaluation_claims': [], 'simulated': True}})
+                memory = harness.agent_memory
+                memory.execute(OperationCall('research_task', {'expected_revision': 0,
+                    'task_id': 'resume-debug', 'action': 'open', 'title': 'Retain raw marker feedback'}))
+                memory.execute(OperationCall('memory_write', {'expected_revision': 1,
+                    'memory_id': 'retained-memory', 'content': 'fixture reusable observation',
+                    'source_refs': [], 'status': 'unverified'}))
             original_update(monitor, harness, backend, compactor, step)
         with patches[0], patches[1], patches[2], patch.object(OpenLabMonitor, 'update', update), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -235,6 +233,10 @@ class OpenLabRecoveryTests(unittest.TestCase):
             self.assertEqual(second['model_calls'], 2)
             self.assertEqual(second['compactions'], 3)
             self.assertIn('fixture reusable observation', json.dumps(transports[1].restored_context))
+            active = transports[1].restored_context['research_agenda']['active_feedback']
+            self.assertEqual(active['tasks'][0]['task_id'], 'resume-debug')
+            self.assertIn('resume-marker.txt', json.dumps(active['observations']))
+            self.assertEqual(DurableRecovery.read(run / 'application')['components']['agent_memory']['state']['revision'], 2)
             resources = transports[1].restored_context['project_context']['resources']
             self.assertEqual(resources['logical_to_physical'], {'0': '8', '1': '13'})
             self.assertEqual(resources, json.loads((run / 'resource-allocation.json').read_text()))

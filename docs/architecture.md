@@ -1,88 +1,72 @@
 # RSISys：统一术语与架构
 
-更新：2026-11-05。本文是当前系统说明、模块文档、prompt 与架构图的统一口径。
-历史审查报告和冻结实验记录保留当时的称谓；说明当前架构时以本文为准。
-下面区分职责约定与实际接线，接口存在不代表所有后端都已实现。
+更新：2026-11-06。当前默认架构是 **一个 meta-agent + Lab + memory 模块**。
+历史审查材料和冻结实验保留当时的两侧称谓；新运行以本文和实际装配配置为准。
 
 ## 一条主链路
 
-**meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ 下一次 decision 的 context。**
-
-meta-agent 是模型承担的系统职能；括号说明当前职责，不代表两个独立训练的模型。
-标准反馈装配中，两侧使用同一 active meta-agent 权重身份、各自独立的上下文。
-整理任务在捕获时固定 `ModelRef`；已经排队的任务保留该身份，不追改历史版本。
+**meta-agent → Lab → 原始 feedback → 同一个 meta-agent。**
+meta-agent 直接负责行动选择、结果解释、调试、上下文管理以及记忆的写入、更新和删除。
+旧“整理侧”的语义判断职责合入这个工作流；默认不再创建独立上下文中的整理模型。
 
 ![系统主链路与信息生命周期](diagrams/system-flow.svg)
 
-| 统一名称 | 定义与职责 |
+| 名称 | 定义与职责 |
 | --- | --- |
-| **meta-agent（decision侧）** | 消费目标、当前状态、即时反馈与检索上下文，选择下一步研究动作；通过 Lab 已安装的能力读写代码、执行程序、训练、评测或应用变更。 |
-| **Lab** | agent 执行任务和实验的环境，封装任务、数据、模型或 agent、工具、harness 与执行资源。内部组织自由；可以含 Actor，也可以直接执行程序，不要求有固定的内层 agent loop。 |
-| **meta-agent（整理侧）** | 在独立上下文中解释反馈、整理和检索记忆、组织可选建议，参与下一次上下文的管理。接入、路由、持久化和视图更新可由确定性代码完成，不要求每条结果都调用模型。 |
-| **decision** | 一次带身份、参数和来源的行动选择或任务，属于消息或记录；不是另一种 agent。 |
-| **Lab 内 agent / Actor** | 某种 Lab 实现内部的执行角色。Actor 不是所有 Lab 的必需组件，也不是 meta-agent 的另一个名字。 |
+| **meta-agent** | 根据目标、真实状态、当前任务原始反馈和相关记忆选择行动，读写代码、调试和解释结果，并显式管理自己的记忆。`decision侧` 可作为兼容说明，不再另设整理侧。 |
+| **Lab** | 任务与实验的执行环境，包含数据、模型或 agent、工具、harness 和授权资源；内部可以直接运行程序，也可以含 agent。 |
+| **memory 模块** | 存储、索引、检索和修订记忆；默认 `AgentMemory` 使用本地原子 JSON 和确定性文本检索，不发出模型或 embedding 请求。 |
+| **decision** | 一次带身份、参数和来源的行动或任务，不是另一种 agent。 |
+| **Meta-agent harness** | 装配输入、执行工具边界、计量和容量管理；与 Lab harness 分开。 |
 
-两侧是两种工作职责，不是同步的三个固定阶段：执行中的 Lab 任务、后台整理与下一次
-decision 可以依照宿主调度交错推进。整理侧不替 decision侧选择或执行下一项实验。
+## 决策时看到什么
 
-## 反馈的两条主消费路径
+1. 宿主给定的任务、约束、权限、资源和截止时间。
+2. 当前任务、作业和候选的真实状态；历史记忆不能覆盖它们。
+3. 最新原始 Lab 回执，以及仍开放的实验/调试任务所固定的原始证据。
+4. 有界检索的既有记忆与归档读取入口；记忆正文可通过 `memory_read` 阅读。
 
-Lab 输出先保持原样，由执行设施补齐任务身份、生命周期状态和原始来源。
-Lab 不必先输出统一的 memory、指标、候选或 proposal schema。
+完整原始历史保留在执行归档中，按需读取。单条原文在容量内直接交付；超长内容使用明确的
+UTF-8 原文页、完整性标记、SHA 和精确读取地址，不能把摘要或预览当作已读完整原文。
 
-| 路径 | 正文如何被使用 | 生命周期 |
+## 当前任务与长期记忆
+
+| 信息 | 谁管理 | 生命周期 |
 | --- | --- | --- |
-| **即时 context** | 真实结果直接进入当前工作上下文，帮助下一步快速决策；适用于测试、查询、调试，也适用于任何需要立即反应的真实结果。 | 默认不触发 LangMem 整理；退出常驻工作视图后可按引用查原文。不是每次消费后立即删除。 |
-| **memory** | 交给整理侧及可替换 memory provider，形成适合后续检索的记忆；需要使用时再提供 context 文本。 | 可检索、可修订、带来源；内部算法、格式、存储、合并策略由模块自行实现。 |
+| **原始即时反馈** | 执行设施交付，同一个 meta-agent 使用 | `previous_feedback` 展示最新原生操作；任务固定的证据见 `active_feedback`，中间读代码/日志和编辑不会挤掉它。 |
+| **实验/调试任务** | meta-agent 调用 `research_task` 的 open/pin/close | open 可固定已有错误，pin 增补原始回执；任务关闭才释放该驻留窗口。任务完成不是单个工具调用结束。 |
+| **可检索 memory** | meta-agent 调用 `memory_write`、`memory_delete` | 跨决策保留，显式修订；更新和删除均记录修订证据，不自动把每条 feedback 写成记忆。 |
+| **原始归档** | 宿主持久化 | 独立于任务窗口和记忆；关闭任务或删除记忆不删除实验原文。可选轨迹产品不等于执行账本。 |
 
-**同一观察的正文按用途选择一条主消费路径，不默认把每条结果同时全量放入两路。**
-正文路由不改变执行账本中的身份、状态和错误；decision侧通过状态和原始证据端口核对。
-memory 路径可即时交付整理请求确认，这不代表把原文又作为即时结果长期驻留，
-也不代表整理已经成功。一次即时结果不妨碍检索既有 memory。
+默认最多同时开放两个任务，每个可固定四条回执，并保留该任务最近两条 producer 回执。
+原始正文使用共享有界窗口，超量时给出原文分页地址。没有授权归档能力时不悄悄丢弃原文。
+这些限额是公开工具能力，超限返回可修正反馈，不驱逐别的活跃任务。
 
-标准医疗 Open Lab 已通过 `RoutedLab`、`ContextOrMemoryAdmission` 和
-`ImmediateFeedbackWindow` 接通：`lab_result` 的 `feedback_route=context|memory`
-默认 `context`。该参数由适配器消费，Lab 收到原有参数；其他 Lab 可选择自己的路由接法。
-即时窗口保留近期观察、当前必要事实和活跃依赖；原文无法归档时不会强行移出。
-当前 memory 工作视图中的“请求完成”确认不是 Lab 任务成功或记忆写入成功；
-任务终态看 `runtime_context / lab_poll` 与原始回执，错误详情按证据引用读取，
-整理进度则看 feedback 状态与实际检索结果。
+`memory_search` 提供文字匹配和近期检索；`memory_read` 可读当前或历史修订，大记录分页。
+写入需要明确来源，或以无来源的 unverified 假设保存；supported/refuted 是 meta-agent 的判断，
+宿主只校验来源与修订身份，**不把记忆散文升级为已验证评测或事实**。
 
-`ResearchAssembly` 要求有可用的 context/memory 接入窗口，默认可以不调用模型。
-LangMem 是当前可选实现，医疗 Open Lab 显式启用它；**模块可用不等于每条反馈都写 memory**。
-通用旧装配仍可能直接交付结果后再整理；二选一路由不是所有历史 launcher 的隐含保证。
+## 默认接线与兼容范围
 
-原始轨迹归档与改进提案是独立的可选能力，不是另两种互斥的正文消费路径：
+`ResearchAssembly()` 和 `ResearchAssembly.single_meta()` 默认安装同一个 meta-agent 的记忆工具与任务窗口。
+医疗 Open Lab 默认 `--feedback-routing agent_memory`，没有后台 LangMem 语义抽取或独立提案模型。
+默认 `ModelDecisionPolicy` 在该模式下的容量压缩只生成机械归档导航，不额外调用总结模型；
+需要语义摘要时，由 meta-agent 在普通 decision 中写研究笔记或 memory。
+所有这些普通 decision 仍按宿主统一调用和 token 账本计费。
 
-- **原始轨迹归档**：默认开启，可关闭或替换。保存已捕获的公开事件与引用，不改写为训练样本；不承诺任何部署都捕获了完整模型会话。
-- **改进提案**：可选。整理侧可提出 harness 或 policy 的改进建议；由 decision侧选择正式任务。提案本身不训练、不执行、不应用。
+旧 `ResearchAssembly.langmem()`、journal provider、`context_or_memory` 路由和 proposer 保留为
+**显式选择的兼容工作流**，不混入单 meta-agent 默认路径。旧冻结运行不能换装本版恢复；
+装配配置升为版本 5，仍拒绝无证据迁移。自定义 harness/provider 自行兑现其已声明能力。
 
-独立可选指模块可分别装配，不保证每条即时反馈还会触发提案。当前标准 Open Lab 的
-`ContextOrMemoryAdmission` 对即时路径跳过整个后台整理 job；若装配 proposer，也受
-这次准入约束。已准入 job 内，提案默认不依赖 memory 成功，除非显式配置该依赖。
-
-执行与交付 journal 还承担事实核对和恢复责任；关闭可选轨迹产物不会删除这些运行事实。
-
-## context、memory、compact 与归档
-
-| 名称 | 固定含义 |
-| --- | --- |
-| **context** | 本次实际交给模型的输入视图，包括当前目标和状态、必要事实、选中的即时结果、检索记忆及必要摘要。它不是另一份全量数据库。 |
-| **memory** | 面向未来使用、可检索和修订的派生记忆。模块的基本输出窗口是 `context(query) -> str`；更新当前视图，不持续追加全部旧版本。 |
-| **compact / 上下文压缩** | 对当前会话历史和工作视图做容量管理。可生成滚动摘要；不同于 LangMem 的长期记忆整理。 |
-| **原始记录 / 轨迹** | 当时捕获的事件、模型交换或执行证据；具体覆盖范围由记录声明。保存原文不代表每次决策都携带原文。 |
-| **执行账本** | 用于任务身份、依赖、版本、幂等和恢复校验的完整运行事实。工作上下文和看板只消费它的视图。 |
-| **Experience** | 现有实现中的系统反馈与证据存储接口；不是整个 memory 子系统的统一名称。 |
-
-整理侧负责语义整理和记忆组织；meta-agent harness 负责把真实状态、即时结果与检索文本
-装配为模型输入，执行选择、容量检查和 compact。这是可替换模块的分工，不新增第三种 agent。
-模型生成的摘要和 memory 都是派生解释，不获得改写执行事实、评测协议或权限的权力。
+新增 `AgentMemoryState` 保存任务、记忆和修订。医疗原目录恢复已注册该组件，原始历史、
+调用账本和绝对截止时间继续沿用；磁盘状态与 checkpoint 不一致时阻塞核对，不清空日志、
+回滚记忆或自动重放不明 mutation。可迁移快照仍需所有组件显式提供完整状态接口。
 
 ## harness、能力与宿主
 
 始终写清归属：**meta-agent harness** 组织 meta-agent 的模型输入、工具调用和研究状态；
 **Lab harness** 组织 Lab 内部的任务执行、推理、训练或评测。修改其中一边不表示另一边也改变。
-整理侧可以使用自己的工作流和 memory provider，不要求复制 decision侧的 harness。
+同一个 meta-agent 负责行动与语义整理；memory provider 负责存储和检索。第三方 harness 可替换内部实现，但须显式接入记忆工具、上下文与恢复状态。
 
 开放执行按已安装工具及权限提供编程能力，SFT / RL / evaluate 是可实现的任务，
 不是框架强制给模型的固定算法菜单。模型可以修改 Lab 代码；真正可执行的范围仍由
@@ -117,7 +101,7 @@ LangMem 是当前可选实现，医疗 Open Lab 显式启用它；**模块可用
 - **项目 / project**：共同目标和领域配置下的一组运行。
 - **运行 / run**：一次完整系统运行，不是单个训练 job；暂停后在原目录恢复仍是同一 run。
 - **任务 / task、作业 / job**：某次实际执行及其生命周期；提交确认不等于终态完成。
-- **研究尝试 / Attempt**：围绕一个想法的可选决策关联；执行时的明确归属与整理侧的事后分组分别记录，不增加调度层级。
+- **研究尝试 / Attempt**：围绕一个想法的可选决策关联；执行时的明确归属与历史兼容工作流的事后分组分别记录，不增加调度层级。
 - **版本**：区分代码版本、模型权重版本、系统组件版本、评测协议版本和记忆修订，不能用一个 revision 替代所有身份。
 - **运行恢复 / durable resume**：在原目录按显式组件状态适配器接续研究状态、调用账本与相同截止时间；未知副作用阻塞核对，不自动重放。
 - **可迁移快照 / snapshot**：在支持的空闲边界导出、到新目录恢复；不是任意组件的通用进程快照。Lab 的 optimizer checkpoint 另由具体训练程序实现。
@@ -134,10 +118,11 @@ LangMem 是当前可选实现，医疗 Open Lab 显式启用它；**模块可用
 
 | 现有标识 | 统一解释 |
 | --- | --- |
-| `decision_maker` | 历史 meta-agent 模型角色键；整理调用也可使用它，不单靠这个键判断当前是哪一侧职责。 |
-| `DecisionMakingLoop` / `DefaultDecisionHarness` / `ModelDecisionPolicy` | meta-agent（decision侧）的现有默认端点、harness 和策略实现。 |
-| `FeedbackLearningService` / `feedback_learning` | meta-agent（整理侧）的反馈接入、处理及产物管理；名字中的 learning 不代表发生了权重训练。 |
-| `LangMemContextMemory` | memory 模块的一种实现，不是独立的第三个 agent。 |
+| `decision_maker` | 历史 meta-agent 模型角色键；默认唯一的 meta-agent 负责行动、调试与记忆管理。 |
+| `DecisionMakingLoop` / `DefaultDecisionHarness` / `ModelDecisionPolicy` | 唯一 meta-agent 的默认端点、harness 和策略实现。 |
+| `FeedbackLearningService` / `feedback_learning` | 原始回执、归档、交付与兼容处理器管理；默认不调用整理模型，learning 不表示权重训练。 |
+| `AgentMemory` | 默认确定性记忆存储、检索、显式写入和任务反馈驻留；不持有模型。 |
+| `LangMemContextMemory` | 显式选用的旧版独立抽取工作流；不属于默认单 meta-agent 路径。 |
 | `LabExecution` / `LocalProcessLab` / `FixedMedicalLab` | Lab 的公开执行窗口及两种具体实现。 |
 | `ExplorationLoop` / `ExplorationLab` | 兼容执行端口及其 Lab 适配；不是所有 Lab 都必须有的内部结构。 |
 | `actor` / `ActorPolicy` / `Environment` | 兼容 Lab 的内部执行组件，不能与整个 Lab 或 meta-agent 画等号。 |

@@ -193,7 +193,7 @@ def factual_fields(value, path=''):
 MAX_EVIDENCE_BYTES = 8192
 
 
-def previous_feedback_view(context):
+def previous_feedback_view(context, *, include_memory_route=False):
     """Deliver the previous native operation before archive/card projection.
 
     One replacing window, never a memory log. Large originals use a mechanical
@@ -219,7 +219,8 @@ def previous_feedback_view(context):
     operation = deepcopy(source.details.get('operation')) if source else None
     if not operation or not operation.get('name', '').startswith(('lab_', 'medical_')):
         return None
-    if operation and (operation.get('arguments') or {}).get('feedback_route') == 'memory':
+    if (not include_memory_route and operation
+            and (operation.get('arguments') or {}).get('feedback_route') == 'memory'):
         return None
     value = {'source_sha256': ident, 'operation': operation,
         'delivery': 'previous_operation_only; raw_observation_not_memory', 'complete': True}

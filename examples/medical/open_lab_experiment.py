@@ -323,7 +323,8 @@ def main(argv=None):
     parser.add_argument('--resource-allocation', type=json.loads,
                         help='Host JSON declaration: physical_devices, logical_devices, memory_availability, external_read_only_services')
     parser.add_argument('--template-family', choices=('sglang', 'vllm'), default='sglang')
-    parser.add_argument('--feedback-routing', choices=('legacy', 'context_or_memory'), default='context_or_memory')
+    parser.add_argument('--feedback-routing', choices=('agent_memory', 'legacy', 'context_or_memory'), default='agent_memory',
+                        help='Default: one meta-agent with explicit memory tools; other modes opt into legacy extraction')
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--max-calls', type=int, default=128)
     parser.add_argument('--deadline-epoch', type=float, help='Absolute host UTC deadline, never extended by initialization or restart')
@@ -388,10 +389,28 @@ def main(argv=None):
                     'application/feedback_learning.json', 'application/module_assembly.json',
                     'application/research_assembly.json', 'application/lab_execution.json',
                     'application/allocated-workspaces/process-recovery.json',
-                    'memory.sqlite3', 'model_calls.json', 'resource-allocation.json']})
+                    *(['application/agent-memory.json'] if args.feedback_routing == 'agent_memory' else ['memory.sqlite3']),
+                    'model_calls.json', 'resource-allocation.json']})
         write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),
             'resume': args.resume, 'at': time.time()})
         return run(args)
+
+
+def legacy_memory_assembly(root, args):
+    """Explicit compatibility workflow; new runs default to single-meta memory."""
+    from importlib import resources
+    memory_instructions = resources.files('rsisys.loops.decision_making.feedback').joinpath(
+        'prompts/langmem_research.txt').read_text()
+    return ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
+        namespace=('rsisys', args.run_id), admission=(ContextOrMemoryAdmission()
+            if args.feedback_routing == 'context_or_memory' else LocalLabMemoryAdmission()),
+        memory_options={'max_calls_per_job': 6, 'max_steps': 1,
+            'parallel_tool_calls': False,
+            'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
+                'Make one focused tool call per reply. Keep each memory to a few sentences; '
+                'do not copy code, complete prompts or unchanged environment descriptions into memory. '
+                'Distinguish program outputs from validated evaluations and adoption. '
+                'Absence from the supplied snapshot does not prove absence from the full history.'})
 
 
 def run(args):
@@ -539,22 +558,13 @@ def run(args):
         loop.harness.policy = TimedOpenPolicy(backend, model, allowed_actions=(),
             directives=DirectiveDefinitions(()), max_validation_attempts=3, structured_output=True,
             context_compactor=compactor, project_context=project, prompts=prompts)
-        if args.feedback_routing == 'context_or_memory':
+        if args.feedback_routing in ('agent_memory', 'context_or_memory'):
             loop.harness.add_context_processor(ImmediateFeedbackWindow())
         return loop
-    from importlib import resources
-    memory_instructions = resources.files('rsisys.loops.decision_making.feedback').joinpath(
-        'prompts/langmem_research.txt').read_text()
-    assembly = ResearchAssembly.langmem(memory_path=root / 'memory.sqlite3',
-        namespace=('rsisys', args.run_id), admission=(ContextOrMemoryAdmission()
-            if args.feedback_routing == 'context_or_memory' else LocalLabMemoryAdmission()),
-        memory_options={'max_calls_per_job': 6, 'max_steps': 1,
-            'parallel_tool_calls': False,
-            'additional_instructions': memory_instructions + '\nCapture concise reusable medical research and debugging observations. '
-                'Make one focused tool call per reply. Keep each memory to a few sentences; '
-                'do not copy code, complete prompts or unchanged environment descriptions into memory. '
-                'Distinguish program outputs from validated evaluations and adoption. '
-                'Absence from the supplied snapshot does not prove absence from the full history.'})
+    if args.feedback_routing == 'agent_memory':
+        assembly = ResearchAssembly.single_meta()
+    else:
+        assembly = legacy_memory_assembly(root, args)
     native_labs = []
     modules = ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
         state_factory=lambda context, decision, exploration: state_ports(
@@ -569,7 +579,7 @@ def run(args):
         execution='local_process', experience_limit=12, memory_limit=8, run_id=args.run_id)
     result = {'run_id': args.run_id, 'status': 'initializing', 'simulated': False,
         'weight_identity': weight_identity, 'actor_weight_identity': actor_weight_identity,
-        'memory_provider': 'langmem', 'feedback_routing': args.feedback_routing, 'started_at': None,
+        'memory_provider': assembly.memory_provider, 'feedback_routing': args.feedback_routing, 'started_at': None,
         'note': 'Model decisions and native program results are evidence; experiment/training counts require review.'}
     started = time.monotonic()
     try:

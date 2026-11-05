@@ -16,7 +16,7 @@ class MedicalResearchAssemblyTests(unittest.TestCase):
     execute = fixture.MedicalExperimentIntegrationTests.execute
     read = fixture.MedicalExperimentIntegrationTests.read
 
-    def test_default_research_always_records_memory_and_trajectory_without_feedback_calls(self):
+    def test_default_research_installs_explicit_memory_and_archives_without_feedback_calls(self):
         result = self.execute([
             {'kind': 'explore', 'mode': 'configure_prompt', 'strategy': 'CPU fixture',
              'arguments': {'instructions': 'Return one legal label.'}}, fixture.FINISH])
@@ -25,7 +25,7 @@ class MedicalResearchAssemblyTests(unittest.TestCase):
         self.assertEqual(result['trainings_reserved'], 0)
         assembly = self.read('research_assembly.json')
         self.assertEqual(assembly['entrypoint'], 'rsisys.research.assemble_research')
-        self.assertEqual(assembly['memory_provider'], 'journal')
+        self.assertEqual(assembly['memory_provider'], 'agent_managed')
         self.assertIsNotNone(assembly['trajectory_archive'])
         self.assertIsNone(assembly['harness_proposals'])
         journal = self.read('feedback_learning.json')

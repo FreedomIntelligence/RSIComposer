@@ -210,8 +210,8 @@ class ExperimentSettings:
         object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
         if type(self.feedback_learning) is not bool:
             raise TypeError('feedback_learning must be boolean')
-        if self.memory_provider not in (None, 'journal', 'langmem'):
-            raise ValueError('memory_provider must be journal or langmem')
+        if self.memory_provider not in (None, 'agent_managed', 'journal', 'langmem'):
+            raise ValueError('memory_provider must be agent_managed, journal or langmem')
         for name in ('archive_trajectories', 'harness_proposals'):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(name + ' must be boolean')
@@ -220,7 +220,7 @@ class ExperimentSettings:
     def effective_memory_provider(self):
         # The compatibility switch selects the upstream manager, never the old
         # combined memory/training-data/system-change interpretation prompt.
-        return self.memory_provider or ('langmem' if self.feedback_learning else 'journal')
+        return self.memory_provider or ('langmem' if self.feedback_learning else 'agent_managed')
 
     def context_budget(self):
         return {'trigger_tokens': self.context_trigger_tokens,
@@ -273,7 +273,7 @@ def build_project_context(settings: ExperimentSettings, task, *, target_model: M
             'proposal_only_unless_installed': ['harness_changes', 'system_changes', 'decision_model_training'],
             'training': 'Only installed SFT with restart from the fixed initializer; no real RL is installed.',
             'feedback_learning': ('Context/memory organization is active through the selected provider. '
-                                  'Journal memory supplies factual views without model inference; LangMem uses '
+                                  'The acting meta-agent explicitly manages memory through ordinary decisions. Legacy journal supplies factual views; explicitly selected LangMem uses '
                                   'a separate context with captured meta-agent weights. Public trajectories are '
                                   'extracted when configured, without generating training targets. Optional harness '
                                   'proposals are unverified; main decisions choose construction and validation. '
@@ -1209,6 +1209,9 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         if settings.effective_memory_provider == 'langmem':
             research = ResearchAssembly.langmem(memory_path=settings.run_dir / 'feedback_memory.sqlite',
                 namespace=('medical', settings.run_dir.resolve().name), **components)
+        elif settings.effective_memory_provider == 'journal':
+            from rsisys.loops.decision_making.feedback import JournalContextMemory
+            research = ResearchAssembly(context_memory=JournalContextMemory(), **components)
         else:
             research = ResearchAssembly(**components)
     research.validate()
@@ -1563,8 +1566,8 @@ def parser() -> argparse.ArgumentParser:
                         help='Explicit bounded JSON allocation declaration; omitted means unknown')
     result.add_argument('--feedback-learning', action='store_true',
                         help='Compatibility switch: select LangMem unless --memory-provider is explicit')
-    result.add_argument('--memory-provider', choices=('journal', 'langmem'), default=None,
-                        help='Active context/memory provider; default journal, or LangMem with --feedback-learning')
+    result.add_argument('--memory-provider', choices=('agent_managed', 'journal', 'langmem'), default=None,
+                        help='Default: explicit memory tools for the acting meta-agent; journal/LangMem are compatibility integrations')
     result.add_argument('--no-trajectory-archive', dest='archive_trajectories', action='store_false',
                         help='Disable trajectory extraction; keep execution/recovery records')
     result.add_argument('--harness-proposals', action='store_true',

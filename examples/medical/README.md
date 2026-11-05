@@ -1,12 +1,10 @@
 # Independent medical assembly
 
 Terminology follows the [canonical architecture](../../docs/architecture.md):
-**meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ context**.
-The standard Open Lab selects the `context` or `memory` body route; immediate
-feedback does not invoke LangMem. The memory provider remains available for
-retrieval. Archives and proposals are independent optional products. The older
-`Decision*`, `Exploration*`, and `decision_maker` names below are compatibility
-identifiers, not additional conceptual agents.
+**one meta-agent → Lab → raw feedback → the same meta-agent**, with an attached
+memory module for storage and retrieval. The meta-agent owns interpretation,
+debugging, context notes and explicit memory writes/updates/deletes. There is no
+independent organizing model in the default path. Older type names are compatibility identifiers.
 
 This example composes `DefaultDecisionHarness`, `DefaultExplorationHarness`, and
 `Runner`. Its normal policy is `ModelDecisionPolicy` with three bounded validation
@@ -21,10 +19,13 @@ Use Python 3.12+ from the RSISys directory with `PYTHONPATH=src:.`.
 ## Open Lab with a real meta-agent
 
 `open_lab_experiment.py` uses the unified `ModuleAssembly` entry, programmable
-`FixedMedicalLab`, native-tool LangMem memory and the default trajectory archive.
-The meta-agent (decision side) chooses code edits and arbitrary installed
-training/inference programs. The meta-agent (organization side) uses the same
-captured model identity in a separate context when organization is requested.
+`FixedMedicalLab`, explicit agent-managed memory and the default trajectory archive.
+The same meta-agent chooses code edits, installed training/inference programs,
+feedback interpretation and memory operations. `research_task` open/pin/close
+retains raw error evidence through code/log reads, edits and retests. Use
+`memory_search/read/write/delete` for longer-lived notes; large records are paged.
+`--feedback-routing agent_memory` is the default. `legacy` and `context_or_memory`
+explicitly opt into the former LangMem extraction workflow.
 Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
 development data, question/options, gold, parsing and accuracy. The editable
 `candidate.py` implements `infer(request)` or `infer_batch(requests)` using the
@@ -63,8 +64,9 @@ Self-written evaluation output remains an exploratory observation. See the
 [repair and interface review](../../docs/review/lion-followup-repair-20261105.md).
 
 Provision an owned Qwen3.5-9B SGLang endpoint named `rsisys-meta-qwen35-9b` with
-native tool calling and JSON-schema responses before launching. Install the
-`rsisys[langmem]` dependencies in an isolated controller environment. Inside a
+JSON-schema responses before launching. The default memory tools run in the
+controller and require no LangMem installation or provider tool-calling API.
+Install `rsisys[langmem]` only for the explicit legacy extraction workflow. Inside a
 scheduler-owned allocation, pass only the GPUs reserved for generated Lab
 programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
 For an explicitly provided external service, opt in with `--lab-endpoint` and

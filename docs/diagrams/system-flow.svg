@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1370" viewBox="0 0 1800 1370" role="img" aria-labelledby="title desc">
-<title id="title">RSISys：meta-agent 两侧职责与 Lab</title>
-<desc id="desc">meta-agent（decision侧）选择任务，Lab 执行并返回原生结果。meta-agent（整理侧）的接入窗口按用途选择即时 context 或 memory 正文路径。即时路径不要求模型整理；memory 按需检索成上下文。两侧标准装配共享捕获的模型权重身份，使用独立上下文。原始归档与提案为独立可选能力；训练和固定正式评测在 Lab；看板只面向人。本图表示职责和信息流，不强制串行模型调用；兼容实现边界见 docs/architecture.md。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1510" viewBox="0 0 1800 1510" role="img" aria-labelledby="title desc">
+<title id="title">RSISys：一个 meta-agent、Lab 与 memory</title>
+<desc id="desc">同一个 meta-agent 选择行动、直接解释 Lab 原始反馈，并显式管理记忆。memory 模块只存储和检索。任务反馈保留到关闭，超长原文分页读取。看板面向人。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -8,118 +8,79 @@
 <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#7445C0"/></marker>
 <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#A86B13"/></marker>
 </defs>
-<rect width="1800" height="1370" fill="#F6F8FC"/>
-<text x="72" y="78" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="40" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 统一系统架构</text>
-<text x="72" y="121" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">两侧职责，一个 meta-agent；Lab 是执行环境，context 是下一次模型输入。</text>
+<rect width="1800" height="1510" fill="#F6F8FC"/>
+<text x="72" y="78" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="40" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 单 meta-agent 架构</text>
+<text x="72" y="121" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">行动、调试、语义整理与记忆管理，在同一个 meta-agent 工作流内完成。</text>
 <rect x="1538" y="50" width="190" height="34" rx="17" fill="#E8EEF8" stroke="none" stroke-width="0"/>
-<text x="1633.0" y="74" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#2365CB" text-anchor="middle">2026-11-05</text>
+<text x="1633.0" y="74" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#2365CB" text-anchor="middle">2026-11-06</text>
 <g id="host">
-<rect x="72" y="150" width="1656" height="92" rx="16" fill="#EAF0F6" stroke="#14243B" stroke-width="1.8"/>
-<text x="96" y="190" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">Host / 宿主</text>
-<text x="96" y="224" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">统一装配 · 权限与资源准入 · 全部模型调用计费 · 截止时间 · 调度、恢复与 owned 资源清理</text>
+<rect x="72" y="158" width="1656" height="100" rx="16" fill="#EAF0F6" stroke="#14243B" stroke-width="1.8"/>
+<text x="96" y="198" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">Host / 宿主</text>
+<text x="96" y="232" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">固定目标与正式评测 · 权限和资源准入 · 调用 / token 账本 · 原截止时间 · 恢复与 owned 资源清理</text>
 </g>
-<path d="M 900 300 V 274 H 36 V 1135 H 72" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)" stroke-dasharray="7 7"/>
-<rect x="10.0" y="971" width="52" height="26" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="36" y="986" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="16" font-weight="400" fill="#7445C0" text-anchor="middle">原文</text>
-<g id="meta-agent-decision">
-<rect x="72" y="300" width="480" height="270" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
-<text x="96" y="340" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">meta-agent（decision侧）</text>
-<text x="96" y="374" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">根据目标、真实状态与 context 决策</text>
-<text x="96" y="403" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">选择动作、写代码、发起 Lab 任务</text>
-<text x="96" y="432" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">选择构建、训练、评测与应用</text>
-<text x="96" y="461" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">实际执行受已安装能力和权限约束</text>
-<text x="96" y="490" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">meta-agent harness 装配输入</text>
+<g id="meta-agent">
+<rect x="72" y="320" width="760" height="350" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
+<text x="96" y="360" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">唯一 meta-agent</text>
+<text x="96" y="394" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">选择研究动作、编写代码、执行与调试</text>
+<text x="96" y="423" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">直接查看原始 feedback 与真实任务状态</text>
+<text x="96" y="452" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">解释实验结果，管理当前任务的上下文</text>
+<text x="96" y="481" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">自己决定记忆写入、更新、删除与检索</text>
+<text x="96" y="510" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">需要语义摘要时，在普通 decision 中撰写</text>
+<text x="96" y="539" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">harness 装配输入、计量并机械管理容量</text>
+<text x="96" y="568" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">默认没有独立的整理或总结模型调用</text>
 </g>
 <g id="lab">
-<rect x="660" y="300" width="480" height="270" rx="16" fill="#EFF8F3" stroke="#178164" stroke-width="1.8"/>
-<text x="684" y="340" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">Lab / 执行环境</text>
-<text x="684" y="374" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">任务 · 数据 · 模型或 agent · harness</text>
-<text x="684" y="403" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">工具 / 代码 / 训练 / 推理 / 评测</text>
-<text x="684" y="432" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">内部组织自由；Actor 是可选实现</text>
-<text x="684" y="461" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">输出原生文本、JSON、日志或引用</text>
-<text x="684" y="490" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">执行设施提供任务身份与真实状态</text>
+<rect x="968" y="320" width="760" height="350" rx="16" fill="#EFF8F3" stroke="#178164" stroke-width="1.8"/>
+<text x="992" y="360" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">Lab / 研究执行环境</text>
+<text x="992" y="394" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">任务 · 数据 · 模型或 agent · Lab harness</text>
+<text x="992" y="423" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">读写代码、运行程序、训练、推理与评测</text>
+<text x="992" y="452" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">使用明确分配的资源，内部组织可替换</text>
+<text x="992" y="481" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">原生结果：文本、JSON、日志或文件引用</text>
+<text x="992" y="510" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">固定正式评测保留候选 / 数据 / 协议身份</text>
+<text x="992" y="539" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">退出成功 ≠ 训练完成 ≠ 质量改善 ≠ 采纳</text>
 </g>
-<g id="meta-agent-organization">
-<rect x="1248" y="300" width="480" height="270" rx="16" fill="#F4EFFB" stroke="#7445C0" stroke-width="1.8"/>
-<text x="1272" y="340" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">meta-agent（整理侧）</text>
-<text x="1272" y="374" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">反馈接入与路由 · 解释与记忆组织</text>
-<text x="1272" y="403" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">模型整理时：同权重、独立上下文</text>
-<text x="1272" y="432" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">即时路径无需额外整理模型调用</text>
-<text x="1272" y="461" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory provider 与算法可替换</text>
-<text x="1272" y="490" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">可选提出建议；执行仍由 decision侧</text>
+<path d="M 832 405 H 968" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+<rect x="838.34" y="371" width="123.32" height="28" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="900" y="388" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#2365CB" text-anchor="middle">动作 / 任务</text>
+<path d="M 968 580 H 832" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+<rect x="854.0" y="541" width="92" height="28" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="900" y="558" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#178164" text-anchor="middle">原始反馈</text>
+<g id="memory">
+<rect x="72" y="810" width="760" height="245" rx="16" fill="#F4EFFB" stroke="#7445C0" stroke-width="1.8"/>
+<text x="96" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">memory 模块 / 确定性服务</text>
+<text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory_search / read / write / delete</text>
+<text x="96" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">存储、文字检索、来源与修订记录</text>
+<text x="96" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">不运行模型抽取、embedding 或后台总结</text>
+<text x="96" y="971" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">记忆是模型解释；引用存在不证明散文为真</text>
+<text x="96" y="1000" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">大记录以原文页读取，不伪装为完整摘要</text>
 </g>
-<path d="M 552 435 H 660" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
-<rect x="550.08" y="402" width="111.84" height="26" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="606" y="417" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="16" font-weight="400" fill="#2365CB" text-anchor="middle">动作 / 任务</text>
-<path d="M 1140 435 H 1248" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
-<rect x="1152.0" y="402" width="84" height="26" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="1194" y="417" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="16" font-weight="400" fill="#178164" text-anchor="middle">原生结果</text>
-<path d="M 1488 570 V 620 H 900 V 680" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
-<path d="M 1488 620 V 680" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
-<rect x="1084.0" y="616" width="220" height="30" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="1194" y="635" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#7445C0" text-anchor="middle">正文主消费路径二选一</text>
-<g id="current-context">
-<rect x="72" y="680" width="480" height="200" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
-<text x="96" y="720" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">本次 context</text>
-<text x="96" y="754" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">当前目标、状态与必要事实</text>
-<text x="96" y="783" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">选中的即时结果 + 检索记忆</text>
-<text x="96" y="812" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">必要摘要 / 可选建议 / 原文入口</text>
-<text x="96" y="841" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">harness 选择、计量与 compact</text>
+<g id="archive">
+<rect x="968" y="810" width="760" height="245" rx="16" fill="#EAF0F6" stroke="#14243B" stroke-width="1.8"/>
+<text x="992" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">原始归档 / 执行账本</text>
+<text x="992" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">保存真实回执、身份与证据 SHA</text>
+<text x="992" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">research_archive 按稳定引用分页读取</text>
+<text x="992" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">关闭任务或删除记忆，不改写实验原文</text>
+<text x="992" y="971" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">可选轨迹产物与恢复账本分别负责</text>
+<text x="992" y="1000" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">恢复不重放未知副作用，不延长原截止</text>
 </g>
-<g id="instant-context">
-<rect x="660" y="680" width="480" height="200" rx="16" fill="#EFF8F3" stroke="#178164" stroke-width="1.8"/>
-<text x="684" y="720" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#178164" text-anchor="start">即时 context 路径</text>
-<text x="684" y="754" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">真实结果支持下一步快速决策</text>
-<text x="684" y="783" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">不触发 LangMem / 长期记忆写入</text>
-<text x="684" y="812" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">近期正文与活跃依赖有界保留</text>
-<text x="684" y="841" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">旧正文退出视图，原文按引用读取</text>
+<path d="M 280 670 V 810" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+<rect x="160.94" y="732" width="238.12" height="29" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="280" y="750" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#7445C0" text-anchor="middle">显式写入 / 更新 / 删除</text>
+<path d="M 630 810 V 670" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+<rect x="582.0" y="764" width="96" height="29" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="630" y="782" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#7445C0" text-anchor="middle">按需检索</text>
+<path d="M 1348 670 V 810" fill="none" stroke="#14243B" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-gray)" stroke-dasharray="7 7"/>
+<rect x="1271.5" y="732" width="153" height="29" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
+<text x="1348" y="750" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#14243B" text-anchor="middle">持久原文与来源</text>
+<g id="task-context">
+<rect x="72" y="1135" width="1656" height="190" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
+<text x="96" y="1175" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">当前任务的原始反馈窗口</text>
+<text x="96" y="1209" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">research_task：open 固定错误 → pin 补充证据 → 读代码 / 日志、编辑和复测 → close 释放驻留</text>
+<text x="96" y="1238" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">中间工具不会挤掉固定的错误；当前任务关闭不等于自动写入长期 memory。</text>
+<text x="96" y="1267" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">完整性与分页显式标记；原始证据、模型记忆、诊断 canary 和正式评测分别识别。</text>
 </g>
-<g id="retrievable-memory">
-<rect x="1248" y="680" width="480" height="200" rx="16" fill="#F4EFFB" stroke="#7445C0" stroke-width="1.8"/>
-<text x="1272" y="720" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">memory 路径</text>
-<text x="1272" y="754" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">整理可复用发现、经验与限制</text>
-<text x="1272" y="783" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">LangMem 或其他可替换实现</text>
-<text x="1272" y="812" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">保存可检索记忆与来源 / 修订</text>
-<text x="1272" y="841" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">模块可用，不代表每条结果都写入</text>
+<g id="monitor">
+<rect x="72" y="1380" width="1656" height="90" rx="16" fill="#FFFFFF" stroke="#8493A8" stroke-width="1.8"/>
+<text x="96" y="1420" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="25" font-weight="650" fill="#14243B" text-anchor="start">看板 / Monitor：Host 写公开投影 → 人查看；不进入模型反馈链路。</text>
 </g>
-<path d="M 312 680 V 570" fill="none" stroke="#2365CB" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
-<rect x="254.5" y="612" width="115" height="29" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="312" y="630" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="19" font-weight="400" fill="#2365CB" text-anchor="middle">下一次输入</text>
-<path d="M 660 780 H 552" fill="none" stroke="#178164" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-green)"/>
-<rect x="564.0" y="747" width="84" height="26" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="606" y="762" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="16" font-weight="400" fill="#178164" text-anchor="middle">真实结果</text>
-<path d="M 1488 880 V 940 H 312 V 880" fill="none" stroke="#7445C0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
-<rect x="766.2" y="914" width="267.6" height="30" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="900" y="933" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#7445C0" text-anchor="middle">按需检索 → context 文本</text>
-<rect x="72" y="966" width="1656" height="44" rx="10" fill="#FFF7E8" stroke="none" stroke-width="1.5"/>
-<text x="900" y="995" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="500" fill="#A86B13" text-anchor="middle">可选改进提案：整理侧提出 → 经 context 交回 decision侧 → 以正式任务进入 Lab。</text>
-<g id="raw-archive">
-<rect x="72" y="1050" width="480" height="200" rx="16" fill="#F4EFFB" stroke="#7445C0" stroke-width="1.8"/>
-<text x="96" y="1090" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">原始轨迹归档（独立可选）</text>
-<text x="96" y="1124" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">公开原始事件、来源与覆盖范围</text>
-<text x="96" y="1153" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">默认开启，可关闭或替换</text>
-<text x="96" y="1182" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">原始轨迹不等于可训练数据集</text>
-<text x="96" y="1211" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">执行 journal 仍承担事实与恢复</text>
-</g>
-<g id="lab-improvement">
-<rect x="660" y="1050" width="480" height="200" rx="16" fill="#FFF7E8" stroke="#A86B13" stroke-width="1.8"/>
-<text x="684" y="1090" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#A86B13" text-anchor="start">Lab 内改进任务（可选）</text>
-<text x="684" y="1124" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">数据构建、SFT / RL、harness 构建</text>
-<text x="684" y="1153" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">由 decision侧正式调用与验证</text>
-<text x="684" y="1182" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">提案 ≠ 训练 ≠ 应用 / 采纳</text>
-<text x="684" y="1211" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">正式评测协议由领域装配固定</text>
-</g>
-<g id="human-monitor">
-<rect x="1248" y="1050" width="480" height="200" rx="16" fill="#EAF0F6" stroke="#14243B" stroke-width="1.8"/>
-<text x="1272" y="1090" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">看板 / Monitor（面向人）</text>
-<text x="1272" y="1124" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">Host 写公开运行投影 → 人查看</text>
-<text x="1272" y="1153" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">不进入模型输入或反馈链路</text>
-<text x="1272" y="1182" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">模型用 Lab / 状态工具读信息</text>
-<text x="1272" y="1211" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">投影不等于完整历史或执行账本</text>
-</g>
-<path d="M 552 1150 H 660" fill="none" stroke="#A86B13" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-amber)" stroke-dasharray="7 7"/>
-<rect x="564.0" y="1117" width="84" height="26" rx="6" fill="#F6F8FC" stroke="none" stroke-width="0"/>
-<text x="606" y="1132" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="16" font-weight="400" fill="#A86B13" text-anchor="middle">固定引用</text>
-<text x="72" y="1300" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">实线：主要数据流；虚线：独立可选能力。任务状态与整理状态分别核对；正文路由不要求每条反馈都调用模型。</text>
-<text x="72" y="1336" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#52637B" text-anchor="start">标准医疗 Open Lab 已接通二选一路由；通用兼容装配须显式配置。术语、协议映射及实现范围见 docs/architecture.md。</text>
 </svg>

@@ -1,8 +1,8 @@
 # meta-agent harness（decision侧）
 
-称谓与 Lab harness、meta-agent（整理侧）的边界见[统一架构](../../../../../docs/architecture.md)。
-`DecisionHarness` 是兼容类型名；本目录负责 decision侧输入装配、工具调用与研究状态。
-整理侧提供可检索的 context 文本，harness 负责当前视图选择、计量和会话 compact。
+默认只有一个 meta-agent，直接负责行动、原始反馈解释与记忆组织；边界见[统一架构](../../../../../docs/architecture.md)。
+`agent_memory.py` 安装显式 memory 工具及任务反馈窗口。harness 装配、计量并机械压缩输入；
+默认单 meta-agent 模式不为压缩另发总结模型请求。底层 `DecisionHarness` 保留兼容类型名。
 
 [DecisionHarness](__init__.py) 是可整体替换的决策执行边界，通过 `step(objective, action_space)`、`pending()` 和 `receive_feedback(directive, feedback)` 服务 [DecisionMakingLoop](../README.md)。协议不要求 memory、tools 或特定 policy 属性。
 

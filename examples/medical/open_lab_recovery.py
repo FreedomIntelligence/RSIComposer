@@ -167,13 +167,18 @@ def state_ports(context, decision, exploration, *, lab, backend):
     from rsisys.adapters.execution import OperationOnlyExploration
     if type(exploration) is not OperationOnlyExploration:
         raise TypeError('Supply a state adapter for the replacement exploration module')
-    return {'decision': DecisionState(decision), 'exploration': OperationOnlyState(),
+    ports = {'decision': DecisionState(decision), 'exploration': OperationOnlyState(),
         'feedback': FeedbackState(decision.feedback_service), 'backend': BackendState(backend),
         'lab_execution': LocalLabState(lab, capture_extra=lambda: deepcopy(lab._evaluations),
             restore_extra=lambda state: setattr(lab, '_evaluations', deepcopy(state)),
             configuration={'evaluator_sha256': lab.evaluator_sha256,
                 'adapter_sha256': lab.adapter_sha256, 'require_input_contract': lab.require_input_contract,
                 'groups': lab.evaluation_groups, 'python': lab.evaluation_python})}
+    memory = getattr(decision.harness, 'agent_memory', None)
+    if memory is not None:
+        from rsisys.loops.decision_making.harness.agent_memory import AgentMemoryState
+        ports['agent_memory'] = AgentMemoryState(memory)
+    return ports
 
 
 def pause_at_boundary(app, *, timeout=40):

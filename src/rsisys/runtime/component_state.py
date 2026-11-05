@@ -53,6 +53,8 @@ class AssemblyRecovery:
             required.add('lab_execution')
         if getattr(app.runner.decision_making, 'feedback_service', None) is not None:
             required.add('feedback')
+        if getattr(app.runner.decision_making.harness, 'agent_memory', None) is not None:
+            required.add('agent_memory')
         missing = required - adapters.keys()
         if missing:
             raise TypeError('Missing component state adapters: ' + ', '.join(sorted(missing)))

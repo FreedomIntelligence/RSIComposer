@@ -6,7 +6,7 @@ from importlib import resources
 from string import Template
 
 
-_NAMES = ('research', 'decision', 'review', 'summary', 'control', 'scheduling',
+_NAMES = ('research', 'agent_memory', 'decision', 'review', 'summary', 'control', 'scheduling',
           'attempt_optional', 'attempt_required', 'validation_correction')
 
 

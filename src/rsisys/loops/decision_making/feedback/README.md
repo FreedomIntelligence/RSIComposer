@@ -1,87 +1,21 @@
-# meta-agent（整理侧）：反馈接入、上下文与记忆
+# 原始反馈、归档与兼容处理器
 
-统一定义见[系统术语与架构](../../../../../docs/architecture.md)。本目录承载整理侧，
-与 **meta-agent（decision侧）** 是同一 meta-agent 的不同职责，不另设 Feedback agent。
-标准医疗 Open Lab 的正文路由为 `context|memory` 二选一；即时路径不触发 LangMem，
-memory 路径按需整理并检索。任务状态由运行视图提供，错误详情按原始证据引用读取；
-即时整理确认不代表 Lab 或整理成功。归档和提案可分别装配；当前即时路径准入也跳过提案 job。
-该接线由 `RoutedLab / ContextOrMemoryAdmission / ImmediateFeedbackWindow` 显式提供；
-未选择路由的旧装配仍可直接交付后后台整理，不据此声称所有 launcher 都已经二选一。
+当前默认为 **一个 meta-agent + Lab + memory 模块**，以[统一架构](../../../../../docs/architecture.md)为准。
+反馈解释、上下文语义整理和记忆修订由同一个 meta-agent 在普通 decision 中完成；
+`harness/agent_memory.py` 提供显式工具与任务窗口，没有独立模型调用。
 
-可选入队策略 `FeedbackAdmissionPolicy.admit(event, pending)` 可在昂贵整理前跳过或合并
-排队事件；原始回执、即时 context、context observer 和轨迹仍保留，running 任务与预算不可修改。
-不配置时保留原行为。医疗默认实现跳过 busy/提交确认等重复状态，优先整理终态证据。
-LangMem 在完整原生请求组装后计量，容量错误结束该 job，不进入 patch 修复循环。
-详见[夜间实测修复](../../../../../docs/review/lion-followup-repair-20261105.md)。
+本目录默认只持久化原始回执、维护交付状态与可选轨迹归档。`FeedbackLearningService` 的
+历史名字不代表默认存在后台学习/整理 agent，更不代表发生权重训练。
+`ResearchAssembly()` / `.single_meta()` 的 memory processor 为 None，后台模型调用为零。
 
-这里负责记录 decision / Lab 原始回执，并整理研究记忆及可选改进提案。
-Context / Memory 的公开出口已收敛为 `context(query) -> str`；
-[接口、SDK 适配与实际请求接线](../../../../../docs/review/feedback-context-window-20261104.md)
-记录本次实现，三方法是兼容实现细节。
-[模块窗口规范](../../../../../docs/review/feedback-module-windows-20261104.md) 进一步定义原始归档、
-原生产物/提案与调度接口；旧 job、Memory 和处理结果协议隔离在适配器内。
-真实执行结果先记账并持久捕获，再按路由交付即时正文或状态与整理确认，不等待 memory
-或提案模型；通用旧装配仍可直接交付真实结果后后台整理。
-meta-agent（整理侧）在独立上下文中承担反馈职能，共享捕获的 active meta-agent 权重身份；调用仍接入宿主的准入、
-计费和生命周期。它不依赖默认 meta-agent harness 的 state、会话格式或 compact 算法。
+`LangMemContextMemory`、proposer、旧 context|memory 二选一路由以及下列 worker 协议
+保留为显式兼容能力。选择 `.langmem()` 会启用独立模型抽取，与默认单 meta-agent 架构不同。
+这些能力仍须接入原有宿主准入、预算和恢复校验，不能隐式降级或迁移旧 journal。
+装配 schema_version=5；普通执行账本与可选轨迹产品分开，原文和来源不会由记忆覆盖。
 
-## 统一命名与边界
+![单 meta-agent 信息流](../../../../../docs/diagrams/system-flow.svg)
 
-| 概念 | 职责 | 现有实现映射 |
-| --- | --- | --- |
-| meta-agent（decision侧） | 选择研究动作、写代码/修代码方案或完整自动化任务 | `decision_maker` 角色及其可替换 DecisionHarness |
-| Decision | 带身份、理由、参数和来源的具体动作或任务；不是模型本身 | `Decision`；当前区分 `invoke` 本地能力与 `explore` 下发指令 |
-| Lab | agent 执行任务的环境，封装目标、数据、模型或 agent、harness 与已安装能力；不要求固定 Actor loop 或算法菜单 | `LabExecution` 提供 describe/execute；`LabSpec / LabTask / Lab` 与 `ExplorationLab` 保留另一种任务/兼容适配；不是默认跨 Lab 调度器 |
-| Sandbox | Lab 执行代码时使用的运行/隔离设施 | 具体后端；不是 Lab 的同义实现 |
-| meta-agent（整理侧） | 同权重、独立上下文；解释执行证据、组织记忆及可选建议，配合确定性路由与视图管理 | `FeedbackLearningService` + `FeedbackAdapter` + 独立 worker；learning 不表示发生权重训练 |
-| Meta-agent harness | 装配当前上下文、检索、compact、调度与执行校验 | 默认、DSH 或其他实现；与 lab 内的 harness 分开 |
-
-保留现有角色名和消息协议，避免靠批量改名破坏旧日志、后端和恢复行为。
-基础 Lab 接口复用 Directive 和现有 handlers；增加接口不会安装通用编程 agent、训练算法
-或隔离设施。适配器任务索引仅在当前进程有效，持久恢复需要显式集成。
-
-![统一系统主链路与两条反馈路径](../../../../../docs/diagrams/system-flow.svg)
-
-只有 context/memory 整理能力必须激活，实现可替换；其他组件按需装配：
-
-| 产物 | 现在提供什么 | 后续消费边界 |
-| --- | --- | --- |
-| 即时 context | 直接交付 Lab / 工具真实结果；标准 Open Lab 默认不触发 memory 整理，近期正文按工作视图保留 | meta-agent（decision侧）的 last_feedback / operation_results；完整账本另存 |
-| context/memory（必须激活，实现可替换） | `context(query) -> str` 或函数；可选 observe 接收新反馈。默认 journal/LangMem 由适配器接入 | 当前文本替换 DecisionContext.memory_context，内部格式、检索与存储属于实现 |
-| 原始轨迹（默认开启，可关闭或替换） | write(event)/read(reference)；Journal 默认经适配器导出索引/固定捕获 | Lab 通过 TrajectorySource / TrajectoryRef 读固定来源，不在反馈端构建样本 |
-| 改进任务提案（可选） | propose(event, model) 返回原生建议；内置适配器生成结构化提案 | meta-agent（decision侧）及具体消费者决定正式构建、训练与验证 |
-
-原 `training_data` / `target=weights` 仍兼容为未验证草稿，不要求每次生成 input/target。
-执行/反馈交付 journal 在模型整理前记录事实；它用于查询和恢复，与可选研究轨迹产物分开。
-关闭轨迹产物不删除这些原始事实；模型失败或队列/调用准入拒绝也不删除原始片段。
-当前 observer 未捕获原 meta-agent 模型的完整 prompt/response，
-轨迹索引明确 `complete_conversation=false` 及缺失范围，不能称为完整会话轨迹。
-
-默认 adapter 在每次新捕获时读取 meta-agent 当前 ModelRef，版本变化后新任务自动跟随；
-安装时的 `model=` 若提供必须匹配当前引用，不能固定成另一个反馈模型。已捕获任务保留
-其快照版本，历史 issuing 模型另行记录。第三方 adapter 的 `model()` 也应提供 active
-meta-agent 引用；实际权重及跨服务身份仍由后端兑现。
-
-`subject` 另外区分 `meta_agent`、`lab` 与 `unspecified`。特别是两个 harness：
-优化 lab 的推理 harness 不等于改进 meta-agent 的研究 harness。
-旧 proposal 没有这个字段时保持 `unspecified`，不猜测归属。历史 `system_change`
-暂单独映射为 `target=system`，不强行归并为 researcher 训练或 harness 改进。
-当前上下文不注入明确标记为 `subject=lab` 的 memory 草稿；这些草稿仍可查询。
-
-## 当前组合链路
-
-研究任务统一使用 [research.py](../../../research.py) 的 `ResearchAssembly / assemble_research`：
-必需 context/memory、默认原始轨迹归档、可选改进提案分别记录状态。
-LangMem 可以组合 `improvement_proposals=ModelImprovementProposer(...)`；memory 算法仍由
-整理器负责。旧 `harness_proposals=ModelHarnessProposer(...)` 仅生成 harness 提案，与新选项互斥。
-meta-agent（decision侧） 在正常 decision 的 `feedback_proposal_ids` 引用建议，执行前校验来源；
-构建/训练由 Lab 的正式任务负责，回执再次进入 feedback。
-`service.trajectory_snapshot(job_id)` / `/trajectory_snapshot` 提供不可变原始来源。
-`extract_trajectory` / `/trajectory_segment` 保留旧组合视图，包含后来完成的反馈交换，不能用作固定训练来源。
-完整 workflow、装配例子和边界见[链路文档](../../../../../docs/review/feedback-workflow.md)。
-Application / Demo 通过 `research=` 接入；医疗控制器始终经过统一入口。启动即记录组件配置，
-恢复拒绝更换组件；配置 schema_version=4 记录公开协议、组件、依赖与故障策略，并保留 archive_only、direct_before_processing 和 Lab 数据归属，
-不静默迁移旧 journal。底层 enable_* 及旧组合解释入口保留兼容。
+以下实现分工和底层例子描述兼容处理器边界；默认语义整理职责以本页开头为准。
 
 ## 实现分工
 

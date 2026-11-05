@@ -129,7 +129,8 @@ class FeedbackLabBoundaryTests(unittest.TestCase):
         service.refresh()
         self.assertFalse(backend.requests)
         self.assertEqual(service.learning.state['attempted'], 0)
-        self.assertEqual(service.working_memory()['totals']['learning_attention'], 0)
+        self.assertEqual(json.loads(service.context())['provider'], 'agent_managed')
+        self.assertEqual(json.loads(service.context())['total'], 0)
         self.assertEqual(len(service.trajectories()), 1)
 
     def test_pinned_raw_snapshot_does_not_change_when_memory_finishes_or_is_read(self):

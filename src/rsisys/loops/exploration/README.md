@@ -3,7 +3,7 @@
 统一定义见[系统术语与架构](../../../../docs/architecture.md)。Lab 是 agent 执行任务的环境；
 本目录是既有指令式实现，不要求所有 Lab 具有这里的 Actor、environment 或 loop 结构。
 开放 Lab 可直接实现 `LabExecution.describe/execute`。动作由 meta-agent（decision侧）选择，
-返回结果按用途进入即时 context 或 meta-agent（整理侧）的 memory 路径。
+返回原始结果给同一个 meta-agent；它决定如何调试、整理与写入记忆。
 
 接收系统 Directive，并通过 Harness 推进执行、学习、评测或 prompt 配置。构造方式为 `ExplorationLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../README.md#系统架构)。
 

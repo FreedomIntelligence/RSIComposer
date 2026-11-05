@@ -1,9 +1,9 @@
 # RSISys
 
-可客制化的 RSI（递归自改进）框架。**meta-agent（decision侧）**选择研究动作，在 **Lab** 中执行；结果进入反馈接入窗口，由 **meta-agent（整理侧）**按用途参与上下文与记忆管理，再支持下一次 decision。使用者定义目标、能力、权限与预算，并替换模型、harness、memory、训练和推理后端。
+可客制化的 RSI（递归自改进）框架。**一个 meta-agent** 在 **Lab** 中选择并执行研究动作，直接读取原始反馈、调试并管理自己的记忆。**memory 模块**负责存储与检索；默认不另设整理或总结 agent。使用者定义目标、能力、权限与预算，并替换模型、harness、memory、训练和推理后端。
 
-- **两侧职责，一个 meta-agent**：decision侧负责行动选择，整理侧负责反馈解释与记忆组织；标准装配同权重、独立上下文。Lab 内部可运行 agent 或直接执行程序，不强制使用固定 Actor loop。
-- **两条反馈路径**：即时 context 直接支持快速决策，memory 面向长期检索；按用途选择正文的主消费路径。原始归档和提案另行按需装配。
+- **一个 meta-agent**：行动选择、反馈解释、上下文管理和记忆组织属于同一工作流。Lab 内部可运行 agent 或直接执行程序。
+- **任务反馈与长期记忆**：原始错误保留到实验/调试任务关闭；meta-agent 显式决定是否写入、更新或删除 memory，完整原文独立归档。
 - **轻量协同**：框架负责指令、作业、反馈与版本引用，不统一各训练框架的数据格式；跨框架数据对齐由接入方完成。
 - **自主研究**：支持隔离的并行任务、显式决策依赖、多结果采纳与汇合；研究尝试（Attempt）记录围绕同一想法的一组决策。
 - **实验监控**：`rsimonitor` 是与 `rsisys` 并列的只读可视化包。一个项目包含多个实验，一个实验对应一次完整 RSI run；进入实验查看尝试、决策理由、改动、反馈和训练指标。
@@ -68,10 +68,9 @@ with MonitorServer(("127.0.0.1", 8765), "runs") as server:
 
 ### 模块关系
 
-概念主链路为 **meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ context**。
-下列目录是当前实现映射；其中 `exploration/` 是一种兼容 Lab 执行路径，`feedback/`
-承载整理侧。新的开放 Lab 通过 `LabExecution.describe/execute` 接入，不必复刻两个旧 loop。
-即时路径可以直接交付真实结果，不必额外调用整理模型；memory 可用不代表每条结果都写入。
+概念主链路为 **meta-agent → Lab → 原始 feedback → 同一个 meta-agent**。
+`harness/agent_memory.py` 提供显式记忆工具和任务反馈窗口；`feedback/` 保留原始回执与归档设施，
+独立 LangMem 整理仅作为显式兼容工作流。新的 Lab 通过 `LabExecution.describe/execute` 接入。
 
 ```text
 src/rsisys/
@@ -79,7 +78,7 @@ src/rsisys/
 │   ├── decision_making/
 │   │   ├── loop.py        # 薄端点与有界推进
 │   │   ├── harness/       # meta-agent（decision侧）的可替换 harness
-│   │   ├── feedback/      # meta-agent（整理侧）的接入、记忆与可选提案
+│   │   ├── feedback/      # 原始反馈、归档与显式兼容处理器
 │   │   └── action_space/  # research 操作与系统指令的描述/校验
 │   ├── exploration/
 │   │   ├── loop.py        # 薄端点
@@ -112,13 +111,9 @@ Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](sr
 
 默认长程上下文、研究议程与可选 DSH 的配置见[默认长程研究能力](#默认长程研究能力)和[使用 DSH Harness](#使用-dsh-harness)。
 
-研究任务通过 `research.py` 的 `ResearchAssembly / assemble_research` 组合必需的
-context/memory、默认原始轨迹归档与可选改进提案。标准医疗 Open Lab 按 `context|memory`
-路由正文：即时 context 不触发 LangMem，memory 路径按需整理并检索；两路都保留真实任务状态。
-通用兼容装配仍可先直接交付再后台整理，具体路由须显式装配。
-数据构建与 meta-agent policy 训练通过 Lab 的可替换能力执行；meta-agent（decision侧）
-在正式 decision 中引用提案并选择构建/训练/验证，回执继续进入反馈；装配入口、workflow 和
-当前验收边界见[Feedback 链路](docs/review/feedback-workflow.md)。
+研究任务通过 `ResearchAssembly()` / `ResearchAssembly.single_meta()` 装配显式 memory、
+当前任务原始反馈和默认原始轨迹归档。meta-agent 自己解释结果和写记忆；模块不自动调用整理模型。
+训练、正式评测及应用变更通过 Lab 的已安装能力执行。当前边界见[统一架构](docs/architecture.md)。
 
 `runtime/recovery.py` 保存运行中协同状态；空闲 `snapshot/` 负责独立可移交快照。前者在同一工作目录继续，后者恢复到新目录。运行恢复按意图 / 回执边界处理，中断且结果不明时要求核对，不假设所有外部副作用都可重放。默认仅串行内置组合，外部组件显式实现恢复契约。
 
@@ -169,7 +164,7 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 ### 兼容执行路径：两个端点协同
 
 下面说明已有 `DecisionMakingLoop / ExplorationLoop` 接口，不将其内部结构规定为所有 Lab 的架构。
-标准开放执行路径和两侧职责见[统一架构](docs/architecture.md)。
+标准开放执行路径和单一 meta-agent 的职责见[统一架构](docs/architecture.md)。
 
 1. Decision Harness 读取上下文、完成本地准备，policy 发出 Directive；Action Space 校验操作和指令模式。
 2. Runner 将 Directive 交给 Exploration 端点，Harness 接收、校验 payload 并推进对应流程。外部系统也可直接通过同一端点提交 Directive。
@@ -628,47 +623,30 @@ attempt 代表及它们的依赖/引用/采纳关系；旧节点通过 `research
 
 ### 统一研究任务装配
 
-`ResearchAssembly` 声明三类产物：必须激活的 context/memory、默认开启且可替换/关闭的轨迹
-提取、可选 harness 提案。Application、Demo 的 `research=` 参数和医疗控制器最终都调用
-`assemble_research`；模型仍只选择 decision，调用和训练准入由宿主控制。
+默认架构为一个 meta-agent、Lab 和确定性 memory 模块：
 
 ```python
 from rsisys.application import Application
 from rsisys.research import ResearchAssembly
-from rsisys.loops.decision_making.feedback import ModelHarnessProposer
 
-research = ResearchAssembly.langmem(
-    memory_path=config.data_dir / 'feedback_memory.sqlite',
-    namespace=('research', config.run_id),
-    harness_proposals=ModelHarnessProposer(config.data_dir / 'harness_proposals'),
-)
-with Application(config, research=research) as app:
+with Application(config, research=ResearchAssembly.single_meta()) as app:
     app.run()
 ```
 
-LangMem 需要显式安装的 optional 依赖及支持 native tool calling 的 backend；缺少时启动报错，
-不会回退成另一套 memory。组件配置本身不创建 run 或数据库。只需事实视图时使用
-`ResearchAssembly()`：内置 JournalContextMemory 保持激活，不额外调用模型；
-`trajectory_archive=None` 可关闭轨迹产物，`context_memory=None` 会被拒绝。
-外部整理器用 `context_memory=provider, memory_processor=processor` 替换，第三方 harness
-通过 `feedback_adapter_factory` 接入。Demo 同样支持 `build_demo(config, research=research)`。
+默认安装 `memory_search/read/write/delete` 与 `research_task`：meta-agent 在普通 decision 中选择
+读什么、记什么、如何修订或删除。`research_task` 的 open/pin/close 将原始错误保留到当前
+实验/调试任务结束。中间读文件、改代码和复测不会替换固定的错误；关闭任务释放驻留窗口，原文仍可归档读取。
+较大的反馈和 memory 使用显式原文分页。记忆带来源、状态与修订，但散文解释始终不等于验证事实。
 
-医疗任务始终经过统一入口，默认 journal memory、轨迹提取开启、harness 提案关闭。
-`--memory-provider langmem` 选择上游整理，`--harness-proposals` 独立启用提案，
-`--no-trajectory-archive` 只关闭派生轨迹。旧 `--feedback-learning` 作为选择 LangMem 的兼容
-开关保留，显式 `--memory-provider` 优先；新任务不再调用旧的组合解释 prompt。
+`ResearchAssembly()` 使用相同默认路径。`trajectory_archive=None` 可关闭派生轨迹产品，
+`context_memory=None` 被拒绝。旧 `.langmem(...)` 独立抽取与 proposer 必须显式选用；
+它们不是默认单 meta-agent 架构。医疗常规入口默认 `--memory-provider agent_managed`，
+Open Lab 默认 `--feedback-routing agent_memory`；旧 journal 和 LangMem 选项保留兼容。
 
-有运行目录时，启动即将选择写入 `research_assembly.json` 和 feedback journal；恢复必须提供原组件配置，
-不自动迁移旧 journal。反馈 journal 的恢复不等于完整 Runner 的恢复；启用 research 的
-Application 若使用 durable，必须提供显式 recovery_contract，内置 snapshot 仍拒绝此组合。
-基础 `Application(config)` / `build_demo(config)` 保留底层循环构建行为，不自动安装研究组件。
-本次未迁移默认 Runner 的跨 Lab 调度；完整 workflow 见[装配文档](docs/review/feedback-workflow.md)。
-
-可替换组件的公开协议见[模块窗口与运行边界](docs/review/feedback-module-windows-20261104.md)：
-context 输出文本，归档使用 write(event)/read(reference)，处理器与提案返回原生产物，
-调度器只选择公开待处理事件。旧 Journal/LangMem 协议经适配器保留，不是新插件的必需方法。
-产品状态和计费由 host 维护；独立提案不因 memory 处理失败跳过，旧 Memory 发布故障默认单独记录。
-ResearchAssembly 配置版本为 4；恢复明确核对组件、依赖和故障策略。
+装配 schema_version=5，启动即记录组件配置，恢复拒绝隐式更换组件。
+`AgentMemoryState` 必须与决策、执行和反馈状态一起注册；医疗 Open Lab 已接线原目录恢复。
+恢复保留记忆、活跃任务、调用账本和原截止时间；状态不一致或副作用不明时阻塞核对。
+通用可迁移 snapshot 仍由完整的组件适配器兑现。基础 `Application(config)` 不自动安装研究组件。
 
 ### 底层反馈接口与兼容路径
 
@@ -683,8 +661,8 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
 
 反馈学习位于独立的 `decision_making/feedback/` 包，不导入默认 harness 实现。
 做决策的模型统一称 meta-agent，decision 是研究动作/任务；固定目标下由 data/model/harness
-组成的研究执行环境称 lab。meta-agent（整理侧）负责整理和路由，meta-agent harness 负责上下文选择与
-compact。当前实现映射、Lab 接口迁移范围和三类产物边界见[反馈架构](src/rsisys/loops/decision_making/feedback/README.md)。
+组成的研究执行环境称 lab。以下独立处理器和组合解释入口属于显式兼容路径；默认
+语义整理由唯一 meta-agent 负责，harness 处理装配、计量和容量。当前实现映射、Lab 接口迁移范围和三类产物边界见[反馈架构](src/rsisys/loops/decision_making/feedback/README.md)。
 基础 `LabSpec / LabTask / Lab` 和 `ExplorationLab` 已提供；默认 Runner 仍走兼容 exploration
 端口。`ExecutionReceipt` 统一本地与 Lab 任务的终态观察，默认 adapter 自动整理本地非只读
 操作的实际完成，异步提交与只读导航不会被当作新的完成任务。

@@ -219,7 +219,7 @@ class ModuleAssemblyStateTests(unittest.TestCase):
         config = replace(ApplicationConfig.load(ROOT / 'configs/local.json'), data_dir=self.root / 'feedback')
         modules = ModuleAssembly(research=ResearchAssembly(), state_factory=lambda ctx, dm, lab: {
             'decision': Port('unused/v1'), 'exploration': Port('unused/v1')})
-        with self.assertRaisesRegex(TypeError, 'Missing component state adapters: feedback'):
+        with self.assertRaisesRegex(TypeError, 'Missing component state adapters: agent_memory, feedback'):
             Application(config, modules=modules, durable=True)
 
     def test_unregistered_component_swap_is_blocked_before_step(self):

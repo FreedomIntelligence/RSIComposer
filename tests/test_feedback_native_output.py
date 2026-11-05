@@ -1,5 +1,6 @@
 """A new Lab submits native content without implementing RSISys business schemas."""
 from copy import deepcopy
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -61,9 +62,10 @@ class NativeLabOutputTests(unittest.TestCase):
         output = 'Traceback from an external worker with its own format'
         ident = self.submit(output, status=ExecutionStatus.FAILED)
         self.service.refresh()
-        record = self.service.learning.context_record(ident)
-        self.assertEqual(record['facts']['status'], ExecutionStatus.FAILED)
-        self.assertIsNone(record['facts']['error'])
+        receipt = self.service.learning.state['jobs'][ident]['raw_input']['receipt']
+        self.assertEqual(receipt_facts(receipt)['status'], ExecutionStatus.FAILED)
+        self.assertIsNone(receipt_facts(receipt)['error'])
+        self.assertEqual(json.loads(self.service.context())['total'], 0)
         self.assertEqual(exact(self.service.learning, job_id=ident,
             evidence_path='/receipt/result/output'), output)
         self.assertEqual(self.backend.requests, [])

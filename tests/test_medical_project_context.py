@@ -53,7 +53,7 @@ class MedicalProjectContextTests(unittest.TestCase):
         self.assertNotIn('physical_devices', resources)
         self.assertNotIn('logical_devices', resources)
         self.assertTrue(project['scope']['decision_improvement']['context_memory_enabled'])
-        self.assertEqual(project['scope']['decision_improvement']['memory_provider'], 'journal')
+        self.assertEqual(project['scope']['decision_improvement']['memory_provider'], 'agent_managed')
         self.assertFalse(project['scope']['decision_improvement']['model_feedback_enabled'])
         self.assertIn('feedback_learning_read', [spec['name'] for spec in context['operations']])
         self.assertEqual(project['scientific_evaluation']['selection_rule'], 'pareto')
@@ -209,7 +209,7 @@ class MedicalProjectSettingsTests(unittest.TestCase):
 
     def test_feedback_learning_defaults_and_dsh_configuration(self):
         self.assertFalse(self.settings().feedback_learning)
-        self.assertEqual(self.settings().effective_memory_provider, 'journal')
+        self.assertEqual(self.settings().effective_memory_provider, 'agent_managed')
         self.assertEqual(self.settings(feedback_learning=True).effective_memory_provider, 'langmem')
         self.assertTrue(self.settings().archive_trajectories)
         self.assertFalse(self.settings().harness_proposals)

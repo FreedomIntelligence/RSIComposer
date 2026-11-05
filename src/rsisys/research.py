@@ -19,6 +19,7 @@ from rsisys.loops.decision_making.feedback.archive import validate_archive
 from rsisys.loops.decision_making.feedback.scheduling import validate_scheduler
 from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer, FeedbackAdmissionPolicy
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.loops.decision_making.harness.agent_memory import AgentMemory, install_agent_memory
 
 
 def _component(component):
@@ -40,14 +41,14 @@ def _component(component):
 
 @dataclass(frozen=True)
 class ResearchAssembly:
-    """Explicit products: required memory, default traces, optional proposals.
+    """One acting meta-agent with explicit memory, plus optional integrations.
 
-    Journal memory supplies factual views without model inference. Use langmem()
-    for the existing upstream manager, or supply an external provider/processor.
+    The default memory stores and retrieves notes written by the acting meta-agent.
+    Use langmem() to explicitly install the legacy independent extraction workflow.
     Component state belongs to this run; reconstruction uses explicit component
     state adapters or a recovery contract, not arbitrary Python serialization.
     """
-    context_memory: ContextMemoryOrganizer = field(default_factory=JournalContextMemory)
+    context_memory: ContextMemoryOrganizer = field(default_factory=AgentMemory)
     memory_processor: FeedbackProcessor | None = None
     trajectory_archive: TrajectoryArchive | None = field(default_factory=JournalTrajectoryArchive)
     harness_proposals: FeedbackProcessor | None = None
@@ -90,7 +91,7 @@ class ResearchAssembly:
 
     def configuration(self):
         return {**({'admission': _component(self.admission)} if self.admission is not None else {}),
-            'schema_version': 4, 'entrypoint': 'rsisys.research.assemble_research',
+            'schema_version': 5, 'entrypoint': 'rsisys.research.assemble_research',
             'context_protocol': 'text-v1', 'context_delivery': 'replace_current_view',
             'archive_protocol': 'raw-event-v1', 'processor_protocol': 'product-v1',
             'proposal_protocol': 'product-v1', 'scheduler_protocol': 'selection-v1',
@@ -105,11 +106,20 @@ class ResearchAssembly:
             'failure_policy': asdict(self.failure_policy),
             'trajectory_mode': 'archive_only', 'dataset_construction_owner': 'lab',
             'receipt_delivery': 'direct_before_processing',
-            'construction_owner': 'main_meta_agent_decision', 'budget_owner': 'host'}
+            'construction_owner': 'main_meta_agent_decision', 'budget_owner': 'host',
+            'agent_topology': ('single_acting_meta_agent' if isinstance(self.context_memory, AgentMemory)
+                               and not self.requires_model else 'explicit_custom_workflow')}
+
+    @classmethod
+    def single_meta(cls, *, memory_path=None, **components):
+        """The meta-agent writes its own memories; storage never calls a model."""
+        if {'context_memory', 'memory_processor', 'harness_proposals', 'improvement_proposals'}.intersection(components):
+            raise ValueError('single_meta() owns memory and has no independent model processing stages')
+        return cls(context_memory=AgentMemory(memory_path), **components)
 
     @classmethod
     def langmem(cls, *, memory_path, namespace, memory_options=None, **components):
-        """Load the selected optional integration; never silently fall back."""
+        """Explicit legacy extraction workflow; not the single-meta default."""
         if {'context_memory', 'memory_processor'}.intersection(components):
             raise ValueError('langmem() owns context_memory and memory_processor')
         try:
@@ -138,6 +148,10 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         raise ValueError('Configure research products through ResearchAssembly')
     if getattr(loop, 'feedback_service', None) is not None:
         raise ValueError('Research feedback is already assembled')
+    if isinstance(assembly.context_memory, AgentMemory):
+        from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+        if not isinstance(loop.harness, DefaultDecisionHarness):
+            raise TypeError('Custom harness must supply its own explicit agent-memory tool/context integration')
     if owner is not None and (not callable(getattr(owner, 'add_cleanup', None))
                               or getattr(owner, '_closed', False)):
         raise ValueError('Research owner must accept cleanup callbacks')
@@ -151,9 +165,15 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         manifest = Path(path).parent / 'research_assembly.json'
         if manifest.exists() and json.loads(manifest.read_text()) != configuration:
             raise ValueError('Research assembly configuration differs from the workspace manifest')
+    context_memory = assembly.context_memory
+    if isinstance(context_memory, AgentMemory):
+        # Assembly is reusable configuration. Mutable run state belongs to the
+        # new harness, including when the same ModuleAssembly resumes a run.
+        context_memory = AgentMemory(context_memory.configured_path)
+        context_memory.bind(loop.harness, path)
     enable_feedback_learning(loop, path=path, backend=backend, model=model, model_provider=model_provider,
         adapter=adapter,
-        context_memory=assembly.context_memory, trajectory_archive=assembly.trajectory_archive,
+        context_memory=context_memory, trajectory_archive=assembly.trajectory_archive,
         scheduler=assembly.scheduler, failure_policy=assembly.failure_policy, admission=assembly.admission,
         processor=FeedbackPipeline(memory_processor=assembly.memory_processor,
                                    harness_proposals=assembly.harness_proposals,
@@ -166,6 +186,8 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         service.learning._commit(deepcopy(service.learning.state))
         if path is not None:
             atomic_write(Path(path).parent / 'research_assembly.json', json_bytes(configuration))
+        if isinstance(context_memory, AgentMemory):
+            install_agent_memory(loop, context_memory, path=path)
         if owner is not None:
             register = getattr(owner, 'add_owned_cleanup', owner.add_cleanup)
             register(service.close)

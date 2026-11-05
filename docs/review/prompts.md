@@ -1,5 +1,7 @@
 # RSISys Prompt 与模型输入审查地图
 
+当前默认（2026-11-06）：一个 meta-agent + Lab + memory 模块；旧整理侧的语义职责合入普通 decision。独立抽取 prompt 仅在显式兼容工作流生效。以下历史审查编号与材料保留当时范围。
+
 整理日期：2026-11-03，基于当前本地工作树。配套：[模块审查地图](modules.md)。
 2026-11-05：角色称谓统一为 meta-agent（decision侧）、Lab、meta-agent（整理侧），
 定义见[统一架构](../architecture.md)。编号与历史请求保留，不能由旧 prompt 的名字推定额外角色。

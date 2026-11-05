@@ -1,6 +1,6 @@
 # Runtime
 
-统一口径见[系统术语与架构](../../../docs/architecture.md)。meta-agent（decision侧）、Lab 与 meta-agent（整理侧）是统一角色称谓；当前类型名和持久化键保留兼容。
+统一口径见[系统术语与架构](../../../docs/architecture.md)。默认只有一个 meta-agent、Lab 和 memory 模块；语义整理合入 meta-agent，旧类型名和持久化键保留兼容。
 
 提供跨 loop 推进、外部运行策略与公共基础能力；研究步骤和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 

@@ -1,100 +1,22 @@
-# meta-agent（整理侧）：反馈路由与可选产物
+# 单 meta-agent 的反馈与记忆链路
 
-更新：2026-11-05。统一称谓和职责以[系统架构](../architecture.md)为准；此前验证记录保留为历史版本。
-本次已落实 [Context / Memory 接入窗口](feedback-context-window-20261104.md)：
-公开 context(query) -> str，默认 journal/LangMem 通过内部适配接入，当前文本替换 memory_context 区块。
-归档、处理、建议、调度的当前协议及失败行为见 [模块窗口](feedback-module-windows-20261104.md)。
-新插件只接公开事件和自己的产物，不必模拟内部 job、状态或计费结构。
+更新：2026-11-06。当前术语以[统一架构](../architecture.md)为准。
 
-## 两条主消费路径与独立可选能力
+1. Lab 执行授权任务并持久化原始回执。
+2. 同一个 meta-agent 直接看原始反馈、当前运行状态与相关记忆。
+3. 调试任务用 `research_task` open/pin 固定原始错误，读代码、改代码和复测后才 close。
+4. meta-agent 通过普通 decision 调用 `memory_write` 更新长期笔记，或 `memory_delete` 撤下旧笔记。
+5. 模块仅存储、检索和记录来源/修订；大原文按 SHA 和稳定地址分页读取。
 
-Lab 原样提供文本、JSON、日志或原生文件引用，内容不要求符合 RSISys 的业务 schema。
-执行设施补充任务关联与生命周期状态；旧结构化 Feedback / OperationResult 接入继续有效。
-执行端先将真实回执写入决策账本，整理侧的接入设施保存原始捕获后返回。
-即时路径交付正文，memory 路径交付状态与整理确认；这个交付过程不调用 memory 或 proposer
-模型，也不等待它们发布。通用旧装配仍可直接交付真实结果后后台整理。
+`ResearchAssembly()` / `.single_meta()` 无独立抽取模型，也不因压缩自动请求模型总结。
+默认最多两个开放任务、每任务四个固定回执，另外保留最近两条 producer 回执；
+关任务不删原文、不自动写 memory。记忆的 supported/refuted 是模型判断，散文始终未验证。
 
-| 路径 / 能力 | 输入 | 产物与职责 |
-| --- | --- | --- |
-| 即时 context 路径 | Lab / 工具的真实结果 | 直接支持 meta-agent（decision侧）；标准 Open Lab 不触发 LangMem，过期正文退出工作视图 |
-| memory 路径 | 需要长期使用的反馈与 ContextQuery | meta-agent（整理侧）配合可替换 provider 整理；按需输出 context 文本，Harness 替换 memory_context 视图 |
-| 原始轨迹归档 | 已捕获的公开 decision、执行及证据 | 默认开启、实现可替换；保存原始片段，不筛选标签、不构建训练数据 |
-| 改进提案（独立可选） | 公开反馈事件 | 整理侧提出原生建议；内置适配器支持 harness_change / policy_training，decision侧选择正式动作 |
+医疗 Open Lab 默认 `--feedback-routing agent_memory`，恢复状态包含 `AgentMemoryState`。
+正常恢复保留任务、记忆、来源、调用账本与原始截止时间。未知 mutation 阻塞核对，不重放。
+旧 LangMem/proposer 工作流仍可显式装配，完整旧实验记录保留其当时配置。
 
-标准医疗 Open Lab 对同一观察的正文按 `context|memory` 二选一路由，不默认全量重复消费。
-正文路由保留完整账本；任务状态看运行视图，错误详情按原始证据引用读取。
-memory 路径的即时确认只代表请求已交付；整理完成须查 feedback 状态与实际检索结果。
-原始归档与提案可分别装配；当前路由准入跳过即时路径的整个后台 job，提案也受这次准入约束。
-memory 模块必须可用，不代表每条结果都写 memory；即时路径仍可检索以前的记忆。
-`RoutedLab` 在适配层消费 `feedback_route`，`ContextOrMemoryAdmission` 控制整理准入，
-`ImmediateFeedbackWindow` 管理近期正文视图。这些是标准 Open Lab 的实际接线，
-不是强加给任意 Lab 的业务字段；未装配路由的旧调用方保留直接交付后后台整理的兼容行为。
-meta-agent（整理侧）使用捕获时 active meta-agent 的同一 ModelRef 和独立上下文。
-
-![系统主链路、即时 context 与 memory](../diagrams/system-flow.svg)
-
-## 统一装配与推进
-
-研究启动仍统一使用 `ResearchAssembly / assemble_research`。默认是 JournalContextMemory、
-JournalTrajectoryArchive，没有额外 memory/proposal 模型推理。
-
-新 Lab 的反馈接入只需提交原始输出，任务关联与 status 来自其执行器：
-
-```python
-job_id = service.observe_output(
-    native_output,
-    task_id=host_task_id,
-    status=host_terminal_status,
-    lab_id=host_lab_id,
-    references=native_artifact_references,
-)
-```
-
-output 可以是文本或任意可持久化 JSON；也可仅提供原生格式 references。
-Lab 不必实现 Directive / Feedback、统一 summary/error、三组 metrics、candidate 或 protocol。
-现有 FeedbackEvidence 是可选的补充证据，不是 Lab 的必填输出；这个入口默认不读取默认 harness 的领域目录。
-执行设施可调用 ExecutionReceipt.from_output 封装同样的输入。业务键即使叫 status、quality_metrics
-或 adopted_candidate_ids，也只保留在原始 output 中，不自动变成宿主状态、已验证指标或采纳声明。
-
-大输出和未知字段以有界 JSON 预览进入模型，包含精确原文读取路径和省略标记；
-原始 JSON/文本保存在 journal，不受模型预览大小影响。文件内容仍由对应 Lab 的读取工具提供，
-核心不自动下载引用，也不要求原生文件引用采用我们的 ArtifactRef 格式。
-observe_output 是反馈观察入口；执行器仍负责原结果交付与任务推进，未新增跨 Lab 调度。
-本轮接口减负自查与待 checkpoint 项见 [适配自查](feedback-adaptation-review-20261104.md)。
-
-```python
-from rsisys.research import ResearchAssembly, assemble_research
-from rsisys.loops.decision_making.feedback import ModelImprovementProposer
-
-service = assemble_research(
-    loop,
-    assembly=ResearchAssembly(
-        improvement_proposals=ModelImprovementProposer(run_dir / 'improvement_proposals')),
-    path=run_dir / 'feedback.json',
-    backend=host_accounted_backend,
-)
-```
-
-`service.observe(receipt)` 只持久捕获并排队，不推进模型。`service.archive(receipt)` 只归档，
-不排队。`service.refresh()` 通知可选 observe hook、写入外部归档、采集后台结果、按 selector 和 host 容量启动任务并发布兼容 memory；
-不等待未完成 worker。默认 Harness 在组装下一次 context 时 refresh，外部 Harness 自行提供 tick。
-宿主原始捕获落盘失败仍阻止确认交付。外部可选归档写入失败单独记录，不重做实际任务或自动重放未知写入。
-独立提案不依赖 memory 处理成功；显式设置 proposal_requires_memory 时才建立成功依赖。
-关闭时未提交的整理任务会取消，原始捕获仍保留；不保证最后一份结果已完成模型整理。
-
-模型 memory 可通过 `ResearchAssembly.langmem(memory_path=..., namespace=...)` 选择。
-缺少 optional 依赖或 native tool calling 时明确失败，不静默回退。外部 organizer/processor
-可以替换整个实现，不要求使用内置记忆格式。宿主仍管理准入和预算。
-
-`harness_proposals=ModelHarnessProposer(...)` 保留为仅产生 harness_change 的兼容选项，
-与 improvement_proposals 互斥。底层旧 enable_feedback_learning 的组合 prompt 保留兼容，
-可读取旧 training_data 草稿；新 ResearchAssembly pipeline 不生成训练样本。
-医疗默认配置继续使用统一入口，旧 --harness-proposals 仍仅启用 harness 提案。
-本次没有修改、迁移或恢复任何旧冻结实验。
-
-配置 schema_version=4 记录 text-v1/raw-event-v1/product-v1/selection-v1、独立产品依赖和故障策略，
-保留 replace_current_view、archive_only、direct_before_processing、dataset_construction_owner=lab。
-与旧 journal 配置不符时拒绝重开，不静默迁移；完整 Application durable 仍要求显式 recovery_contract。
+下方轨迹与 Lab 接口也供显式兼容工作流使用，不表示默认有第二个整理 agent。
 
 ## 原始轨迹到 Lab 的接口
 
