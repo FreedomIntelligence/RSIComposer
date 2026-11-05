@@ -1,4 +1,12 @@
-# Meta-agent 的反馈整理与路由
+# meta-agent（整理侧）：反馈接入、上下文与记忆
+
+统一定义见[系统术语与架构](../../../../../docs/architecture.md)。本目录承载整理侧，
+与 **meta-agent（decision侧）** 是同一 meta-agent 的不同职责，不另设 Feedback agent。
+标准医疗 Open Lab 的正文路由为 `context|memory` 二选一；即时路径不触发 LangMem，
+memory 路径按需整理并检索。任务状态由运行视图提供，错误详情按原始证据引用读取；
+即时整理确认不代表 Lab 或整理成功。归档和提案可分别装配；当前即时路径准入也跳过提案 job。
+该接线由 `RoutedLab / ContextOrMemoryAdmission / ImmediateFeedbackWindow` 显式提供；
+未选择路由的旧装配仍可直接交付后后台整理，不据此声称所有 launcher 都已经二选一。
 
 可选入队策略 `FeedbackAdmissionPolicy.admit(event, pending)` 可在昂贵整理前跳过或合并
 排队事件；原始回执、即时 context、context observer 和轨迹仍保留，running 任务与预算不可修改。
@@ -12,54 +20,36 @@ Context / Memory 的公开出口已收敛为 `context(query) -> str`；
 记录本次实现，三方法是兼容实现细节。
 [模块窗口规范](../../../../../docs/review/feedback-module-windows-20261104.md) 进一步定义原始归档、
 原生产物/提案与调度接口；旧 job、Memory 和处理结果协议隔离在适配器内。
-真实执行结果在记账、持久捕获后直接交回 decision，不等待 memory 或提案模型。
-反馈分身是同一个 meta-agent
-在独立上下文中承担反馈职能，共享当前权重；反馈调用仍接入宿主的准入、
+真实执行结果先记账并持久捕获，再按路由交付即时正文或状态与整理确认，不等待 memory
+或提案模型；通用旧装配仍可直接交付真实结果后后台整理。
+meta-agent（整理侧）在独立上下文中承担反馈职能，共享捕获的 active meta-agent 权重身份；调用仍接入宿主的准入、
 计费和生命周期。它不依赖默认 meta-agent harness 的 state、会话格式或 compact 算法。
 
 ## 统一命名与边界
 
 | 概念 | 职责 | 现有实现映射 |
 | --- | --- | --- |
-| Meta-agent | 选择研究动作、写代码/修代码方案或完整自动化任务 | `decision_maker` 角色及其可替换 DecisionHarness |
+| meta-agent（decision侧） | 选择研究动作、写代码/修代码方案或完整自动化任务 | `decision_maker` 角色及其可替换 DecisionHarness |
 | Decision | 带身份、理由、参数和来源的具体动作或任务；不是模型本身 | `Decision`；当前区分 `invoke` 本地能力与 `explore` 下发指令 |
-| Lab | 固定目标与评测契约下的研究环境，包含 data、model、harness；支持已安装的代码执行、SFT、RL、推理、评测能力 | `LabSpec / LabTask / Lab` 提供基础契约，`ExplorationLab` 适配现有 exploration；默认 Runner 尚未迁移为跨 Lab 调度器 |
+| Lab | agent 执行任务的环境，封装目标、数据、模型或 agent、harness 与已安装能力；不要求固定 Actor loop 或算法菜单 | `LabExecution` 提供 describe/execute；`LabSpec / LabTask / Lab` 与 `ExplorationLab` 保留另一种任务/兼容适配；不是默认跨 Lab 调度器 |
 | Sandbox | Lab 执行代码时使用的运行/隔离设施 | 具体后端；不是 Lab 的同义实现 |
-| Feedback 分身 | 同权重、独立上下文；整理执行证据、关联 decision，决定信息的去向 | `FeedbackLearningService` + `FeedbackAdapter` + 独立 worker；不是另训一个反馈模型 |
+| meta-agent（整理侧） | 同权重、独立上下文；解释执行证据、组织记忆及可选建议，配合确定性路由与视图管理 | `FeedbackLearningService` + `FeedbackAdapter` + 独立 worker；learning 不表示发生权重训练 |
 | Meta-agent harness | 装配当前上下文、检索、compact、调度与执行校验 | 默认、DSH 或其他实现；与 lab 内的 harness 分开 |
 
 保留现有角色名和消息协议，避免靠批量改名破坏旧日志、后端和恢复行为。
 基础 Lab 接口复用 Directive 和现有 handlers；增加接口不会安装通用编程 agent、训练算法
 或隔离设施。适配器任务索引仅在当前进程有效，持久恢复需要显式集成。
 
-```mermaid
-flowchart LR
-    M[Meta-agent] --> D[Decision / 任务]
-    D --> L[Lab: 固定目标 + data/model/harness]
-    L --> E[执行回执与产物引用]
-    D --> T[Decision 轨迹]
-    E --> M
-    E --> W[默认原始轨迹归档]
-    T --> W
-    E --> F[Feedback 分身: 整理 + 路由]
-    F --> K[必须激活: 可替换的 Context / Memory 整理器]
-    F -. 有改进时 .-> H[Harness / Policy 改进任务提案]
-    K --> V[Meta-agent harness 选择当前视图]
-    V --> M
-    H --> M
-    M --> G[正式 decision: 构建 / 训练 / 评测 / 应用]
-    W --> D2[改进 Lab: 可替换数据构建 / 训练能力]
-    G --> D2
-```
+![统一系统主链路与两条反馈路径](../../../../../docs/diagrams/system-flow.svg)
 
 只有 context/memory 整理能力必须激活，实现可替换；其他组件按需装配：
 
 | 产物 | 现在提供什么 | 后续消费边界 |
 | --- | --- | --- |
-| 即时 context | 直接交付 Lab / 工具的真实结果、错误、指标和产物引用；不经反馈模型改写 | Decision 的 last_feedback / operation_results 及账本 |
+| 即时 context | 直接交付 Lab / 工具真实结果；标准 Open Lab 默认不触发 memory 整理，近期正文按工作视图保留 | meta-agent（decision侧）的 last_feedback / operation_results；完整账本另存 |
 | context/memory（必须激活，实现可替换） | `context(query) -> str` 或函数；可选 observe 接收新反馈。默认 journal/LangMem 由适配器接入 | 当前文本替换 DecisionContext.memory_context，内部格式、检索与存储属于实现 |
 | 原始轨迹（默认开启，可关闭或替换） | write(event)/read(reference)；Journal 默认经适配器导出索引/固定捕获 | Lab 通过 TrajectorySource / TrajectoryRef 读固定来源，不在反馈端构建样本 |
-| 改进任务提案（可选） | propose(event, model) 返回原生建议；内置适配器生成结构化提案 | 主 decision 和具体消费者决定正式构建、训练与验证 |
+| 改进任务提案（可选） | propose(event, model) 返回原生建议；内置适配器生成结构化提案 | meta-agent（decision侧）及具体消费者决定正式构建、训练与验证 |
 
 原 `training_data` / `target=weights` 仍兼容为未验证草稿，不要求每次生成 input/target。
 执行/反馈交付 journal 在模型整理前记录事实；它用于查询和恢复，与可选研究轨迹产物分开。
@@ -84,7 +74,7 @@ meta-agent 引用；实际权重及跨服务身份仍由后端兑现。
 必需 context/memory、默认原始轨迹归档、可选改进提案分别记录状态。
 LangMem 可以组合 `improvement_proposals=ModelImprovementProposer(...)`；memory 算法仍由
 整理器负责。旧 `harness_proposals=ModelHarnessProposer(...)` 仅生成 harness 提案，与新选项互斥。
-主 meta-agent 在正常 decision 的 `feedback_proposal_ids` 引用建议，执行前校验来源；
+meta-agent（decision侧） 在正常 decision 的 `feedback_proposal_ids` 引用建议，执行前校验来源；
 构建/训练由 Lab 的正式任务负责，回执再次进入 feedback。
 `service.trajectory_snapshot(job_id)` / `/trajectory_snapshot` 提供不可变原始来源。
 `extract_trajectory` / `/trajectory_segment` 保留旧组合视图，包含后来完成的反馈交换，不能用作固定训练来源。
@@ -259,7 +249,8 @@ job 元信息的 `trajectory.enabled` 与轨迹列表的 `enabled` 显式标记�
 
 ## 后续迁移
 
-这一阶段落实四条反馈链路、固定来源契约，以及 Lab 数据构建/训练能力适配。
+当前定义区分即时 context / memory 两条正文路径与独立可选的归档、提案；
+另有固定来源契约及 Lab 数据构建/训练能力适配。
 具体数据 recipe、真实训练后端、独立 policy 评测与激活仍由相应实现提供。
 默认跨 Lab 调度、任务索引持久恢复及通用代码能力尚需继续迁移，harness 提案的验证/应用流程也未补齐。
 不能将接口草图、fixture、一次整理调用或已有的 actor SFT 计为完成了这些能力。

@@ -1,15 +1,15 @@
-# Decision-making loop
+# meta-agent（decision侧）端点
 
 选择优化目标与改进策略，对外发布 Directive 并接收 Feedback。构造方式为 `DecisionMakingLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../README.md#系统架构)。
 
-概念上做决策的模型称为 **meta-agent**，decision 是其动作或任务；带固定研究目标的
-data/model/harness 执行环境称为 **lab**。反馈角色与 meta-agent 共享当前权重，使用独立
-上下文；context/memory 整理能力必须激活且实现可替换；轨迹归档默认开启、可关闭或替换，harness 修改按需提出，
-轨迹转训练材料由后续 skill/规则定义。基础 Lab 契约和共享 ExecutionReceipt
-已提供，默认 Runner 仍走兼容 exploration 端口；实现映射与迁移边界见[反馈架构](feedback/README.md)。
+统一口径为 **meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ context**，
+见[系统术语与架构](../../../../docs/architecture.md)。decision 是动作或任务；整理侧使用捕获的
+同一权重身份与独立上下文。即时 context 不必触发模型整理，memory 模块保持可用并按需检索。
+原始轨迹与提案独立可选，数据构建和训练在 Lab 执行。`DecisionMakingLoop` 是本端点的
+兼容类型名；Lab 可以使用开放程序路径，不必有 Actor loop。具体映射见[整理侧](feedback/README.md)。
 
-研究装配入口为 `ResearchAssembly / assemble_research`：context/memory 保持激活，数据先提取公开轨迹，
-harness 先给提案。主 decision 通过 `feedback_proposal_ids` 引用提案后选择构建/验证，执行回执
+研究装配入口为 `ResearchAssembly / assemble_research`：context/memory 接入窗口保持可用，
+原始轨迹默认归档，提案按需启用。meta-agent（decision侧）通过 `feedback_proposal_ids` 引用提案后选择构建/验证，执行回执
 继续进入 feedback；[workflow 与装配](../../../../docs/review/feedback-workflow.md) 描述实际接通范围。
 
 [loop.py](loop.py) 只委托 `step(objective)`、`pending()` 与 `receive_feedback(directive, feedback)`；`run(objective, max_steps=16)` 有界推进，在下发、等待、结束或步数上限处返回。策略、准备操作、训练和状态编排属于 Harness。

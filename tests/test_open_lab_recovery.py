@@ -197,7 +197,7 @@ class OpenLabRecoveryTests(unittest.TestCase):
         transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
             from_pretrained=lambda *args, **kwargs: Tokenizer()))
         patches = [patch.dict(sys.modules, {'transformers': transformers}),
-            patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': '0'}),
+            patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,13'}),
             patch.object(launcher, 'VLLMBackend', Transport)]
         from examples.medical.open_lab_monitor import OpenLabMonitor
         from rsisys.loops.decision_making.feedback.langmem import LangMemContextMemory
@@ -221,7 +221,8 @@ class OpenLabRecoveryTests(unittest.TestCase):
             first = launcher.main(['--root', str(run), '--task', str(inputs / 'task.json'),
                 '--model-path', str(model), '--python', sys.executable,
                 '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'recovery-fixture',
-                '--seconds', '120', '--max-calls', '5'])
+                '--seconds', '120', '--max-calls', '5', '--device-type', 'npu',
+                '--resource-allocation', json.dumps({'physical_devices': [8,13], 'logical_devices': [0,1]})])
             self.assertEqual(first['status'], 'paused')
             saved = json.loads((run / 'recovery-launch.json').read_text())
             checkpoint = DurableRecovery.read(run / 'application')
@@ -234,6 +235,9 @@ class OpenLabRecoveryTests(unittest.TestCase):
             self.assertEqual(second['model_calls'], 2)
             self.assertEqual(second['compactions'], 3)
             self.assertIn('fixture reusable observation', json.dumps(transports[1].restored_context))
+            resources = transports[1].restored_context['project_context']['resources']
+            self.assertEqual(resources['logical_to_physical'], {'0': '8', '1': '13'})
+            self.assertEqual(resources, json.loads((run / 'resource-allocation.json').read_text()))
             self.assertEqual([t.calls for t in transports], [1, 1])
             self.assertEqual(json.loads((run / 'recovery-launch.json').read_text()), saved)
             restored = DurableRecovery.read(run / 'application')
@@ -252,6 +256,10 @@ class OpenLabRecoveryTests(unittest.TestCase):
             self.assertFalse(report['uncommitted_mutation'])
             with self.assertRaises(SystemExit):
                 launcher.main(['--root', str(run), '--resume', '--max-calls', '999'])
+            self.assertEqual((run / 'model_calls.json').read_bytes(), before)
+            with patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,14'}), \
+                 self.assertRaisesRegex(ValueError, 'deployment identity changed|device mapping'):
+                launcher.main(['--root', str(run), '--resume'])
             self.assertEqual((run / 'model_calls.json').read_bytes(), before)
             # A write-ahead step without a committed checkpoint is uncertain.
             # Resume may inspect it but must make no model call or clear it.

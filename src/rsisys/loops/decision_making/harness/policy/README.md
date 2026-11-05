@@ -1,4 +1,6 @@
-# Decision policy
+# meta-agent（decision侧）的 policy 实现
+
+统一口径见[系统术语与架构](../../../../../../docs/architecture.md)。policy 选择具体 decision；harness 装配输入。两者不是两个 agent。
 
 位于 [默认 Decision Harness](../README.md) 内部。`DecisionPolicy.decide` 选择操作、系统指令、等待或结束；Harness 组织执行与结果处理，[Decision Action Space](../../action_space/README.md) 定义操作参数和指令模式约束。
 
@@ -97,7 +99,7 @@ explore 可附顶层 `review_after_seconds`，不放入模式 arguments。`Model
 
 内置 update_model 只更改当前策略的模型引用，拒绝切换 backend_id。explore 的系统指令交给 Exploration Harness；训练/评测仍需配置对应后端。`configure_prompt` 使用 PromptSpec(instructions)，空字符串清空 Actor 指令配置，结构见[共享协议](../../../contracts/README.md)。
 
-决策者自身训练可通过 Harness 本地调用，见 [learner](../learner/README.md)；当前没有自动自优化指令或触发机制。SystemVersion / Candidate 可描述命名组件变更，具体组件校验和启用仍由消费方及 SystemActivator 实现，不自动执行任意代码修改。
+meta-agent（decision侧）自身训练可通过 Harness 本地调用，见 [learner](../learner/README.md)；当前没有自动自优化指令或触发机制。SystemVersion / Candidate 可描述命名组件变更，具体组件校验和启用仍由消费方及 SystemActivator 实现，不自动执行任意代码修改。
 
 `context_compactor` 默认使用 80k→24k 的 `BasicContextCompactor`，在最终决策/review请求构造后
 计量，包含协议和能力定义。摘要调用也经过 backend 并记录 usage；最新完整工具结果不被删除。

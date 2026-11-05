@@ -8,7 +8,7 @@ from .artifacts import ArtifactRef
 
 @dataclass(frozen=True)
 class Directive:
-    """System instruction sent by a decision-maker or external controller.
+    """System instruction sent by the meta-agent (decision side) or an external controller.
 
     The exploration harness executes the requested mode. allowed_actions only
     constrains Actor/environment interactions inside execute or RL rollouts.

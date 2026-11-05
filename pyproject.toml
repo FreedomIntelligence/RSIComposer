@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rsisys"
 version = "0.1.0"
-description = "Modular dual-loop RSI scaffold"
+description = "Modular RSI framework with a meta-agent and Lab execution environments"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

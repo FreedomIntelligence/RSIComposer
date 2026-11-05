@@ -13,6 +13,7 @@ from unittest.mock import patch
 from examples.medical.open_lab_experiment import (
     AllocatedProcessBackend, HostAdmissionStop, RecordedBackend, TimedOpenPolicy,
     AbsoluteHostPolicy,
+    allocated_resources,
     sglang_template_tools,
 )
 from examples.medical import open_lab_experiment
@@ -85,6 +86,19 @@ class MedicalOpenLabTests(unittest.TestCase):
                     self.assertEqual((lab.workspace / advertised['data_root'] / task['train']).read_bytes(),
                                      (inputs / task['train']).read_bytes())
                     self.assertEqual(advertised['path_base'], 'lab_workspace')
+                    resources = advertised['resources']
+                    self.assertEqual(resources['device_count'], 7)
+                    physical = ['8', '9', '10', '11', '13', '14', '15']
+                    self.assertEqual(resources['physical_devices'], physical)
+                    self.assertEqual(resources['logical_to_physical'], dict(zip(map(str, range(7)), physical)))
+                    self.assertEqual(resources, json.loads((config.data_dir.parent / 'resource-allocation.json').read_text()))
+                    self.assertEqual(resources['memory_availability']['capacity_mib_per_device'], 65536)
+                    ident = lab.execute(open_lab_experiment.OperationCall('lab_start', {'key': 'mapping',
+                        'argv': [sys.executable, '-c', 'import os;print(os.environ["ASCEND_RT_VISIBLE_DEVICES"])']})).data['job_id']
+                    native = lab.lab if hasattr(lab, 'lab') else lab
+                    native.backend.wait(native._jobs[ident][0])
+                    receipt = lab.execute(open_lab_experiment.OperationCall('lab_result', {'job_id': ident}))
+                    self.assertEqual(receipt.data['stdout'].strip(), resources['visibility_environment']['ASCEND_RT_VISIBLE_DEVICES'])
                 finally:
                     lab.close()
                     for cleanup in reversed(cleanups):
@@ -94,14 +108,26 @@ class MedicalOpenLabTests(unittest.TestCase):
             transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
                 from_pretrained=lambda *args, **kwargs: Tokenizer()))
             with patch.dict(sys.modules, {'transformers': transformers}), \
-                 patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': '0', 'CUDA_DEVICE_ORDER': 'PCI_BUS_ID'}), \
+                 patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,9,10,11,13,14,15'}), \
                  patch.object(open_lab_experiment.ResearchAssembly, 'langmem',
                               return_value=open_lab_experiment.ResearchAssembly()), \
                  patch.object(open_lab_experiment, 'Application', side_effect=inspect_application), \
                  self.assertRaises(FixtureStop):
                 open_lab_experiment.main(['--root', str(root / 'run'), '--task', str(inputs / 'task.json'),
                     '--model-path', str(model), '--python', sys.executable,
-                    '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture'])
+                    '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
+                    '--resource-allocation', json.dumps({'physical_devices': [8,9,10,11,13,14,15],
+                        'memory_availability': {'capacity_mib_per_device': 65536}})])
+
+    def test_conflicting_resource_declarations_fail_before_lab_execution(self):
+        environment = {'ASCEND_RT_VISIBLE_DEVICES': '8,9'}
+        for declaration in ({'physical_devices': [0, 1]}, {'physical_devices': [9, 8]},
+                            {'logical_devices': [8, 9]}):
+            with self.subTest(declaration=declaration), self.assertRaisesRegex(ValueError, 'mapping'):
+                allocated_resources(environment, 'npu', declaration)
+        for mapping in ('', '8,8', '8, 9'):
+            with self.subTest(mapping=mapping), self.assertRaises(ValueError):
+                allocated_resources({'ASCEND_RT_VISIBLE_DEVICES': mapping}, 'npu')
 
     def test_no_idle_envelopes_and_no_host_budget_in_context(self):
         policy = TimedOpenPolicy(Transport(), MODEL, directives=DirectiveDefinitions(()))

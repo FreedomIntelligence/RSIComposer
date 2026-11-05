@@ -1,5 +1,7 @@
 # 共享协议
 
+统一口径见[系统术语与架构](../../../../docs/architecture.md)。meta-agent（decision侧）、Lab 与 meta-agent（整理侧）是统一角色称谓；当前类型名和持久化键保留兼容。
+
 开放式执行端口见 [execution.py](execution.py)：Lab 提供 `describe/execute`，
 工具输入输出复用 [decision.py](decision.py) 的 OperationSpec/OperationCall 与
 coordination.OperationResult。算法与参数语义属于 Lab，框架不限定 SFT、RL、evaluate 的实现。

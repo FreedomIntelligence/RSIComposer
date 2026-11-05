@@ -223,6 +223,38 @@ class RetainedAllocatedProcessBackend(AllocatedProcessBackend, RetainedLocalProc
     """The same explicit device routing, with retained local executor state."""
 
 
+def allocated_resources(environment, device_type, declaration=None):
+    """Describe the host assignment, checking it against actual child routing.
+
+    Visibility is supplied by the operator, never discovered as an authorization.
+    Memory and other host devices are observations, not additional allocation.
+    """
+    from .experiment import copy_resource_allocation
+    key = {'cuda': 'CUDA_VISIBLE_DEVICES', 'npu': 'ASCEND_RT_VISIBLE_DEVICES'}[device_type]
+    physical = environment.get(key, '').split(',')
+    if any(not item or item != item.strip() for item in physical) or len(set(physical)) != len(physical):
+        raise ValueError('An explicit distinct allocated device mapping is required')
+    declaration = copy_resource_allocation(declaration) or {}
+    if ('physical_devices' in declaration
+            and [str(item) for item in declaration['physical_devices']] != physical):
+        raise ValueError('Declared allocation differs from the Lab process device mapping')
+    logical = list(range(len(physical)))
+    if 'logical_devices' in declaration and declaration['logical_devices'] != logical:
+        raise ValueError('Declared logical devices differ from the Lab process device mapping')
+    return {**declaration, 'device_type': device_type, 'device_count': len(physical),
+        'physical_devices': physical, 'logical_devices': logical,
+        'logical_to_physical': dict(zip(map(str, logical), physical)),
+        'visibility_environment': {key: environment[key]},
+        'allocation_status': 'host_assigned',
+        'memory_availability': declaration.get('memory_availability', 'unknown'),
+        'external_read_only_services': declaration.get('external_read_only_services', []),
+        'scope': 'Use only these assigned devices. Logical device IDs apply inside generated programs. '
+            'One program may use multiple assigned devices with the installed accelerator framework. '
+            'Memory figures are timestamped observations, not guarantees of current free memory. '
+            'Visibility is routing, not OS isolation. External services grant inference access only; '
+            'do not stop, reload, reconfigure or train on their reserved devices.'}
+
+
 CANDIDATE = r'''"""Editable candidate; fixed evaluation supplies the questions and owns scoring."""
 import concurrent.futures, json, sys
 from pathlib import Path
@@ -258,6 +290,8 @@ def main(argv=None):
     parser.add_argument('--lab-model-id', help='Candidate inference alias; defaults to the decision alias')
     parser.add_argument('--lab-model-path', help='Candidate base weights; defaults to the decision weights')
     parser.add_argument('--device-type', choices=('cuda', 'npu'), default='cuda')
+    parser.add_argument('--resource-allocation', type=json.loads,
+                        help='Host JSON declaration: physical_devices, logical_devices, memory_availability, external_read_only_services')
     parser.add_argument('--template-family', choices=('sglang', 'vllm'), default='sglang')
     parser.add_argument('--feedback-routing', choices=('legacy', 'context_or_memory'), default='context_or_memory')
     parser.add_argument('--seconds', type=int, default=600)
@@ -320,7 +354,7 @@ def main(argv=None):
                     'application/feedback_learning.json', 'application/module_assembly.json',
                     'application/research_assembly.json', 'application/lab_execution.json',
                     'application/allocated-workspaces/process-recovery.json',
-                    'memory.sqlite3', 'model_calls.json']})
+                    'memory.sqlite3', 'model_calls.json', 'resource-allocation.json']})
         write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),
             'resume': args.resume, 'at': time.time()})
         return run(args)
@@ -390,9 +424,12 @@ def run(args):
         OMP_NUM_THREADS='4', PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'src') + ':' +
         str(Path(__file__).resolve().parents[2]))
     persist_identity('backend-environment.json', environment)
+    resources = allocated_resources(environment, args.device_type, args.resource_allocation)
+    persist_identity('resource-allocation.json', resources)
     lab_endpoint = os.environ.get('RSISYS_LAB_ENDPOINT', args.endpoint)
     project = {'scenario': 'medical', 'python': args.python,
         'model_path': args.lab_model_path or args.model_path, 'device_type': args.device_type,
+        'resources': resources,
         'endpoint': lab_endpoint, 'served_model': args.lab_model_id or model.model_id, 'task': 'data/task.json',
         'path_base': 'lab_workspace', 'data_root': 'data',
         'available_data': [{**entry, 'path': str(Path('data') / entry['path'])}

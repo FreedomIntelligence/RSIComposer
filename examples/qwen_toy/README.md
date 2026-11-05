@@ -1,6 +1,6 @@
 # Qwen 自主研究 toycase
 
-Decision-maker 自己选择研究步骤；没有 train → evaluate → apply → execute 阶段表，也没有固定的候选接受阈值。模型可以先执行当前 Actor、查询日志与源码、训练、重复评测、应用候选、修改 prompt，或直接结束。框架只检查已安装能力、外部权限、预算和请求/模型版本一致性；无脚本兜底决策。
+meta-agent（decision侧） 自己选择研究步骤；没有 train → evaluate → apply → execute 阶段表，也没有固定的候选接受阈值。模型可以先执行当前 Actor、查询日志与源码、训练、重复评测、应用候选、修改 prompt，或直接结束。框架只检查已安装能力、外部权限、预算和请求/模型版本一致性；无脚本兜底决策。
 
 这个示例使用真实 Qwen 服务、Transformers / PEFT LoRA SFT、独立样本 NLL 评测和版本化 Actor 推理。训练仍只支持本例的 `toy-lora` / `sft`，评测协议为 `heldout-nll`，不运行真实 RL。数据格式属于本例，核心不依赖 PyTorch，也不转换跨框架数据。
 
@@ -73,7 +73,7 @@ worker 为每个候选保存独立 LoRA adapter；从父候选训练时复制父
 
 `train.apply_result` 由模型选择。模型也可先产生多个候选再评测或应用；应用要求候选 base 与当前 Actor 匹配。NLL 指标是证据，不自动触发采纳。未应用候选保持 proposed，不能根据负 delta 或缺少 apply 就标记为模型明确 rejected。
 
-此 toy worker 的模型操作由一个锁串行保护，不代表两个 GPU 训练任务已经并行；框架的并行实验需要为实验工厂配置独立执行资源或支持并发的外部后端。默认 Decision-maker 仍使用 baseline，Actor 可切换版本；本例不自动训练 Decision-maker。
+此 toy worker 的模型操作由一个锁串行保护，不代表两个 GPU 训练任务已经并行；框架的并行实验需要为实验工厂配置独立执行资源或支持并发的外部后端。默认 meta-agent（decision侧） 仍使用 baseline，Actor 可切换版本；本例不自动训练 meta-agent（decision侧）。
 
 ## 结果与监控
 

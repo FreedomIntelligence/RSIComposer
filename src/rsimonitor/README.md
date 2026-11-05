@@ -1,5 +1,7 @@
 # RSISys 实验监控库
 
+统一口径见[系统术语与架构](../../docs/architecture.md)。看板面向人，只消费公开投影；不作为 meta-agent 的模型输入或反馈接口。
+
 Python 标准库 HTTP 服务 + 原生 HTML/CSS/JavaScript。无需安装前端依赖、构建或发布站点；不启动训练、不修改运行文件。源码位于 `src/rsimonitor/`，拥有独立的 `pyproject.toml` 和 `rsimonitor` distribution，不依赖 `rsisys`，要求 Python 3.12+；HTTP 服务运行仅依赖 Python 标准库。
 
 ## 启动

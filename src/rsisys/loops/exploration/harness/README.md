@@ -1,4 +1,7 @@
-# Exploration Harness
+# Lab harness（Exploration 兼容实现）
+
+按[统一架构](../../../../../docs/architecture.md)，本目录属于 Lab 内部执行装配，
+与 meta-agent harness 分开。下列 Actor、episode、learner 等是这一实现的组件，不是所有 Lab 的必填结构。
 
 默认 Harness 通过 `describe_queries()` / `query(QueryRequest)` 提供显式只读查询，具体实现在 [queries.py](queries.py)。查询只查看当前模型、已有 inspect 进展、任务回执、本地 history、候选及 Experience 摘要和产物引用；不会 poll 或触发外部执行。返回数据有页数和大小限制，远端日志没有显式来源时标记不可用。ExplorationLoop 只转发 QueryProvider 能力，其他 Harness 可不实现；不支持时发现结果为空，调用 query 明确抛 NotImplementedError。完整参数与正文读取入口见 [Decision query tools](../../decision_making/harness/tools/README.md#只读查询)。
 

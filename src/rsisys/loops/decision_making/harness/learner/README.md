@@ -1,6 +1,8 @@
-# Decision learner
+# meta-agent policy 的训练适配
 
-负责决策者自身的学习后端，任务控制和版本应用仍由 [默认 Decision Harness](../README.md) 管理。
+统一口径见[系统术语与架构](../../../../../../docs/architecture.md)。这里只描述已有训练接点；数据构建与训练属于 Lab 任务，不由整理侧的 memory 更新隐式触发。
+
+负责meta-agent（decision侧）自身的学习后端，任务控制和版本应用仍由 [默认 Decision Harness](../README.md) 管理。
 
 ## 接口与输入
 
@@ -12,7 +14,7 @@
 
 ## 任务与应用
 
-DefaultDecisionHarness 接受可选 `model_activator`。应用真实训练结果时必须由它确认 `TrainingResult.model` 已可用于推理，之后才能更新决策者绑定；部署进行中可用 `ModelActivationPending` 保持原绑定并在后续重试。具体接口见[共享协议](../../../contracts/README.md#作业与版本)。模拟后端可继续模拟版本切换。
+DefaultDecisionHarness 接受可选 `model_activator`。应用真实训练结果时必须由它确认 `TrainingResult.model` 已可用于推理，之后才能更新meta-agent（decision侧）绑定；部署进行中可用 `ModelActivationPending` 保持原绑定并在后续重试。具体接口见[共享协议](../../../contracts/README.md#作业与版本)。模拟后端可继续模拟版本切换。
 
 通过默认 Harness 的 `loop.harness.submit_learning(request, *, idempotency_key)` 提交：键不能为空，同键同请求复用任务，同键不同请求报错；同一 Harness 最多一个未终结训练任务。未配置 learner 时不能提交。
 

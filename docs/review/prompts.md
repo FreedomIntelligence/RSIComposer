@@ -1,6 +1,8 @@
 # RSISys Prompt 与模型输入审查地图
 
 整理日期：2026-11-03，基于当前本地工作树。配套：[模块审查地图](modules.md)。
+2026-11-05：角色称谓统一为 meta-agent（decision侧）、Lab、meta-agent（整理侧），
+定义见[统一架构](../architecture.md)。编号与历史请求保留，不能由旧 prompt 的名字推定额外角色。
 这里为每个指令构造点编号，完整正文以链接的代码为准；动态拼接部分必须结合生效配置、输入和 wire 日志审查。
 P 编号覆盖独立调用、指令片段、工具描述、数据投影及传输包装，不代表存在同样数量的模型调用。
 
@@ -32,8 +34,8 @@ Feedback 旧组合解释已迁入 [LegacyFeedbackInterpreter](../../src/rsisys/l
 
 | ID | 审查对象 | 属于模块 | 何时生效 |
 | --- | --- | --- | --- |
-| P01 | Meta-agent 身份、研究范围与证据原则 | M03 | 基础 decision / review 共享片段 |
-| P02 | 主 decision 指令与结构化上下文 | M03/M06 | 默认 policy 的决策调用；可被领域覆盖 |
+| P01 | meta-agent（decision侧）的身份、研究范围与证据原则 | M03 | 基础 decision / review 共享片段 |
+| P02 | 普通 decision 指令与结构化上下文 | M03/M06 | 默认 policy 的决策调用；可被领域覆盖 |
 | P03 | Attempt / lineage 的模型侧指引 | M03/M05/M08 | decision；review invoke 也引用 |
 | P04 | 运行中实验 review | M02/M03 | 默认模型 review 路径 |
 | P05 | Compact 滚动摘要 | M06 | 默认 compactor 实际触发模型摘要时 |
@@ -42,7 +44,7 @@ Feedback 旧组合解释已迁入 [LegacyFeedbackInterpreter](../../src/rsisys/l
 | P08 | 医疗 envelope 指引与三次动作校验纠正 | M03/M14 | 医疗每次 decision；失败时加纠正 |
 | P09 | 输出截断/格式恢复 | M03/M11 | 医疗 DecisionBackend 的有限恢复 |
 | P10 | 医疗 objective 与 project_context | M03/M14 | 医疗主实验装配 |
-| P11 | Feedback 分身的整理与路由主指令 | M07/M08/M09 | 选择模型整理器时；observe 本身不调用模型 |
+| P11 | meta-agent（整理侧）的整理与路由主指令 | M07/M08/M09 | 选择模型整理器时；即时 context 路径不调用它 |
 | P12 | Feedback 的 evaluation_claims 指引 | M08/M12 | 输入带 candidate_evidence 时追加 |
 | P13 | Feedback / Attempt / claims 输出 schema | M07/M08/M09 | 依 backend schema 能力和输入字段 |
 | P14 | 工作知识、证据卡、摘要导航中的说明 | M06/M09 | 不新增模型调用，进入后续 decision 数据 |
@@ -57,7 +59,7 @@ Feedback 旧组合解释已迁入 [LegacyFeedbackInterpreter](../../src/rsisys/l
 | P23 | Qwen toy 的 researcher 说明与预算提示 | M03/M14 | Qwen toy 入口，行为不同于医疗 time 模式 |
 | P24 | Qwen toy 的 Actor、部署探针与 NLL 输入 | M10/M11/M12/M14 | toy Actor、激活探针、训练/评测样本 |
 | P25 | 最终模型消息与 provider schema/template | M11 | transport/backend/worker 的真实发送与渲染 |
-| P26 | 可选改进任务提案 | M09/M10 | 安装 ModelImprovementProposer 时，memory 阶段之后 |
+| P26 | 可选改进任务提案 | M09/M10 | 安装 ModelImprovementProposer 时；是否依赖 memory 成功由装配声明 |
 
 ## P01：Meta-agent 身份与研究范围
 
@@ -70,7 +72,7 @@ Feedback 旧组合解释已迁入 [LegacyFeedbackInterpreter](../../src/rsisys/l
 
 关联：`test_medical_project_context.py`、`test_researcher_integration.py`。完整共享正文在该静态方法中。
 
-## P02：主 decision 请求
+## P02：普通 decision 请求
 
 代码：[ModelDecisionPolicy._decision_request / _context_inputs / decision_schema](../../src/rsisys/loops/decision_making/harness/policy/__init__.py#L247)、
 [DecisionContext](../../src/rsisys/loops/decision_making/harness/state.py)、
@@ -201,14 +203,14 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 自行组织 prompt，实际交换由 host gateway 归档。
 
 - [ ] 整理者只能解释与路由，不替研究 meta-agent 选择下一实验、停止或直接应用改进。
-- [ ] context/memory 整理能力必须激活，实现可以来自外部；轨迹归档是默认开启的可选组件。真实结果直接返回 decision，不等待整理；查询归档不触发本 prompt。
+- [ ] context/memory 接入窗口必须可用，实现可以来自外部；轨迹归档默认开启且可选。即时路径交付真实正文，memory 路径即时交付状态与整理确认；两者都不等待后台整理；查询归档不触发本 prompt。
 - [ ] `training_data` 仅保留旧入口的兼容草稿；新 pipeline 不生成训练样本。筛选、标注、格式转换、训练由正式 Lab 任务及 recipe 负责。
 - [ ] coverage、摘录、未提供正文、旧 Attempt 解释与原始事实的区别是否清楚。
 - [ ] 反馈跟随当前 meta-agent 版本，历史 decision 发出版本分别归因；排队快照和已完成请求不追改版本。
 - [ ] 有限输入是否仍足以整理研究轨迹；捕获的本地操作是否覆盖代码修复等任务。
 
 关联：`test_feedback_learning_evidence.py`、`test_feedback_decoupling.py`、`test_feedback_learning_integration.py`、`test_feedback_required_outputs.py`、`test_feedback_lab_boundaries.py`。
-当前四分支与旧组合入口的差异见 [工作流](feedback-workflow.md)；旧完整 prompt 导出只代表当时配置。
+当前两条正文路径、独立可选能力与旧组合入口的差异见[工作流](feedback-workflow.md)；旧完整 prompt 导出只代表当时配置。
 
 ## P12：候选指标 claim 指令
 
@@ -394,8 +396,8 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 - [ ] 只允许 harness_change（subject=meta_agent/lab）或 policy_training（subject=meta_agent）；可返回空提案。
 - [ ] 不生成 memory、训练样本、标签、数据集或 system_change；计数只能提示调查，不能自动授权训练。
 - [ ] 保留候选/协议/指标/来源及不确定性；缺少快照证据不等于全局未发生。
-- [ ] 提案回到主 decision，由 feedback_proposal_ids 关联正式动作；不得直接执行、训练、停止或激活。
-- [ ] memory 与 proposer 各阶段的调用、失败、恢复及预算准确，真实结果交付不等待它们。
+- [ ] 提案回到 meta-agent（decision侧），由 feedback_proposal_ids 关联正式动作；不得直接执行、训练、停止或激活。
+- [ ] memory 与 proposer 各阶段的调用、失败、恢复及预算准确；即时正文或整理确认的交付不等待它们。
 - [ ] Lab 能力的描述和 schema 与 parser/执行校验一致，数据构建和训练分别下发；只公布已安装能力。
 
 Lab 模型侧接口：[improvement_directives](../../src/rsisys/adapters/improvement.py)。

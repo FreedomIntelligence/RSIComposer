@@ -35,7 +35,7 @@ Transformers / PEFT SFT；其他 CLI 通过显式命令和 result_reader 接入�
 [使用指南](../../../../../../README.md#接入整项训练任务)。领域任务装配和验收规则留在
 [examples/medical/](../../../../../../examples/medical/)，不写入 learner。
 
-成功结果默认形成候选。显式 `apply_learning`、`SFTSpec(apply_result=True)`、`TrainSpec(apply_result=True)` 或默认 RL 内部更新改变 Actor 绑定；应用要求 policy 支持 ModelUpdatable、当前模型与训练 base 一致，且无环境交互或其他活跃训练。同一 job 重复应用不再次更新；这些操作不验收质量，也不自动更新 Decision-maker。
+成功结果默认形成候选。显式 `apply_learning`、`SFTSpec(apply_result=True)`、`TrainSpec(apply_result=True)` 或默认 RL 内部更新改变 Actor 绑定；应用要求 policy 支持 ModelUpdatable、当前模型与训练 base 一致，且无环境交互或其他活跃训练。同一 job 重复应用不再次更新；这些操作不验收质量，也不自动更新 meta-agent（decision侧）。
 
 真实后端须让推理侧能够解析新版本，并兑现重试提交的幂等性、轮询和取消约定。
 

@@ -1,5 +1,7 @@
 # Experience
 
+统一口径见[系统术语与架构](../../../docs/architecture.md)。Experience 是现有系统证据存储接口；context、长期 memory、原始轨迹和执行账本分别定义。
+
 两个角色 harness 共享的系统反馈库，提供记录、检索与存储。默认 Harness 将原始 test-time history、research 准备过程和 Actor 轨迹保存在各自内部 memory；大文件交给 [Runtime 产物存储](../runtime/README.md)，本模块保留反馈摘要、结构化 details 和关联引用。
 
 ## 内容与接口

@@ -1,5 +1,7 @@
 # Framework boundaries
 
+统一口径见[系统术语与架构](../../../docs/architecture.md)。meta-agent（decision侧）、Lab 与 meta-agent（整理侧）是统一角色称谓；当前类型名和持久化键保留兼容。
+
 These optional adapters run trusted native jobs and call an existing vLLM API.
 The core adapters need only the standard library; the LangChain bridge described
 below explicitly needs its optional extra. Install neither frameworks nor

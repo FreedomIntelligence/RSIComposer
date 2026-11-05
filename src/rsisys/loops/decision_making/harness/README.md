@@ -1,4 +1,8 @@
-# Decision Harness
+# meta-agent harness（decision侧）
+
+称谓与 Lab harness、meta-agent（整理侧）的边界见[统一架构](../../../../../docs/architecture.md)。
+`DecisionHarness` 是兼容类型名；本目录负责 decision侧输入装配、工具调用与研究状态。
+整理侧提供可检索的 context 文本，harness 负责当前视图选择、计量和会话 compact。
 
 [DecisionHarness](__init__.py) 是可整体替换的决策执行边界，通过 `step(objective, action_space)`、`pending()` 和 `receive_feedback(directive, feedback)` 服务 [DecisionMakingLoop](../README.md)。协议不要求 memory、tools 或特定 policy 属性。
 
@@ -244,7 +248,7 @@ bindings = {**bindings, **research_tools.bindings}
 | [policy](policy/README.md) | 构建模型请求，选择操作或系统指令 |
 | [memory](memory/README.md) | research 历史、工作记忆与决策记录 |
 | [tools](tools/README.md) | 操作绑定，以及普通决策 / review 共用的执行与回执记录 |
-| [learner](learner/README.md) | 决策者自身训练后端 |
+| [learner](learner/README.md) | meta-agent（decision侧）自身训练后端 |
 | [decision.py](decision.py) | Decision 与推进结果 |
 | [state.py](state.py) | 上下文、生命周期状态与待写结果 |
 
@@ -279,7 +283,7 @@ history 中。`DecisionContext.decision_graph` 提供同一 ID/title 对，polic
 
 异步 tools 返回 JobRef；外部通过 `loop.harness.resume(job, result)` 回填终态 OperationResult。job 必须匹配当前等待任务，不自动轮询或重做。操作已执行但 history/Experience 写入失败时保留结果与稳定 ID，后续 step 或相同回填只补写，待补写期间拒绝不同结果并禁止快照；单独使用 Harness 时暂存仅在进程内；durable Application 可保存回执并在中断后要求核对。
 
-`loop.harness.submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning` 控制决策者自身训练，不自动执行 Actor 任务或触发周期优化。训练任务与模型应用约束见 learner README。默认训练为 Mock，未实现真实梯度更新。
+`loop.harness.submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning` 控制meta-agent（decision侧）自身训练，不自动执行 Actor 任务或触发周期优化。训练任务与模型应用约束见 learner README。默认训练为 Mock，未实现真实梯度更新。
 
 系统反馈写入共享 [Experience](../../../experience/README.md)，原始准备过程留在默认 Harness 的本地 history。自定义 Harness 的[快照](../../../snapshot/README.md)需显式集成。
 

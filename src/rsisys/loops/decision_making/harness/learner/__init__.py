@@ -40,10 +40,10 @@ class DecisionLearner(Protocol):
 
 class UnimplementedDecisionLearner:
     def submit(self, request: DecisionTrainingRequest, *, idempotency_key: str = "") -> JobRef:
-        raise NotImplementedError("Decision-maker training is not implemented.")
+        raise NotImplementedError("Meta-agent policy training is not implemented.")
 
     def result(self, job: JobRef) -> TrainingResult:
-        raise NotImplementedError("Decision-maker training is not implemented.")
+        raise NotImplementedError("Meta-agent policy training is not implemented.")
 
     def poll(self, job: JobRef) -> JobOutcome[TrainingResult]:
         raise NotImplementedError("Training backend is not implemented.")

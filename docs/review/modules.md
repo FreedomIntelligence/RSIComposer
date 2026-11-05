@@ -1,13 +1,13 @@
 # RSISys 模块审查地图
 
-更新日期：2026-11-04。范围是当前本地工作树，包括基于 `cb67628` 的 feedback / Lab 边界调整。
+更新日期：2026-11-05。术语与职责以[统一术语与架构](../architecture.md)为准；下方历史审查材料保留其版本范围。
 本文件是待审查清单，条目列出审查问题和验收材料，不表示已经发现或排除了相应缺陷。
 
 配套：[逐项 prompt 审查地图](prompts.md)、[反馈架构与当前实现边界](../../src/rsisys/loops/decision_making/feedback/README.md)。
 
 2026-11-04 全模块实现审查、缺陷修复和验证材料见 [本轮审查报告](audit-20261104/README.md)。
 下方复选框仍留给用户逐项验收；实现回归通过不替代 prompt/架构语义验收。
-最新四分支与 Lab 数据/训练接口见 [本次调整记录](m01-feedback-lab-20261104.md)。
+早期反馈分工与 Lab 数据/训练接口见 [调整记录](m01-feedback-lab-20261104.md)；当前两条正文路径及独立可选能力见[统一架构](../architecture.md)。
 CP1 / CP2 确认后的 [接口减负自查](feedback-adaptation-review-20261104.md) 记录原生输出入口及剩余耦合。
 进一步按基本职能接入窗口复审的 [Feedback 边界报告](feedback-module-contract-review-20261104.md) 包含具体问题与实现调整建议，尚待逐项 checkpoint。
 已落实用户确认的 [Context / Memory 文本窗口](feedback-context-window-20261104.md)，其余可选模块继续逐项审查。
@@ -20,43 +20,20 @@ CP1 / CP2 确认后的 [接口减负自查](feedback-adaptation-review-20261104.
 
 ## 先对齐审查对象
 
-- **Meta-agent** 是做决策的模型；**decision** 是其动作或任务。
+- **meta-agent（decision侧）** 选择行动；**decision** 是具体动作或任务，不是另一个 agent。
 - **Meta-agent harness** 组织模型输入、工具调用、状态、检索和 compact，可整体替换。
 - **Lab** 是固定目标下的 data/model/harness 研究环境。基础 Lab 契约与 exploration 适配器已补齐；默认跨 Lab 调度尚未迁移，真实能力仍由已安装的后端、工具和领域装配提供。
 - **Sandbox** 是执行代码的设施。具体后端的隔离能力应单独核验，不能由名称推定。
-- **Feedback 分身** 使用 meta-agent 当前权重和独立上下文；整理 context/memory，按需提出 harness / policy 改进任务。原始轨迹直接归档，训练数据构建和训练在 Lab 执行。
-- **即时 context** 是直接返回的真实 Lab / 工具结果，不必等待反馈模型；memory 为后续 context 提供整理视图。
+- **meta-agent（整理侧）** 使用捕获的 active meta-agent 权重和独立上下文；解释反馈、组织 context/memory，按需提出 harness / policy 建议。确定性的接入和路由不要求额外模型调用。
+- **即时 context / memory** 是正文的两条主消费路径；标准医疗 Open Lab 已按用途二选一，通用兼容装配须显式配置。memory 保持可用不等于每条结果都写入。
+- **原始归档 / 提案 / 调度** 是独立可选能力；训练数据构建和训练属于 Lab。Host 管理权限、额度、截止时间与生命周期；看板面向人。
 - **执行事实、解释、提案、验证、应用** 分别审查。结构化引用有效不等于自然语言结论正确。
 
-```mermaid
-flowchart TD
-    H[Host / Runner / 执行预算] --> MH[Meta-agent harness]
-    MH --> MA[Meta-agent / decision policy]
-    MA --> D[Decision]
-    D --> T[本地工具与代码执行]
-    D --> E[Exploration / 当前 Lab 执行能力]
-    T --> L[操作回执 / 完整决策账本]
-    E --> R[终态 Feedback / 产物与评测]
-    R --> L
-    R --> MH
-    R --> F[Feedback 分身]
-    L --> F
-    F --> K[必须激活: 可替换的 Context / Memory 整理器]
-    F -. 有改进时 .-> P[Harness / Policy 改进任务提案]
-    L -. 默认开启 / 可关闭或替换 .-> W[原始公开轨迹归档]
-    K --> V[Harness 选择工作视图 / 检索 / compact]
-    L --> V
-    V --> MH
-    P --> MH
-    MH --> AP[正式 decision 选择构建 / 验证 / 应用]
-    W --> TR[改进 Lab: 数据构建与训练插件]
-    AP --> TR
-    TR --> R
-```
+![当前系统主链路与路由](../diagrams/system-flow.svg)
 
-这张图按当前接线绘制：exploration 的 `receive_feedback` 与本地非只读完成回执都进入
-`service.observe(ExecutionReceipt)`，交付只持久捕获/排队，后续 tick 才推进模型。
-只读查询通过 `archive` 保存原始片段，不触发反馈推理，也不进入常驻 memory。
+两侧的语义职责与 `service.observe` 的持久捕获、入队和后续 tick 分开：接收结果本身
+不触发模型推理。标准 Open Lab 用 `ContextOrMemoryAdmission` 决定是否整理；只读查询
+和即时结果不会因读取自身再次触发 LangMem。旧装配的直接交付行为仍按各自配置解释。
 
 ## 总目录与建议顺序
 
@@ -64,13 +41,13 @@ flowchart TD
 | --- | --- | --- | --- |
 | M01 | 共享契约与系统装配 | 身份、消息、职责和可替换边界是否清晰 | 统一入口、固定轨迹来源、Lab 数据构建契约已接入；跨 Lab 调度待迁移 |
 | M02 | Host / Runner / RunPolicy | 谁推进、等待、停止、计费、交付与清理 | 已有；不同模式分别审 |
-| M03 | Meta-agent decision policy | 模型实际收到什么指令，能输出什么动作 | 两层替换接口已修复并离线验收；九个通用 prompt 可替换，待用户逐句核对 |
+| M03 | meta-agent（decision侧） | 模型实际收到什么指令，能输出什么动作 | 两层替换接口已修复并离线验收；九个通用 prompt 可替换，待用户逐句核对 |
 | M04 | Action Space / 工具 / Sandbox | 声明、授权、校验、执行是否一致 | 开放 Lab 已接线；进程修复、可修正错误回传与生产事件去重已实现 |
 | M05 | 决策账本与版本归因 | decision、候选、评测和采纳能否准确追溯 | 已有 |
 | M06 | 上下文组装、归档、证据投影与 compact | 哪些状态常驻，何时增长，能否精确读回 | 已有；含本地新重构 |
-| M07 | Feedback 捕获与后台任务 | 真实结果是否直接交付，归档、队列、调用及恢复是否可靠 | 交付与推理解耦；只读查询仅归档 |
+| M07 | 整理侧的反馈捕获与后台任务 | 正文路由、状态交付、归档、队列、调用及恢复是否可靠 | 交付与推理解耦；只读查询仅归档 |
 | M08 | Feedback 解释、Attempt 与指标归属 | 解释是否正确关联事实，是否混淆旧分数 | 已有结构校验；自由文字语义待独立核验 |
-| M09 | Feedback 四分支与可选提案 | 即时结果、memory、原始归档、改进任务如何消费 | 固定来源与提案引用已接线；不在反馈侧构建训练数据 |
+| M09 | meta-agent（整理侧）的路由与产物 | 即时 context / memory 如何选择，归档与提案如何独立启用 | 标准 Open Lab 路由已接线；数据构建和训练在 Lab |
 | M10 | Lab 当前执行层 / Exploration | 指令如何成为数据构建、训练、评测及回执 | 进程与结果交付已有 CPU 回归；重复读取归档、显式重整，真实训练部署另验收 |
 | M11 | 训练、初始化、推理与部署适配 | 真实权重、父版本、initializer 和路由是否一致 | 框架接口及部分真实后端已有 |
 | M12 | 评测、比较与候选采纳 | 指标有效性、协议、公平比较和应用是否独立 | 已有通用与医疗实现 |
@@ -114,7 +91,7 @@ flowchart TD
 核对测试：`test_run_policy.py`、`test_research_cycles.py`、`test_coordination.py`、`test_parallel_experiments.py`、`test_operation_retry.py`。
 Prompt：P07 / P09 / P10；普通计时和调度应由执行逻辑负责。
 
-## M03：Meta-agent decision policy
+## M03：meta-agent（decision侧）
 
 两层替换边界的后续审查见 [Decision Harness / Policy 接口报告](decision-module-contract-review-20261104.md)：
 记录权限、用量、压缩和反馈装配的四类可复现问题及输入契约设计缺口。
@@ -219,9 +196,9 @@ Prompt：P11 / P12 / P13 / P18。
 核对测试：`test_attempt_learning.py`、`test_feedback_candidate_evidence.py`、`test_feedback_learning_evidence.py`、`test_research_working_state.py`。
 Prompt：P11 / P12 / P13。最后一项须保留人工判例，当前结构校验不覆盖全部自然语言含义。
 
-## M09：Feedback 组件、可选修改与后续消费
+## M09：整理侧组件、可选建议与后续消费
 
-最新装配与提案引用链路见 [feedback-workflow.md](feedback-workflow.md)。反馈侧提供原始归档，
+最新装配与提案引用链路见 [feedback-workflow.md](feedback-workflow.md)。整理侧的接入设施提供原始归档，
 Lab 接固定来源构建数据并显式训练；通用 harness 激活/回滚及实际数据 recipe 仍未提供。
 
 入口：[knowledge.py](../../src/rsisys/loops/decision_making/feedback/knowledge.py)、
@@ -231,10 +208,10 @@ Lab 接固定来源构建数据并显式训练；通用 harness 激活/回滚及
 
 | 路线 | 当前产物/接线 | 需单独审查或补齐的消费链 |
 | --- | --- | --- |
-| 即时 context | Lab / 工具真实结果直接记账并返回 decision，不经模型改写 | 持久捕获失败时重试交付，不重复执行 |
+| 即时 context | Lab / 工具真实结果记账后按路由进入 decision 的工作视图，不经模型改写；memory 路径即时返回状态与整理确认 | 持久捕获失败时重试交付，不重复执行 |
 | context / memory（必须激活，实现可替换） | 可注入 `ContextMemoryOrganizer`；默认提供事实 context、可选解释及分页入口；harness 消费视图 | 提炼、更新、冲突/失效、检索；如何避免兼容 episodic memory 重复常驻 |
 | 原始轨迹归档（默认开启，可关闭或替换） | 索引及 `/trajectory_snapshot` 不可变捕获，固定 archive/id/digest；旧 segment 仅组合查看 | 补齐原始决策模型交换；Lab recipe 负责聚合、过滤、标注和质量门槛 |
-| 改进任务提案（可选） | harness_change / policy_training，带 subject、来源和验证计划，主 decision 引用 | 构建/训练分别是正式 Lab 任务；验证、采纳、激活各自验收 |
+| 改进任务提案（可选） | harness_change / policy_training，带 subject、来源和验证计划，由 meta-agent（decision侧）引用 | 构建/训练分别是正式 Lab 任务；验证、采纳、激活各自验收 |
 
 - [ ] **M09.1 组件与提案**：context/memory 必须激活但实现可替换，轨迹默认开启并可关闭/替换；二者不依赖 proposals；`kind → target`、`subject=meta_agent/lab/unspecified`、旧 `training_data/system_change` 的兼容不混淆归档和训练。
 - [ ] **M09.2 知识生命周期**：最新 Attempt 优先、活跃项优先、未归组观察、字节上限、来源分页、兼容副本去重及旧 memory 保留。
@@ -351,10 +328,10 @@ Prompt：P07–P10 / P20–P25；不启动实验也可以完成静态装配和�
 | 原始执行回执、指标、错误、产物 | M04/M10/M11/M12/M13 | executor/backend 的执行记录 | 完整性、身份、状态、有限数值、来源 |
 | 完整 decision/candidate/lineage 账本 | M05/M13 | 默认 harness 接纳经校验回执 | 不把模型声称当确认关系，恢复不变 |
 | 原始历史和兼容 Memory | M06/M09/M13 | 各 harness / feedback publisher | 档案与常驻区分、重复与冲突 |
-| Attempt、解释和知识卡 | M08/M09 | feedback 分身，标记未验证 | 分组/版本/语义/coverage、不过度常驻 |
+| Attempt、解释和知识卡 | M08/M09 | meta-agent（整理侧），标记未验证 | 分组/版本/语义/coverage、不过度常驻 |
 | 研究笔记与待办 | M06/M13 | 模型通过 research_patch 编辑 | 不覆盖执行事实、修订和分页 |
 | 滚动摘要 | M06 | compactor / 摘要模型 | 局部历史范围、current_state、一致性 |
-| Harness / weights / system 提案 | M09 | feedback 分身提出 | proposed 不等于 applied，草稿不等于训练样本 |
+| Harness / weights / system 提案 | M09 | meta-agent（整理侧）提出 | proposed 不等于 applied，草稿不等于训练样本 |
 | 前端公开 snapshot | M15 | producer 与只读 server 投影 | 不是原始完整账本，不补造缺失事实 |
 
 ## 每个审查点统一交付

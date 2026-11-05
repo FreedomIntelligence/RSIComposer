@@ -1,51 +1,37 @@
-# Feedback 四条链路与改进 Lab
+# meta-agent（整理侧）：反馈路由与可选产物
 
-更新：2026-11-04。本文是当前职责与接线说明；此前验证记录保留为历史版本。
+更新：2026-11-05。统一称谓和职责以[系统架构](../architecture.md)为准；此前验证记录保留为历史版本。
 本次已落实 [Context / Memory 接入窗口](feedback-context-window-20261104.md)：
 公开 context(query) -> str，默认 journal/LangMem 通过内部适配接入，当前文本替换 memory_context 区块。
 归档、处理、建议、调度的当前协议及失败行为见 [模块窗口](feedback-module-windows-20261104.md)。
 新插件只接公开事件和自己的产物，不必模拟内部 job、状态或计费结构。
 
-## 四条分支
+## 两条主消费路径与独立可选能力
 
 Lab 原样提供文本、JSON、日志或原生文件引用，内容不要求符合 RSISys 的业务 schema。
 执行设施补充任务关联与生命周期状态；旧结构化 Feedback / OperationResult 接入继续有效。
-执行端先将真实回执写入决策账本，
-反馈侧保存原始捕获后返回；这个交付过程不调用 memory 或 proposer 模型，也不等待它们发布。
+执行端先将真实回执写入决策账本，整理侧的接入设施保存原始捕获后返回。
+即时路径交付正文，memory 路径交付状态与整理确认；这个交付过程不调用 memory 或 proposer
+模型，也不等待它们发布。通用旧装配仍可直接交付真实结果后后台整理。
 
-| 分支 | 输入 | 产物与职责 |
+| 路径 / 能力 | 输入 | 产物与职责 |
 | --- | --- | --- |
-| 快速结果返回 | Lab / 工具的真实结果 | 直接成为 decision 的 last_feedback / operation_results 与账本记录，不经过模型改写 |
-| Memory | 公开反馈事件与 ContextQuery | 必须启用、实现可替换；输出 context 文本，Harness 注入当前 memory_context |
+| 即时 context 路径 | Lab / 工具的真实结果 | 直接支持 meta-agent（decision侧）；标准 Open Lab 不触发 LangMem，过期正文退出工作视图 |
+| memory 路径 | 需要长期使用的反馈与 ContextQuery | meta-agent（整理侧）配合可替换 provider 整理；按需输出 context 文本，Harness 替换 memory_context 视图 |
 | 原始轨迹归档 | 已捕获的公开 decision、执行及证据 | 默认开启、实现可替换；保存原始片段，不筛选标签、不构建训练数据 |
-| 改进提案 | 公开反馈事件 | 原生建议；内置适配器支持 harness_change / policy_training，主 decision 选择正式动作 |
+| 改进提案（独立可选） | 公开反馈事件 | 整理侧提出原生建议；内置适配器支持 harness_change / policy_training，decision侧选择正式动作 |
 
-同一份结果可以进入多条分支。短查询也保存原始轨迹，但不产生 memory 模型任务，
-不因读取 feedback 再调用 feedback 模型。归档查询不自动挤入研究 working memory。
-反馈分身使用捕获时 active meta-agent 的同一 ModelRef 和独立上下文。
+标准医疗 Open Lab 对同一观察的正文按 `context|memory` 二选一路由，不默认全量重复消费。
+正文路由保留完整账本；任务状态看运行视图，错误详情按原始证据引用读取。
+memory 路径的即时确认只代表请求已交付；整理完成须查 feedback 状态与实际检索结果。
+原始归档与提案可分别装配；当前路由准入跳过即时路径的整个后台 job，提案也受这次准入约束。
+memory 模块必须可用，不代表每条结果都写 memory；即时路径仍可检索以前的记忆。
+`RoutedLab` 在适配层消费 `feedback_route`，`ContextOrMemoryAdmission` 控制整理准入，
+`ImmediateFeedbackWindow` 管理近期正文视图。这些是标准 Open Lab 的实际接线，
+不是强加给任意 Lab 的业务字段；未装配路由的旧调用方保留直接交付后后台整理的兼容行为。
+meta-agent（整理侧）使用捕获时 active meta-agent 的同一 ModelRef 和独立上下文。
 
-```mermaid
-flowchart TD
-    A[Meta-agent 主 decision] --> L[业务 Lab 或本地工具]
-    L --> R[真实执行回执与原始记录]
-    R --> A
-    R --> T[默认原始轨迹归档]
-    R --> M[可替换 memory 整理]
-    R --> P[可选改进任务提案]
-    M --> C[下一次 context 的工作视图]
-    C --> A
-    P --> A
-    A --> I[Meta-agent 改进 Lab]
-    T --> S[固定来源与摘要指纹]
-    S --> I
-    I --> D[可替换的数据构建能力]
-    D --> V[有版本的数据集与构建报告]
-    A --> TR[显式训练任务]
-    V --> TR
-    TR --> W[候选权重与训练回执]
-    W --> A
-    A --> E[按已安装能力评测与选择应用]
-```
+![系统主链路、即时 context 与 memory](../diagrams/system-flow.svg)
 
 ## 统一装配与推进
 
@@ -170,13 +156,14 @@ backend 的具体构建算法、训练框架、资源准入和外部恢复由部
 评测/部署/应用由正式 decision 选择已安装能力执行；本次没有新增通用 policy evaluator、
 harness 构建器或版本激活器。Harness 提案仍通过现有代码能力构建和验证。
 
-## 改进提案到主 decision
+## 改进提案回到 meta-agent（decision侧）
 
 可选 ModelImprovementProposer 的 prompt 位于 feedback/prompts/improvement_proposals.txt。
 它只允许 harness_change 或 policy_training，拒绝 training_example 和不匹配的目标。
-这轮没有额外 routing 模型调用；同一执行证据由 memory 与可选 proposer 顺序处理。
+路由不增加模型调用。内置 pipeline 按准入和宿主容量推进 memory 与可选 proposer；
+提案独立可选，只有显式设置 `proposal_requires_memory` 才依赖 memory 成功。
 
-主 decision 在 research_agenda.feedback_learning.improvement_proposals 中获得有界入口，
+meta-agent（decision侧）在 research_agenda.feedback_learning.improvement_proposals 中获得有界入口，
 通过 feedback_learning_read(view='proposals') 查看完整内容，使用 feedback_proposal_ids 关联正式任务。
 宿主在执行前检查 ID、目标和来源，记录 proposal digest；提案、选中、构建、训练、评测、采纳分别记录。
 原 harness_proposals 导航保留兼容。提案永远不直接执行代码、生成训练标签或修改权重。

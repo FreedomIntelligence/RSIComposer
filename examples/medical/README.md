@@ -1,5 +1,13 @@
 # Independent medical assembly
 
+Terminology follows the [canonical architecture](../../docs/architecture.md):
+**meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ context**.
+The standard Open Lab selects the `context` or `memory` body route; immediate
+feedback does not invoke LangMem. The memory provider remains available for
+retrieval. Archives and proposals are independent optional products. The older
+`Decision*`, `Exploration*`, and `decision_maker` names below are compatibility
+identifiers, not additional conceptual agents.
+
 This example composes `DefaultDecisionHarness`, `DefaultExplorationHarness`, and
 `Runner`. Its normal policy is `ModelDecisionPolicy` with three bounded validation
 attempts (generation/parsing only, before effects); research choices are not a
@@ -14,8 +22,9 @@ Use Python 3.12+ from the RSISys directory with `PYTHONPATH=src:.`.
 
 `open_lab_experiment.py` uses the unified `ModuleAssembly` entry, programmable
 `FixedMedicalLab`, native-tool LangMem memory and the default trajectory archive.
-The meta-agent chooses code edits and arbitrary installed training/inference
-programs. Its separate feedback context uses the same captured model identity.
+The meta-agent (decision side) chooses code edits and arbitrary installed
+training/inference programs. The meta-agent (organization side) uses the same
+captured model identity in a separate context when organization is requested.
 Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
 development data, question/options, gold, parsing and accuracy. The editable
 `candidate.py` consumes JSON inputs on stdin and returns predictions on stdout;
@@ -31,6 +40,17 @@ scheduler-owned allocation, pass only the GPUs reserved for generated Lab
 programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
 `RSISYS_LAB_ENDPOINT` can route development inference to a separately allocated
 baseline service; the default uses the meta-agent endpoint.
+
+Open Lab exposes the explicit child device mapping as `project_context.resources`
+and in `lab_config.json`, including the device count and logical-to-physical IDs.
+`--resource-allocation` accepts the same small JSON operator declaration as the
+medical assembly: `physical_devices`, `logical_devices`, `memory_availability`
+and `external_read_only_services`. The declared order must match
+`CUDA_VISIBLE_DEVICES` or `ASCEND_RT_VISIBLE_DEVICES`; logical IDs start at zero.
+Include timestamped capacity/free-memory observations and separately reserved
+service devices in that declaration. It grants no rights to those external
+devices or services. Resume retains the exact declaration and rejects changed
+child routing before inference. The operator still supplies OS isolation.
 
 ```bash
 PYTHONPATH=src:. python -m examples.medical.open_lab_experiment \

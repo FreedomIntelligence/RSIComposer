@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate native SVGs with explicit core, replaceable adapter and example layers."""
+"""Generate the canonical meta-agent / Lab architecture as editable native SVGs."""
 from pathlib import Path
 from html import escape
 import unicodedata
@@ -83,303 +83,196 @@ class SVG:
         print(f'{name}: {self.width}x{self.height}, {self.text_count} editable text elements')
 
 
-def legend(s):
-    s.rect(100, 158, 42, 26, '#EAF0F6', LINE, rx=6)
-    s.text(156, 179, '框架骨架', 20, MUTED)
-    s.rect(350, 158, 42, 26, '#F4F8FF', BLUE, rx=6, dash='8 5')
-    s.text(406, 179, '整体可换 / 实现可换（遵守接口）', 20, MUTED)
-    s.rect(980, 158, 42, 26, '#FFF8E8', AMBER, rx=6, dash='8 5')
-    s.text(1036, 179, '接入 / 示例 · 需显式装配', 20, MUTED)
-    s.text(2300, 179, '蓝 / 绿：两个 Loop    紫：共享 Experience', 20, MUTED, anchor='end')
 
 
-def replaceable(s, ident, x, y, w, h, title, lines=(), color=BLUE,
-                fill='#FFFFFF', title_size=27, whole=False, adapt=False):
-    s.node(ident, x, y, w, h, title, lines, color, fill, color,
-           title_size=title_size,
-           tag='可换 · 需适配' if adapt else '整体可换' if whole else '实现可换',
-           dash='8 5')
+def section(s, x, y, w, h, ident, title, lines, color, fill):
+    s.node(ident, x, y, w, h, title, lines, color=color,
+           fill=fill, stroke=color, title_size=28)
+
+
+def heading(s, title, subtitle):
+    s.text(72, 78, title, 40, weight=750)
+    s.text(72, 121, subtitle, 23, MUTED)
+    s.chip(1538, 50, 190, '2026-11-05', '#E8EEF8', BLUE, 18)
 
 
 def system_flow():
-    s = SVG(2400, 2780, 'RSISys 系统流程图',
-            '两个 Loop 的 Harness 和 ActionSpace 可整体替换；图中展示默认 Harness 的可替换内部实现。'
-            'Decision Policy 自主选择科研步骤，Actor Policy 选择环境动作；外部权限过滤与执行检查独立约束能力。'
-            'Decision step / review 共享操作执行；默认 Exploration Harness 仅协调，内部执行组件显式接收依赖。'
-            'Experience、模型、训练、环境、沙箱和产物后端可替换。Snapshot 实现可替换但自定义模块需显式适配。'
-            'Loop protocol 与 Runner 协同是框架骨架，默认串行，可选隔离的并行实验。'
-            'runtime 中的 RunPolicy 可替换；SystemRegistry 管理组件清单的父版本与 current。'
-            'TrainingOrigin 区分实验父系统与初始权重。具体训练和 serving 适配器、独立 medical 示例位于 Harness 外。')
-    s.text(100, 80, 'RSISys / 系统流程', 42, weight=750)
-    s.text(100, 126, '一个项目 = 一次 RSI 启动 · 项目内自主多轮研究 · 执行实现可替换', 26, MUTED)
-    legend(s)
+    s = SVG(1800, 1370, 'RSISys：meta-agent 两侧职责与 Lab',
+            'meta-agent（decision侧）选择任务，Lab 执行并返回原生结果。'
+            'meta-agent（整理侧）的接入窗口按用途选择即时 context 或 memory 正文路径。'
+            '即时路径不要求模型整理；memory 按需检索成上下文。'
+            '两侧标准装配共享捕获的模型权重身份，使用独立上下文。'
+            '原始归档与提案为独立可选能力；训练和固定正式评测在 Lab；看板只面向人。'
+            '本图表示职责和信息流，不强制串行模型调用；兼容实现边界见 docs/architecture.md。')
+    heading(s, 'RSISys / 统一系统架构',
+            '两侧职责，一个 meta-agent；Lab 是执行环境，context 是下一次模型输入。')
+    section(s, 72, 150, 1656, 92, 'host', 'Host / 宿主', (
+        '统一装配 · 权限与资源准入 · 全部模型调用计费 · 截止时间 · 调度、恢复与 owned 资源清理',
+    ), INK, '#EAF0F6')
 
-    for x, w, title in [(100, 930, 'Decision-making Loop'), (1320, 980, 'Exploration Loop')]:
-        s.rect(x, 230, w, 1150, '#EAF0F6', LINE, rx=24)
-        s.text(x+35, 280, title, 32, INK, 700)
-        s.text(x+w-35, 280, 'Loop protocol · 骨架', 19, MUTED, anchor='end')
+    # Optional raw-event storage travels outside the working-context loop.
+    s.path('M 900 300 V 274 H 36 V 1135 H 72', PURPLE,
+           arrow='purple', dash='7 7')
+    s.label(36, 986, '原文', PURPLE, 16)
 
-    s.parts.append('<g id="decision-harness">')
-    s.rect(130, 330, 870, 780, '#EFF5FF', BLUE, dash='8 5')
-    s.text(170, 379, 'Decision Harness · 默认 / DSH', 29, BLUE, 650)
-    s.chip(815, 352, 145, '整体可换', '#DCE9FC', BLUE)
-    replaceable(s, 'decision-policy', 170, 425, 790, 155, 'Decision Policy', (
-        'decide(context) → Decision · review(context)',
-        '模型自主选择操作、指令、复查、等待或结束',
-    ), title_size=30)
-    s.node('decision-execution', 170, 680, 790, 140, 'step / review · 共享操作执行', (
-        'tools.execute_operation → 校验外部权限 / 执行 / 回执',
-        'step 等待异步作业；review 接收提交回执；指令 → Exploration',
-    ), BLUE, stroke='#9FBEEB', title_size=28)
-    s.path('M 565 580 V 680', BLUE, arrow='blue')
-    s.label(565, 637, 'Decision / ReviewDecision', BLUE, 22)
-    s.path('M 170 750 H 150 V 505 H 170', BLUE, arrow='blue', dash='7 6')
-    for ident, x, w, title, line in [
-        ('decision-tools', 170, 250, 'tools', '现有操作绑定'),
-        ('decision-memory', 440, 250, '研究记忆', '摘要 / 计划 / 原文'),
-        ('decision-learner', 710, 250, 'learner', '显式自身学习'),
-    ]:
-        replaceable(s, ident, x, 910, w, 130, title, (line,), title_size=26)
-    s.path('M 295 820 V 910', BLUE, arrow='blue')
-    s.parts.append('</g>')
+    section(s, 72, 300, 480, 270, 'meta-agent-decision', 'meta-agent（decision侧）', (
+        '根据目标、真实状态与 context 决策',
+        '选择动作、写代码、发起 Lab 任务',
+        '选择构建、训练、评测与应用',
+        '实际执行受已安装能力和权限约束',
+        'meta-agent harness 装配输入',
+    ), BLUE, '#EFF5FF')
+    section(s, 660, 300, 480, 270, 'lab', 'Lab / 执行环境', (
+        '任务 · 数据 · 模型或 agent · harness',
+        '工具 / 代码 / 训练 / 推理 / 评测',
+        '内部组织自由；Actor 是可选实现',
+        '输出原生文本、JSON、日志或引用',
+        '执行设施提供任务身份与真实状态',
+    ), GREEN, '#EFF8F3')
+    section(s, 1248, 300, 480, 270, 'meta-agent-organization', 'meta-agent（整理侧）', (
+        '反馈接入与路由 · 解释与记忆组织',
+        '模型整理时：同权重、独立上下文',
+        '即时路径无需额外整理模型调用',
+        'memory provider 与算法可替换',
+        '可选提出建议；执行仍由 decision侧',
+    ), PURPLE, '#F4EFFB')
+    s.path('M 552 435 H 660', BLUE, arrow='blue')
+    s.label(606, 417, '动作 / 任务', BLUE, 16)
+    s.path('M 1140 435 H 1248', GREEN, arrow='green')
+    s.label(1194, 417, '原生结果', GREEN, 16)
 
-    replaceable(s, 'decision-action-space', 130, 1180, 870, 170, 'Decision ActionSpace', (
-        '能力：显式定义 / 外部 provider 发现；外部权限过滤与校验',
-        'review 默认只读；可开放全部操作或 allowlist',
-    ), whole=True, title_size=28)
-    s.path('M 945 1180 V 1110', BLUE, arrow='blue')
-    s.label(775, 1152, '描述 / 校验 / 执行检查', BLUE, 20)
+    s.path('M 1488 570 V 620 H 900 V 680', PURPLE, arrow='purple')
+    s.path('M 1488 620 V 680', PURPLE, arrow='purple')
+    s.label(1194, 635, '正文主消费路径二选一', PURPLE, 20)
+    section(s, 72, 680, 480, 200, 'current-context', '本次 context', (
+        '当前目标、状态与必要事实',
+        '选中的即时结果 + 检索记忆',
+        '必要摘要 / 可选建议 / 原文入口',
+        'harness 选择、计量与 compact',
+    ), BLUE, '#EFF5FF')
+    section(s, 660, 680, 480, 200, 'instant-context', '即时 context 路径', (
+        '真实结果支持下一步快速决策',
+        '不触发 LangMem / 长期记忆写入',
+        '近期正文与活跃依赖有界保留',
+        '旧正文退出视图，原文按引用读取',
+    ), GREEN, '#EFF8F3')
+    section(s, 1248, 680, 480, 200, 'retrievable-memory', 'memory 路径', (
+        '整理可复用发现、经验与限制',
+        'LangMem 或其他可替换实现',
+        '保存可检索记忆与来源 / 修订',
+        '模块可用，不代表每条结果都写入',
+    ), PURPLE, '#F4EFFB')
+    s.path('M 312 680 V 570', BLUE, arrow='blue')
+    s.label(312, 630, '下一次输入', BLUE, 19)
+    s.path('M 660 780 H 552', GREEN, arrow='green')
+    s.label(606, 762, '真实结果', GREEN, 16)
+    s.path('M 1488 880 V 940 H 312 V 880', PURPLE, arrow='purple')
+    s.label(900, 933, '按需检索 → context 文本', PURPLE, 20)
 
-    s.parts.append('<g id="exploration-harness">')
-    s.rect(1350, 330, 920, 780, '#EFF8F3', GREEN, dash='8 5')
-    s.text(1390, 379, 'Exploration Harness', 29, GREEN, 650)
-    s.chip(2085, 352, 145, '整体可换', '#D7EEE2', GREEN)
-    s.node('directive-dispatch', 1390, 410, 840, 105, '默认 Harness · 仅装配与指令协调', (
-        'Directive → execute / SFT / RL / train / prompt / evaluate',
-    ), GREEN, stroke='#9ACBB6', title_size=28)
-    s.path('M 1810 515 V 540', GREEN, arrow='green')
-    s.parts.append('<g id="exploration-execution">')
-    s.rect(1390, 540, 840, 285, stroke=GREEN, dash='8 5')
-    s.text(1414, 580, '默认内部执行职责', 25, GREEN, 650, max_width=600)
-    s.text(2206, 580, '实现可换', 18, GREEN, 600, anchor='end')
-    for y, flow in [
-        (630, 'EpisodeExecution → Actor Policy / Environment → 轨迹'),
-        (680, 'LearningExecution → learner → 候选 / 应用'),
-        (730, 'EvaluationExecution → evaluator → 指标 / 证据'),
-        (780, 'LocalRLExecution：rollout → 训练 → 应用'),
-    ]:
-        s.text(1414, y, flow, 23, GREEN, 500, max_width=792)
-    s.parts.append('</g>')
-    replaceable(s, 'exploration-policy', 1390, 850, 390, 110, 'Actor Policy', (
-        'act(context) → 选择环境动作',
-    ), GREEN, title_size=27)
-    replaceable(s, 'system-execution', 1840, 850, 390, 110, 'learner / evaluator', (
-        '训练 / 评测后端',
-    ), GREEN, title_size=25)
-    replaceable(s, 'environment', 1390, 985, 390, 110, 'Environment', (
-        '环境后端：动作 → 观察',
-    ), GREEN, title_size=27)
-    replaceable(s, 'exploration-memory', 1840, 985, 390, 110, 'memory', (
-        '本地工作记忆',
-    ), GREEN, title_size=26)
-    s.path('M 1585 825 V 850', GREEN, arrow='green')
-    s.path('M 2035 825 V 850', GREEN, arrow='green')
-    s.path('M 1585 960 V 985', GREEN, arrow='green')
-    s.path('M 1390 1040 H 1370 V 920 H 1390', GREEN, arrow='green', dash='7 6')
-    s.parts.append('</g>')
-
-    replaceable(s, 'exploration-action-space', 1350, 1180, 920, 170, 'Actor ActionSpace', (
-        '环境动作的定义与校验', '供 execute episode / RL rollout 使用',
-    ), GREEN, whole=True, title_size=28)
-    s.path('M 1450 1180 V 1110', GREEN, arrow='green')
-    s.label(1620, 1152, '描述 / 校验', GREEN, 20)
-
-    s.node('external-system', 1060, 230, 230, 100, '外部控制器', (
-        '可直接提交指令',
-    ), INK, '#EAF0F6', LINE, title_size=25)
-    s.node('directive', 1060, 410, 230, 180, 'Directive', (
-        'execute · sft', 'rl · train', 'evaluate · 配置',
-    ), INK, '#EAF0F6', LINE, title_size=26)
-    s.path('M 1175 330 V 410')
-    s.path('M 960 710 H 1045 V 465 H 1060', BLUE, arrow='blue')
-    s.path('M 1290 465 H 1390', BLUE, arrow='blue')
-    s.node('runner', 1060, 620, 230, 145, 'Runner', (
-        '串行 / 可选并行', '推进·停止·交付',
-    ), INK, '#EAF0F6', LINE, title_size=26)
-    s.node('run-policy', 1060, 805, 230, 155, 'RunPolicy', (
-        'researcher', 'time / goal',
-    ), BLUE, '#EFF5FF', BLUE, title_size=26,
-        tag='runtime · 实现可换', dash='8 5')
-    s.path('M 1175 805 V 765', BLUE, arrow='blue')
-    s.node('feedback', 1060, 1010, 230, 120, 'Feedback', (
-        '状态 / 指标', '候选 / 证据引用',
-    ), INK, '#EAF0F6', LINE, title_size=26)
-    s.path('M 1350 1070 H 1290')
-    s.path('M 1060 1070 H 1020 V 505 H 960')
-
-    for x in (600, 1810):
-        s.path(f'M {x} 1380 V 1450', PURPLE, arrow='purple')
-        s.label(x, 1424, '系统反馈', PURPLE, 20)
-    replaceable(s, 'experience', 100, 1450, 2200, 150, 'Experience / 共享系统反馈与改进证据', (
-        '运行反馈 · 训练与评测 · 改进结论与证据引用',
-        'FeedbackSelector 提取 / 检索 / 存储实现可换；各 Harness 保留工作记忆',
-    ), PURPLE, '#F2EBFB', title_size=30)
-    s.path('M 100 1525 H 55 V 505 H 170', PURPLE, arrow='purple', dash='9 7')
-    s.label(55, 1410, '检索', PURPLE, 18)
-
-    s.node('system-versions', 100, 1650, 2200, 155, '核心协议 / 系统版本与训练来源', (
-        'SystemVersion：命名组件 + model + parent_version；Candidate.parent_system 与训练 base_version 独立',
-        'SystemRegistry：父版本 / current / activate；SystemActivationRejected 释放 pending，未知结果冻结；TrainingOrigin：父系统 / 初始权重 / 恢复模式',
-        'BackendCapabilities：method / resume / update / checkpoint / reattach；DeploymentState：稳定引用，READY 才表示可推理',
-    ), INK, '#EAF0F6', LINE, title_size=28)
-    replaceable(s, 'runtime-backends', 100, 1850, 1050, 165, 'Runtime / 共享后端', (
-        'Model · Sandbox · Artifact 后端',
-        'Recovery：运行检查点 / 回执；未知效果须核对',
-    ), BLUE, '#EFF5FF', title_size=28)
-    replaceable(s, 'snapshot', 1190, 1850, 1110, 165, 'Snapshot / 保存与恢复', (
-        '内置空闲边界 · 仅默认 researcher 运行策略',
-        '自定义模块需显式适配保存 / 恢复 / 引用一致性',
-    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    replaceable(s, 'training-adapter', 100, 2070, 1050, 170, 'adapters/training.py · 原生训练', (
-        'ProcessTrainingBackend → TrainingCommand / 原生配方 / 作业回执',
-        'Transformers / PEFT：单进程或 torchrun DDP；其他 CLI 显式接入',
-    ), AMBER, '#FFF8E8', title_size=27, adapt=True)
-    replaceable(s, 'serving-adapter', 1190, 2070, 1110, 170, 'adapters/serving.py · 推理与部署', (
-        'VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator',
-        '既有服务 / 显式 LoRA；query / reattach → READY；release',
-    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    s.path('M 625 2070 V 2035 H 70 V 1725 H 100', AMBER, arrow='amber', dash='7 6')
-    s.path('M 1745 2070 V 2035 H 2330 V 1725 H 2300', AMBER, arrow='amber', dash='7 6')
-    replaceable(s, 'medical-example', 100, 2290, 2200, 155, 'examples/medical/ · 独立领域装配，位于 Harness 外', (
-        'task.py：冻结数据；evaluation.py：就绪准备 / 分样本 poll / 固定协议；run.py：两 Harness + Runner / prepare / check / run',
-        'native.py：数据转换 / 训练证据；Transformers / SGLang / Ascend 推理适配，训练前释放本地资源',
-    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    replaceable(s, 'monitor-library', 100, 2490, 2200, 170, 'src/rsimonitor/ · 可独立使用的实验可视化', (
-        'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
-        '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
-    ), BLUE, '#EFF5FF', title_size=29)
-    s.text(100, 2720, '实线灰框：协议与协调骨架；彩色虚线框：可替换实现或独立装配。核心不规定训练框架、医学任务或全局验收阈值。', 22, MUTED)
+    s.rect(72, 966, 1656, 44, '#FFF7E8', 'none', rx=10)
+    s.text(900, 995,
+           '可选改进提案：整理侧提出 → 经 context 交回 decision侧 → 以正式任务进入 Lab。',
+           20, AMBER, 500, 'middle', max_width=1608)
+    section(s, 72, 1050, 480, 200, 'raw-archive', '原始轨迹归档（独立可选）', (
+        '公开原始事件、来源与覆盖范围',
+        '默认开启，可关闭或替换',
+        '原始轨迹不等于可训练数据集',
+        '执行 journal 仍承担事实与恢复',
+    ), PURPLE, '#F4EFFB')
+    section(s, 660, 1050, 480, 200, 'lab-improvement', 'Lab 内改进任务（可选）', (
+        '数据构建、SFT / RL、harness 构建',
+        '由 decision侧正式调用与验证',
+        '提案 ≠ 训练 ≠ 应用 / 采纳',
+        '正式评测协议由领域装配固定',
+    ), AMBER, '#FFF7E8')
+    section(s, 1248, 1050, 480, 200, 'human-monitor', '看板 / Monitor（面向人）', (
+        'Host 写公开运行投影 → 人查看',
+        '不进入模型输入或反馈链路',
+        '模型用 Lab / 状态工具读信息',
+        '投影不等于完整历史或执行账本',
+    ), INK, '#EAF0F6')
+    s.path('M 552 1150 H 660', AMBER, arrow='amber', dash='7 7')
+    s.label(606, 1132, '固定引用', AMBER, 16)
+    s.text(72, 1300, '实线：主要数据流；虚线：独立可选能力。任务状态与整理状态分别核对；正文路由不要求每条反馈都调用模型。',
+           20, MUTED, max_width=1656)
+    s.text(72, 1336, '标准医疗 Open Lab 已接通二选一路由；通用兼容装配须显式配置。术语、协议映射及实现范围见 docs/architecture.md。',
+           18, MUTED, max_width=1656)
     s.save('system-flow.svg')
 
 
 def file_architecture():
-    s = SVG(2400, 2660, 'RSISys 文件架构图',
-            '两个 Loop 的 Harness 与 ActionSpace 可整体替换，Policy、tools、memory、learner、evaluator 等实现可替换。'
-            'Decision ActionSpace 下的 access.py 负责外部权限过滤和执行检查，capabilities.py 负责显式定义或外部 provider 发现。'
-            'step / review 共用 tools 中的操作执行；默认 Exploration Harness 仅协调，四项执行职责位于现有文件并显式接收依赖。'
-            '跨 Loop 协议与 Runner 是框架骨架；runtime/run_policy.py 提供可替换的 researcher、time、goal 运行控制。'
-            'SystemVersion、TrainingOrigin 与可选部署能力定义在 contracts，SystemRegistry 位于 runtime/systems.py。'
-            'adapters 提供 Harness 外的具体执行接入；examples/medical 独立持有领域任务和验收规则。')
-    s.text(100, 80, 'RSISys / 文件架构', 42, weight=750)
-    s.text(100, 126, 'src/rsisys/ · 默认组合与替换边界', 26, MUTED)
-    legend(s)
+    s = SVG(1800, 1530, 'RSISys：统一角色与代码映射',
+            '以 meta-agent（decision侧）、Lab、meta-agent（整理侧）映射当前文件。'
+            '最小公开窗口只规定模块基本职能，不规定内部算法、存储或 Actor 结构。'
+            '统一装配与 Host 管理生命周期；状态适配器提供原目录恢复；看板只面向人。'
+            'decision_maker、exploration、feedback_learning 保留为兼容实现标识。')
+    heading(s, 'RSISys / 模块与代码映射',
+            '概念角色保持统一；目录、类型和持久化字段通过兼容映射接入。')
+    s.text(72, 166, '核心路径相对 src/rsisys/；领域装配相对 examples/；子卡中的简写属于所在模块。',
+           19, MUTED, max_width=1656)
+    columns = [
+        (72, BLUE, '#EFF5FF', 'meta-agent（decision侧）',
+         'loops/decision_making/', [
+             ('decision-input', '决策与上下文（harness/）',
+              ('policy/ · engine.py', 'context.py · research_state.py')),
+             ('decision-actions', '工具与研究状态',
+              ('action_space/ · harness/tools/', 'harness/state.py', 'harness/research.py')),
+         ]),
+        (660, GREEN, '#EFF8F3', 'Lab / 执行环境',
+         'loops/contracts/execution.py', [
+             ('open-lab-files', '开放 Lab',
+              ('adapters/local_lab.py', 'examples/medical/', 'fixed_evaluation.py')),
+             ('legacy-lab-files', '兼容 Lab 适配',
+              ('adapters/execution.py', 'loops/exploration/（内部可替换）')),
+         ]),
+        (1248, PURPLE, '#F4EFFB', 'meta-agent（整理侧）',
+         'loops/decision_making/feedback/', [
+             ('organization-products', '反馈接入与产物',
+              ('service.py · learning.py', 'pipeline.py · proposals.py')),
+             ('organization-memory', '记忆与路由',
+              ('langmem.py · context_memory.py', 'adapters/local_lab_feedback.py')),
+         ]),
+    ]
+    for x, color, fill, title, path, cards in columns:
+        s.rect(x, 215, 480, 490, fill, color, rx=20)
+        s.text(x+24, 264, title, 28, color, 650, max_width=432)
+        s.text(x+24, 301, path, 21, MUTED, mono=True, max_width=432)
+        for y, (ident, label, lines) in zip((330, 510), cards):
+            s.node(ident, x+24, y, 432, 145, label, lines,
+                   color=color, stroke=color, title_size=25)
 
-    for ident, x, title, policy, interface, color, fill in [
-        ('decision-dir', 100, 'loops/decision_making/', 'Decision Policy',
-         'DecisionPolicy · decide / review', BLUE, '#EFF5FF'),
-        ('exploration-dir', 870, 'loops/exploration/', 'Actor Policy',
-         'ActorPolicy · act(context)', GREEN, '#EFF8F3'),
+    s.text(72, 772, '最小公开窗口', 30, weight=650)
+    s.text(72, 810, '只约束基本职能；内部算法、格式、存储与流程由可替换模块自行实现。', 23, MUTED)
+    for x, ident, title, lines, color, fill in [
+        (72, 'lab-port', 'Lab 执行窗口',
+         ('describe() / execute(call)', '声明真实能力，执行授权调用', '不规定 SFT / RL 算法菜单'), GREEN, '#EFF8F3'),
+        (496, 'context-port', 'context / memory 窗口',
+         ('context(query) → str', '按需提供文本，替换当前视图', '可选 observe 接收反馈'), PURPLE, '#F4EFFB'),
+        (920, 'archive-port', '归档窗口（可选）',
+         ('write(event) / read(ref)', '保存原生事件与稳定来源', '数据筛选与构建交给 Lab'), PURPLE, '#F4EFFB'),
+        (1344, 'optional-ports', '提案 / 调度（可选）',
+         ('propose(...) / select(...)', '分别返回建议或选择待办', '不授予执行、重放或预算'), AMBER, '#FFF7E8'),
     ]:
-        s.parts.append(f'<g id="{ident}">')
-        s.rect(x, 230, 730, 1100, '#EAF0F6', LINE, rx=24)
-        s.text(x+35, 280, title, 29, INK, 700, mono=True, max_width=660)
-        s.text(x+35, 327, 'loop.py · 协议端点 / 框架骨架', 23, MUTED)
-        s.rect(x+30, 390, 670, 600, fill, color, dash='8 5')
-        s.text(x+60, 438, 'harness/', 29, color, 650, mono=True)
-        s.chip(x+510, 411, 150, '整体可换', '#FFFFFF', color)
-        s.text(x+60, 480, '__init__.py：Harness 协议', 22, MUTED)
-        replaceable(s, ident+'-policy', x+60, 515, 610, 130, 'policy/ · '+policy,
-                    (interface,), color, title_size=28)
-        if ident == 'decision-dir':
-            s.text(x+60, 700, 'engine.py · dsh.py · decision.py · state.py', 23, MUTED)
-            replaceable(s, ident+'-internals', x+60, 740, 610, 150, 'tools/ · learner/ · memory/', (
-                'tools/__init__.py：step / review 共享操作执行',
-                'context.py · research.py：摘要 / 计划 / 修订',
-            ), color, title_size=26)
-            s.text(x+60, 945, '默认 / DSH 可换；动作经 Action Space 执行', 22, color)
-            lines = ('access.py：外部权限过滤 / 执行检查',
-                     'capabilities.py：显式定义 / 外部 provider 发现',
-                     'directives.py · queries.py：指令与查询定义',
-                     'review：默认只读 / 全部操作 / allowlist')
-        else:
-            s.text(x+60, 685, 'engine.py · commands.py · concurrent.py', 22, MUTED, max_width=610)
-            s.text(x+60, 721, '隔离实验状态 / memory；下列执行实现可换', 21, color, max_width=610)
-            s.parts.append('<g id="exploration-dir-internals">')
-            s.rect(x+60, 740, 610, 225, '#FFFFFF', color, rx=16, dash='8 5')
-            for y, source, execution, dependencies in [
-                (770, 'environment/__init__.py', 'EpisodeExecution',
-                 'policy · environment · memory · Experience · state'),
-                (822, 'learner/__init__.py', 'LearningExecution',
-                 'policy · memory · Experience · state · jobs · activator'),
-                (874, 'evaluation/__init__.py', 'EvaluationExecution',
-                 'Experience · state · JobBook(evaluator)'),
-                (926, 'rl.py', 'LocalRLExecution',
-                 'EpisodeExecution · LearningExecution · state'),
-            ]:
-                s.text(x+80, y, f'{source} → {execution}', 19, color, 600, max_width=570)
-                s.text(x+80, y+25, dependencies, 16, MUTED, max_width=570)
-            s.parts.append('</g>')
-            lines = ('__init__.py：ActionSpace 协议 / 动作定义',
-                     'local.py：本地命令动作',
-                     '只定义与校验；环境负责执行')
-        replaceable(s, ident+'-action-space', x+30, 1050, 670, 220, 'action_space/',
-                    lines, color, whole=True, title_size=28)
-        s.parts.append('</g>')
+        s.node(ident, x, 850, 384, 180, title, lines,
+               color=color, fill=fill, stroke=color, title_size=24)
 
-    s.rect(1640, 230, 660, 1100, '#F2EBFB', PURPLE, rx=24, dash='8 5')
-    s.text(1680, 280, 'experience/', 31, PURPLE, 700, mono=True)
-    s.chip(2110, 253, 150, '实现可换', '#FFFFFF', PURPLE)
-    s.text(1680, 327, '共享反馈与证据 · ExperienceSystem', 23, MUTED)
-    s.node('experience-records', 1680, 390, 580, 160, 'records.py · provenance.py', (
-        '记录类型与来源关联',
-    ), PURPLE, stroke='#D7C5EC', title_size=26)
-    replaceable(s, 'experience-retrieval', 1680, 610, 580, 160, 'retrieval.py', (
-        'Experience 写入 / 检索 · FeedbackSelector 提取',
-    ), PURPLE, title_size=27)
-    replaceable(s, 'experience-storage', 1680, 830, 580, 160, 'storage.py · sqlite.py', (
-        '存储后端；内置内存 / SQLite',
-    ), PURPLE, title_size=27)
-    s.text(1680, 1105, '共享系统反馈', 25, PURPLE, 650)
-    s.text(1680, 1150, '运行 / 训练 / 评测 / 改进证据', 22, MUTED)
-    s.text(1680, 1200, '工作记忆保留在两个 Harness 内', 22, MUTED)
-
-    s.node('framework', 100, 1380, 2200, 155, '框架骨架 / Loop protocol + Runner 协同', (
-        'loops/contracts/：candidate.py → SystemVersion / Candidate；training.py → TrainingOrigin；backend.py → 能力 / 部署协议',
-        'runtime/runner.py：协同；systems.py：父版本 / current / 应用；recovery.py：恢复；control.py：查询 / 取消 / 更新 / 比较',
-        'Directive / Feedback / coordination / queries / requests / jobs / model_service / artifacts：共享端口与消息',
+    s.node('host-runtime-files', 72, 1080, 800, 190, 'Host / 统一装配与生命周期', (
+        'application.py · assembly.py · research.py',
+        'runtime/runner.py · run_policy.py · recovery.py',
+        'loops/contracts/：身份、权限、回执、引用与状态协议',
     ), INK, '#EAF0F6', LINE, title_size=28)
-    s.parts.append('<g id="runtime-dir">')
-    s.node('runtime-boundary', 100, 1570, 1050, 255, 'runtime/ · 运行控制与共享后端',
-           color=BLUE, fill='#EFF5FF', title_size=28)
-    replaceable(s, 'runtime-run-policy', 130, 1640, 510, 155, 'run_policy.py · RunPolicy', (
-        'evaluate(RunContext) → RunDecision',
-        'researcher / time / goal',
-    ), BLUE, title_size=25)
-    replaceable(s, 'runtime-backend-files', 655, 1640, 465, 155, 'Model / Sandbox / Artifact', (
-        'model.py · sandbox.py · artifacts.py',
-        'jobs.py · recovery.py：检查点 / 核对',
-    ), BLUE, title_size=24)
-    s.parts.append('</g>')
-    replaceable(s, 'snapshot-dir', 1190, 1570, 1110, 255, 'snapshot/ · 保存与恢复', (
-        'capture.py · restore.py · storage.py / local.py · codec.py · manifest.py',
-        '内置空闲边界 · 仅默认 researcher 运行策略',
-        'time / goal 与自定义组件需显式适配保存 / 恢复 / 引用一致性',
-    ), AMBER, '#FFF8E8', title_size=28, adapt=True)
-    replaceable(s, 'concrete-adapters', 100, 1880, 2200, 185, 'src/rsisys/adapters/ · 具体接入，独立于两个 Harness', (
-        'training.py：ProcessTrainingBackend / TrainingCommand；Transformers / PEFT 单进程或 torchrun DDP',
-        'serving.py：VLLMBackend / VLLMDeploymentBackend / VLLMLoRAActivator；独立服务 / 显式 LoRA',
-        '依赖共享协议，不反向把原生训练或 serving 框架嵌入 Harness；外部作业回执不等于控制器完整恢复',
-    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    replaceable(s, 'medical-example-files', 100, 2120, 2200, 185, 'examples/medical/ · 独立装配与可替换领域规则', (
-        'task.py：冻结引用；evaluation.py：分样本 poll / 原始输出 / 验收解释；run.py：装配 / prepare / check / run',
-        'native.py：MedicalTrainingBackend / 显式 tokenize / 转化证据；MedicalServing：评测前准备独立候选路由',
-        'experiment.py：独立 researcher 与 actor 装配；Transformers / SGLang / Ascend：可替换推理',
-    ), AMBER, '#FFF8E8', title_size=29, adapt=True)
-    replaceable(s, 'monitor-library', 100, 2350, 2200, 170, 'src/rsimonitor/ · 可独立使用的实验可视化', (
-        'server.py：只读 HTTP API；static/：实验图谱 / 决策与反馈 / 训练指标',
-        '生产端 → runs/*/monitor.json → MonitorServer / RunStore → 浏览器；不参与调度或执行',
-    ), BLUE, '#EFF5FF', title_size=29)
-    s.text(100, 2600, '装配入口：application.py · config.py · assembly.py；领域示例自行组合。实线灰框是核心，彩色虚线框可替换或需显式适配。', 22, MUTED)
+    s.node('recovery-files', 912, 1080, 816, 190, '状态恢复 / 显式组件适配', (
+        'runtime/component_state.py · snapshot/',
+        'adapters/local_lab_state.py · medical/open_lab_recovery.py',
+        '原目录续跑保留预算；未知效果先核对，不自动重放',
+    ), BLUE, '#EFF5FF', BLUE, title_size=28)
+    s.node('domain-and-monitor', 72, 1320, 1656, 135, '领域装配与面向人的看板', (
+        'examples/medical/open_lab_experiment.py：固定正式评测、资源配置、路由与恢复接线。',
+        'src/rsimonitor/：只读 monitor.json / HTTP API；不把看板页面作为模型输入。',
+    ), INK, '#FFFFFF', LINE, title_size=28)
+    s.text(72, 1500,
+           'decision_maker / exploration / feedback_learning 仅为兼容实现标识；统一定义与实现边界见 docs/architecture.md。',
+           19, MUTED, max_width=1656)
     s.save('file-architecture.svg')
 
 

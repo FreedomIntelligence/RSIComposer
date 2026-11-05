@@ -1,5 +1,7 @@
 # Runtime
 
+统一口径见[系统术语与架构](../../../docs/architecture.md)。meta-agent（decision侧）、Lab 与 meta-agent（整理侧）是统一角色称谓；当前类型名和持久化键保留兼容。
+
 提供跨 loop 推进、外部运行策略与公共基础能力；研究步骤和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 
 ## 运行来源
@@ -39,7 +41,7 @@ monitor 在写入前校验此约束；受监控的父目录也必须与 parent_r
 
 Directive 的 `review_after_seconds` 开启首次复查。Runner 在后续 tick 到期时调用可选的 Decision `review`，由其返回 `ReviewDecision('continue' | 'cancel', next_review_seconds=...)`；None 停止后续自动复查。模型调用次数与后端轮询次数独立；串行模式每 tick 最多一次普通决策或一次复查流程；并行模式一次普通决策后，还可执行当前轮询实验的一次到期复查。复查内部可执行有限次权限允许的工具查询和模型调用。Runner 的 decision_steps 按流程计数，模型 token usage 由 Harness 逐次累计。Runner 不 sleep、不自行创建后台线程，实际复查发生在截止时间之后的下一次 tick。调用方负责轮询间隔，单独重建 Runner 后从恢复时刻重新计算首次复查时间；durable Application 则恢复原截止时间并计入停机时间。
 
-取消响应不确定时保留复查结果，通常重试取消不重新问模型。若 Decision 端点提供 authorize_review，Runner 在实际取消及每次重试前重新授权；权限撤销后丢弃旧模型意图，下一次复查读取新权限。已被后端接收的请求不会被撤回。外部调用 Runner.cancel 属于操作者控制，不受模型的取消权限配置限制。默认串行模式只有一个在途指令；可选并行模式隔离管理多个实验，并通过显式版本化 update 请求调用后端支持的控制。不支持替换原始 Directive、通用 pause/resume 或并发修改同一模型绑定。决策者按时间/token 自训练的触发器仍未实现。
+取消响应不确定时保留复查结果，通常重试取消不重新问模型。若 Decision 端点提供 authorize_review，Runner 在实际取消及每次重试前重新授权；权限撤销后丢弃旧模型意图，下一次复查读取新权限。已被后端接收的请求不会被撤回。外部调用 Runner.cancel 属于操作者控制，不受模型的取消权限配置限制。默认串行模式只有一个在途指令；可选并行模式隔离管理多个实验，并通过显式版本化 update 请求调用后端支持的控制。不支持替换原始 Directive、通用 pause/resume 或并发修改同一模型绑定。meta-agent（decision侧）按时间/token 自训练的触发器仍未实现。
 
 [jobs.py](jobs.py) 的 JobBook 管理所有权、幂等键，每个实例至多有一个未完成任务；JobHandle 缓存终态，成功发出一次取消请求后只继续轮询。MockJobQueue 在 poll 时推进模拟任务，result 只读成功结果；JobBackend 是预留集群接口。独立使用时记账仅在进程内；durable Application 显式保存内置 Mock 队列、JobBook、幂等键、取消标记及终态缓存，外部后端需恢复契约；状态与幂等约定见[共享协议](../loops/contracts/README.md)。
 

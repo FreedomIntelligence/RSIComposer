@@ -1,13 +1,14 @@
 # RSISys
 
-可客制化的双 loop RSI（递归自改进）框架。Decision-maker 自主设计研究策略，Exploration 执行探索、训练与评测，Experience 保存系统反馈与证据。使用者定义能力、权限与预算，并替换适合自己的模型、Harness、训练和推理后端。
+可客制化的 RSI（递归自改进）框架。**meta-agent（decision侧）**选择研究动作，在 **Lab** 中执行；结果进入反馈接入窗口，由 **meta-agent（整理侧）**按用途参与上下文与记忆管理，再支持下一次 decision。使用者定义目标、能力、权限与预算，并替换模型、harness、memory、训练和推理后端。
 
-- **两个 loop**：各自由 Harness 与 Action Space 组成；Decision Policy 选择研究步骤，Actor Policy 选择环境动作。训练、评测和提示词调整是发给 Exploration 的系统指令。
+- **两侧职责，一个 meta-agent**：decision侧负责行动选择，整理侧负责反馈解释与记忆组织；标准装配同权重、独立上下文。Lab 内部可运行 agent 或直接执行程序，不强制使用固定 Actor loop。
+- **两条反馈路径**：即时 context 直接支持快速决策，memory 面向长期检索；按用途选择正文的主消费路径。原始归档和提案另行按需装配。
 - **轻量协同**：框架负责指令、作业、反馈与版本引用，不统一各训练框架的数据格式；跨框架数据对齐由接入方完成。
 - **自主研究**：支持隔离的并行任务、显式决策依赖、多结果采纳与汇合；研究尝试（Attempt）记录围绕同一想法的一组决策。
 - **实验监控**：`rsimonitor` 是与 `rsisys` 并列的只读可视化包。一个项目包含多个实验，一个实验对应一次完整 RSI run；进入实验查看尝试、决策理由、改动、反馈和训练指标。
 
-项目介绍、架构和使用方法统一维护在本 README；组件接口与边界留在各目录 README。
+术语和职责以[统一术语与架构](docs/architecture.md)为准；本 README 提供使用入口，各目录 README 说明接口与实现。`decision_maker`、`DecisionMakingLoop`、`ExplorationLoop` 等保留为兼容标识，不另设同名概念角色。
 
 [快速开始](#快速开始) · [实验监控](#实验监控) · [系统架构](#系统架构) · [使用指南](#使用指南) · [组件文档](#组件文档)
 
@@ -67,16 +68,22 @@ with MonitorServer(("127.0.0.1", 8765), "runs") as server:
 
 ### 模块关系
 
+概念主链路为 **meta-agent（decision侧）→ Lab → meta-agent（整理侧）→ context**。
+下列目录是当前实现映射；其中 `exploration/` 是一种兼容 Lab 执行路径，`feedback/`
+承载整理侧。新的开放 Lab 通过 `LabExecution.describe/execute` 接入，不必复刻两个旧 loop。
+即时路径可以直接交付真实结果，不必额外调用整理模型；memory 可用不代表每条结果都写入。
+
 ```text
 src/rsisys/
 ├── loops/
 │   ├── decision_making/
 │   │   ├── loop.py        # 薄端点与有界推进
-│   │   ├── harness/       # 可替换执行边界；engine.py 为默认实现
+│   │   ├── harness/       # meta-agent（decision侧）的可替换 harness
+│   │   ├── feedback/      # meta-agent（整理侧）的接入、记忆与可选提案
 │   │   └── action_space/  # research 操作与系统指令的描述/校验
 │   ├── exploration/
 │   │   ├── loop.py        # 薄端点
-│   │   ├── harness/       # 系统指令分派；engine.py 为默认实现
+│   │   ├── harness/       # 兼容 Lab harness；系统指令分派与内部执行
 │   │   └── action_space/  # Actor 环境动作的描述/校验
 │   └── contracts/         # 消息、引用与公开端口
 ├── experience/            # 共享系统反馈库
@@ -106,8 +113,10 @@ Decision／Actor Policy 位于默认 Harness 内部：[DecisionPolicy.decide](sr
 默认长程上下文、研究议程与可选 DSH 的配置见[默认长程研究能力](#默认长程研究能力)和[使用 DSH Harness](#使用-dsh-harness)。
 
 研究任务通过 `research.py` 的 `ResearchAssembly / assemble_research` 组合必需的
-context/memory、默认原始轨迹归档与可选改进提案。真实结果先直接交付 decision，memory 后续整理。
-数据构建与 decision-policy 训练通过改进 Lab 的可替换能力执行；主 meta-agent
+context/memory、默认原始轨迹归档与可选改进提案。标准医疗 Open Lab 按 `context|memory`
+路由正文：即时 context 不触发 LangMem，memory 路径按需整理并检索；两路都保留真实任务状态。
+通用兼容装配仍可先直接交付再后台整理，具体路由须显式装配。
+数据构建与 meta-agent policy 训练通过 Lab 的可替换能力执行；meta-agent（decision侧）
 在正式 decision 中引用提案并选择构建/训练/验证，回执继续进入反馈；装配入口、workflow 和
 当前验收边界见[Feedback 链路](docs/review/feedback-workflow.md)。
 
@@ -157,7 +166,10 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 部署协议独立提供 prepare / query / release 与可选 reattach，返回稳定 DeploymentRef、可选 JobRef 及精确 ModelRef；只有 READY 表示可推理，UNKNOWN 保留不确定性。ModelActivator 适配器在确认目标模型就绪后返回，Harness 才更新角色绑定。SystemActivator 负责更大组件组合的准备和应用，不能用 JobStatus.SUCCEEDED 或新模型 URI 代替服务就绪。registry 与外部回执的持久化需单独集成，不因存在引用或训练后端 reattach 就自动获得 Application 恢复支持。
 
-### 双 loop 协同
+### 兼容执行路径：两个端点协同
+
+下面说明已有 `DecisionMakingLoop / ExplorationLoop` 接口，不将其内部结构规定为所有 Lab 的架构。
+标准开放执行路径和两侧职责见[统一架构](docs/architecture.md)。
 
 1. Decision Harness 读取上下文、完成本地准备，policy 发出 Directive；Action Space 校验操作和指令模式。
 2. Runner 将 Directive 交给 Exploration 端点，Harness 接收、校验 payload 并推进对应流程。外部系统也可直接通过同一端点提交 Directive。
@@ -174,7 +186,7 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 运行中的 review 保留 continue / cancel。安装 `ExperimentControls` 后，研究者可通过普通获授权工具按 ID inspect / cancel / update / compare。`DirectiveUpdate` 携带 expected_version、幂等键和 changes；原指令不可变，支持更新的 handler/backend 应用控制变更并确认版本，不支持的字段或后端明确拒绝。候选比较要求已知完整训练 base、相同评测协议/输入及有效指标；排序不自动采纳。训练、评测、采纳的业务策略属于可替换的 Decision Harness，不写入 Runner。
 
-Decision-maker 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。`WorkspaceTools` 提供挂载工作区内的 list/read/search 基础操作，研究者可自行读日志、数据、配置和代码；实时服务内部状态仍需后端提供读取途径。外部权限配置决定当前可用 Action Space；默认运行中只读，也可开放其他操作或全部已接入能力。Harness 在展示和执行前检查权限，read_only 是操作属性而非固定限制。权限表达“当前允许做什么”，沙箱限制“执行代码实际能接触哪些资源”；例如允许训练但禁止删除候选，由能力权限检查，限制文件、网络和设备访问则由部署的沙箱承担。两者互补；本地进程后端不是宿主安全隔离。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。
+meta-agent（decision侧） 在科研场景中充当 researcher。实验查询由 Exploration Harness 及其后端提供，Decision Action Space 声明查询操作，Decision Harness 的 tools 绑定执行。查询能力可发现、可替换，返回内容带来源与时间，大内容可通过引用读取；可访问的信息不必全部预先注入模型上下文。`WorkspaceTools` 提供挂载工作区内的 list/read/search 基础操作，研究者可自行读日志、数据、配置和代码；实时服务内部状态仍需后端提供读取途径。外部权限配置决定当前可用 Action Space；默认运行中只读，也可开放其他操作或全部已接入能力。Harness 在展示和执行前检查权限，read_only 是操作属性而非固定限制。权限表达“当前允许做什么”，沙箱限制“执行代码实际能接触哪些资源”；例如允许训练但禁止删除候选，由能力权限检查，限制文件、网络和设备访问则由部署的沙箱承担。两者互补；本地进程后端不是宿主安全隔离。原始查询记录留在研究侧 history，最终判断引用这些记录进入 Experience；不新增独立的观察或记忆子系统。
 
 默认 Decision 上下文另含当前 Exploration 模型/进度、Decision 模型、发出指令时的版本归因，以及每个候选最近一次评测的协议、输入引用、结果和证据。这些事实不依赖有限长度的任务 history；完整评测档案仍由 Experience 保存。
 
@@ -214,16 +226,18 @@ Runtime 提供运行策略、系统清单注册与应用、作业、产物和 Ru
 ### 尚待定义的边界
 
 - SystemVersion / Candidate 已能描述命名组件变更；各组件的格式、执行校验和原子启用仍由消费方及 SystemActivator 定义，框架不执行任意代码自修改。
-- 决策者训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
+- meta-agent（decision侧）训练可通过默认 Decision Harness 在本地调用，但没有自动自优化指令或触发机制。
 - 候选跨轮保存，显式启用 `apply_candidate` 可独立应用已评测候选；验收指标和阈值由具体 policy 决定，没有全局默认验收规则。SFT 与可选 train 的 `apply_result` 默认 false，默认 RL 每轮应用学习结果，evaluate 不自动部署候选。
 
 ### 图示
+
+当前图示使用统一角色名，并分别标出正文路由、可选归档、宿主与面向人的看板。
 
 ![系统流程](docs/diagrams/system-flow.svg)
 
 ![文件架构](docs/diagrams/file-architecture.svg)
 
-两张原生 SVG 直接维护；`docs/diagrams/build_diagrams.py` 尚未同步上述上下文标注，重生成会覆盖相应内容，须先同步并核对差异。PNG 仅在临时目录中用于视觉验收，不作为仓库文档副本保存。
+两张图由 `docs/diagrams/build_diagrams.py` 生成，文字与布局均为可编辑的原生 SVG；修改图示时同步生成脚本并重新核验。PNG 仅在临时目录中用于视觉验收，不作为仓库文档副本保存。
 
 ## 使用指南
 
@@ -669,7 +683,7 @@ with Application(config, decision_factory=feedback_learning_decision_factory(max
 
 反馈学习位于独立的 `decision_making/feedback/` 包，不导入默认 harness 实现。
 做决策的模型统一称 meta-agent，decision 是研究动作/任务；固定目标下由 data/model/harness
-组成的研究执行环境称 lab。反馈分身负责整理和路由，meta-agent harness 负责上下文选择与
+组成的研究执行环境称 lab。meta-agent（整理侧）负责整理和路由，meta-agent harness 负责上下文选择与
 compact。当前实现映射、Lab 接口迁移范围和三类产物边界见[反馈架构](src/rsisys/loops/decision_making/feedback/README.md)。
 基础 `LabSpec / LabTask / Lab` 和 `ExplorationLab` 已提供；默认 Runner 仍走兼容 exploration
 端口。`ExecutionReceipt` 统一本地与 Lab 任务的终态观察，默认 adapter 自动整理本地非只读

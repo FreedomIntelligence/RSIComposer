@@ -1,4 +1,6 @@
-# Decision Action Space
+# meta-agent（decision侧）的能力窗口
+
+统一口径见[系统术语与架构](../../../../../docs/architecture.md)。已安装工具的描述与权限是执行边界；不把 SFT / RL 等列成所有 Lab 必须遵守的固定决策菜单。
 
 操作的 `OperationSpec.read_only` 默认 false。read_only 是能力属性，默认权限配置用它筛选运行中操作；外部配置可开放写操作或所有已接入操作，具体执行仍由 Harness tools 负责。[QueryActionDefinition](queries.py) 将 Exploration 广告的查询转换为只读操作，默认装配自动注入。两个默认 Action Space 可通过 `extra_definitions=()` 添加这些定义，自定义操作仍使用同一验证接口。
 
