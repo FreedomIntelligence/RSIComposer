@@ -469,7 +469,7 @@ class AgentMemoryState:
         self.memory.restore(state)
 
     def validate_snapshot(self):
-        pass
+        raise TypeError('Agent memory supports same-directory recovery; portable snapshots require explicit file relocation integration')
 
 
 class MemoryActionSpace:

@@ -282,6 +282,10 @@ class AgentMemoryTests(unittest.TestCase):
                 self.mutate('memory_write', memory_id='note', content='Hypothesis', source_refs=[], status='unverified')
         self.assertEqual(self.memory.export(), before)
 
+    def test_state_port_does_not_claim_portable_file_relocation_support(self):
+        with self.assertRaisesRegex(TypeError, 'same-directory recovery'):
+            AgentMemoryState(self.memory).validate_snapshot()
+
     def test_permissions_filter_memory_and_review_cannot_mutate(self):
         space = authorized_space(self.loop.action_space)
         # Permissions belong to the installed base ActionSpace, as for Lab tools.
