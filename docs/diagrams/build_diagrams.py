@@ -97,15 +97,15 @@ def heading(s, title, subtitle):
 
 
 def system_flow():
-    s = SVG(1800, 1510, 'RSISys：一个 meta-agent、Lab 与 memory',
+    s = SVG(1800, 1510, 'RSISys：host、meta-agent/harness 与 Lab',
         '同一个 meta-agent 选择行动、直接解释 Lab 原始反馈，并显式管理记忆。'
-        'memory 模块只存储和检索。任务反馈保留到关闭，超长原文分页读取。看板面向人。')
+        'memory 是 harness 子模块；正式评测是 Lab 能力。任务反馈保留到关闭，超长原文分页读取。看板面向人。')
     heading(s, 'RSISys / 单 meta-agent 架构',
         '行动、调试、语义整理与记忆管理，在同一个 meta-agent 工作流内完成。')
     section(s, 72, 158, 1656, 100, 'host', 'Host / 宿主', (
         '固定目标与正式评测 · 权限和资源准入 · 调用 / token 账本 · 原截止时间 · 恢复与 owned 资源清理',
     ), INK, '#EAF0F6')
-    section(s, 72, 320, 760, 350, 'meta-agent', '唯一 meta-agent', (
+    section(s, 72, 320, 760, 350, 'meta-agent', '唯一 meta-agent / harness', (
         '选择研究动作、编写代码、执行与调试',
         '直接查看原始 feedback 与真实任务状态',
         '解释实验结果，管理当前任务的上下文',
@@ -126,7 +126,7 @@ def system_flow():
     s.label(900, 388, '动作 / 任务', BLUE, 18)
     s.path('M 968 580 H 832', GREEN, arrow='green')
     s.label(900, 558, '原始反馈', GREEN, 18)
-    section(s, 72, 810, 760, 245, 'memory', 'memory 模块 / 确定性服务', (
+    section(s, 72, 810, 760, 245, 'memory', 'Harness 子模块 / memory 服务', (
         'memory_search / read / write / delete',
         '存储、文字检索、来源与修订记录',
         '不运行模型抽取、embedding 或后台总结',
@@ -183,7 +183,8 @@ def file_architecture():
         for y, (ident, label, lines) in zip((345, 530), children):
             s.node(ident, x+24, y, 432, 160, label, lines, color, stroke=color, title_size=24)
     s.node('assembly', 72, 810, 800, 190, 'Host / 装配、准入与生命周期', (
-        'application.py · assembly.py · research.py',
+        'application.py · assembly.py · methods.py',
+        'components.py：内部组合可选；整体方法也可接入',
         'runtime/runner.py · run_policy.py · recovery.py',
         'runtime/component_state.py：必须注册 memory 状态',
     ), INK, '#EAF0F6', LINE, title_size=28)

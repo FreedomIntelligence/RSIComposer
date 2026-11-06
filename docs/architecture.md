@@ -1,6 +1,7 @@
 # RSISys：统一术语与架构
 
-更新：2026-11-06。当前默认架构是 **一个 meta-agent + Lab + memory 模块**。
+更新：2026-11-06。顶层职责是 **host、一个 meta-agent/harness 与 Lab**。
+Memory 是 harness 的可替换子模块；正式评测是 Lab 能力，其协议由 host 固定。
 历史审查材料和冻结实验保留当时的两侧称谓；新运行以本文和实际装配配置为准。
 
 ## 一条主链路
@@ -15,7 +16,7 @@ meta-agent 直接负责行动选择、结果解释、调试、上下文管理以
 | --- | --- |
 | **meta-agent** | 根据目标、真实状态、当前任务原始反馈和相关记忆选择行动，读写代码、调试和解释结果，并显式管理自己的记忆。`decision侧` 可作为兼容说明，不再另设整理侧。 |
 | **Lab** | 任务与实验的执行环境，包含数据、模型或 agent、工具、harness 和授权资源；内部可以直接运行程序，也可以含 agent。 |
-| **memory 模块** | 存储、索引、检索和修订记忆；默认 `AgentMemory` 使用本地原子 JSON 和确定性文本检索，不发出模型或 embedding 请求。 |
+| **memory 模块** | harness 内的存储、索引、检索和修订服务；默认 `AgentMemory` 使用本地原子 JSON 和确定性文本检索，不发出模型或 embedding 请求。 |
 | **decision** | 一次带身份、参数和来源的行动或任务，不是另一种 agent。 |
 | **Meta-agent harness** | 装配输入、执行工具边界、计量和容量管理；与 Lab harness 分开。 |
 
@@ -79,7 +80,10 @@ UTF-8 原文页、完整性标记、SHA 和精确读取地址，不能把摘要�
 | **Sandbox / 执行后端** | 运行代码并兑现其实际隔离边界。Lab 是环境，Sandbox 是可使用的设施，两者不是同义词。 |
 | **看板 / Monitor** | 面向人的只读可观测界面，消费公开运行投影；不处于模型输入链路，不作为 agent 的反馈工具。模型读运行状态用 Lab 或显式状态查询端口。 |
 
-组件选择使用统一 `ModuleAssembly`。可选 `ComponentGraph` 将 host 注册的训练/推理策略、
+整套 RSI 方法通过 `MethodCatalog` 选择协议、ID、版本和原生参数，返回统一 `ModuleAssembly`。
+可以整体实现 harness/Lab，也可内部组合；实验设计、反馈解释和下一步选择可以由同一个
+meta-agent 完成，不要求独立的研究阶段插件。方法版本与配置随运行和快照保存，恢复拒绝
+身份变化。可选 `ComponentGraph` 将 host 注册的训练/推理策略、
 训推引擎、数据、harness 和 RSI 决策策略按显式依赖组合；构造前检查缺失项、契约冲突与
 循环，运行身份记录每个组件的版本、参数及根端口绑定。训练引擎和推理引擎可以独立选择，
 `ResearchAssembly` 继续负责 memory/feedback 接线，不代表整个 RSI 算法。

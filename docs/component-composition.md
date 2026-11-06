@@ -6,9 +6,60 @@ RSISys 使用 `ModuleAssembly` 作为统一装配入口。可选的 `ComponentGr
 原生参数、依赖和版本记录为一个配置；同一启动代码可以组合不同的研究策略、harness、
 训练策略、推理策略和执行引擎。已有 Python 工厂继续兼容。
 
+## 顶层归属与整套 RSI 方法
+
+顶层职责是 host、meta-agent/harness 和 Lab。Memory 是 harness 可替换的子模块；正式
+评测是 Lab 内的流程或服务入口，由 host 固定协议与权限。反馈解释、实验设计、记忆内容
+组织和下一步选择可以由同一个 meta-agent 完成，不要求 host 分别提供研究阶段组件。
+
+一套 RSI 方法包含所选实现、接线，以及由这些实现兑现的迭代规则。它可以整体提供
+harness 和 Lab，也可以在内部使用组件图；两种形式都通过 `ModuleAssembly` 接入。
+不要求拆出候选生成、训练、推理、评测、选择等固定阶段，也不要求所有组件都能自修改。
+
+`methods.py` 提供版本化的 `rsisys-method/v1` 接入协议：
+
+```python
+from rsisys.methods import MethodCatalog, MethodDefinition
+
+catalog = MethodCatalog({
+    "my_method": MethodDefinition(
+        factory=make_method,  # make_method(config) -> ModuleAssembly
+        version="1",
+        validate_config=check_method_config,  # 可选，成功返回 None
+    ),
+})
+modules = catalog.select({"method": "my_method", "config": {}})
+# 使用已有 Application(config, modules=modules) / build_demo(config, modules=modules)
+```
+
+host 显式注册可信实现；选择文件只有 `method` 和 `config`，不包含导入路径、host 权限、
+预算或评测规则。选择时检查协议版本、JSON 参数和返回类型；构造运行时再检查公共端口。
+`make_method` 只生成装配描述，不能获取资源或启动任务；资源在返回的装配工厂中构造，
+研究从正式 step/run 开始。这是可信实现的接入约定，不是任意 Python 代码的隔离机制。
+
+| 方法提供的边界 | 最小协议 | 可自由组织的内部实现 |
+| --- | --- | --- |
+| Meta-agent harness | `step(objective, action_space)`、`pending()`、`receive_feedback(...)`，接到现有 `DecisionMakingLoop` | 策略、SDK、memory、状态、prompt、搜索与迭代方法 |
+| Lab | `describe()`、`execute(call)` | 数据、训练、推理、正式评测入口及内部编排 |
+| 可选兼容执行端点 | 现有 accept/advance/inspect/cancel/acknowledge 协议 | 旧 directive 工作流；仅 Lab 工具运行可使用默认空适配 |
+| 可选恢复与资源能力 | 显式 state ports，以及适用时的 shutdown/close | 实现自己的状态格式、任务重连和 owned 资源退出 |
+
+方法调用模型时仍需接入 host 的受控后端或用量观察；不自动截获任意 SDK 调用。
+内部组件可以共用已有接口，host 不递归读取实现私有字段。
+
+完整 CPU 示例通过相同启动入口选择 `whole`（整体实现）或 `composed`（内部组件组合）：
+
+```sh
+PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
+```
+
+将选择文件的 `method` 从 `whole` 改成 `composed` 即可切换。示例中的任务和调度均为
+合成 fixture，只证明接入与组合，不代表通用第三方算法已自动适配或真实研究有效。
+
 ## 按职责拆分
 
-组件槽位名由领域装配定义，下表是推荐拆分，不是核心强制的算法菜单。
+组件槽位名由方法或领域装配定义。下表列出可选的内部拆分；一个方法可以整体封装其中多项，
+不需要把每一行变成独立插件、独立模型或固定研究步骤。
 
 | 模块 | 负责什么 | 模型可修改范围由谁决定 |
 | --- | --- | --- |
@@ -21,9 +72,9 @@ RSISys 使用 `ModuleAssembly` 作为统一装配入口。可选的 `ComponentGr
 | 推理引擎 | 模型加载、服务或离线生成的执行适配 | host 选择实现及资源；不要求训练和推理使用同一个引擎 |
 | Meta-agent harness | 输入、记忆接线、工具调用、结果交付 | host 装配；可通过审核后的候选替换 |
 | Lab harness | Lab 内部训练/推理任务的编排和执行 | 可作为独立组件；不等于 meta-agent harness |
-| RSI 算法 | 如何提出、选择、调度和接受下一次改进 | 公共 `DecisionPolicy.decide(DecisionInput)` 可独立替换；复杂算法可组合其他组件 |
-| memory/归档 | 存储、检索、分页及显式修订 | 已有 `ResearchAssembly` 管理这些接线；它不等于整个 RSI 算法 |
-| 正式评测协议 | 数据身份、解析、计分、预算、提交配额 | host 固定；研究代码不能提交自己计算的正式分数 |
+| RSI 决策策略 | 如何提出、选择、调度和接受下一次改进 | 公共 `DecisionPolicy.decide(DecisionInput)` 是可选子模块；整套方法通过上述方法协议接入 |
+| memory/归档 | harness 内的存储、检索、分页及显式修订；原始归档由 host 保留 | 已有 `ResearchAssembly` 管理这些接线；它不等于整个 RSI 算法 |
+| 正式评测协议 | Lab 流程中的数据身份、解析、计分、预算、提交配额 | host 固定；研究代码不能提交自己计算的正式分数 |
 
 组件可被替换与模型有权修改组件是两个独立属性。host 可以固定训练引擎，允许模型探索
 训练和推理脚本；也可以另开实验，允许提出引擎或 harness 候选。正式评测规则始终单独管理。
@@ -128,12 +179,16 @@ PYTHONPATH=src python examples/modular_research.py configs/modular-demo.json
 
 ## 状态、恢复和来源
 
-`Application` 将图、组件版本、配置、依赖和根端口绑定保存到 `module_assembly.json`。
-恢复时只要这些身份变化，就在调用组件工厂之前拒绝；换组合应创建新运行。
+`Application` 将整套方法的协议、ID、版本和配置，以及可选组件图的版本、配置、依赖和
+根端口绑定保存到 `module_assembly.json`。原目录恢复时若这些身份变化，会在调用资源
+工厂之前拒绝；换方法或组合应创建新运行。方法选择时的纯配置 builder 可以先执行，
+不能在其中创建资源或提交任务。
 版本是 host 声明，不是自动计算的代码证明。实验仍需记录 canonical commit、代码和
 数据/权重 manifest；修改实现时必须更新版本，不能沿用旧标识隐藏变化。
 
 持久恢复需要显式 `state_factory` 或完整自定义 `recovery_contract`。
+整体方法不需要为内部结构虚构图槽位；由它的 harness/Lab 状态适配器覆盖真实内部状态，
+包括所用 memory 和未完成任务。host 自动加入 `method_manifest` 状态端口，不能覆盖。
 使用 `state_factory` 时，除了原有 decision、exploration、Lab、feedback/memory 端口，
 每个有状态组件都需 `component:<slot>` 状态端口。host 自动注册组件清单端口，以及
 明确声明 `stateless=True` 的空状态端口；不能用显式适配器覆盖它们。
@@ -143,6 +198,8 @@ stateless 是 host 对实现的承诺，不是自动证明；带计数器、随�
 状态端口保留原有 `state_id/capture/restore` 契约和配置检查；跨目录空闲快照还需
 `validate_snapshot()`。状态适配器必须处理内部依赖、未完成任务和产物身份，不能用
 空字典冒充恢复。运行中重新绑定已注册组件会在下一次 durable step 之前被阻止。
+新建的便携组件快照同时保存并校验装配清单；恢复时会在资源构造前拒绝方法或组件身份
+变化。历史没有清单的快照继续受原有显式状态契约约束，不能补称已通过该提前检查。
 
 ## 本次检查与验证
 
@@ -158,9 +215,13 @@ owned 清理重试、恢复/快照、版本/参数/接线变化拒绝和运行�
 这些检查覆盖组合机制。原生训推组合、具体 RSI 算法有效性、医疗分数和隔离评测服务
 仍分别需要相应验收，不能由组件接线通过推导。
 
-2026-11-06 本地 Python 3.12.14 验证：新增测试 15 项通过（包含上述 32 种组合）；
-完整 CPU 回归共 1825 项，44 项跳过，无失败。复现命令：
+首轮组件组合验证（`0da61f2`，Python 3.12.14）：15 项新增测试通过（包含上述 32 种组合）；
+完整 CPU 回归共 1825 项，44 项跳过，无失败。整套方法测试见 `tests/test_rsi_methods.py`，
+覆盖相同入口下整体/组合实现、host 权限、实际端口验证、恢复与快照方法身份。复现命令：
 
 ```sh
 PYTHONPATH=src:tests python -m unittest discover -s tests -t . -q
 ```
+
+本轮方法协议验证（2026-11-06，Python 3.12.14）：新增方法测试 11 项及便携快照组件身份
+测试 1 项通过；完整 CPU 回归 1837 项，44 项跳过，无失败。未启动 GPU 实验或模型服务。

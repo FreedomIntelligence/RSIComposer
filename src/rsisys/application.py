@@ -98,10 +98,11 @@ class Application:
         decision_factory, exploration_factory, lab_factory = (
             modules.decision_factory, modules.exploration_factory, modules.lab_factory)
         research = modules.research
-        module_layout = {name: getattr(modules, name) is not None for name in (
-            'decision_factory', 'exploration_factory', 'lab_factory', 'research', 'state_factory')}
+        module_layout = modules.configuration()
+        if modules.method_identity is not None:
+            if durable and recovery_contract is None and modules.state_factory is None:
+                raise TypeError('Methods require explicit state_factory or recovery_contract for durable=True')
         if modules.components is not None:
-            module_layout['components'] = modules.component_configuration()
             if durable and recovery_contract is None and modules.state_factory is None:
                 raise TypeError('Components require explicit state_factory or recovery_contract for durable=True')
         if research is not None:
@@ -118,7 +119,8 @@ class Application:
         self.config = config
         self.modules = modules
         self.custom_assembly = (decision_factory is not None or exploration_factory is not None
-                                or lab_factory is not None or modules.components is not None)
+                                or lab_factory is not None or modules.components is not None
+                                or modules.method_identity is not None)
         self.custom_exploration = exploration_factory is not None
         self.recovery = None
         self.assembly: AssemblyContext | None = None

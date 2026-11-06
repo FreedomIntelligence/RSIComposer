@@ -64,9 +64,10 @@
 <g id="assembly">
 <rect x="72" y="810" width="800" height="190" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="96" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">Host / 装配、准入与生命周期</text>
-<text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · assembly.py · research.py</text>
-<text x="96" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py · run_policy.py · recovery.py</text>
-<text x="96" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/component_state.py：必须注册 memory 状态</text>
+<text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · assembly.py · methods.py</text>
+<text x="96" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">components.py：内部组合可选；整体方法也可接入</text>
+<text x="96" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py · run_policy.py · recovery.py</text>
+<text x="96" y="971" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/component_state.py：必须注册 memory 状态</text>
 </g>
 <g id="recovery">
 <rect x="912" y="810" width="816" height="190" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>

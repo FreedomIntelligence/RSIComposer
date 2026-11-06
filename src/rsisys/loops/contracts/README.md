@@ -1,6 +1,11 @@
 # 共享协议
 
-统一口径见[系统术语与架构](../../../../docs/architecture.md)。默认只有一个 meta-agent、Lab 和 memory 模块；语义整理合入 meta-agent，旧类型名和持久化键保留兼容。
+统一口径见[系统术语与架构](../../../../docs/architecture.md)。Host 管理一个 meta-agent/harness 与 Lab；memory 是 harness 子模块，正式评测是 Lab 能力。语义整理合入 meta-agent，旧类型名和持久化键保留兼容。
+
+整套方法的 `rsisys-method/v1` 协议由 [methods.py](../../methods.py) 提供：可信
+`MethodFactory(config) -> ModuleAssembly` 可整体提供 harness/Lab，也可内部使用组件图。
+统一外部端口、版本、状态和生命周期；不强制将研究拆成独立阶段。接入与边界见
+[组件组合说明](../../../../docs/component-composition.md)。
 
 开放式执行端口见 [execution.py](execution.py)：Lab 提供 `describe/execute`，
 工具输入输出复用 [decision.py](decision.py) 的 OperationSpec/OperationCall 与

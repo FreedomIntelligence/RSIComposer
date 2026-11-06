@@ -6,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from rsisys.components import ComponentGraph, ComponentInstances
+from rsisys.methods import MethodIdentity
 from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.execution import LabExecution
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
@@ -63,6 +64,7 @@ class AssemblyContext:
     project_context: dict = field(default_factory=dict)
     lab_execution: LabExecution | None = None
     components: ComponentInstances | None = field(default=None, init=False)
+    method_identity: MethodIdentity | None = field(default=None, init=False)
     state_adapters: dict = field(default_factory=dict, init=False, repr=False)
     _cleanup: list[tuple[Callable[[], object], bool]] = field(default_factory=list, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
@@ -132,8 +134,11 @@ class ModuleAssembly:
     state_factory: Callable | None = None
     components: ComponentGraph | None = None
     component_bindings: Mapping = field(default_factory=dict)
+    method_identity: MethodIdentity | None = None
 
     def __post_init__(self):
+        if self.method_identity is not None and not isinstance(self.method_identity, MethodIdentity):
+            raise TypeError('method_identity must be a MethodIdentity')
         if self.components is not None and not isinstance(self.components, ComponentGraph):
             raise TypeError('components must be a ComponentGraph')
         bindings = dict(self.component_bindings)
@@ -206,6 +211,16 @@ class ModuleAssembly:
     def component_configuration(self):
         return {**self.components.configuration(), 'bindings': dict(self.component_bindings)}
 
+    def configuration(self):
+        """Stable assembly identity, shared by durable and portable restore."""
+        layout = {name: getattr(self, name) is not None for name in (
+            'decision_factory', 'exploration_factory', 'lab_factory', 'research', 'state_factory')}
+        if self.components is not None:
+            layout['components'] = self.component_configuration()
+        if self.method_identity is not None:
+            layout['method'] = self.method_identity.configuration()
+        return layout
+
 
 def module_assembly(modules=None, **legacy):
     """Accept old keyword APIs without silently overriding a module bundle."""
@@ -228,6 +243,7 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
     modules = module_assembly(modules)
     if context._closed:
         raise RuntimeError('Assembly is closed')
+    context.method_identity = modules.method_identity
     if modules.components is not None:
         if context.components is not None:
             raise RuntimeError('Components are already assembled')
@@ -237,10 +253,14 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
     # Resolve the current harness at close, including domain configuration before
     # the first step. Owned close retains its dependencies if cleanup must retry.
     def close_decision():
-        close = optional_method(decision.harness, 'close')
+        harness = getattr(decision, 'harness', None)
+        close = optional_method(harness, 'close')
         if close is not None and not (context.components is not None and context.components.owns(decision.harness)):
             close()
     context.add_owned_cleanup(close_decision)
+    if context.method_identity is not None:
+        from rsisys.methods import validate_method_ports
+        validate_method_ports(decision, exploration, context.lab_execution)
     if modules.research is not None:
         from rsisys.research import assemble_research
         options = dict(modules.feedback_options)
@@ -252,11 +272,15 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
     if modules.state_factory is not None:
         from rsisys.runtime.component_state import validate_adapters, assembly_bindings
         adapters = validate_adapters(modules.state_factory(context, decision, exploration))
+        automatic = {}
         if context.components is not None:
-            automatic = context.components.state_adapters()
-            if automatic.keys() & adapters.keys():
-                raise ValueError('Explicit state adapters cannot replace component manifest/stateless ports')
-            adapters = {**automatic, **adapters}
+            automatic.update(context.components.state_adapters())
+        if context.method_identity is not None:
+            from rsisys.components import _StaticState
+            automatic['method_manifest'] = _StaticState(context.method_identity.configuration())
+        if automatic.keys() & adapters.keys():
+            raise ValueError('Explicit state adapters cannot replace method/component manifest/stateless ports')
+        adapters = {**automatic, **adapters}
         context.state_adapters = adapters
         context._state_bindings = assembly_bindings(context, decision, exploration)
         context._state_port_bindings = dict(context.state_adapters)

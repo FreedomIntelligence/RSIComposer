@@ -320,6 +320,18 @@ class ComponentRecoveryTests(unittest.TestCase):
                 Application.resume(self.config.data_dir, modules=modules)
             self.assertEqual(len(self.created), count)
 
+    def test_portable_snapshot_checks_graph_identity_before_resource_factories(self):
+        modules = self.modules()
+        with Application(self.config, modules=modules, durable=True) as app:
+            snapshot = LocalSnapshotCapture(app).capture('graph identity')
+            directory = app.config.data_dir / 'snapshots' / snapshot.snapshot_id
+        count = len(self.created)
+        for changed in (self.modules(initial=7), self.modules(version='2'), self.modules(decision='other')):
+            with self.assertRaisesRegex(TypeError, 'original modules'):
+                restore_snapshot(directory, self.root / 'invalid', modules=changed)
+            self.assertEqual(len(self.created), count)
+            self.assertFalse((self.root / 'invalid').exists())
+
     def test_stateful_component_cannot_silently_restore_with_no_port(self):
         with self.assertRaisesRegex(TypeError, 'component:counter'):
             Application(self.config, modules=self.modules(missing=True), durable=True)

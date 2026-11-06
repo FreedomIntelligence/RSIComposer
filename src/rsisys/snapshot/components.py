@@ -51,6 +51,11 @@ def capture_components(app, store, contract, label):
                                                        'objective': app.config.objective}))
         atomic_write(staging / 'runtime.json', json_bytes({'python': list(sys.version_info[:2]),
                                                           'saved_at': time()}))
+        marker = app.config.data_dir / 'module_assembly.json'
+        if marker.exists():
+            if json.loads(marker.read_text()) != app.modules.configuration():
+                raise TypeError('Saved module assembly differs from the running assembly')
+            shutil.copyfile(marker, staging / marker.name)
         app.store.backup(staging / 'experience.sqlite3')
         (staging / 'artifacts').mkdir()
         for ref in app.artifacts.refs():
@@ -91,6 +96,12 @@ def restore_components(directory, target, manifest, *, run_id, modules, contract
     modules = module_assembly(modules)
     if contract is None and modules.state_factory is None:
         raise TypeError('Supply the original modules/state_factory or an explicit snapshot contract')
+    marker = directory / 'module_assembly.json'
+    if marker.exists():
+        if json.loads(marker.read_text()) != modules.configuration():
+            raise TypeError('Supply the original modules (module assembly) when restoring this snapshot')
+    elif modules.method_identity is not None:
+        raise TypeError('Snapshot has no method identity')
     contract = _contract(contract if contract is not None else AssemblyRecovery())
     state = decode(json.loads((directory / 'state.json').read_text()))
     if (not isinstance(state, dict) or set(state) != {'contract_id', 'components', 'runner', 'policy'}
@@ -127,4 +138,5 @@ def restore_components(directory, target, manifest, *, run_id, modules, contract
             raise TypeError('Component snapshot restore must return None')
         _validate(contract, app)
 
-    return publish_restore(directory, target, config, manifest, (), construct, restore)
+    files = (marker.name,) if marker.exists() else ()
+    return publish_restore(directory, target, config, manifest, files, construct, restore)

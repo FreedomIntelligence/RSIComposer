@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1510" viewBox="0 0 1800 1510" role="img" aria-labelledby="title desc">
-<title id="title">RSISys：一个 meta-agent、Lab 与 memory</title>
-<desc id="desc">同一个 meta-agent 选择行动、直接解释 Lab 原始反馈，并显式管理记忆。memory 模块只存储和检索。任务反馈保留到关闭，超长原文分页读取。看板面向人。</desc>
+<title id="title">RSISys：host、meta-agent/harness 与 Lab</title>
+<desc id="desc">同一个 meta-agent 选择行动、直接解释 Lab 原始反馈，并显式管理记忆。memory 是 harness 子模块；正式评测是 Lab 能力。任务反馈保留到关闭，超长原文分页读取。看板面向人。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -20,7 +20,7 @@
 </g>
 <g id="meta-agent">
 <rect x="72" y="320" width="760" height="350" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
-<text x="96" y="360" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">唯一 meta-agent</text>
+<text x="96" y="360" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">唯一 meta-agent / harness</text>
 <text x="96" y="394" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">选择研究动作、编写代码、执行与调试</text>
 <text x="96" y="423" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">直接查看原始 feedback 与真实任务状态</text>
 <text x="96" y="452" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">解释实验结果，管理当前任务的上下文</text>
@@ -47,7 +47,7 @@
 <text x="900" y="558" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="400" fill="#178164" text-anchor="middle">原始反馈</text>
 <g id="memory">
 <rect x="72" y="810" width="760" height="245" rx="16" fill="#F4EFFB" stroke="#7445C0" stroke-width="1.8"/>
-<text x="96" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">memory 模块 / 确定性服务</text>
+<text x="96" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#7445C0" text-anchor="start">Harness 子模块 / memory 服务</text>
 <text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory_search / read / write / delete</text>
 <text x="96" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">存储、文字检索、来源与修订记录</text>
 <text x="96" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">不运行模型抽取、embedding 或后台总结</text>
