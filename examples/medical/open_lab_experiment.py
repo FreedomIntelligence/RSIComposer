@@ -624,7 +624,7 @@ def run(args, *, method_catalog=None):
         if optimizer_config.get('reflect_interval_seconds') is not None:
             from .open_lab_reflection import PeriodicReflection
             reflection = PeriodicReflection(context.data_dir / 'reflection-state.json',
-                optimizer_config['reflect_interval_seconds'])
+                optimizer_config['reflect_interval_seconds'], started_at=optimizer_config.get('reflect_started_at'))
         def slot():
             return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab,
                                     reflection=reflection)
@@ -666,11 +666,15 @@ def run(args, *, method_catalog=None):
     native_labs = []
     def build_method(config):
         nonlocal optimizer_config
-        if (set(config) - {'reflect', 'reflect_interval_seconds', 'meta_model_updates'}
+        import math
+        if (set(config) - {'reflect', 'reflect_interval_seconds', 'reflect_started_at', 'meta_model_updates'}
                 or any(key in config and type(config[key]) is not bool for key in ('reflect', 'meta_model_updates'))
                 or ('reflect_interval_seconds' in config and (
                     type(config['reflect_interval_seconds']) is not int or config['reflect_interval_seconds'] < 60
-                    or config.get('reflect') is False))):
+                    or config.get('reflect') is False))
+                or ('reflect_started_at' in config and ('reflect_interval_seconds' not in config
+                    or type(config['reflect_started_at']) not in (int, float)
+                    or not math.isfinite(config['reflect_started_at']) or config['reflect_started_at'] < 0))):
             raise ValueError('open_lab optimizer config requires boolean reflect/meta_model_updates and '
                              'an optional reflect_interval_seconds >=60 with reflection enabled')
         optimizer_config = deepcopy(config)

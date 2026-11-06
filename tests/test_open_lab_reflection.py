@@ -102,6 +102,22 @@ class ReflectionTests(unittest.TestCase):
         self.assertTrue(receipt['activation_verified'])
         self.assertFalse(receipt['improvement_verified'])
 
+    def test_repair_attempt_preserves_original_cadence_and_reviews_once(self):
+        self.now = 10000
+        replacement = PeriodicReflection(self.root / 'new-attempt.json', 1800,
+            clock=lambda: self.now, started_at=1000)
+        replacement.bind(self.harness, self.registry)
+        self.assertTrue(replacement.snapshot()['due'])
+        self.read_all()
+        replacement.report(self.report)
+        self.assertEqual(replacement.snapshot()['next_due_at'], 11800)
+        self.assertEqual(len(replacement.capture()['reports']), 1)
+        with self.assertRaisesRegex(ValueError, 'recovered reflection start'):
+            PeriodicReflection(replacement.path, 1800, clock=lambda: self.now, started_at=1001)
+        for value in (-1, True, float('nan'), float('inf'), 10001):
+            with self.assertRaises(ValueError):
+                PeriodicReflection(self.root / 'invalid.json', 1800, clock=lambda: self.now, started_at=value)
+
     def test_due_turn_cannot_poll_or_report_without_complete_raw_archive_pages(self):
         operations = (OperationSpec('research_archive', 'Archive', {}),
             OperationSpec('lab_poll', 'Poll running Lab job', {}), *self.reflection.specifications())

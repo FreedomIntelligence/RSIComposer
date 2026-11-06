@@ -70,6 +70,12 @@ the review does not preempt an in-flight model call. Missed periods do not cause
 of catch-up requests. Durable state detects an interrupted receipt write rather
 than resetting the schedule.
 
+For an explicit code-changing repair attempt, the host may supply the original
+`reflect_started_at` epoch in the optimizer config. This retains the campaign's
+cadence and makes an already-due review run at the next decision boundary;
+missed windows still produce only one current review, followed by the next
+original half-hour boundary. It does not change the research deadline.
+
 ## Deployment and recovery
 
 Verify the actual target model revision, all weight shard digests, device UUIDs,

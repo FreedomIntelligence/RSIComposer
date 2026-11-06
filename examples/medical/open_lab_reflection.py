@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 
@@ -20,17 +21,22 @@ from rsisys.runtime.files import atomic_write, json_bytes
 class PeriodicReflection:
     state_id = 'medical-periodic-reflection/v1'
 
-    def __init__(self, path, interval_seconds, *, clock=time.time):
+    def __init__(self, path, interval_seconds, *, clock=time.time, started_at=None):
         if type(interval_seconds) is not int or interval_seconds < 60:
             raise ValueError('Reflection interval must be an integer of at least 60 seconds')
         self.path, self.interval, self.clock = Path(path), interval_seconds, clock
+        if started_at is not None and (type(started_at) not in (int, float)
+                or not math.isfinite(started_at) or not 0 <= started_at <= clock()):
+            raise ValueError('Reflection start must be a finite past host epoch')
         self.harness = self.registry = None
         if self.path.exists():
             self.state = json.loads(self.path.read_text())
             if self.state['interval_seconds'] != self.interval:
                 raise ValueError('Cannot change the recovered reflection interval')
+            if started_at is not None and self.state['started_at'] != started_at:
+                raise ValueError('Cannot change the recovered reflection start')
         else:
-            now = clock()
+            now = clock() if started_at is None else started_at
             self.state = {'interval_seconds': self.interval, 'started_at': now,
                           'next_due_at': now + self.interval, 'reports': []}
             self._save(self.state)
