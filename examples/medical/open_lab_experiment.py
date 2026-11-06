@@ -105,6 +105,9 @@ class RecordedBackend(AccountedModelBackend):
 
 class TimedOpenPolicy(ModelDecisionPolicy):
     """Host lifetime, open operations; no idle/finish decision envelopes."""
+    def bind_reflection(self, reflection):
+        self.scheduled_reflection = reflection
+
     def _context_inputs(self, context):
         return super()._context_inputs(replace(context, run_control={'stopping_owner': 'host'}))
 
@@ -124,6 +127,8 @@ class TimedOpenPolicy(ModelDecisionPolicy):
         decision = super()._parse_decision(response, context)
         if decision.kind not in ('invoke', 'explore'):
             raise ValueError('Select an available operation; the host owns stopping')
+        if getattr(self, 'scheduled_reflection', None) is not None:
+            self.scheduled_reflection.validate_decision(decision, context)
         return decision
 
 

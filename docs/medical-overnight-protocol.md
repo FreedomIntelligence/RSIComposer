@@ -50,19 +50,23 @@ The built-in optimizer accepts:
 {"method":"open_lab","config":{"reflect":true,"reflect_interval_seconds":1800,"meta_model_updates":false}}
 ```
 
-The same meta-agent sees a scheduled review in its live runtime context, reads
-its existing decision graph and raw archive, and may build and activate a
+At the first decision boundary after a review becomes due, the same meta-agent
+enters a scheduled reflection phase. Its schema offers archive reads until it
+has read every chunk of at least one native operation history record. It then
+may build and activate a
 `meta.prompts` or `meta.harness` candidate through versioned host ports. It then
 calls `reflect_report` with decision references, analysis and either `changed`
 or `no_change`. No separate summarizer/model is created. Explicit agent_memory,
 research tasks and accounting persist. No meta-agent model binding port is
 installed with `meta_model_updates=false`; Lab agent training remains available.
 
-Reflection receipts bind cited decision-record digests and the actual component
-version. They are self-reports, not proof that the cited evidence was read or
-that research performance improved. The monitor must check archive reads and
-subsequent behavior separately. Review hints refresh at decision boundaries;
-they do not preempt an in-flight model call. Missed periods do not cause a burst
+Reflection receipts bind cited decision-record digests, complete archive-read
+receipts and the actual component version. Every cited decision requires a raw
+operation history read in the current review window. Reading does not prove
+comprehension or improved research performance. After eight review operations,
+the next decision must report; a reasoned `no_change` is valid. Ordinary research
+operations resume after a valid report. Running Lab jobs continue independently;
+the review does not preempt an in-flight model call. Missed periods do not cause a burst
 of catch-up requests. Durable state detects an interrupted receipt write rather
 than resetting the schedule.
 

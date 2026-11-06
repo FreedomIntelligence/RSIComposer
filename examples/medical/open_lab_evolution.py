@@ -63,6 +63,9 @@ def bind_evolution(context, loop, lab, backend, model, *, config):
     lab.attach(wrapper)
     if lab.reflection is not None:
         lab.reflection.bind(dm, registry)
+        bind = getattr(policy, 'bind_reflection', None)
+        if callable(bind):
+            bind(lab.reflection)
         loop.reflection_state = lab.reflection
     loop.evolution_state = EvolutionState(registry)
     return registry
