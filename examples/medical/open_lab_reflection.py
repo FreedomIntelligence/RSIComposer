@@ -108,7 +108,11 @@ class PeriodicReflection:
                 'lab_read_file', 'lab_read_log', 'lab_write_file', 'system_status',
                 'system_register', 'system_activate'}
             if used >= 8:
-                allowed = {'reflect_report'}
+                # Archive access is also the compactor's guarantee that old
+                # receipts remain recoverable. Keep it while requiring a report;
+                # hiding it makes every historical failure irreducibly resident
+                # and prevents recovery from an invalid report citation.
+                allowed = {'research_archive', 'reflect_report'}
         operations = []
         for spec in context.operations:
             if spec.name not in allowed:

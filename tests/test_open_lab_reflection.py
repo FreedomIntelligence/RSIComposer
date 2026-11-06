@@ -10,13 +10,16 @@ from examples.medical.open_lab_reflection import PeriodicReflection
 from examples.medical.open_lab_evolution import bind_evolution, EvolutionLabSlot
 from examples.medical.open_lab_experiment import TimedOpenPolicy
 from rsisys.loops.contracts.candidate import SystemVersion
+from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse
 from rsisys.loops._memory import HistoryEntry
 from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.research import ResearchAgenda
 from rsisys.loops.decision_making.harness.state import DecisionContext
+from rsisys.loops.decision_making.harness.context import BasicContextCompactor, ContextBudgetError
 from rsisys.loops.decision_making.harness.tools.research import ResearchTools
 from rsisys.loops.decision_making.harness.policy.prompts import DecisionPrompts
 from rsisys.runtime.artifacts import InMemoryArtifactStore
@@ -176,6 +179,48 @@ class ReflectionTests(unittest.TestCase):
         loop.evolution_state.capture()
         loop.evolution_state.restore(loop.evolution_state.capture())
         self.assertEqual(registry.current.model_for('decision_maker'), model)
+
+    def test_report_retry_retains_archive_and_compacts_old_failures(self):
+        self.now = 2800
+        self.read_all()
+        results = []
+        for i in range(12):
+            result = OperationResult('Recorded program failure', (), False,
+                status=ExecutionStatus.FAILED, error=f'failure-{i} ' + 'original diagnostic ' * 800)
+            results.append(result)
+            self.memory.append(HistoryEntry(f'failed-{i}', 'operation', None, result.summary, False,
+                details={'operation': {'name': 'lab_poll', 'arguments': {}}, 'result': result.payload()}))
+        for i in range(8):
+            ident = f'review-{i}'
+            self.harness.state.decision_records[ident] = {
+                'objective': 'Scheduled harness reflection window 1. Read original evidence.'}
+            result = OperationResult('Invalid report citation', (), False,
+                status=ExecutionStatus.FAILED, error='Cite existing decision IDs')
+            results.append(result)
+            self.memory.append(HistoryEntry(ident + ':operation', 'operation', None, result.summary, False,
+                details={'decision_id': ident, 'operation': {'name': 'reflect_report', 'arguments': {}},
+                         'result': result.payload()}))
+        context = DecisionContext('Continue research', (),
+            (*(cap.definition.spec for cap in self.tools.describe()),
+             OperationSpec('lab_poll', 'Poll', {}), *self.reflection.specifications()),
+            tuple(results), history=self.memory.history())
+        original_history = deepcopy(self.memory.history())
+        due = self.reflection.project_context(context)
+        self.assertEqual({s.name for s in due.operations}, {'research_archive', 'reflect_report'})
+        config = dict(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
+                      max_target_tokens=40000)
+        measure = lambda view: len(json.dumps(asdict(view)).encode())
+        # The former report-only gate made recoverable failures irreducible.
+        report_only = replace(due, operations=tuple(s for s in due.operations if s.name == 'reflect_report'))
+        with self.assertRaises(ContextBudgetError):
+            BasicContextCompactor(**config).compact(report_only, measure=measure)
+        compactor = BasicContextCompactor(**config)
+        compacted = compactor.compact(due, measure=measure)
+        self.assertLessEqual(measure(compacted), 40000)
+        self.assertEqual(compacted.operation_results[-1].payload(), results[-1].payload())
+        self.assertEqual(self.memory.history(), original_history)
+        receipt = self.reflection.report(self.report).data
+        self.assertEqual(receipt['outcome'], 'no_change')
 
 
 if __name__ == '__main__':
