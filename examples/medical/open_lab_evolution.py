@@ -49,23 +49,30 @@ def bind_evolution(context, loop, lab, backend, model, *, config):
     def apply_model(raw):
         policy.backend = backend
         policy.update_model(ModelRef(**raw))
+    model_ports = ({'decision_maker': ActivationPort('accounted-ready-meta/v1', prepare_model,
+        lambda: asdict(dm.current_model()), apply_model)} if config.get('meta_model_updates', True) else {})
     activator = BindingSystemActivator(ports, context.artifacts,
-        models={'decision_maker': ActivationPort('accounted-ready-meta/v1', prepare_model,
-            lambda: asdict(dm.current_model()), apply_model)},
+        models=model_ports,
         path=context.data_dir / 'system-activation.json')
-    registry = SystemRegistry(SystemVersion('initial', {}, models={'decision_maker': model}), activator,
+    initial = (SystemVersion('initial', {}, models={'decision_maker': model}) if model_ports else
+               SystemVersion('initial', {}, model=model))
+    registry = SystemRegistry(initial, activator,
                               path=context.data_dir / 'system-registry.json')
     wrapper = EvolutionLab(lab.lab, registry, context.artifacts)
     # The action space/tools already point at the Lab facade made by lab_factory.
     lab.attach(wrapper)
+    if lab.reflection is not None:
+        lab.reflection.bind(dm, registry)
+        loop.reflection_state = lab.reflection
     loop.evolution_state = EvolutionState(registry)
     return registry
 
 
 class EvolutionLabSlot:
     """Stable assembly binding; attach host ports before admission, never later."""
-    def __init__(self, lab):
+    def __init__(self, lab, reflection=None):
         self.lab, self._evolution = lab, None
+        self.reflection = reflection
 
     def attach(self, evolution):
         if self._evolution is not None:
@@ -76,9 +83,13 @@ class EvolutionLabSlot:
         return getattr(self.lab, name)
 
     def describe(self):
-        return (*self.lab.describe(), *EvolutionLab.specifications())
+        return (*self.lab.describe(), *EvolutionLab.specifications(),
+                *(self.reflection.specifications() if self.reflection is not None else ()))
 
     def execute(self, call):
+        if call.name == 'reflect_report' and self.reflection is not None:
+            self.lab.require_admission()
+            return self.reflection.report(call.arguments)
         return self._evolution.execute(call) if self._evolution is not None else self.lab.execute(call)
 
     def runtime_context(self):
@@ -86,4 +97,6 @@ class EvolutionLabSlot:
         native = json.loads(self.lab.runtime_context())
         if self._evolution is not None:
             native['system'] = asdict(self._evolution.registry.current)
+        if self.reflection is not None:
+            native['reflection'] = self.reflection.snapshot()
         return json.dumps(native, ensure_ascii=False)

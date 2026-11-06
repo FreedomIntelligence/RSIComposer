@@ -304,6 +304,9 @@ def main(argv=None):
     parser.add_argument('--program-timeout', type=int, default=1800)
     parser.add_argument('--evaluation-campaign-id', help='Shared evaluation account across candidates and restarts')
     parser.add_argument('--evaluation-ledger', help='Host-owned persistent campaign ledger outside research workspaces')
+    parser.add_argument('--evaluation-score-protocol', default='exact-option-letter-v1',
+                        choices=('exact-option-letter-v1', 'medxpertqa-official-zero-shot-ao-v1'),
+                        help='Host-fixed scoring/extraction rules; unchanged across candidate submissions')
     parser.add_argument('--closed-evaluator-config', help='Operator-only isolated gateway transport config; never a closed dataset path')
     parser.add_argument('--revision', default='unreported')
     parser.add_argument('--run-id')
@@ -428,6 +431,8 @@ def run(args, *, method_catalog=None):
     # task.json is a public data contract. Never copy operator-only fields or
     # closed dataset paths from a combined input manifest into the workspace.
     task = {'train': task['train'], 'development': task['development']}
+    evaluation_protocol = replace(EVALUATION_PROTOCOL,
+        score_protocol=getattr(args, 'evaluation_score_protocol', EVALUATION_PROTOCOL.score_protocol))
     closed_gateway = (json.loads(Path(args.closed_evaluator_config).read_text())
                       if args.closed_evaluator_config else None)
     # Do not discover or read any sibling heldout/private paths.
@@ -512,8 +517,8 @@ def run(args, *, method_catalog=None):
             'interface': 'infer(request) or infer_batch(requests); use request.render(tokenizer,...) '
                          'for local inference or request.chat_messages() in the actual HTTP request',
             'scope': 'Optional adapter for candidate inference; candidate scripts may also implement the JSON protocol directly'},
-        'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': PROTOCOL,
-            'owner': 'medical_lab', 'evaluation_protocol': asdict(EVALUATION_PROTOCOL), 'scoring_editable': False,
+        'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': evaluation_protocol.score_protocol,
+            'owner': 'medical_lab', 'evaluation_protocol': asdict(evaluation_protocol), 'scoring_editable': False,
             'base_model_paths': [entry['model_path'] for entry in available_models],
             'submission': 'key, candidate_id, split (public|closed), submission_path (workspace directory). '
                 'submission.json selects entrypoint, registered base_model_path, and optional checkpoint_path OR adapter_path.',
@@ -525,7 +530,7 @@ def run(args, *, method_catalog=None):
                 'execution': 'Installed Python runs entrypoint with the frozen bundle as cwd. Read submission.json for paths.',
                 'stdin': '{protocol, items:[{benchmark_id,id,messages:[{role,content},...]}]}; '
                     'complete question/options are in user messages, without gold',
-                'stdout': '{predictions:[{benchmark_id,id,text}]} with exactly one final option letter per item; '
+                'stdout': '{predictions:[{benchmark_id,id,text}]} with one raw answer per item; '
                     'send public diagnostics to stderr. The supplied system prompt may be adapted by your inference code.'},
             'closed': {'enabled': closed_gateway is not None, 'interval_seconds': 1800,
                 'feedback': 'aggregate_scores_and_status_only', 'isolation_owner': 'operator_gateway'},
@@ -543,7 +548,7 @@ def run(args, *, method_catalog=None):
             'The host supplies the meta-agent service; deployment of Lab inference is your choice. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
             'Formal evaluation uses medical_evaluate with a frozen inference script plus checkpoint/adapter or registered base. '
-            'You own inference, tokenizer, prompting and decoding. The host owns data, strict final-letter scoring, '
+            'You own inference, tokenizer, prompting and decoding. The host owns data, the selected fixed scoring/extraction protocol, '
             'resource/time limits and submission quota. Closed evaluation returns only aggregates/status and accepts '
             'one submission per 1800 seconds across the campaign; accepted failures consume the slot. '
             'This contract does not constrain training or query programs. '
@@ -589,6 +594,7 @@ def run(args, *, method_catalog=None):
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = ProtocolMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
+            score_protocol=evaluation_protocol.score_protocol,
             max_jobs=args.max_jobs, max_parallel=args.max_parallel, python=args.python,
             evaluation_root=context.data_dir / 'fixed-evaluations',
             base_model_paths=[entry['model_path'] for entry in available_models],
@@ -609,8 +615,16 @@ def run(args, *, method_catalog=None):
                 for group in task['development']])
         project['fixed_evaluation']['protocol_sha256'] = lab.protocol_sha256
         native_labs.append(lab)
+        reflection = None
+        if optimizer_config.get('reflect_interval_seconds') is not None:
+            from .open_lab_reflection import PeriodicReflection
+            reflection = PeriodicReflection(context.data_dir / 'reflection-state.json',
+                optimizer_config['reflect_interval_seconds'])
+        def slot():
+            return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab,
+                                    reflection=reflection)
         if args.resume:
-            return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab)
+            return slot()
         # Seed only new workspaces. Restore never overwrites edited code/data.
         (lab.workspace / 'data').mkdir()
         for name in relative_files:
@@ -625,7 +639,7 @@ def run(args, *, method_catalog=None):
         else:
             (lab.workspace / 'candidate.py').write_text(EXTERNAL_CANDIDATE if args.lab_endpoint else CANDIDATE)
             write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
-        return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab)
+        return slot()
     def make_decision(context, exploration):
         from rsisys.loops.decision_making.action_space.access import ActionPermissions
         context.action_permissions = ActionPermissions.from_dict(getattr(args, 'action_permissions', {}))
@@ -647,8 +661,13 @@ def run(args, *, method_catalog=None):
     native_labs = []
     def build_method(config):
         nonlocal optimizer_config
-        if set(config) - {'reflect'} or ('reflect' in config and type(config['reflect']) is not bool):
-            raise ValueError('open_lab optimizer config supports optional boolean reflect')
+        if (set(config) - {'reflect', 'reflect_interval_seconds', 'meta_model_updates'}
+                or any(key in config and type(config[key]) is not bool for key in ('reflect', 'meta_model_updates'))
+                or ('reflect_interval_seconds' in config and (
+                    type(config['reflect_interval_seconds']) is not int or config['reflect_interval_seconds'] < 60
+                    or config.get('reflect') is False))):
+            raise ValueError('open_lab optimizer config requires boolean reflect/meta_model_updates and '
+                             'an optional reflect_interval_seconds >=60 with reflection enabled')
         optimizer_config = deepcopy(config)
         return ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
         model_session=model_session,

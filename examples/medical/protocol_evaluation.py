@@ -30,9 +30,11 @@ from rsisys.runtime.runtime_identity import inference_policy, runtime_identity
 try:
     from .fixed_evaluation import FixedMedicalLab, fixed_inputs, score_predictions, run_candidate
     from .checkpoint_evaluation import digest, file_digest
+    from .official_protocol import scoring_functions
 except ImportError:
     from fixed_evaluation import FixedMedicalLab, fixed_inputs, score_predictions, run_candidate
     from checkpoint_evaluation import digest, file_digest
+    from official_protocol import scoring_functions
 
 
 PROTOCOL = EvaluationProtocol()
@@ -42,7 +44,8 @@ BUNDLE_SCHEMA = 'candidate-inference-bundle-v1'
 def source_identity():
     root = Path(__file__).resolve().parent
     result = {name: file_digest(root / name)['sha256'] for name in (
-        'protocol_evaluation.py', 'fixed_evaluation.py', 'candidate_adapter.py', 'checkpoint_evaluation.py')}
+        'protocol_evaluation.py', 'fixed_evaluation.py', 'candidate_adapter.py', 'checkpoint_evaluation.py',
+        'official_protocol.py', 'closed_gateway.py')}
     for name in ('loops/contracts/evaluation.py', 'runtime/evaluation.py', 'runtime/isolation.py',
                  'runtime/runtime_identity.py'):
         result['rsisys/' + name] = file_digest(root.parents[1] / 'src/rsisys' / name)['sha256']
@@ -145,6 +148,8 @@ def safe_closed_result(raw, request, gateway):
 def evaluate(config):
     if source_identity() != config['source_sha256']:
         raise ValueError('Host evaluation protocol source changed')
+    protocol = EvaluationProtocol(**config.get('evaluation_protocol', asdict(PROTOCOL)))
+    fixed_inputs, score_predictions = scoring_functions(protocol.score_protocol)
     bundle = Path(config['bundle_path'])
     if bundle_manifest(bundle) != config['submission']['files']:
         raise ValueError('Frozen submission changed')
@@ -152,7 +157,7 @@ def evaluate(config):
         gateway = config['closed_gateway']
         request = {key: config[key] for key in ('protocol_sha256', 'campaign_id', 'candidate_id', 'submission_id')}
         request.update(submission_sha256=config['submission']['sha256'], bundle_path=str(bundle),
-                       submission=config['submission'], protocol=asdict(PROTOCOL),
+                       submission=config['submission'], protocol=asdict(protocol),
                        runtime_sha256=gateway['runtime_sha256'],
                        execution_budget=config['execution_budget'])
         # The configured command is a transport to an isolated service, not a
@@ -178,7 +183,7 @@ def evaluate(config):
             raise ValueError('Installed inference runtime changed')
         isolation = ProcessIsolation(policy)
         predictions = run_candidate([config['python'], submission['entrypoint']], payload,
-                                    execution=(isolation, bundle))
+                                    execution=(isolation, bundle), timeout_seconds=max(1, config['timeout_seconds'] - 5))
         metrics, scored = score_predictions(predictions, gold)
         if not verify_base():
             raise ValueError('Registered base changed during inference')
@@ -190,7 +195,7 @@ def evaluate(config):
     if bundle_manifest(bundle) != config['submission']['files']:
         raise ValueError('Frozen submission changed during inference; no score')
     record.update({key: config[key] for key in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256')})
-    record.update(protocol=PROTOCOL.score_protocol, evaluation_protocol=asdict(PROTOCOL),
+    record.update(protocol=protocol.score_protocol, evaluation_protocol=asdict(protocol),
                   submission_sha256=config['submission']['sha256'],
                   execution_budget=config['execution_budget'], adopted=False)
     atomic_write(Path(config['output']), json_bytes(record))
@@ -213,7 +218,7 @@ def run_candidate_gateway(argv, request, timeout):
 
 class ProtocolMedicalLab(FixedMedicalLab):
     def __init__(self, *args, base_model_paths, campaign_id, ledger_path, closed_gateway=None,
-                 resource_policy=None, candidate_execution=None, **kwargs):
+                 resource_policy=None, candidate_execution=None, score_protocol=PROTOCOL.score_protocol, **kwargs):
         super().__init__(*args, **kwargs)
         self.protocol_runner = Path(__file__).resolve()
         self.closed_gateway = deepcopy(closed_gateway)
@@ -233,13 +238,15 @@ class ProtocolMedicalLab(FixedMedicalLab):
                 if not isinstance(name, str) or not name or not isinstance(sha, str) or len(sha) != 64:
                     raise ValueError('Invalid closed dataset identity')
                 int(sha, 16)
-        self.ledger = EvaluationLedger(ledger_path, campaign_id)
+        scoring_functions(score_protocol)
+        self.evaluation_protocol = replace(PROTOCOL, score_protocol=score_protocol)
+        self.ledger = EvaluationLedger(ledger_path, campaign_id, protocol=self.evaluation_protocol)
         self.candidate_execution = candidate_execution or inference_policy(self.evaluation_python)
         if not isinstance(self.candidate_execution, ExecutionPolicy):
             raise TypeError('candidate_execution must be a host ExecutionPolicy')
         ProcessIsolation(self.candidate_execution).check()
         self.installed_runtime = runtime_identity(self.evaluation_python, self.candidate_execution)
-        self.formal_configuration = {'evaluation_protocol': asdict(PROTOCOL),
+        self.formal_configuration = {'evaluation_protocol': asdict(self.evaluation_protocol),
             'source_sha256': source_identity(), 'campaign_id': campaign_id,
             'ledger_path': str(Path(ledger_path).resolve()),
             'base_model_paths': list(dict.fromkeys(str(Path(p).resolve()) for p in base_model_paths)),
@@ -252,7 +259,7 @@ class ProtocolMedicalLab(FixedMedicalLab):
             raise ValueError('At least one registered base is required')
         # Inference code is part of the candidate, so it is deliberately absent
         # from the common comparison protocol identity.
-        self.protocol_sha256 = digest({'protocol': asdict(PROTOCOL), 'source': source_identity(),
+        self.protocol_sha256 = digest({'protocol': asdict(self.evaluation_protocol), 'source': source_identity(),
                                       'runtime_sha256': self.installed_runtime['sha256'],
                                       'closed_runtime_sha256': (closed_gateway or {}).get('runtime_sha256'),
                                       'execution_budget': self.formal_configuration['execution_budget']})
@@ -338,6 +345,7 @@ class ProtocolMedicalLab(FixedMedicalLab):
         # inventory is separately bound to submission_sha256.
         config = {'candidate_id': args['candidate_id'], 'split': args['split'],
             'protocol_sha256': self.protocol_sha256, 'source_sha256': source_identity(),
+            'evaluation_protocol': asdict(self.evaluation_protocol),
             'campaign_id': self.ledger.campaign_id, 'submission_id': args['key'],
             'submission': submission, 'bundle_path': str(destination), 'python': self.evaluation_python,
             'execution_budget': self.formal_configuration['execution_budget'],
@@ -367,7 +375,8 @@ class ProtocolMedicalLab(FixedMedicalLab):
             raw = Path(config['output']).read_bytes()
             record = json.loads(raw)
             if (any(record[k] != config[k] for k in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256'))
-                    or record['evaluation_protocol'] != asdict(PROTOCOL) or record['protocol'] != PROTOCOL.score_protocol
+                    or record['evaluation_protocol'] != asdict(self.evaluation_protocol)
+                    or record['protocol'] != self.evaluation_protocol.score_protocol
                     or record['execution_budget'] != config['execution_budget']
                     or record['submission_sha256'] != config['submission']['sha256']
                     or record['adopted'] is not False):
@@ -375,6 +384,7 @@ class ProtocolMedicalLab(FixedMedicalLab):
             if config['split'] == 'public':
                 if record['runtime_sha256'] != config['runtime_identity']['sha256']:
                     raise ValueError('Inference runtime receipt identity differs')
+                fixed_inputs, score_predictions = scoring_functions(self.evaluation_protocol.score_protocol)
                 _, gold, datasets = fixed_inputs(self.evaluation_groups)
                 metrics, scored = score_predictions([{k: v[k] for k in ('benchmark_id', 'id', 'text')}
                                                      for v in record['predictions']], gold)

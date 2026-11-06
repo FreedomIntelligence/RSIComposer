@@ -92,7 +92,7 @@ def diagnostic_inputs():
 
 
 def run_candidate(argv, payload, *, require_input_contract=False, return_contract=False,
-                  execution=None):
+                  execution=None, timeout_seconds=None, stderr=None):
     # Legacy exploratory callers retain their explicit trusted-local behavior.
     # Formal evaluation supplies a host-selected isolation boundary and cwd.
     options = {}
@@ -104,7 +104,7 @@ def run_candidate(argv, payload, *, require_input_contract=False, return_contrac
             argv, env = isolation.command(workspace, argv, {'PATH': '/usr/bin:/bin',
                 'LANG': 'C.UTF-8', 'PYTHONUNBUFFERED': '1'}, writable=False, scratch=scratch.name)
             options = {'cwd': workspace, 'env': env}
-        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, **options)
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, **options)
     except BaseException:
         if scratch is not None:
             scratch.cleanup()
@@ -118,13 +118,25 @@ def run_candidate(argv, payload, *, require_input_contract=False, return_contrac
         finally:
             process.stdin.close()
     writer = threading.Thread(target=feed, daemon=True)
+    timed_out = threading.Event()
+    def expire():
+        timed_out.set()
+        try:
+            process.kill()  # Only this exact Popen-owned isolation supervisor.
+        except ProcessLookupError:
+            pass
+    timer = threading.Timer(timeout_seconds, expire) if timeout_seconds is not None else None
     try:
+        if timer is not None:
+            timer.start()
         writer.start()
         output = process.stdout.read(MAX_PREDICTION_BYTES + 1)
         if len(output) > MAX_PREDICTION_BYTES:
             raise ValueError('Candidate prediction output exceeds fixed byte limit')
         code = process.wait()
         writer.join(timeout=5)
+        if timed_out.is_set():
+            raise TimeoutError('Candidate inference exceeded host timeout')
         if writer.is_alive() or errors or code != 0:
             raise ValueError('Candidate failed to consume inputs or return predictions successfully')
         result = json.loads(output)
@@ -139,6 +151,8 @@ def run_candidate(argv, payload, *, require_input_contract=False, return_contrac
                 'adapter and request.render(...) or request.chat_messages(). Run medical_diagnose first')
         return (result['predictions'], contract) if return_contract else result['predictions']
     finally:
+        if timer is not None:
+            timer.cancel()
         if process.poll() is None:
             process.kill()
         process.wait()
