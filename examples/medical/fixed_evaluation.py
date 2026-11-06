@@ -1,8 +1,11 @@
-"""Host-owned medical evaluation; candidate programs remain freely editable.
+"""Legacy program-driven medical evaluation and shared fixed scoring utilities.
 
 The candidate consumes JSON on stdin and returns predictions on stdout. The
 evaluator owns data selection, prompts, gold matching and aggregate metrics.
 This is a trusted local execution contract, not an OS security boundary.
+New Open Lab runs use protocol_evaluation.ProtocolMedicalLab with frozen bundles,
+split-specific feedback and durable campaign admission. This legacy API remains
+for historical receipt recovery and explicit exploratory input debugging.
 """
 from copy import deepcopy
 from dataclasses import replace

@@ -129,6 +129,15 @@ class OpenLabMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.update()['evaluations']), 1)
         self.assertEqual(self.monitor.data['evaluations'][0]['record_sha256'], 'a' * 64)
 
+    def test_checkpoint_profile_and_raw_output_diagnostics_remain_public(self):
+        fixed = self.fixed(profile={'id': 'medical-checkpoint-nonthinking-v1'},
+            profile_sha256='c' * 64, adapter_identity={'sha256': 'd' * 64},
+            diagnostics={'invalid_answers': 3, 'output_limit_hits': 4})
+        self.receipt('checkpoint', data={'job_id': 'j', 'fixed_evaluation': fixed})
+        row = self.update()['evaluations'][0]
+        for name in ('profile', 'profile_sha256', 'adapter_identity', 'diagnostics'):
+            self.assertEqual(row[name], fixed[name])
+
     def test_only_explicit_evaluation_role_marks_baseline(self):
         self.receipt('baseline-named', data={'job_id': 'baseline-job',
             'fixed_evaluation': self.fixed(candidate_id='baseline.py')})

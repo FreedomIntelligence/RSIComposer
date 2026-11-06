@@ -151,7 +151,9 @@ class OpenLabMonitor:
         if decision_id is not None:
             row.setdefault('decision_id', decision_id)
         for name in ('protocol', 'record_sha256', 'dataset_sha256', 'evaluator_sha256',
-                     'adopted', 'weight_identity', 'role', 'verified'):
+                     'adopted', 'weight_identity', 'adapter_identity', 'profile', 'profile_sha256',
+                     'diagnostics', 'role', 'verified', 'split', 'evaluation_protocol',
+                     'protocol_sha256', 'submission_sha256'):
             if name in fixed:
                 row[name] = deepcopy(fixed[name])
         self.evaluations[key] = row

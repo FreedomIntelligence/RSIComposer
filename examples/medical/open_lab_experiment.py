@@ -20,7 +20,8 @@ import traceback
 
 from rsisys.adapters.local_lab_memory import LocalLabMemoryAdmission
 from rsisys.adapters.local_lab_feedback import RoutedLab, ContextOrMemoryAdmission, ImmediateFeedbackWindow
-from .fixed_evaluation import FixedMedicalLab, PROTOCOL
+from .fixed_evaluation import PROTOCOL
+from .protocol_evaluation import ProtocolMedicalLab, PROTOCOL as EVALUATION_PROTOCOL, BUNDLE_SCHEMA
 from rsisys.adapters.serving import VLLMBackend
 from rsisys.application import Application, ApplicationConfig
 from rsisys.assembly import ModuleAssembly, build_default_decision
@@ -264,17 +265,17 @@ adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
 '''
 
-CANDIDATE = r'''"""Implement infer(request); the host adapter owns protocol/IDs/input receipts.
+CANDIDATE = r'''"""Exploratory inference example, not a formal evaluation implementation.
 
 Read lab_config.json for model paths, installed Python and allocated devices.
 Choose direct inference or deploy your own service using Lab-owned programs.
 For a persistent service, submit it with lab_start and collect its logs; run
-medical_evaluate as a separate job, then stop the service with lab_cancel.
+your own exploratory measurement, then stop the service with lab_cancel.
 Use request.render(tokenizer, enable_thinking=False) for local inference; tokenize
 that returned text. For a service use request.chat_messages() as its messages.
 Both preserve the user question/options. Never extract messages[0]: it is system.
 Optional infer_batch(requests) may prepare requests then generate them together.
-Run medical_diagnose with the SAME argv before spending a full evaluation.
+Formal medical_evaluate accepts a frozen submission bundle containing inference code and weights.
 There is no predeployed candidate endpoint and no answer/scoring implementation.
 """
 ''' + CANDIDATE_ADAPTER + r'''
@@ -289,7 +290,7 @@ if __name__ == '__main__':
 '''
 
 
-EXTERNAL_CANDIDATE = r'''"""Explicit external-service example; shared standard input adapter."""
+EXTERNAL_CANDIDATE = r'''"""Exploratory external-service example; not used by formal evaluation."""
 ''' + CANDIDATE_ADAPTER + r'''
 from urllib.request import Request, urlopen
 def infer(request):
@@ -306,19 +307,52 @@ if __name__ == '__main__':
 
 
 
+RESOURCE_POOL_README = '''# Allocated research workspace
+
+Read lab_config.json for the assigned devices, installed Python, available model
+inventories and fixed data paths. You choose the research programs and device
+layout. Nothing is running initially and no candidate implementation is selected.
+
+Use lab_start with your own argv for environment queries, training, checkpoint
+loading, inference, evaluation experiments or other research programs. One program
+may use multiple assigned devices. You may query status/logs immediately, or use
+the optional bounded lab_poll wait. Collect terminal results with lab_result.
+
+Training code, optimizer choices, checkpoints and any service deployment belong
+to you. A service is optional and occupies a program slot. Use only assigned
+devices and the installed environment; preserve external services.
+
+For formal medical scores, medical_evaluate accepts a frozen submission directory
+with submission.json, your inference Python, and checkpoint/adapter files or a
+registered base reference. You own loading, prompting and decoding. The host owns
+data, exact-letter scoring, resources and submission admission. Public evaluation
+supports debugging. Closed evaluation requires an isolated gateway, returns only
+aggregate scores/status and accepts at most one submission per 1800 seconds
+across the campaign. Read fixed_evaluation in lab_config.json. Release other
+programs before evaluation. Compare matching protocol and dataset hashes.
+Unverified stdout is exploratory. Retain real optimizer, loss, weight,
+loading and evaluation evidence before claiming training or improvement.
+'''
+
+
 def main(argv=None):
     from .open_lab_recovery import controller_lock, example_identity, inspect_recovery
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--task')
-    parser.add_argument('--model-path')
+    parser.add_argument('--model-path', help='Installed meta-agent/tokenizer weights; does not select a resource-pool candidate')
     parser.add_argument('--python', help='Installed accelerator/Transformers Python for generated programs')
     parser.add_argument('--endpoint')
     parser.add_argument('--model-id', default='rsisys-meta-qwen35-9b')
     parser.add_argument('--model-revision', default='lion-local-qwen35-9b')
-    parser.add_argument('--lab-endpoint', help='Optional external read-only candidate endpoint; default: meta-agent deploys its own inference')
+    parser.add_argument('--lab-endpoint', help='Optional external read-only endpoint for exploratory inference only')
     parser.add_argument('--lab-model-id', help='Explicit served model alias required with --lab-endpoint')
-    parser.add_argument('--lab-model-path', help='Candidate base weights; defaults to the decision weights')
+    parser.add_argument('--lab-model-path', help='Installed research weights to advertise; selects a base only in candidate_scaffold mode')
+    parser.add_argument('--available-model-path', action='append', default=[],
+                        help='Additional installed weights available for the meta-agent to choose')
+    parser.add_argument('--workspace-mode', choices=('resource_pool', 'candidate_scaffold'),
+                        default='resource_pool',
+                        help='Default: an empty programmable resource pool; candidate_scaffold explicitly seeds an inference example')
     parser.add_argument('--device-type', choices=('cuda', 'npu'), default='cuda')
     parser.add_argument('--resource-allocation', type=json.loads,
                         help='Host JSON declaration: physical_devices, logical_devices, memory_availability, external_read_only_services')
@@ -332,6 +366,9 @@ def main(argv=None):
     parser.add_argument('--max-parallel', type=int, default=2,
                         help='Host program slots, including any persistent Lab-owned inference services')
     parser.add_argument('--program-timeout', type=int, default=1800)
+    parser.add_argument('--evaluation-campaign-id', help='Shared evaluation account across candidates and restarts')
+    parser.add_argument('--evaluation-ledger', help='Host-owned persistent campaign ledger outside research workspaces')
+    parser.add_argument('--closed-evaluator-config', help='Operator-only isolated gateway transport config; never a closed dataset path')
     parser.add_argument('--revision', default='unreported')
     parser.add_argument('--run-id')
     parser.add_argument('--resume', action='store_true', help='Resume the same durable run using its saved configuration')
@@ -375,10 +412,15 @@ def main(argv=None):
                 parser.error('Host limits must be positive')
             if args.lab_endpoint and not args.lab_model_id:
                 parser.error('--lab-endpoint requires an explicit --lab-model-id')
+            if args.closed_evaluator_config and (not args.evaluation_campaign_id or not args.evaluation_ledger):
+                parser.error('Closed evaluation requires --evaluation-campaign-id and --evaluation-ledger')
+            if (args.closed_evaluator_config and Path(args.evaluation_ledger).resolve().is_relative_to(root)):
+                parser.error('Closed evaluation ledger must be shared outside the individual run directory')
             args.root = str(root)
-            for name in ('task', 'model_path', 'python', 'lab_model_path'):
+            for name in ('task', 'model_path', 'python', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config'):
                 if getattr(args, name):
                     setattr(args, name, str(Path(getattr(args, name)).resolve()))
+            args.available_model_path = [str(Path(path).resolve()) for path in args.available_model_path]
             # Fix the wall deadline once, including setup and future downtime.
             args.deadline_epoch = min(args.deadline_epoch or float('inf'), time.time() + args.seconds)
             saved_args = {k: v for k, v in vars(args).items() if k not in ('resume', 'inspect_recovery')}
@@ -437,10 +479,17 @@ def run(args):
         max_target_tokens=40000, target_increment_tokens=12000)
     prompts = DecisionPrompts({
         'control': 'The host owns stopping. Select and execute your next research action. Do not use wait or finish.',
-        'scheduling': 'Use lab_poll for actual running programs, then lab_result to deliver terminal evidence. ',
+        'scheduling': 'Use lab_poll to query running programs immediately, or set wait_seconds '
+            'to wait within its advertised limit. You may also inspect logs or do other research work. '
+            'Use lab_result to collect terminal evidence. ',
     })
     task_path = Path(args.task).resolve()
     task = json.loads(task_path.read_text())
+    # task.json is a public data contract. Never copy operator-only fields or
+    # closed dataset paths from a combined input manifest into the workspace.
+    task = {'train': task['train'], 'development': task['development']}
+    closed_gateway = (json.loads(Path(args.closed_evaluator_config).read_text())
+                      if args.closed_evaluator_config else None)
     # Do not discover or read any sibling heldout/private paths.
     relative_files = [task['train'], *(group['path'] for group in task['development'])]
     data_manifest = []
@@ -468,7 +517,12 @@ def run(args):
             'binding': 'local_config_and_weight_inventory; full_weight_digest_not_verified'}
     weight_identity = inventory(args.model_path)
     actor_weight_identity = inventory(args.lab_model_path or args.model_path)
-    persist_identity('model-inventory.json', {'decision': weight_identity, 'actor': actor_weight_identity})
+    resource_pool = args.workspace_mode == 'resource_pool' and not args.lab_endpoint
+    available_models = [inventory(path) for path in dict.fromkeys(
+        [args.lab_model_path or args.model_path, *args.available_model_path])]
+    persist_identity('model-inventory.json', {'decision': weight_identity,
+        'actor': None if resource_pool else actor_weight_identity,
+        'available_models': available_models})
     device_keys = ('CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER') if args.device_type == 'cuda' else (
         'ASCEND_RT_VISIBLE_DEVICES', 'ASCEND_HOME_PATH', 'ASCEND_OPP_PATH', 'ASCEND_AICPU_PATH')
     environment = {k: os.environ[k] for k in (*device_keys, 'LD_LIBRARY_PATH', 'TORCH_DEVICE_BACKEND_AUTOLOAD')
@@ -487,7 +541,7 @@ def run(args):
             'initial_service': 'external' if args.lab_endpoint else 'none',
             'program_slots': args.max_parallel,
             'deployment': 'Choose local inference or deploy services with lab_start on assigned devices. '
-                'A persistent service occupies a program slot; leave another slot for medical_evaluate. '
+                'A persistent service occupies a program slot. Release devices before formal evaluation. '
                 'Readiness and configuration are your responsibility. Stop owned services with lab_cancel; '
                 'pause, timeout and host shutdown clean up their process groups. '
                 'A stopped service is not automatically relaunched on recovery.'},
@@ -498,13 +552,31 @@ def run(args):
         'feedback_routing': args.feedback_routing,
         'candidate_input_adapter': {'path': str(Path(__file__).with_name('candidate_adapter.py').resolve()),
             'sha256': hashlib.sha256(Path(__file__).with_name('candidate_adapter.py').read_bytes()).hexdigest(),
-            'contract': 'medical-input-adapter-v1', 'required': True,
+            'contract': 'medical-input-adapter-v1', 'required': False,
             'interface': 'infer(request) or infer_batch(requests); use request.render(tokenizer,...) '
                          'for local inference or request.chat_messages() in the actual HTTP request',
-            'diagnose_operation': 'medical_diagnose',
-            'scope': 'Input adapter boundary only; backend consumption and weights are not attested'},
+            'scope': 'Optional adapter for candidate inference; candidate scripts may also implement the JSON protocol directly'},
         'fixed_evaluation': {'operation': 'medical_evaluate', 'protocol': PROTOCOL,
-                             'owner': 'medical_lab', 'scoring_editable': False},
+            'owner': 'medical_lab', 'evaluation_protocol': asdict(EVALUATION_PROTOCOL), 'scoring_editable': False,
+            'base_model_paths': [entry['model_path'] for entry in available_models],
+            'submission': 'key, candidate_id, split (public|closed), submission_path (workspace directory). '
+                'submission.json selects entrypoint, registered base_model_path, and optional checkpoint_path OR adapter_path.',
+            'bundle_schema': BUNDLE_SCHEMA,
+            'submission_manifest': {'schema': BUNDLE_SCHEMA, 'entrypoint': 'infer.py',
+                'base_model_path': 'one of base_model_paths',
+                'weights': 'optional checkpoint_path OR adapter_path, relative to the bundle'},
+            'inference_interface': {
+                'execution': 'Installed Python runs entrypoint with the frozen bundle as cwd. Read submission.json for paths.',
+                'stdin': '{protocol, items:[{benchmark_id,id,messages:[{role,content},...]}]}; '
+                    'complete question/options are in user messages, without gold',
+                'stdout': '{predictions:[{benchmark_id,id,text}]} with exactly one final option letter per item; '
+                    'send public diagnostics to stderr. The supplied system prompt may be adapted by your inference code.'},
+            'closed': {'enabled': closed_gateway is not None, 'interval_seconds': 1800,
+                'feedback': 'aggregate_scores_and_status_only', 'isolation_owner': 'operator_gateway'},
+            'comparison': 'Match protocol_sha256, dataset_sha256 and execution budgets. '
+                'This measures the whole candidate including inference; isolate training effects with a fixed inference script.',
+            'execution': 'Host executes a frozen candidate inference bundle. Closed data stays at an isolated gateway. '
+                'Release other programs using the assigned cards before submitting.'},
         'model_loading': 'Qwen3.5 uses transformers.AutoModelForImageTextToText, dtype=bfloat16; '
                          'use local_files_only=True and inspect installed accelerator support. '
                          'For NPU import torch_npu and use npu:0 within the assigned visible device mapping.',
@@ -514,15 +586,30 @@ def run(args):
             'Lab code uses only the accelerators assigned to generated programs. '
             'The host supplies the meta-agent service; deployment of Lab inference is your choice. '
             'You may write, repair and execute arbitrary research implementations within this Lab. '
-            'Formal evaluation uses medical_evaluate with fixed data, inputs, gold, parsing and scoring. '
-            'Edit candidate.py using the standard input adapter; it owns stdin/stdout and prediction IDs. '
-            'Use medical_diagnose with the SAME candidate argv for synthetic input checks; '
-            'it reads no development data, reports no accuracy, and shares the formal inference path. '
-            'Self-written evaluation scripts produce exploratory observations, not formal comparable scores. '
+            'Formal evaluation uses medical_evaluate with a frozen inference script plus checkpoint/adapter or registered base. '
+            'You own inference, tokenizer, prompting and decoding. The host owns data, strict final-letter scoring, '
+            'resource/time limits and submission quota. Closed evaluation returns only aggregates/status and accepts '
+            'one submission per 1800 seconds across the campaign; accepted failures consume the slot. '
+            'This contract does not constrain training or query programs. '
+            'Self-written scoring produces exploratory observations; formal scores come only from medical_evaluate receipts. '
             'Preserve candidate identity, protocol, dataset identity and exact metrics. '
             'Pareto adoption requires primary improvement without guardrail regression; '
             'do not equate a program succeeding, a proposal, or unvalidated stdout with adoption. '
             'Development accuracy is not medical generalization.'}
+    project['workspace_mode'] = args.workspace_mode
+    if resource_pool:
+        for name in ('model_path', 'model_loading', 'candidate_reference', 'inference', 'candidate_input_adapter'):
+            project.pop(name)
+        project.update(available_models=available_models, initial_programs=[],
+            research_execution={'owner': 'meta_agent', 'operation': 'lab_start',
+                'program_slots': args.max_parallel,
+                'choice': 'Choose your own experiments, programs, models and allocation across the assigned devices. '
+                    'Environment/status/log queries, training, checkpoint loading, inference and evaluation '
+                    'are available. No candidate or deployment step is prescribed. '
+                    'Use the installed Python and inspect its libraries as needed. '
+                    'A program may use multiple assigned devices; coordinate concurrent programs yourself. '
+                    'Collect real terminal receipts and retain optimizer/loss/checkpoint/loading evidence '
+                    'when training. An available model inventory is not a selected or loaded candidate.'})
     if args.lab_endpoint:
         project.update(endpoint=args.lab_endpoint, served_model=args.lab_model_id)
     def make_lab(context):
@@ -530,13 +617,20 @@ def run(args):
                                             device_type=args.device_type)
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
-        lab = FixedMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
+        lab = ProtocolMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
             max_jobs=args.max_jobs, max_parallel=args.max_parallel, python=args.python,
-            evaluation_root=context.data_dir / 'fixed-evaluations', require_input_contract=True,
+            evaluation_root=context.data_dir / 'fixed-evaluations',
+            base_model_paths=[entry['model_path'] for entry in available_models],
+            campaign_id=args.evaluation_campaign_id or args.run_id,
+            ledger_path=args.evaluation_ledger or root / 'evaluation-ledger.json', closed_gateway=closed_gateway,
+            resource_policy={'device_type': args.device_type, 'device_count': resources['device_count']},
+            wait_interrupted=lambda: backend.stop_requested or backend.pause_requested or (
+                backend.deadline is not None and time.monotonic() >= backend.deadline),
             defer_session=args.resume,
             evaluation_groups=[{'benchmark_id': group['benchmark_id'],
                 'path': str(task_path.parent / group['path']), 'sha256': manifest[group['path']]['sha256']}
                 for group in task['development']])
+        project['fixed_evaluation']['protocol_sha256'] = lab.protocol_sha256
         native_labs.append(lab)
         if args.resume:
             return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
@@ -546,9 +640,13 @@ def run(args):
             target = lab.workspace / 'data' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(task_path.parent / name, target)
-        shutil.copyfile(task_path, lab.workspace / 'data/task.json')
-        (lab.workspace / 'candidate.py').write_text(EXTERNAL_CANDIDATE if args.lab_endpoint else CANDIDATE)
-        write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
+        write(lab.workspace / 'data/task.json', task)
+        if resource_pool:
+            (lab.workspace / 'README.md').write_text(RESOURCE_POOL_README)
+            write(lab.workspace / 'lab_config.json', project)
+        else:
+            (lab.workspace / 'candidate.py').write_text(EXTERNAL_CANDIDATE if args.lab_endpoint else CANDIDATE)
+            write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
         return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
     def make_decision(context, exploration):
         context.project_context = project
@@ -578,7 +676,8 @@ def run(args):
     config = ApplicationConfig(objective, root / 'application', {'meta': binding}, {'decision_maker': model},
         execution='local_process', experience_limit=12, memory_limit=8, run_id=args.run_id)
     result = {'run_id': args.run_id, 'status': 'initializing', 'simulated': False,
-        'weight_identity': weight_identity, 'actor_weight_identity': actor_weight_identity,
+        'weight_identity': weight_identity, 'actor_weight_identity': None if resource_pool else actor_weight_identity,
+        'available_model_inventories': available_models,
         'memory_provider': assembly.memory_provider, 'feedback_routing': args.feedback_routing, 'started_at': None,
         'note': 'Model decisions and native program results are evidence; experiment/training counts require review.'}
     started = time.monotonic()

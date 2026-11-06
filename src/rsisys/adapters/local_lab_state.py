@@ -202,6 +202,7 @@ class LocalLabState:
         lab = self.lab
         return {'timeout_seconds': lab.timeout_seconds, 'max_jobs': lab.max_jobs,
             'max_parallel': lab.max_parallel, 'max_file_bytes': lab.max_file_bytes,
+            'max_poll_wait_seconds': lab.max_poll_wait_seconds,
             'max_output_bytes': lab.backend.max_output_bytes, 'max_log_bytes': lab.backend.max_log_bytes,
             'extension': self.extra_configuration}
 

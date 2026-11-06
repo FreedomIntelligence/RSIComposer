@@ -1,0 +1,379 @@
+"""Medical scoring protocol accepting frozen candidate weights AND inference code.
+
+Public inference uses the ordinary trusted Lab executor. Closed evaluation is
+delegated to an operator's isolated gateway; no closed data is loaded here.
+The gateway must enforce the same campaign quota and freeze/import the bundle
+before executing candidate code in a data-, filesystem- and network-isolated
+worker. Its private logs/data never enter the Lab backend or artifact store.
+"""
+from copy import deepcopy
+from dataclasses import asdict, replace
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+from uuid import uuid4
+
+from rsisys.adapters.local_lab import LocalProcessLab
+from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.evaluation import EvaluationProtocol
+from rsisys.loops.contracts.execution import LabToolError
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.runtime.evaluation import EvaluationLedger, EvaluationAdmissionError
+from rsisys.runtime.files import atomic_write, json_bytes
+try:
+    from .fixed_evaluation import FixedMedicalLab, fixed_inputs, score_predictions, run_candidate
+    from .checkpoint_evaluation import digest, file_digest
+except ImportError:
+    from fixed_evaluation import FixedMedicalLab, fixed_inputs, score_predictions, run_candidate
+    from checkpoint_evaluation import digest, file_digest
+
+
+PROTOCOL = EvaluationProtocol()
+BUNDLE_SCHEMA = 'candidate-inference-bundle-v1'
+
+
+def source_identity():
+    root = Path(__file__).resolve().parent
+    result = {name: file_digest(root / name)['sha256'] for name in (
+        'protocol_evaluation.py', 'fixed_evaluation.py', 'candidate_adapter.py', 'checkpoint_evaluation.py')}
+    for name in ('loops/contracts/evaluation.py', 'runtime/evaluation.py'):
+        result['rsisys/' + name] = file_digest(root.parents[1] / 'src/rsisys' / name)['sha256']
+    return result
+
+
+def bundle_manifest(root):
+    root = Path(root)
+    result = {}
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise ValueError('Submission bundles cannot contain symlinks')
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ValueError('Submission bundles contain regular files only')
+        result[str(path.relative_to(root))] = file_digest(path)
+    return result
+
+
+def bundle_configuration(root, bases):
+    root = Path(root)
+    config = json.loads((root / 'submission.json').read_text())
+    if (not isinstance(config, dict) or set(config) - {
+            'schema', 'entrypoint', 'base_model_path', 'checkpoint_path', 'adapter_path'}
+            or not {'schema', 'entrypoint', 'base_model_path'} <= set(config)
+            or config['schema'] != BUNDLE_SCHEMA or config['base_model_path'] not in bases
+            or {'checkpoint_path', 'adapter_path'} <= set(config)):
+        raise ValueError('Invalid submission.json; choose a registered base and a Python entrypoint')
+    for name in ('entrypoint', 'checkpoint_path', 'adapter_path'):
+        if name not in config:
+            continue
+        value = config[name]
+        if (not isinstance(value, str) or not value or Path(value).is_absolute()
+                or '..' in Path(value).parts or '\x00' in value):
+            raise ValueError('Bundle paths must be relative and cannot escape the submission')
+        path = (root / value).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise ValueError('Bundle path escapes submission')
+        if name == 'entrypoint':
+            if not path.is_file() or path.suffix != '.py':
+                raise ValueError('entrypoint must name a submitted Python file')
+        elif not path.is_dir():
+            raise ValueError(name + ' must name a submitted directory')
+    return config
+
+
+def registered_base_identity(root):
+    root = Path(root)
+    if not (root / 'config.json').is_file():
+        raise ValueError('Registered base requires config.json')
+    # Candidate inference may use generation defaults or other installed base
+    # files, so bind the whole registered inventory, not only model shards.
+    files = {str(p.relative_to(root)): file_digest(p) for p in sorted(root.rglob('*')) if p.is_file()}
+    return {'files': files, 'sha256': digest(files)}
+
+
+def frozen_bundle(source, destination, bases):
+    manifest = bundle_manifest(source)
+    config = bundle_configuration(source, bases)
+    shutil.copytree(source, destination)
+    if bundle_manifest(destination) != manifest or bundle_manifest(source) != manifest:
+        raise ValueError('Submission changed while freezing; no submission accepted')
+    base = registered_base_identity(config['base_model_path'])
+    return {'configuration': config, 'files': manifest, 'base_identity': base,
+            'sha256': digest({'files': manifest, 'base_identity': base})}
+
+
+def safe_closed_result(raw, request, gateway):
+    """Construct an allowlisted receipt. Never publish arbitrary gateway fields."""
+    if (not isinstance(raw, dict) or raw.get('status') not in ('succeeded', 'failed')
+            or any(raw.get(k) != request[k] for k in (
+                'protocol_sha256', 'campaign_id', 'submission_id', 'candidate_id', 'submission_sha256'))
+            or raw.get('service_id') != gateway['service_id']
+            or raw.get('dataset_sha256') != gateway['dataset_sha256']):
+        raise ValueError('Closed gateway receipt identity mismatch')
+    result = {k: raw[k] for k in ('status', 'protocol_sha256', 'campaign_id', 'submission_id',
+                                  'candidate_id', 'submission_sha256', 'service_id', 'dataset_sha256')}
+    if raw['status'] == 'succeeded':
+        metrics = raw.get('metrics')
+        if not isinstance(metrics, dict) or set(metrics) != set(gateway['dataset_sha256']):
+            raise ValueError('Missing closed aggregate metrics')
+        for values in metrics.values():
+            if (not isinstance(values, dict) or set(values) != {'accuracy', 'n'}
+                    or type(values['n']) is not int or values['n'] < 1
+                    or type(values['accuracy']) not in (int, float)
+                    or not math.isfinite(values['accuracy']) or not 0 <= values['accuracy'] <= 1):
+                raise ValueError('Invalid closed aggregate metrics')
+        result['metrics'] = deepcopy(metrics)
+    else:
+        # Candidate diagnostics may contain questions. Keep all failure details
+        # at the private gateway and expose only this fixed status code.
+        result['failure_code'] = 'closed_candidate_failed'
+    return result
+
+
+def evaluate(config):
+    if source_identity() != config['source_sha256']:
+        raise ValueError('Host evaluation protocol source changed')
+    bundle = Path(config['bundle_path'])
+    if bundle_manifest(bundle) != config['submission']['files']:
+        raise ValueError('Frozen submission changed')
+    if config['split'] == 'closed':
+        gateway = config['closed_gateway']
+        request = {key: config[key] for key in ('protocol_sha256', 'campaign_id', 'candidate_id', 'submission_id')}
+        request.update(submission_sha256=config['submission']['sha256'], bundle_path=str(bundle),
+                       submission=config['submission'], protocol=asdict(PROTOCOL),
+                       execution_budget=config['execution_budget'])
+        # The configured command is a transport to an isolated service, not a
+        # candidate command. Bounded output stays in memory and is allowlisted.
+        raw = run_candidate_gateway(gateway['argv'], request, config['timeout_seconds'])
+        record = safe_closed_result(raw, request, gateway)
+    else:
+        payload, gold, datasets = fixed_inputs(config['groups'])
+        submission = config['submission']['configuration']
+        def verify_base():
+            return registered_base_identity(submission['base_model_path']) == config['submission']['base_identity']
+        if not verify_base():
+            raise ValueError('Registered base changed')
+        # Template/tokenizer/decoding are candidate-owned. The host passes full
+        # questions/options without gold, then scores strict final letters.
+        previous = Path.cwd()
+        try:
+            os.chdir(bundle)
+            os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+            predictions = run_candidate([config['python'], submission['entrypoint']], payload)
+        finally:
+            os.chdir(previous)
+        metrics, scored = score_predictions(predictions, gold)
+        if not verify_base():
+            raise ValueError('Registered base changed during inference')
+        record = {'status': 'succeeded', 'metrics': metrics, 'predictions': scored,
+                  'dataset_sha256': datasets, 'submission': config['submission']}
+    if bundle_manifest(bundle) != config['submission']['files']:
+        raise ValueError('Frozen submission changed during inference; no score')
+    record.update({key: config[key] for key in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256')})
+    record.update(protocol=PROTOCOL.score_protocol, evaluation_protocol=asdict(PROTOCOL),
+                  submission_sha256=config['submission']['sha256'],
+                  execution_budget=config['execution_budget'], adopted=False)
+    atomic_write(Path(config['output']), json_bytes(record))
+    return record
+
+
+def run_candidate_gateway(argv, request, timeout):
+    # Use files, rather than unbounded capture_output, for a potentially buggy
+    # transport. Neither its stdout nor stderr becomes a Lab process log.
+    import tempfile
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        result = subprocess.run(argv, input=json_bytes(request), stdout=output, stderr=errors,
+                                timeout=timeout, check=False)
+        output.seek(0)
+        data = output.read(1024 * 1024 + 1)
+    if result.returncode or len(data) > 1024 * 1024:
+        raise ValueError('Closed gateway transport failed')
+    return json.loads(data)
+
+
+class ProtocolMedicalLab(FixedMedicalLab):
+    def __init__(self, *args, base_model_paths, campaign_id, ledger_path, closed_gateway=None,
+                 resource_policy=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.protocol_runner = Path(__file__).resolve()
+        self.closed_gateway = deepcopy(closed_gateway)
+        if closed_gateway is not None:
+            if (not isinstance(closed_gateway, dict) or set(closed_gateway) != {
+                    'argv', 'service_id', 'dataset_sha256'}
+                    or not isinstance(closed_gateway['argv'], list) or not closed_gateway['argv']
+                    or any(not isinstance(v, str) or not v or '\x00' in v for v in closed_gateway['argv'])
+                    or not isinstance(closed_gateway['service_id'], str) or not closed_gateway['service_id']
+                    or not isinstance(closed_gateway['dataset_sha256'], dict) or not closed_gateway['dataset_sha256']):
+                raise ValueError('Closed evaluation requires an operator-configured isolated gateway')
+            for name, sha in closed_gateway['dataset_sha256'].items():
+                if not isinstance(name, str) or not name or not isinstance(sha, str) or len(sha) != 64:
+                    raise ValueError('Invalid closed dataset identity')
+                int(sha, 16)
+        self.ledger = EvaluationLedger(ledger_path, campaign_id)
+        self.formal_configuration = {'evaluation_protocol': asdict(PROTOCOL),
+            'source_sha256': source_identity(), 'campaign_id': campaign_id,
+            'ledger_path': str(Path(ledger_path).resolve()),
+            'base_model_paths': list(dict.fromkeys(str(Path(p).resolve()) for p in base_model_paths)),
+            'closed_gateway': self.closed_gateway,
+            'execution_budget': {'timeout_seconds': self.timeout_seconds,
+                                 'resources': deepcopy(resource_policy)}}
+        if not self.formal_configuration['base_model_paths']:
+            raise ValueError('At least one registered base is required')
+        # Inference code is part of the candidate, so it is deliberately absent
+        # from the common comparison protocol identity.
+        self.protocol_sha256 = digest({'protocol': asdict(PROTOCOL), 'source': source_identity(),
+                                      'execution_budget': self.formal_configuration['execution_budget']})
+
+    def describe(self):
+        text = {'type': 'string', 'minLength': 1}
+        return (*LocalProcessLab.describe(self), OperationSpec('medical_evaluate',
+            'Submit a workspace bundle containing submission.json, inference Python and checkpoint/LoRA '
+            'or a registered base reference. You own inference; the host owns data, scoring and budgets. '
+            'public returns detailed development evidence; closed returns aggregate scores/status only '
+            'through an isolated gateway, at most once per 1800 seconds across this campaign. '
+            'An accepted failure consumes its slot. Reuse the same key only to query the same submission. '
+            'Release active research programs first. Collect with lab_poll then lab_result.',
+            {'type': 'object', 'properties': {'key': text, 'candidate_id': text,
+                'split': {'enum': ['public', 'closed']}, 'submission_path': text},
+             'required': ['key', 'candidate_id', 'split', 'submission_path'], 'additionalProperties': False}))
+
+    def execute(self, call):
+        if call.name != 'medical_evaluate':
+            if (call.name == 'lab_start' and isinstance(call.arguments, dict)
+                    and call.arguments.get('key') not in self._keys
+                    and any(row['job_id'] in self._evaluations for row in self._status()['active_jobs'])):
+                raise LabToolError('Evaluation is using the assigned devices', data={'reason': 'evaluation_devices_busy'})
+            return LocalProcessLab.execute(self, call)
+        args = call.arguments
+        if (not isinstance(args, dict) or set(args) != {'key', 'candidate_id', 'split', 'submission_path'}
+                or any(not isinstance(v, str) or not v.strip() or '\x00' in v for v in args.values())
+                or args['split'] not in ('public', 'closed')):
+            raise LabToolError('Submit key, candidate_id, split and submission_path only')
+        if self._closed or not self._accepting:
+            raise RuntimeError('Lab is shutting down; new work is closed')
+        if args['split'] == 'closed' and self.closed_gateway is None:
+            raise LabToolError('An isolated closed evaluator has not been configured',
+                               data={'reason': 'closed_evaluator_unavailable'})
+        if self.formal_configuration['source_sha256'] != source_identity():
+            raise PermissionError('Host evaluation protocol source changed')
+        identity = digest(args)
+        previous = self.ledger.lookup(args['key'])
+        if previous is not None:
+            if previous['identity'] != identity or previous['split'] != args['split']:
+                raise LabToolError('Evaluation key already identifies another submission')
+            ident = previous['job_id']
+            binding = self._evaluations.get(ident)
+            if binding is None or args['key'] not in self._keys:
+                raise LabToolError('Accepted evaluation requires host recovery; no automatic replay',
+                                   data={'reason': 'accepted_submission_requires_recovery'})
+            return self._start({'key': args['key'], 'argv': binding['command']})
+        if args['key'] in self._keys:
+            raise LabToolError('Key is already used by a research program')
+        if self._status()['active_jobs']:
+            raise LabToolError('Release owned programs before evaluation', data={'reason': 'evaluation_devices_busy'})
+        source = self.workspace / args['submission_path']
+        if (Path(args['submission_path']).is_absolute() or '..' in Path(args['submission_path']).parts
+                or source.is_symlink() or not source.resolve().is_relative_to(self.workspace.resolve())
+                or not source.is_dir()):
+            raise LabToolError('submission_path must name a directory inside the workspace')
+        ident = uuid4().hex
+        destination = self.evaluation_root / (ident + '-bundle')
+        try:
+            submission = frozen_bundle(source, destination, self.formal_configuration['base_model_paths'])
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            raise LabToolError('Invalid candidate bundle: ' + str(exc)) from exc
+        try:
+            admission = self.ledger.reserve(args['key'], identity, args['split'])
+        except EvaluationAdmissionError as exc:
+            shutil.rmtree(destination)
+            raise LabToolError(str(exc), data=exc.data) from exc
+        if admission['replayed']:
+            shutil.rmtree(destination)
+            raise LabToolError('Concurrent submission accepted; reconcile its existing identity',
+                               data={'reason': 'accepted_submission_requires_recovery'})
+        config = {'candidate_id': args['candidate_id'], 'split': args['split'],
+            'protocol_sha256': self.protocol_sha256, 'source_sha256': source_identity(),
+            'campaign_id': self.ledger.campaign_id, 'submission_id': args['key'],
+            'submission': submission, 'bundle_path': str(destination), 'python': self.evaluation_python,
+            'execution_budget': self.formal_configuration['execution_budget'],
+            'timeout_seconds': self.timeout_seconds, 'groups': self.evaluation_groups if args['split'] == 'public' else [],
+            'closed_gateway': self.closed_gateway if args['split'] == 'closed' else None,
+            'output': str(self.evaluation_root / (ident + '.json'))}
+        config_path = self.evaluation_root / (ident + '-request.json')
+        atomic_write(config_path, json_bytes(config))
+        command = [self.evaluation_python, str(self.protocol_runner), str(config_path)]
+        result = self._start({'key': args['key'], 'argv': command})
+        self._evaluations[result.data['job_id']] = {'arguments': deepcopy(args), 'config': config, 'command': command}
+        self.ledger.attach(args['key'], result.data['job_id'])
+        return result
+
+    def _observe(self, ident):
+        result = LocalProcessLab._observe(self, ident)
+        binding = self._evaluations.get(ident)
+        if (binding is None or result.data['state'] != 'succeeded'
+                or 'fixed_evaluation' in result.data or 'fixed_evaluation_error' in result.data):
+            return result
+        config = binding['config']
+        try:
+            if bundle_manifest(config['bundle_path']) != config['submission']['files']:
+                raise ValueError('Frozen submission changed before collection')
+            raw = Path(config['output']).read_bytes()
+            record = json.loads(raw)
+            if (any(record[k] != config[k] for k in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256'))
+                    or record['evaluation_protocol'] != asdict(PROTOCOL) or record['protocol'] != PROTOCOL.score_protocol
+                    or record['execution_budget'] != config['execution_budget']
+                    or record['submission_sha256'] != config['submission']['sha256']
+                    or record['adopted'] is not False):
+                raise ValueError('Evaluation receipt identity differs')
+            if config['split'] == 'public':
+                _, gold, datasets = fixed_inputs(self.evaluation_groups)
+                metrics, scored = score_predictions([{k: v[k] for k in ('benchmark_id', 'id', 'text')}
+                                                     for v in record['predictions']], gold)
+                if (record['status'] != 'succeeded' or record['dataset_sha256'] != datasets
+                        or record['metrics'] != metrics or record['predictions'] != scored):
+                    raise ValueError('Public evaluation score differs from evidence')
+                artifact = self.artifacts.put(raw, kind='public_medical_protocol_evaluation')
+                result = replace(result, artifacts=(*result.artifacts, artifact))
+            else:
+                request = {k: config[k] for k in ('protocol_sha256', 'campaign_id', 'submission_id', 'candidate_id')}
+                request['submission_sha256'] = config['submission']['sha256']
+                safe = safe_closed_result(record, request, self.closed_gateway)
+                if safe['status'] == 'failed':
+                    result = replace(result, status=ExecutionStatus.FAILED, error='Closed candidate failed',
+                                     data={**result.data, 'state': 'failed', 'closed_evaluation_status': 'failed'})
+                    self._terminal[ident] = result
+                    return result
+            fixed = {k: record[k] for k in ('protocol', 'evaluation_protocol', 'protocol_sha256', 'candidate_id',
+                                            'split', 'metrics', 'dataset_sha256', 'submission_sha256')}
+            fixed.update(record_sha256=hashlib.sha256(raw).hexdigest(), adopted=False,
+                         evaluator_sha256=config['source_sha256']['protocol_evaluation.py'], verified=True)
+            result = replace(result, data={**result.data, 'fixed_evaluation': fixed})
+        except Exception:
+            # Do not expose gateway payloads, candidate output or private paths
+            # in exception strings. Detailed closed diagnostics stay remote.
+            result = replace(result, status=ExecutionStatus.FAILED, error='Evaluation receipt verification failed',
+                data={**result.data, 'failure_origin': 'infrastructure',
+                      'fixed_evaluation_error': 'evaluation_receipt_verification_failed'})
+        self._terminal[ident] = result
+        return result
+
+
+if __name__ == '__main__':
+    configuration = json.loads(Path(sys.argv[1]).read_text())
+    try:
+        value = evaluate(configuration)
+        print(json.dumps({'status': value['status'], 'split': value['split']}), flush=True)
+    except Exception:
+        # Gateway errors can include closed questions. Never print their text.
+        if configuration['split'] == 'public':
+            import traceback
+            traceback.print_exc()
+        else:
+            print('evaluation_execution_failed', file=sys.stderr, flush=True)
+        sys.exit(1)

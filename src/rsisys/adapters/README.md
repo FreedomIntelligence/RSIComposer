@@ -61,7 +61,14 @@ No native SDK, internal validation class or loop state is required of the provid
 
 [local_lab.py](local_lab.py) supplies a programmable local implementation with
 file read/write/export and background program start/poll/result/cancel. Programs
-can implement and revise training/evaluation themselves. `lab_poll` observations
+can implement and revise training/evaluation themselves. `lab_poll` defaults to
+an immediate query. Optional `wait_seconds` waits for termination up to the
+host-advertised limit (30 seconds by default), then returns the current native
+state. Waiting does not cancel or restart a program. A host can provide
+`wait_interrupted` to return promptly for pause, deadline or shutdown; the medical
+launcher supplies this hook. `poll_wait` telemetry belongs only to that query,
+and leaves terminal producer receipts unchanged. State, log and result queries
+remain available without waiting. `lab_poll` observations
 are query archives; `lab_result` collects terminal evidence into the ordinary
 feedback/memory path. Stdout is retained as native output, not verified metrics.
 Start keys prevent duplicate jobs within this process; submission is not completion.

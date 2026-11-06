@@ -1,5 +1,9 @@
 # RSISys
 
+Current working source follows the [single-checkout version policy](docs/version-policy.md).
+The programmable medical Lab accepts candidate weights **and inference scripts**
+through the [public/closed evaluation protocol](docs/evaluation-protocol.md).
+
 可客制化的 RSI（递归自改进）框架。**一个 meta-agent** 在 **Lab** 中选择并执行研究动作，直接读取原始反馈、调试并管理自己的记忆。**memory 模块**负责存储与检索；默认不另设整理或总结 agent。使用者定义目标、能力、权限与预算，并替换模型、harness、memory、训练和推理后端。
 
 - **一个 meta-agent**：行动选择、反馈解释、上下文管理和记忆组织属于同一工作流。Lab 内部可运行 agent 或直接执行程序。

@@ -19,33 +19,48 @@ Use Python 3.12+ from the RSISys directory with `PYTHONPATH=src:.`.
 ## Open Lab with a real meta-agent
 
 `open_lab_experiment.py` uses the unified `ModuleAssembly` entry, programmable
-`FixedMedicalLab`, explicit agent-managed memory and the default trajectory archive.
+`ProtocolMedicalLab`, explicit agent-managed memory and the default trajectory archive.
 The same meta-agent chooses code edits, installed training/inference programs,
 feedback interpretation and memory operations. `research_task` open/pin/close
 retains raw error evidence through code/log reads, edits and retests. Use
 `memory_search/read/write/delete` for longer-lived notes; large records are paged.
 `--feedback-routing agent_memory` is the default. `legacy` and `context_or_memory`
 explicitly opt into the former LangMem extraction workflow.
-Formal evaluation uses `medical_evaluate(key, candidate_id, argv)`: the Lab fixes
-development data, question/options, gold, parsing and accuracy. The editable
-`candidate.py` implements `infer(request)` or `infer_batch(requests)` using the
-host's `candidate_adapter.py`, whose frozen path is in `lab_config.json`.
-The adapter owns stdin/stdout, sample IDs and input receipts. For direct inference,
-use `request.render(tokenizer, ...)` and tokenize the returned text. For a service,
-put `request.chat_messages()` in the actual HTTP request. Both preserve the fixed
-user question/options; `messages[0]` is the system instruction. Candidate code may
-choose the model, generation settings, batching and deployment.
+Formal evaluation has one entry:
 
-`medical_diagnose(key, candidate_id, argv)` runs the **same argv and adapter** on
-two public synthetic inputs. It reads no development data or gold and reports
-no accuracy or adoption. Collect its native result, repair input errors, then use
-the same candidate path for `medical_evaluate`. Open Lab requires adapter receipts
-on formal runs; older explicitly configured integrations can retain the legacy
-stdin protocol with input consumption marked `unverified_legacy`.
-Adapter receipts attest to the adapter boundary only. They do not prove that
-arbitrary candidate internals use the input, identify loaded weights, or attest
-to what an external backend consumed. Constant answers can pass the input check;
-their correctness is still scored against the original gold without relaxation.
+```text
+medical_evaluate(key, candidate_id, split, submission_path)
+```
+
+Submit a workspace directory containing `submission.json`, a Python inference
+script and checkpoint/adapter files, or a registered base reference. The candidate
+owns loading, tokenizer, prompting and decoding. The host freezes and hashes the
+bundle, passes complete questions/options without gold, executes it, and owns
+strict option-letter scoring, dataset membership and execution budgets.
+
+`split=public` uses visible development partitions and permits detailed debugging.
+`split=closed` requires an operator-configured isolated gateway and returns only
+aggregate scores/status. Accepted closed submissions, including failures, must
+be at least **1800 seconds apart across the entire campaign**. The durable host
+ledger survives restart; querying the same key never reruns a candidate. A
+reservation with an unknown external effect requires reconciliation.
+
+Release other owned programs before formal evaluation. The submitted bundle and
+registered base are verified before and after public inference. Compare matching
+`protocol_sha256`, `dataset_sha256` and execution budgets; this measures the full
+candidate, including inference. Fix inference code when isolating training gains.
+Historical scores remain unchanged and do not become a baseline automatically.
+
+No closed files are copied to the workspace. The ordinary local executor uses
+the same UID and provides **no closed-data isolation**. Without a separate gateway,
+closed evaluation fails before acceptance. The operator must isolate its datasets,
+worker filesystem, network and private logs, and independently enforce campaign
+admission. Merely hiding a path is insufficient. See the
+[evaluation protocol](../../docs/evaluation-protocol.md) for bundle and gateway contracts.
+
+`CheckpointMedicalLab` remains an explicit reference evaluator for experiments
+that deliberately fix the whole inference profile. `FixedMedicalLab` and
+`medical_diagnose(argv)` remain legacy helpers. Neither is the default Open Lab path.
 
 Code reads return context-sized UTF-8 pages even when a larger `max_bytes` is
 requested. Follow `next_offset` until `eof`, carrying `file_version` as
@@ -54,17 +69,26 @@ fits below the individual evidence limit, including JSON escapes. Repeating the
 same page three times adds a transient navigation hint; it does not replay work
 or write memory.
 
-The default scaffold requires the meta-agent to implement inference: it chooses
-direct model loading or deploys its own inference service on assigned Lab devices.
-The host supplies local model paths, the installed Python and explicit resources;
-it starts no candidate service and makes no implicit fallback to its meta-agent API.
+The default `--workspace-mode resource_pool` starts an empty programmable
+workspace containing the fixed data, `lab_config.json` and a short resource guide.
+It seeds no `candidate.py`, selects no candidate model and starts no Lab program.
+The host supplies available local weight inventories, the installed Python and
+assigned devices. The same meta-agent chooses environment queries, training,
+checkpoint loading, inference, evaluation and how to share its assigned cards.
+Use `--available-model-path` repeatedly to advertise additional installed weights;
+these are available inputs, not a selected or loaded actor. Training programs and
+queries use arbitrary `lab_start` argv. Self-written inference and measurements
+remain available as exploratory programs.
+`--workspace-mode candidate_scaffold` explicitly seeds an exploratory inference example.
+Neither mode starts a candidate service or falls back to the meta-agent API.
 Collect the submitted
 job with `lab_poll` / `lab_result`; submission is not a score or adoption.
 Self-written evaluation output remains an exploratory observation. See the
 [repair and interface review](../../docs/review/lion-followup-repair-20261105.md).
 
-Provision an owned Qwen3.5-9B SGLang endpoint named `rsisys-meta-qwen35-9b` with
-JSON-schema responses before launching. The default memory tools run in the
+Provision the meta-agent's decision endpoint with JSON-schema responses before
+launching, and pass its actual model ID/revision and local tokenizer path. This
+endpoint supplies the meta-agent, not a preselected research candidate. The default memory tools run in the
 controller and require no LangMem installation or provider tool-calling API.
 Install `rsisys[langmem]` only for the explicit legacy extraction workflow. Inside a
 scheduler-owned allocation, pass only the GPUs reserved for generated Lab
@@ -73,13 +97,13 @@ For an explicitly provided external service, opt in with `--lab-endpoint` and
 `--lab-model-id`; this seeds an HTTP candidate example with inference-only access.
 `RSISYS_LAB_ENDPOINT` no longer implicitly chooses a service.
 
-The default `--max-parallel 2` allows a Lab-owned persistent service started with
-`lab_start` and a separate `medical_evaluate` program to coexist. Each service
-occupies a program slot. The meta-agent chooses its backend, parallelism, batching,
-readiness checks and cleanup with `lab_cancel`; the host still owns device and
-process limits. Pause, timeout and shutdown terminate owned process groups.
-Recovery retains receipts and configuration, and does not silently restart services.
-The meta-agent may instead run direct inference entirely inside one evaluation job.
+The default `--max-parallel 2` allows two research programs. An optional research
+service occupies one slot; stop it with `lab_cancel` before formal evaluation.
+The meta-agent chooses research backends, parallelism and batching. Formal
+evaluation uses the host protocol and requires no other owned active jobs.
+Pause, timeout and shutdown terminate owned process groups. Recovery retains
+evaluation bindings, receipts and configuration without resubmitting completed
+work or silently restarting services.
 
 Open Lab exposes the explicit child device mapping as `project_context.resources`
 and in `lab_config.json`, including the device count and logical-to-physical IDs.

@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import time
 from uuid import uuid4
 
 from rsisys.loops.contracts.coordination import OperationResult
@@ -36,10 +37,13 @@ class LocalProcessLab:
     """
     def __init__(self, backend: LocalProcessBackend, artifacts, *, timeout_seconds=300,
                  max_jobs=1024, max_parallel=4, max_file_bytes=1024 * 1024,
-                 defer_session=False):
+                 max_poll_wait_seconds=30, wait_interrupted=None, defer_session=False):
         if not isinstance(backend, LocalProcessBackend):
             raise TypeError('LocalProcessLab requires an explicit LocalProcessBackend')
         positive(timeout_seconds, 'timeout_seconds')
+        positive(max_poll_wait_seconds, 'max_poll_wait_seconds')
+        if wait_interrupted is not None and not callable(wait_interrupted):
+            raise TypeError('wait_interrupted must be callable')
         for name, value in (('max_jobs', max_jobs), ('max_parallel', max_parallel), ('max_file_bytes', max_file_bytes)):
             if type(value) is not int or value < 1:
                 raise ValueError(f'{name} must be a positive integer')
@@ -48,6 +52,7 @@ class LocalProcessLab:
         self.backend, self.artifacts = backend, artifacts
         self.timeout_seconds, self.max_jobs = timeout_seconds, max_jobs
         self.max_parallel, self.max_file_bytes = max_parallel, max_file_bytes
+        self.max_poll_wait_seconds, self.wait_interrupted = max_poll_wait_seconds, wait_interrupted
         self._jobs, self._keys, self._terminal = {}, {}, {}
         self._accepting, self._closed = True, False
         # A state adapter attaches the original session during restore. Factory
@@ -76,8 +81,13 @@ class LocalProcessLab:
              {'key': text, 'argv': {'type': 'array', 'items': text, 'minItems': 1},
               'timeout_seconds': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': self.timeout_seconds}},
              ['key', 'argv'], False),
-            ('lab_poll', 'Observe a known owned job without delivering a research result. When terminal, use lab_result for feedback/memory. Native stdout/stderr are not automatically validated metrics or adoption.',
-             {'job_id': text}, ['job_id'], True),
+            ('lab_poll', 'Observe a known owned job without delivering a research result. '
+             'Omit wait_seconds or use 0 for an immediate query. A positive wait_seconds waits '
+             'up to that duration for program termination, then returns the current state. '
+             'The host can interrupt the wait for pause or shutdown. Waiting never cancels or restarts the program. '
+             'When terminal, use lab_result for feedback/memory. Native stdout/stderr are not automatically validated metrics or adoption.',
+             {'job_id': text, 'wait_seconds': {'type': 'number', 'minimum': 0,
+                'maximum': self.max_poll_wait_seconds, 'default': 0}}, ['job_id'], True),
             ('lab_status', 'Read current owned jobs and recent terminal jobs, independently of remembered history.',
              {}, [], True),
             ('lab_read_log', 'Read durable stdout/stderr by byte offset. Omit offset for the latest tail. Returns exact retained coverage and any quota gap.',
@@ -106,6 +116,10 @@ class LocalProcessLab:
         args = deepcopy(call.arguments)
         if set(args) - spec.input_schema['properties'].keys() or set(spec.input_schema['required']) - args.keys():
             raise LabToolError('Missing or unknown Lab arguments')
+        wait_seconds = args.get('wait_seconds', 0)
+        if call.name == 'lab_poll' and (type(wait_seconds) not in (int, float)
+                or not 0 <= wait_seconds <= self.max_poll_wait_seconds):
+            raise LabToolError(f'wait_seconds must be finite and between 0 and {self.max_poll_wait_seconds}')
         json.dumps(args, allow_nan=False)
         if not self._accepting and call.name in ('lab_start', 'lab_write_file'):
             raise RuntimeError('Lab is shutting down; new work is closed')
@@ -135,7 +149,7 @@ class LocalProcessLab:
                 self.backend.cancel(self._jobs[ident][0])
                 return OperationResult('Cancellation requested; poll to confirm exit', (), False,
                                        data={'job_id': ident, 'cancellation_requested': True})
-            result = self._observe(ident)
+            result = self._poll(ident, wait_seconds) if call.name == 'lab_poll' else self._observe(ident)
             if call.name == 'lab_result':
                 if result.data['state'] not in {status.value for status in TERMINAL_STATUSES}:
                     return OperationResult('Program result is not ready; poll before collection', (), False,
@@ -148,6 +162,32 @@ class LocalProcessLab:
                 raise LabInfrastructureError(result)
             return result
         return self._file(call.name, args)
+
+    def _poll(self, ident, wait_seconds):
+        if wait_seconds == 0:
+            return self._observe(ident)
+        started = time.monotonic()
+        until = started + wait_seconds
+        reason = 'timeout'
+        ref = self._jobs[ident][0]
+        while True:
+            if self.backend.poll(ref).status in TERMINAL_STATUSES:
+                reason = 'terminal'
+                break
+            if (self._closed or not self._accepting
+                    or (self.wait_interrupted is not None and self.wait_interrupted())):
+                reason = 'host_interrupted'
+                break
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(.05, remaining))
+        result = self._observe(ident)
+        # Wait telemetry belongs to this query, not the immutable process result.
+        # In particular, collection/recovery must retain the same producer event.
+        return replace(result, data={**result.data, 'poll_wait': {
+            'requested_seconds': wait_seconds, 'elapsed_seconds': time.monotonic() - started,
+            'reason': reason}})
 
     def _start(self, args):
         key, argv = args['key'], args['argv']

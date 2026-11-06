@@ -58,7 +58,8 @@ class MedicalOpenLabTests(unittest.TestCase):
             inputs = root / 'inputs'
             inputs.mkdir()
             task = {'train': 'train.jsonl', 'development': [
-                {'path': 'nested/dev.jsonl', 'benchmark_id': 'fixture'}]}
+                {'path': 'nested/dev.jsonl', 'benchmark_id': 'fixture'}],
+                'closed': {'path': 'DO_NOT_READ_PRIVATE.jsonl'}}
             (inputs / 'nested').mkdir()
             (inputs / 'task.json').write_text(json.dumps(task))
             for name in ('train.jsonl', 'nested/dev.jsonl'):
@@ -66,6 +67,11 @@ class MedicalOpenLabTests(unittest.TestCase):
             model = root / 'model'
             model.mkdir()
             (model / 'config.json').write_text('{}')
+            backends = []
+            def recorded_backend(*args, **kwargs):
+                value = RecordedBackend(*args, **kwargs)
+                backends.append(value)
+                return value
 
             def inspect_application(config, *, modules, **options):
                 cleanups = []
@@ -73,13 +79,46 @@ class MedicalOpenLabTests(unittest.TestCase):
                                           add_owned_cleanup=cleanups.append)
                 lab = modules.lab_factory(context)
                 try:
+                    native = lab.lab if hasattr(lab, 'lab') else lab
+                    recorded = backends[-1]
+                    self.assertFalse(native.wait_interrupted())
+                    for flag in ('pause_requested', 'stop_requested'):
+                        setattr(recorded, flag, True)
+                        self.assertTrue(native.wait_interrupted())
+                        setattr(recorded, flag, False)
+                    with patch.object(open_lab_experiment.time, 'monotonic', return_value=100):
+                        recorded.deadline = 100
+                        self.assertTrue(native.wait_interrupted())
+                        recorded.deadline = 101
+                        self.assertFalse(native.wait_interrupted())
+                    recorded.deadline = None
                     project = json.loads((lab.workspace / 'lab_config.json').read_text())
                     policy = TimedOpenPolicy(Transport(), MODEL, project_context=project)
                     prompt = json.loads(policy._decision_request(
                         DecisionContext('fixture', (), (), ())).prompt)
                     advertised = prompt['project_context']
-                    self.assertEqual(advertised['inference']['program_slots'], 2)
-                    if mode == 'managed':
+                    formal = advertised['fixed_evaluation']
+                    self.assertEqual(formal['evaluation_protocol']['closed_interval_seconds'], 1800)
+                    self.assertFalse(formal['closed']['enabled'])
+                    self.assertEqual(formal['base_model_paths'], [str(model.resolve())])
+                    specs = {spec.name: spec for spec in native.describe()}
+                    self.assertNotIn('medical_diagnose', specs)
+                    self.assertNotIn('argv', specs['medical_evaluate'].input_schema['properties'])
+                    self.assertIn('submission_path', specs['medical_evaluate'].input_schema['properties'])
+                    self.assertEqual(native.formal_configuration['evaluation_protocol'], formal['evaluation_protocol'])
+                    if mode == 'resource_pool':
+                        self.assertEqual(advertised['research_execution']['program_slots'], 2)
+                        self.assertEqual(advertised['initial_programs'], [])
+                        self.assertEqual(advertised['workspace_mode'], 'resource_pool')
+                        self.assertFalse((lab.workspace/'candidate.py').exists())
+                        self.assertTrue((lab.workspace/'README.md').is_file())
+                        for name in ('model_path', 'model_loading', 'inference', 'candidate_reference',
+                                     'endpoint', 'served_model', 'weight_identity'):
+                            self.assertNotIn(name, advertised)
+                        self.assertEqual(advertised['available_models'][0]['model_path'], str(model.resolve()))
+                        self.assertIsNone(json.loads((config.data_dir.parent/'model-inventory.json').read_text())['actor'])
+                    elif mode == 'managed':
+                        self.assertEqual(advertised['inference']['program_slots'], 2)
                         self.assertEqual(advertised['inference']['owner'], 'meta_agent')
                         self.assertNotIn('endpoint', advertised)
                         self.assertNotIn('served_model', advertised)
@@ -94,15 +133,16 @@ class MedicalOpenLabTests(unittest.TestCase):
                         self.assertTrue(path.is_file(), f'Advertised data path missing: {entry["path"]}')
                         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), entry['sha256'])
                     seeded_task = json.loads((lab.workspace / advertised['task']).read_text())
-                    self.assertEqual(seeded_task, task)
+                    self.assertEqual(seeded_task, {k: task[k] for k in ('train', 'development')})
+                    self.assertNotIn('DO_NOT_READ_PRIVATE', json.dumps(advertised))
+                    self.assertNotIn('closed', seeded_task)
                     self.assertEqual((lab.workspace / advertised['data_root'] / task['train']).read_bytes(),
                                      (inputs / task['train']).read_bytes())
                     self.assertEqual(advertised['path_base'], 'lab_workspace')
                     resources = advertised['resources']
-                    self.assertEqual(resources['device_count'], 7)
-                    physical = ['8', '9', '10', '11', '13', '14', '15']
+                    self.assertEqual(resources['device_count'], len(physical))
                     self.assertEqual(resources['physical_devices'], physical)
-                    self.assertEqual(resources['logical_to_physical'], dict(zip(map(str, range(7)), physical)))
+                    self.assertEqual(resources['logical_to_physical'], dict(zip(map(str, range(len(physical))), physical)))
                     self.assertEqual(resources, json.loads((config.data_dir.parent / 'resource-allocation.json').read_text()))
                     self.assertEqual(resources['memory_availability']['capacity_mib_per_device'], 65536)
                     ident = lab.execute(open_lab_experiment.OperationCall('lab_start', {'key': 'mapping',
@@ -119,19 +159,22 @@ class MedicalOpenLabTests(unittest.TestCase):
 
             transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
                 from_pretrained=lambda *args, **kwargs: Tokenizer()))
-            for mode in ('managed', 'external'):
+            for mode in ('managed', 'external', 'resource_pool'):
+                physical = list(map(str, range(8, 16))) if mode == 'resource_pool' else ['8','9','10','11','13','14','15']
                 with self.subTest(mode=mode), patch.dict(sys.modules, {'transformers': transformers}), \
-                     patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,9,10,11,13,14,15',
+                     patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': ','.join(physical),
                                             'RSISYS_LAB_ENDPOINT': 'http://implicit.invalid/v1'}), \
                      patch.object(open_lab_experiment.ResearchAssembly, 'langmem',
                                   return_value=open_lab_experiment.ResearchAssembly()), \
+                     patch.object(open_lab_experiment, 'RecordedBackend', side_effect=recorded_backend), \
                      patch.object(open_lab_experiment, 'Application', side_effect=inspect_application), \
                      self.assertRaises(FixtureStop):
-                    extra = ['--lab-endpoint', 'http://explicit.invalid/v1', '--lab-model-id', 'explicit-candidate'] if mode == 'external' else []
+                    extra = (['--lab-endpoint', 'http://explicit.invalid/v1', '--lab-model-id', 'explicit-candidate']
+                        if mode == 'external' else ['--workspace-mode', 'candidate_scaffold'] if mode == 'managed' else [])
                     open_lab_experiment.main(['--root', str(root / ('run-'+mode)), '--task', str(inputs / 'task.json'),
                         '--model-path', str(model), '--python', sys.executable,
                         '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
-                        '--resource-allocation', json.dumps({'physical_devices': [8,9,10,11,13,14,15],
+                        '--resource-allocation', json.dumps({'physical_devices': list(map(int, physical)),
                             'memory_availability': {'capacity_mib_per_device': 65536}}), *extra])
 
     def test_owned_inference_service_and_fixed_evaluation_run_together_and_clean_up(self):

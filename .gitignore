@@ -13,3 +13,6 @@ runs/
 
 # Local verification evidence and optional runtime tooling
 .local/
+
+# Legacy monitor deployment releases/logs; canonical source is src/rsimonitor.
+monitor-ui/

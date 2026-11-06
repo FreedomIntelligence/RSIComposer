@@ -113,6 +113,20 @@ class LocalLabDeliveryTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.lab._jobs, {})
 
+    def test_optional_wait_uses_one_decision_and_delivers_native_failure_to_the_next(self):
+        started = self.invoke('lab_start', key='waited', argv=[sys.executable, '-c',
+            'import time; time.sleep(.05); raise RuntimeError("waited native failure")'])
+        ident = started.event['operation_result']['data']['job_id']
+        observed = self.invoke('lab_poll', job_id=ident, wait_seconds=1)
+        data = observed.event['operation_result']['data']
+        self.assertEqual(data['state'], 'failed')
+        self.assertEqual(data['poll_wait']['reason'], 'terminal')
+        self.assertIn('waited native failure', data['stderr'])
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(len(self.lab._jobs), 1)
+        self.invoke('lab_status')
+        self.assertIn('waited native failure', self.requests[-1].prompt)
+
     def test_invalid_feedback_read_is_recorded_and_next_decision_can_correct_arguments(self):
         arguments = {'view': 'jobs', 'target': 'context_memory', 'limit': 1}
         failed = self.invoke('feedback_learning_read', **arguments)
