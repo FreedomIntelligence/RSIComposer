@@ -77,6 +77,9 @@ harness 实现仍须安装相应 host 激活端口和状态适配器，不能用
 医疗研究程序使用 `IsolatedProcessBackend`。Host 显式挂载只读运行时、分配的设备节点和
 可写工作区，关闭直接外网与 host 服务访问；修改可见设备环境变量不会增加设备权限。
 Linux 要求可用的 bubblewrap/namespace 和明确的 `--execution-policy`，不可用即拒绝。
+启用 AppArmor 用户命名空间限制的主机，需要为系统 `/usr/bin/bwrap` 安装允许 `userns`
+的程序级 profile。若预检报告 `loopback: Failed RTM_NEWADDR`，应检查内核 AppArmor
+拒绝记录并修复该程序的配置；不要关闭全局限制、取消网络隔离或以 root 运行研究程序。
 本机 Seatbelt 支持 CPU 文件/网络边界回归；GPU/NPU 驱动组合需要各节点独立验收。
 可信本地执行器仍保留给明确选择的旧集成，不承担上述隔离保证。
 

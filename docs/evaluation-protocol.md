@@ -42,6 +42,17 @@ absolute read of a mutable research-side dependency fails rather than producing
 a score under an incomplete candidate identity. Candidate-owned inference still
 controls all loading, prompting and decoding inside this boundary.
 
+The Open Lab host can repeat `--inference-runtime-path PATH` to mount installed
+SDKs or driver metadata needed by formal inference. Research execution mounts
+are not inherited: these paths must be declared separately and enter the runtime
+identity. For NVIDIA on the validated B20Z host, CUDA initialization also needs
+read-only `/sys/module/nvidia/initstate`, `/sys/module/nvidia_uvm/initstate`,
+`/sys/devices/system/memory/block_size_bytes` and
+`/sys/devices/system/cpu/online`, plus the installed CUDA SDK when used. Declare
+the same metadata in the research `ExecutionPolicy`. Device access still uses
+exact assigned `/dev/nvidiaN` nodes and the necessary NVIDIA control/UVM nodes;
+mounting the whole host `/dev`, `/proc` or `/sys` is not required.
+
 `runtime_sha256` binds the execution policy, interpreter and installed non-OS
 runtime file bytes, checked before and after inference. The common installed
 runtime identity enters `protocol_sha256`; the chosen registered base is also

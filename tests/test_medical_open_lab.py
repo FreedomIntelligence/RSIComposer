@@ -67,6 +67,12 @@ class MedicalOpenLabTests(unittest.TestCase):
             model = root / 'model'
             model.mkdir()
             (model / 'config.json').write_text('{}')
+            inference_runtime = root / 'installed-inference-runtime'
+            inference_runtime.mkdir()
+            (inference_runtime / 'driver-metadata.txt').write_text('runtime-fixture-v1')
+            research_runtime = root / 'research-only-runtime'
+            research_runtime.mkdir()
+            (research_runtime / 'helper.txt').write_text('not-formal-inference')
             backends = []
             def recorded_backend(*args, **kwargs):
                 value = RecordedBackend(*args, **kwargs)
@@ -106,6 +112,10 @@ class MedicalOpenLabTests(unittest.TestCase):
                     self.assertNotIn('argv', specs['medical_evaluate'].input_schema['properties'])
                     self.assertIn('submission_path', specs['medical_evaluate'].input_schema['properties'])
                     self.assertEqual(native.formal_configuration['evaluation_protocol'], formal['evaluation_protocol'])
+                    self.assertIn(str(inference_runtime.resolve()), native.candidate_execution.read_only)
+                    self.assertNotIn(str(research_runtime.resolve()), native.candidate_execution.read_only)
+                    self.assertEqual(native.installed_runtime['files'][str((inference_runtime / 'driver-metadata.txt').resolve())],
+                        hashlib.sha256(b'runtime-fixture-v1').hexdigest())
                     if mode == 'resource_pool':
                         self.assertEqual(advertised['research_execution']['program_slots'], 2)
                         self.assertEqual(advertised['initial_programs'], [])
@@ -173,7 +183,8 @@ class MedicalOpenLabTests(unittest.TestCase):
                         if mode == 'external' else ['--workspace-mode', 'candidate_scaffold'] if mode == 'managed' else [])
                     open_lab_experiment.main(['--root', str(root / ('run-'+mode)), '--task', str(inputs / 'task.json'),
                         '--execution-policy', json.dumps({'read_only': list(__import__(
-                            'rsisys.runtime.isolation', fromlist=['system_runtime_paths']).system_runtime_paths())}),
+                            'rsisys.runtime.isolation', fromlist=['system_runtime_paths']).system_runtime_paths()) + [str(research_runtime)]}),
+                        '--inference-runtime-path', str(inference_runtime),
                         '--model-path', str(model), '--python', sys.executable,
                         '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
                         '--resource-allocation', json.dumps({'physical_devices': list(map(int, physical)),

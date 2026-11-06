@@ -286,6 +286,8 @@ def main(argv=None):
                         help='Host JSON declaration: physical_devices, logical_devices, memory_availability, external_read_only_services')
     parser.add_argument('--execution-policy', type=json.loads,
                         help='Host-only ExecutionPolicy JSON: runtime read_only mounts and exact device nodes; no direct network')
+    parser.add_argument('--inference-runtime-path', action='append', default=[],
+                        help='Host-only extra read-only installed runtime/driver path for formal candidate inference; repeat as needed')
     parser.add_argument('--rsi-method', type=json.loads, default={'method': 'open_lab'},
                         help='Host catalog selection {method,config}; default optimizer supports optional reflect')
     parser.add_argument('--action-permissions', type=json.loads, default={},
@@ -589,6 +591,7 @@ def run(args, *, method_catalog=None):
             ledger_path=args.evaluation_ledger or root / 'evaluation-ledger.json', closed_gateway=closed_gateway,
             resource_policy={'device_type': args.device_type, 'device_count': resources['device_count']},
             candidate_execution=inference_policy(args.python, devices=policy.devices,
+                read_only=getattr(args, 'inference_runtime_path', ()),
                 environment=tuple((k, v) for k, v in environment.items() if k != 'PYTHONPATH')),
             wait_interrupted=lambda: backend.stop_requested or backend.pause_requested or (
                 backend.deadline is not None and time.monotonic() >= backend.deadline),

@@ -51,10 +51,14 @@ class HostExecutionBoundaryTests(unittest.TestCase):
 import os
 os.environ['CUDA_VISIBLE_DEVICES']='0,1,2,3,4,5,6,7'
 p=Path({str(target)!r})
-for action in (lambda:p.read_text(),lambda:p.write_text('escaped')):
-    try: action()
-    except OSError: pass
-    else: raise AssertionError('host path was accessible')
+try: p.read_text()
+except OSError: pass
+else: raise AssertionError('host file was readable')
+# Linux synthesizes /tmp in the child namespace. Writing the same pathname
+# there can create a private shadow; the host assertion below checks that the
+# original was not changed. Seatbelt may reject the write altogether.
+try: p.write_text('escaped')
+except OSError: pass
 Path('research.txt').write_text('allowed')
 print('confined')
 '''
