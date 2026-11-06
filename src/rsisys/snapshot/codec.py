@@ -54,6 +54,7 @@ ENUMS = {cls.__name__: cls for cls in (JobStatus, ExecutionStatus, ResumeMode)}
 # Only these additive fields may be absent in older checkpoints. Keep
 # rejecting unknown fields and missing pre-existing fields on every state type.
 LINEAGE_DEFAULTS = {
+    'SystemVersion': {'models'}, 'Candidate': {'model_bases'},
     'Decision': {'decision_id', 'depends_on_decision_ids', 'source_decision_ids',
                  'research_attempt_id', 'research_attempt_title', 'feedback_proposal_ids'},
     'DecisionContext': {'decision_graph', 'candidate_origins'},

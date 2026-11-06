@@ -243,7 +243,7 @@ class LocalTransformerServing:
                 'source_commit': source.name if source.parent.name == 'snapshots' else None}
 
     def _candidate(self, system):
-        ref = system.model
+        ref = system.model_for('actor')
         if ref is None:
             raise ValueError('Inference requires an explicit model')
         if ref == self.actor_model:
@@ -309,21 +309,25 @@ class LocalTransformerServing:
         with self._lock:
             candidate = self._candidate(system)
             if candidate is not None:
-                previous = self._prepared.get(system.model)
+                previous = self._prepared.get(system.model_for('actor'))
                 if previous is not None and candidate != previous:
                     raise ValueError('Candidate revision already bound to different native weights/manifest')
-                self._prepared[system.model] = candidate
+                self._prepared[system.model_for('actor')] = candidate
             try:
                 self._load()
                 if candidate is not None:
-                    self._ensure_adapter(system.model)
+                    self._ensure_adapter(system.model_for('actor'))
             except Exception:
                 if candidate is not None and previous is None:
-                    self._prepared.pop(system.model, None)
+                    self._prepared.pop(system.model_for('actor'), None)
                 raise
             return system
 
     def activate(self, system, *, idempotency_key):
+        if any(name != 'actor' and (name != 'decision_maker' or ref != self.decision_model)
+               for name, ref in system.models.items()):
+            from rsisys.runtime.systems import SystemActivationRejected
+            raise SystemActivationRejected('Meta model changes require a separate confirmed activation port')
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError('An activation idempotency key is required')
         with self._lock:

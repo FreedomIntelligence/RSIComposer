@@ -23,6 +23,7 @@ from rsisys.loops.contracts.execution import LabInfrastructureError, LabToolErro
 from rsisys.loops.contracts.jobs import JobStatus, TERMINAL_STATUSES
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.local_process import LocalProcessBackend
+from rsisys.runtime.accounting import HostAdmissionStop
 from rsisys.runtime.run_policy import positive
 from rsisys.runtime.json_tools import encoded
 from rsisys.runtime.sandbox import SandboxSpec, ExecRequest
@@ -37,13 +38,16 @@ class LocalProcessLab:
     """
     def __init__(self, backend: LocalProcessBackend, artifacts, *, timeout_seconds=300,
                  max_jobs=1024, max_parallel=4, max_file_bytes=1024 * 1024,
-                 max_poll_wait_seconds=30, wait_interrupted=None, defer_session=False):
+                 max_poll_wait_seconds=30, wait_interrupted=None, admission_open=None,
+                 defer_session=False):
         if not isinstance(backend, LocalProcessBackend):
             raise TypeError('LocalProcessLab requires an explicit LocalProcessBackend')
         positive(timeout_seconds, 'timeout_seconds')
         positive(max_poll_wait_seconds, 'max_poll_wait_seconds')
         if wait_interrupted is not None and not callable(wait_interrupted):
             raise TypeError('wait_interrupted must be callable')
+        if admission_open is not None and not callable(admission_open):
+            raise TypeError('admission_open must be callable')
         for name, value in (('max_jobs', max_jobs), ('max_parallel', max_parallel), ('max_file_bytes', max_file_bytes)):
             if type(value) is not int or value < 1:
                 raise ValueError(f'{name} must be a positive integer')
@@ -53,6 +57,7 @@ class LocalProcessLab:
         self.timeout_seconds, self.max_jobs = timeout_seconds, max_jobs
         self.max_parallel, self.max_file_bytes = max_parallel, max_file_bytes
         self.max_poll_wait_seconds, self.wait_interrupted = max_poll_wait_seconds, wait_interrupted
+        self.admission_open = admission_open
         self._jobs, self._keys, self._terminal = {}, {}, {}
         self._accepting, self._closed = True, False
         # A state adapter attaches the original session during restore. Factory
@@ -62,6 +67,17 @@ class LocalProcessLab:
     @property
     def workspace(self):
         return self.backend.workspace(self.session)
+
+    def require_admission(self):
+        """Host stop/deadline gate, separate from a graceful pause request.
+
+        Queries, result collection and cancellation remain available. Every new
+        program and extension mutation must check this again at its own boundary.
+        """
+        if self._closed or not self._accepting:
+            raise RuntimeError('Lab is shutting down; new work is closed')
+        if self.admission_open is not None and not self.admission_open():
+            raise HostAdmissionStop('Host Lab admission closed')
 
     def describe(self):
         text = {'type': 'string', 'minLength': 1}
@@ -121,8 +137,8 @@ class LocalProcessLab:
                 or not 0 <= wait_seconds <= self.max_poll_wait_seconds):
             raise LabToolError(f'wait_seconds must be finite and between 0 and {self.max_poll_wait_seconds}')
         json.dumps(args, allow_nan=False)
-        if not self._accepting and call.name in ('lab_start', 'lab_write_file'):
-            raise RuntimeError('Lab is shutting down; new work is closed')
+        if call.name in ('lab_start', 'lab_write_file'):
+            self.require_admission()
         if call.name == 'lab_start':
             return self._start(args)
         if call.name == 'lab_status':
@@ -189,7 +205,8 @@ class LocalProcessLab:
             'requested_seconds': wait_seconds, 'elapsed_seconds': time.monotonic() - started,
             'reason': reason}})
 
-    def _start(self, args):
+    def _start(self, args, *, executor=None):
+        self.require_admission()
         key, argv = args['key'], args['argv']
         if not isinstance(key, str) or not key.strip():
             raise LabToolError('A nonempty submission key is required')
@@ -222,7 +239,8 @@ class LocalProcessLab:
                                    'on an existing job, then retry after a slot is released',
                                    data={'reason': 'execution_busy', 'active_jobs': active})
             try:
-                ref = self.backend.exec(self.session, request)
+                self.require_admission()
+                ref = (executor or self.backend.exec)(self.session, request)
             except OSError as exc:
                 # A missing/invalid program is repairable by decision. Missing
                 # workspaces, permissions and backend failures remain host errors.

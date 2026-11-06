@@ -100,7 +100,7 @@ class MedicalEvaluator:
         state = self._states.get(system.version)
         if state is None:
             rows = self.task.check()
-            if system.model is None:
+            if system.model_for('actor') is None:
                 raise ValueError('Medical inference requires an explicit candidate model')
             state = {'system': deepcopy(system), 'rows': rows, 'predictions': [],
                      'instructions': self.artifacts.get(system.components['prompt']).decode('utf-8'),
@@ -118,11 +118,11 @@ class MedicalEvaluator:
         if len(predictions) < len(rows):
             row = rows[len(predictions)]
             legal = LABELS[row.benchmark_id]
-            request = GenerationRequest('actor', system.model, row.prompt,
+            request = GenerationRequest('actor', system.model_for('actor'), row.prompt,
                 system=instructions + '\nReturn exactly one label: ' + ', '.join(legal) + '. No explanation.',
                 max_output_tokens=self.task.max_output_tokens)
             response = self.inference(request)
-            if not isinstance(response, GenerationResponse) or response.model != system.model:
+            if not isinstance(response, GenerationResponse) or response.model != system.model_for('actor'):
                 raise ValueError('Inference must return GenerationResponse with the requested model identity')
             if not isinstance(response.text, str) or type(response.simulated) is not bool:
                 raise ValueError('Invalid inference response text or simulation marker')

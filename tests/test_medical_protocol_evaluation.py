@@ -18,6 +18,7 @@ from rsisys.adapters.local_lab_state import LocalLabState
 from rsisys.loops.contracts.decision import OperationCall
 from rsisys.loops.contracts.execution import LabToolError, LabInfrastructureError
 from rsisys.runtime.artifacts import InMemoryArtifactStore
+from rsisys.runtime.accounting import HostAdmissionStop
 
 
 INFERENCE = '''import json,sys
@@ -91,6 +92,61 @@ class MedicalProtocolTests(unittest.TestCase):
         self.assertFalse(self.options['ledger_path'].exists())
         self.assertEqual(self.lab._jobs, {})
 
+    def test_absolute_admission_closes_after_freeze_without_consuming_quota_or_starting(self):
+        open_gate = [True]
+        original = host.frozen_bundle
+        def freeze(*args):
+            result = original(*args)
+            open_gate[0] = False
+            return result
+        self.lab.admission_open = lambda: open_gate[0]
+        with patch.object(host, 'frozen_bundle', freeze):
+            with self.assertRaises(HostAdmissionStop):
+                self.submit()
+        self.assertFalse(self.options['ledger_path'].exists())
+        self.assertEqual(self.lab._jobs, {})
+        self.assertEqual(list(self.lab.evaluation_root.iterdir()), [])
+
+    def test_formal_candidate_cannot_read_unmanifested_external_dependency(self):
+        external = self.root / 'mutable-answer.txt'
+        (self.bundle / 'infer.py').write_text('import json,sys\nfrom pathlib import Path\n'
+            f'answer=Path({str(external)!r}).read_text()\n'
+            'p=json.load(sys.stdin)\nprint(json.dumps({"predictions":[{"benchmark_id":r["benchmark_id"],'
+            '"id":r["id"],"text":answer} for r in p["items"]]}))\n')
+        identities = []
+        for letter in ('A', 'J'):
+            external.write_text(letter)
+            ident = self.submit(key='external-' + letter)
+            identities.append(self.lab._evaluations[ident]['config']['submission']['sha256'])
+            state = self.backend.wait(self.lab._jobs[ident][0])
+            self.assertNotEqual(state.exit_code, 0)
+            result = self.lab.execute(OperationCall('lab_result', {'job_id': ident}))
+            self.assertNotIn('fixed_evaluation', result.data)
+        self.assertEqual(identities[0], identities[1])
+
+    def test_bundled_dependency_is_frozen_and_runtime_identity_is_in_receipt(self):
+        (self.bundle / 'answer.txt').write_text('J')
+        (self.bundle / 'infer.py').write_text(INFERENCE.replace("'text':'J'", "'text':Path('answer.txt').read_text()"))
+        ident = self.submit()
+        (self.bundle / 'answer.txt').write_text('A')
+        fixed = self.complete(ident).data['fixed_evaluation']
+        self.assertEqual(fixed['metrics']['public-fixture']['accuracy'], 1.)
+        self.assertEqual(fixed['runtime_sha256'], self.lab._evaluations[ident]['config']['runtime_identity']['sha256'])
+
+    def test_mutating_declared_installed_dependency_requires_a_new_protocol(self):
+        from dataclasses import replace
+        library = self.root / 'installed-runtime'
+        library.mkdir()
+        (library / 'helper.py').write_text('VERSION=1')
+        policy = replace(self.lab.candidate_execution, read_only=(*self.lab.candidate_execution.read_only, str(library)))
+        other = host.ProtocolMedicalLab(self.backend, self.lab.artifacts, candidate_execution=policy, **self.options)
+        self.addCleanup(other.close)
+        self.assertNotEqual(other.protocol_sha256, self.lab.protocol_sha256)
+        (library / 'helper.py').write_text('VERSION=2')
+        with self.assertRaisesRegex(PermissionError, 'runtime changed'):
+            other.execute(OperationCall('medical_evaluate', self.args))
+        self.assertFalse(self.options['ledger_path'].exists())
+
     def test_closed_gateway_aggregates_are_allowlisted_and_all_log_routes_stay_redacted(self):
         gateway = self.root / 'gateway-fixture.py'
         gateway.write_text('''import json,sys
@@ -98,13 +154,13 @@ r=json.load(sys.stdin)
 assert 'groups' not in r
 assert 'full question' not in json.dumps(r)
 result={k:r[k] for k in ('protocol_sha256','campaign_id','submission_id','candidate_id','submission_sha256')}
-result.update(status='succeeded',service_id='synthetic-gateway',dataset_sha256={'closed-fixture':'a'*64},
+result.update(status='succeeded',service_id='synthetic-gateway',dataset_sha256={'closed-fixture':'a'*64},runtime_sha256=r['runtime_sha256'],
  metrics={'closed-fixture':{'accuracy':0.5,'n':2}},predictions=['SECRET_QUESTION'],stderr='SECRET_GOLD')
 print('SECRET_QUESTION',file=sys.stderr)
 print(json.dumps(result))
 ''')
         self.lab.closed_gateway = {'argv': [sys.executable, str(gateway)], 'service_id': 'synthetic-gateway',
-                                   'dataset_sha256': {'closed-fixture': 'a' * 64}}
+                                   'dataset_sha256': {'closed-fixture': 'a' * 64}, 'runtime_sha256': 'b' * 64}
         ident = self.submit(split='closed')
         result = self.complete(ident)
         self.assertEqual(result.data['fixed_evaluation']['metrics']['closed-fixture']['accuracy'], .5)
@@ -132,7 +188,7 @@ print(json.dumps(result))
 
     def test_failed_start_consumes_slot_and_unknown_effect_is_not_replayed(self):
         self.lab.closed_gateway = {'argv': [sys.executable, '-c', 'pass'], 'service_id': 'g',
-                                   'dataset_sha256': {'closed': 'a' * 64}}
+                                   'dataset_sha256': {'closed': 'a' * 64}, 'runtime_sha256': 'b' * 64}
         with patch.object(self.backend, 'exec', side_effect=OSError('fixture start failure')):
             with self.assertRaises(OSError):
                 self.submit(split='closed')

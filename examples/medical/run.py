@@ -222,7 +222,7 @@ class _ApplyMedical(CommandHandler):
 
         system = state.data['applied']
         # Binding changes only after the injected activator confirms readiness.
-        harness.policy.update_model(system.model)
+        harness.policy.update_model(system.model_for('actor'))
         harness.state.instructions = state.data['instructions']
         if 'evidence' not in state.data:
             state.data['evidence'] = self.artifacts.put(encoded({**state.data['interpretation'],

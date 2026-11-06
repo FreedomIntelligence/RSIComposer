@@ -63,6 +63,7 @@ class AssemblyContext:
     action_permissions: ActionPermissions = field(default_factory=ActionPermissions)
     project_context: dict = field(default_factory=dict)
     lab_execution: LabExecution | None = None
+    model_session: object | None = None
     components: ComponentInstances | None = field(default=None, init=False)
     method_identity: MethodIdentity | None = field(default=None, init=False)
     state_adapters: dict = field(default_factory=dict, init=False, repr=False)
@@ -135,8 +136,13 @@ class ModuleAssembly:
     components: ComponentGraph | None = None
     component_bindings: Mapping = field(default_factory=dict)
     method_identity: MethodIdentity | None = None
+    model_session: object | None = None
 
     def __post_init__(self):
+        if self.model_session is not None:
+            from rsisys.runtime.model_session import HostModelSession
+            if not isinstance(self.model_session, HostModelSession):
+                raise TypeError('model_session must be a host-accounted HostModelSession')
         if self.method_identity is not None and not isinstance(self.method_identity, MethodIdentity):
             raise TypeError('method_identity must be a MethodIdentity')
         if self.components is not None and not isinstance(self.components, ComponentGraph):
@@ -219,6 +225,10 @@ class ModuleAssembly:
             layout['components'] = self.component_configuration()
         if self.method_identity is not None:
             layout['method'] = self.method_identity.configuration()
+        if self.model_session is not None:
+            from dataclasses import asdict
+            layout['model_session'] = {'models': [asdict(m) for m in self.model_session.models],
+                'protocol': 'host-accounted-model-session/v1'}
         return layout
 
 
@@ -244,6 +254,11 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
     if context._closed:
         raise RuntimeError('Assembly is closed')
     context.method_identity = modules.method_identity
+    if modules.model_session is not None:
+        context.model_session = modules.model_session
+        if any(model not in context.model_session.models for model in context.roles.values()):
+            raise ValueError('Assembly role is outside the host model session')
+        context.backends = dict(context.model_session.backends)
     if modules.components is not None:
         if context.components is not None:
             raise RuntimeError('Components are already assembled')

@@ -6,6 +6,7 @@ candidate adoption. Use only in a trusted, scheduler-isolated allocation.
 """
 import argparse
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -37,6 +38,12 @@ from rsisys.runtime.local_process import LocalProcessBackend
 from rsisys.adapters.local_lab_state import RetainedLocalProcessBackend
 from rsisys.runtime.model import ModelResponseError
 from rsisys.runtime.run_policy import TimeRunPolicy, RunDecision
+from rsisys.methods import MethodCatalog, MethodDefinition
+from rsisys.runtime.isolation import ExecutionPolicy, IsolatedProcessBackend, system_runtime_paths
+from rsisys.runtime.runtime_identity import inference_policy
+from rsisys.runtime.model_session import HostModelSession, ModelSessionBroker
+from rsisys.runtime.resource_account import ResourceAccount
+from .open_lab_evolution import EvolutionLabSlot, bind_evolution
 
 
 def write(path, value):
@@ -46,10 +53,6 @@ def write(path, value):
 def append(path, value):
     with Path(path).open('ab') as stream:
         stream.write(json_bytes(value) + b'\n')
-
-
-class HostAdmissionStop(RuntimeError):
-    pass
 
 
 class AbsoluteHostPolicy:
@@ -90,93 +93,14 @@ def sglang_template_tools(request):
     return normalized
 
 
-class RecordedBackend:
-    """One account for decisions, feedback, summaries and rejected responses."""
-    supports_tool_calling = True
-    supports_response_schema = True
-    token_count_mode = 'local_official_chat_template'
+# Compatibility import; every method uses the common host model session.
+from rsisys.runtime.accounting import AccountedModelBackend, HostAdmissionStop
 
-    def __init__(self, transport, tokenizer, root, *, max_calls, max_input_tokens=56000,
-                 template_tool_normalizer=None, provider_token_counter=False, resume=False):
-        self.transport, self.tokenizer, self.root = transport, tokenizer, Path(root)
-        self.template_tool_normalizer = template_tool_normalizer
-        self.provider_token_counter = provider_token_counter
-        if provider_token_counter:
-            self.token_count_mode = 'provider_tokenizer'
-        self.max_calls, self.max_input_tokens = max_calls, max_input_tokens
-        self.calls, self.deadline = 0, None
-        self.stop_requested = False
-        self.pause_requested = False
-        self.lock = threading.RLock()
-        if resume:
-            ledger = json.loads((self.root / 'model_calls.json').read_text())
-            if (ledger['limit'] != max_calls or type(ledger['attempted']) is not int
-                    or not 0 <= ledger['attempted'] <= max_calls):
-                raise ValueError('Cannot change or reset the recovered model-call budget')
-            self.calls = ledger['attempted']
-        else:
-            write(self.root / 'model_calls.json', {'attempted': 0, 'limit': max_calls})
 
-    def count_tokens(self, request):
-        if self.provider_token_counter:
-            return self.transport.count_tokens(request)
-        tools = (self.template_tool_normalizer(request) if self.template_tool_normalizer
-                 else list(request.tools))
-        kwargs = {'tools': tools} if tools else {}
-        tokens = self.tokenizer.apply_chat_template(request.chat_messages(), tokenize=True,
-            add_generation_prompt=True, enable_thinking=False, **kwargs)
-        # Transformers 5 returns BatchEncoding (a Mapping, not a dict). Its
-        # length counts fields, usually 2, rather than prompt tokens.
-        return len(tokens['input_ids'] if isinstance(tokens, Mapping) else tokens)
-
-    def generate(self, request):
-        with self.lock:
-            original = request
-            for attempt in range(3):
-                try:
-                    return self._generate(request, response_attempt=attempt + 1)
-                except ModelResponseError as exc:
-                    # Native memory tools own their validation/recovery lifecycle.
-                    # Only retry rejected decision JSON, before any action exists.
-                    if (not exc.retryable or attempt == 2 or original.tools
-                            or original.role != 'decision_maker' or original.response_schema is None):
-                        raise
-                    correction = ('The previous response exceeded the output limit. Return a shorter, complete JSON object.'
-                                  if exc.reason == 'output_truncated' else
-                                  'The previous response failed format validation. Return one complete valid JSON object.')
-                    request = replace(original, system=original.system + '\n' + correction +
-                        ' Preserve the required schema and evidence; do not execute or assume any previous action.')
-            raise AssertionError('Unreachable response recovery loop')
-
-    def _generate(self, request, *, response_attempt):
-        with self.lock:
-            if self.stop_requested or self.calls >= self.max_calls or (self.deadline is not None and time.monotonic() >= self.deadline):
-                raise HostAdmissionStop('Host inference admission closed')
-            count = self.count_tokens(request)
-            if count > self.max_input_tokens:
-                raise ValueError('Complete request exceeds configured model input limit')
-            self.calls += 1
-            ident = self.calls
-            append(self.root / 'model_requests.jsonl', {'call': ident, 'at': time.time(),
-                'response_attempt': response_attempt,
-                'input_tokens': count, 'request': asdict(request),
-                'wire_request': self.transport._generation_payload(request)})
-            write(self.root / 'model_calls.json', {'attempted': self.calls, 'limit': self.max_calls})
-            try:
-                response = self.transport.generate_with_response_observer(request,
-                    lambda wire: append(self.root / 'model_wire.jsonl', {
-                        'call': ident, 'response_attempt': response_attempt, **wire}))
-                append(self.root / 'model_responses.jsonl', {'call': ident, 'at': time.time(),
-                    'response': asdict(response)})
-                return response
-            except BaseException as exc:
-                append(self.root / 'model_errors.jsonl', {'call': ident, 'at': time.time(),
-                    'response_attempt': response_attempt,
-                    **({'reason': exc.reason, 'retryable': exc.retryable,
-                        'finish_reason': exc.finish_reason, 'provider_model': exc.provider_model}
-                       if isinstance(exc, ModelResponseError) else {}),
-                    'error': f'{type(exc).__name__}: {exc}'})
-                raise
+class RecordedBackend(AccountedModelBackend):
+    """Medical integration's bounded JSON repair, sharing the host account."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, response_attempts=3, **kwargs)
 
 
 class TimedOpenPolicy(ModelDecisionPolicy):
@@ -222,6 +146,10 @@ class AllocatedProcessBackend(LocalProcessBackend):
 
 class RetainedAllocatedProcessBackend(AllocatedProcessBackend, RetainedLocalProcessBackend):
     """The same explicit device routing, with retained local executor state."""
+
+
+class RetainedIsolatedAllocatedProcessBackend(IsolatedProcessBackend, RetainedLocalProcessBackend):
+    """Real execution protection plus the same retained process ownership."""
 
 
 def allocated_resources(environment, device_type, declaration=None):
@@ -356,6 +284,12 @@ def main(argv=None):
     parser.add_argument('--device-type', choices=('cuda', 'npu'), default='cuda')
     parser.add_argument('--resource-allocation', type=json.loads,
                         help='Host JSON declaration: physical_devices, logical_devices, memory_availability, external_read_only_services')
+    parser.add_argument('--execution-policy', type=json.loads,
+                        help='Host-only ExecutionPolicy JSON: runtime read_only mounts and exact device nodes; no direct network')
+    parser.add_argument('--rsi-method', type=json.loads, default={'method': 'open_lab'},
+                        help='Host catalog selection {method,config}; default optimizer supports optional reflect')
+    parser.add_argument('--action-permissions', type=json.loads, default={},
+                        help='Host ActionPermissions JSON; explicit sensitive rules, ordinary installed research stays open')
     parser.add_argument('--template-family', choices=('sglang', 'vllm'), default='sglang')
     parser.add_argument('--feedback-routing', choices=('agent_memory', 'legacy', 'context_or_memory'), default='agent_memory',
                         help='Default: one meta-agent with explicit memory tools; other modes opt into legacy extraction')
@@ -432,7 +366,8 @@ def main(argv=None):
                     'application/research_assembly.json', 'application/lab_execution.json',
                     'application/allocated-workspaces/process-recovery.json',
                     *(['application/agent-memory.json'] if args.feedback_routing == 'agent_memory' else ['memory.sqlite3']),
-                    'model_calls.json', 'resource-allocation.json']})
+                    'application/system-registry.json', 'application/system-activation.json',
+                    'model_calls.json', 'resource-account.json', 'resource-allocation.json']})
         write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),
             'resume': args.resume, 'at': time.time()})
         return run(args)
@@ -455,7 +390,7 @@ def legacy_memory_assembly(root, args):
                 'Absence from the supplied snapshot does not prove absence from the full history.'})
 
 
-def run(args):
+def run(args, *, method_catalog=None):
     from .open_lab_recovery import state_ports, pause_at_boundary
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -532,11 +467,25 @@ def run(args):
         str(Path(__file__).resolve().parents[2]))
     persist_identity('backend-environment.json', environment)
     resources = allocated_resources(environment, args.device_type, args.resource_allocation)
+    supplied_policy = getattr(args, 'execution_policy', None)
+    if supplied_policy is None and sys.platform == 'linux':
+        raise ValueError('Linux Open Lab requires an explicit --execution-policy with assigned device nodes and runtimes')
+    execution_policy = (ExecutionPolicy.from_dict(supplied_policy) if supplied_policy is not None else
+        ExecutionPolicy(read_only=system_runtime_paths(args.python)))
+    resources['enforced_device_nodes'] = list(execution_policy.devices)
     persist_identity('resource-allocation.json', resources)
+    if any(root.is_relative_to(Path(p)) for p in execution_policy.read_only):
+        raise ValueError('Runtime mounts cannot expose host run/account/recovery directories')
+    model_session = HostModelSession({'meta': backend}, (model,))
     project = {'scenario': 'medical', 'python': args.python,
         'model_path': args.lab_model_path or args.model_path, 'device_type': args.device_type,
         'resources': resources,
         'task': 'data/task.json',
+        'rsi_method': getattr(args, 'rsi_method', {'method': 'open_lab'}),
+        'coevolution': 'Use system_status/register/activate for optional joint changes. Meta-side changes '
+            'are reflect within the RSI optimizer. You build candidates; the host validates installed target ports. '
+            'No candidate, reflect, training or evaluation phase is required on every decision.',
+        'execution_policy': execution_policy.configuration(),
         'inference': {'owner': 'external_read_only' if args.lab_endpoint else 'meta_agent',
             'initial_service': 'external' if args.lab_endpoint else 'none',
             'program_slots': args.max_parallel,
@@ -550,7 +499,7 @@ def run(args):
                            for entry in data_manifest],
         'candidate_reference': 'candidate.py',
         'feedback_routing': args.feedback_routing,
-        'candidate_input_adapter': {'path': str(Path(__file__).with_name('candidate_adapter.py').resolve()),
+        'candidate_input_adapter': {'path': 'candidate_adapter.py',
             'sha256': hashlib.sha256(Path(__file__).with_name('candidate_adapter.py').read_bytes()).hexdigest(),
             'contract': 'medical-input-adapter-v1', 'required': False,
             'interface': 'infer(request) or infer_batch(requests); use request.render(tokenizer,...) '
@@ -613,8 +562,23 @@ def run(args):
     if args.lab_endpoint:
         project.update(endpoint=args.lab_endpoint, served_model=args.lab_model_id)
     def make_lab(context):
-        allocated = RetainedAllocatedProcessBackend(context.data_dir / 'allocated-workspaces', environment,
-                                            device_type=args.device_type)
+        import tempfile
+        broker_root = Path(tempfile.gettempdir()) / ('rsisys-brokers-' + str(os.getuid()))
+        broker_root.mkdir(mode=0o700, exist_ok=True)
+        broker_path = broker_root / (hashlib.sha256(str(root).encode()).hexdigest()[:24] + '.sock')
+        broker = ModelSessionBroker(broker_path, model_session)
+        context.add_owned_cleanup(broker.close)
+        project['model_session'] = {'protocol': 'generation-request-jsonl/v1', 'socket': str(broker_path),
+            'models': [asdict(model)], 'account': 'shared_host_model_calls',
+            'request': 'One GenerationRequest JSON object per line; response is {response:GenerationResponse} or {error,message}. '
+                'All attempts consume the shared host account. Offline local inference/training is recorded separately.'}
+        source = Path(__file__).resolve().parents[2] / 'src'
+        policy = replace(execution_policy,
+            read_only=(*execution_policy.read_only, str(source), *[entry['model_path'] for entry in available_models]),
+            sockets=(*execution_policy.sockets, str(broker_path)), environment=tuple(environment.items()))
+        account = ResourceAccount(root / 'resource-account.json', allocation=policy.configuration())
+        allocated = RetainedIsolatedAllocatedProcessBackend(context.data_dir / 'allocated-workspaces',
+            policy=policy, max_output_bytes=128000, resource_account=account)
         context.add_owned_cleanup(allocated.close_all)
         manifest = {entry['path']: entry for entry in data_manifest}
         lab = ProtocolMedicalLab(allocated, context.artifacts, timeout_seconds=args.program_timeout,
@@ -624,8 +588,13 @@ def run(args):
             campaign_id=args.evaluation_campaign_id or args.run_id,
             ledger_path=args.evaluation_ledger or root / 'evaluation-ledger.json', closed_gateway=closed_gateway,
             resource_policy={'device_type': args.device_type, 'device_count': resources['device_count']},
+            candidate_execution=inference_policy(args.python, devices=policy.devices,
+                environment=tuple((k, v) for k, v in environment.items() if k != 'PYTHONPATH')),
             wait_interrupted=lambda: backend.stop_requested or backend.pause_requested or (
                 backend.deadline is not None and time.monotonic() >= backend.deadline),
+            admission_open=lambda: not backend.stop_requested and (
+                args.deadline_epoch is None or time.time() < args.deadline_epoch) and (
+                backend.deadline is None or time.monotonic() < backend.deadline),
             defer_session=args.resume,
             evaluation_groups=[{'benchmark_id': group['benchmark_id'],
                 'path': str(task_path.parent / group['path']), 'sha256': manifest[group['path']]['sha256']}
@@ -633,7 +602,7 @@ def run(args):
         project['fixed_evaluation']['protocol_sha256'] = lab.protocol_sha256
         native_labs.append(lab)
         if args.resume:
-            return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
+            return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab)
         # Seed only new workspaces. Restore never overwrites edited code/data.
         (lab.workspace / 'data').mkdir()
         for name in relative_files:
@@ -641,14 +610,17 @@ def run(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(task_path.parent / name, target)
         write(lab.workspace / 'data/task.json', task)
+        shutil.copyfile(Path(__file__).with_name('candidate_adapter.py'), lab.workspace / 'candidate_adapter.py')
         if resource_pool:
             (lab.workspace / 'README.md').write_text(RESOURCE_POOL_README)
             write(lab.workspace / 'lab_config.json', project)
         else:
             (lab.workspace / 'candidate.py').write_text(EXTERNAL_CANDIDATE if args.lab_endpoint else CANDIDATE)
             write(lab.workspace / 'lab_config.json', {**project, 'weight_identity': actor_weight_identity})
-        return RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab
+        return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab)
     def make_decision(context, exploration):
+        from rsisys.loops.decision_making.action_space.access import ActionPermissions
+        context.action_permissions = ActionPermissions.from_dict(getattr(args, 'action_permissions', {}))
         context.project_context = project
         context.backends = {'meta': backend}
         loop = build_default_decision(context, exploration)
@@ -658,17 +630,30 @@ def run(args):
             context_compactor=compactor, project_context=project, prompts=prompts)
         if args.feedback_routing in ('agent_memory', 'context_or_memory'):
             loop.harness.add_context_processor(ImmediateFeedbackWindow())
+        bind_evolution(context, loop, context.lab_execution, backend, model, config=optimizer_config)
         return loop
     if args.feedback_routing == 'agent_memory':
         assembly = ResearchAssembly.single_meta()
     else:
         assembly = legacy_memory_assembly(root, args)
     native_labs = []
-    modules = ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
+    def build_method(config):
+        nonlocal optimizer_config
+        if set(config) - {'reflect'} or ('reflect' in config and type(config['reflect']) is not bool):
+            raise ValueError('open_lab optimizer config supports optional boolean reflect')
+        optimizer_config = deepcopy(config)
+        return ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
+        model_session=model_session,
         state_factory=lambda context, decision, exploration: state_ports(
             context, decision, exploration, lab=native_labs[0], backend=backend),
         research_backend=backend, feedback_options={'max_calls': args.max_calls, 'max_pending': 8,
             'max_input_tokens': 24000, 'max_output_tokens': 4096})
+    optimizer_config = {}
+    catalog = method_catalog or MethodCatalog({'open_lab': MethodDefinition(build_method, 'open-lab-coevolution/v1')})
+    modules = catalog.select(getattr(args, 'rsi_method', {'method': 'open_lab'}))
+    if modules.model_session is not None and modules.model_session is not model_session:
+        raise ValueError('Selected method must use this run\'s host model session')
+    modules = replace(modules, model_session=model_session)
     objective = ('Improve the medical Lab using real evidence. Choose your own hypotheses and implement, '
         'execute, debug and compare them using the available tools. Read the installed task and environment '
         'information as needed. A submission is not completion: collect real terminal results with lab_result '
@@ -724,7 +709,8 @@ def run(args):
                     except HostAdmissionStop:
                         if backend.stop_requested:
                             result.update(status='completed', stop='host_signal')
-                        elif backend.deadline is not None and time.monotonic() >= backend.deadline:
+                        elif ((backend.deadline is not None and time.monotonic() >= backend.deadline)
+                              or (args.deadline_epoch is not None and time.time() >= args.deadline_epoch)):
                             result.update(status='completed', stop='host_deadline')
                         else:
                             result.update(status='host_limit_reached', stop='inference_admission_limit')

@@ -7,6 +7,7 @@ through the [public/closed evaluation protocol](docs/evaluation-protocol.md).
 可客制化的 RSI（递归自改进）框架。**一个 meta-agent** 在 **Lab** 中选择并执行研究动作，直接读取原始反馈、调试并管理自己的记忆。Harness 内的 **memory 模块**负责存储与检索；默认不另设整理或总结 agent。Host 定义目标、能力、权限与预算；整套 RSI 方法可以整体接入，也可组合模型、harness、memory、训练和推理后端。
 
 - **一个 meta-agent**：行动选择、反馈解释、上下文管理和记忆组织属于同一工作流。Lab 内部可运行 agent 或直接执行程序。
+- **共同演化与 reflect**：RSI 优化器决定两侧改进的触发与编排，包含面向 meta-agent 自身的 reflect 策略；Lab 侧改进作用于其中的研究对象。候选由 meta-agent 按需构建，当前接口能力与尚需适配的闭环见[架构说明](docs/architecture.md#共同演化与-reflect)。
 - **任务反馈与长期记忆**：原始错误保留到实验/调试任务关闭；meta-agent 显式决定是否写入、更新或删除 memory，完整原文独立归档。
 - **轻量协同**：框架负责指令、作业、反馈与版本引用，不统一各训练框架的数据格式；跨框架数据对齐由接入方完成。
 - **自主研究**：支持隔离的并行任务、显式决策依赖、多结果采纳与汇合；研究尝试（Attempt）记录围绕同一想法的一组决策。

@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import threading
+import tempfile
 from uuid import uuid4
 
 from rsisys.adapters.local_lab import LocalProcessLab
@@ -90,8 +91,24 @@ def diagnostic_inputs():
         for index, marker in enumerate(('CANARY_ORANGE_41', 'CANARY_PURPLE_73'))]}
 
 
-def run_candidate(argv, payload, *, require_input_contract=False, return_contract=False):
-    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def run_candidate(argv, payload, *, require_input_contract=False, return_contract=False,
+                  execution=None):
+    # Legacy exploratory callers retain their explicit trusted-local behavior.
+    # Formal evaluation supplies a host-selected isolation boundary and cwd.
+    options = {}
+    scratch = None
+    try:
+        if execution is not None:
+            isolation, workspace = execution
+            scratch = tempfile.TemporaryDirectory(prefix='rsisys-inference-')
+            argv, env = isolation.command(workspace, argv, {'PATH': '/usr/bin:/bin',
+                'LANG': 'C.UTF-8', 'PYTHONUNBUFFERED': '1'}, writable=False, scratch=scratch.name)
+            options = {'cwd': workspace, 'env': env}
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, **options)
+    except BaseException:
+        if scratch is not None:
+            scratch.cleanup()
+        raise
     errors = []
     def feed():
         try:
@@ -130,6 +147,8 @@ def run_candidate(argv, payload, *, require_input_contract=False, return_contrac
             writer.join(timeout=5)
         elif not process.stdin.closed:
             process.stdin.close()
+        if scratch is not None:
+            scratch.cleanup()
         # The outer LocalProcessBackend owns the entire group and cleans up
         # candidate descendants on evaluator exit or timeout.
 
@@ -178,8 +197,7 @@ class FixedMedicalLab(LocalProcessLab):
     def execute(self, call):
         if call.name not in ('medical_evaluate', 'medical_diagnose'):
             return super().execute(call)
-        if self._closed or not self._accepting:
-            raise RuntimeError('Lab is shutting down; new work is closed')
+        self.require_admission()
         args = call.arguments
         if (set(args) != {'key', 'candidate_id', 'argv'}
                 or any(not isinstance(args[name], str) or not args[name].strip()

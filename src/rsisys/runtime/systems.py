@@ -3,6 +3,9 @@ from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Protocol
+from pathlib import Path
+import hashlib
+import json
 
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
 from rsisys.loops.contracts.model_service import ModelRef
@@ -47,11 +50,12 @@ class SystemActivator(Protocol):
 
 class ReferenceSystemActivator:
     """Default for reference-only components; does not deploy or change weights."""
-    def __init__(self, model: ModelRef | None = None):
+    def __init__(self, model: ModelRef | None = None, *, models=None):
         self.model = model
+        self.models = deepcopy(models or {})
 
     def activate(self, system, *, idempotency_key):
-        if system.model != self.model:
+        if system.model != self.model or system.models != self.models:
             raise SystemActivationRejected('Model deployment requires an explicit SystemActivator')
         return deepcopy(system)
 
@@ -62,7 +66,7 @@ class SystemRegistry:
     No implicit storage or resource acquisition. Custom recovery must persist this
     registry and the activator's receipts together; do not reconstruct on a retry.
     """
-    def __init__(self, initial: SystemVersion, activator: SystemActivator):
+    def __init__(self, initial: SystemVersion, activator: SystemActivator, *, path=None):
         if not isinstance(initial, SystemVersion):
             raise TypeError('Expected SystemVersion')
         self._current = deepcopy(initial)
@@ -74,6 +78,44 @@ class SystemRegistry:
         self._receipts = {}
         self._rejections = {}
         self._pending = None
+        self.path = Path(path) if path is not None else None
+        if self.path is not None and self.path.exists():
+            from rsisys.snapshot.codec import decode
+            raw = json.loads(self.path.read_text())
+            from .files import json_bytes
+            if hashlib.sha256(json_bytes(raw['state'])).hexdigest() != raw['sha256']:
+                raise ValueError('System registry digest mismatch')
+            state = decode(raw['state'])
+            if state['versions'].get(initial.version) != initial:
+                raise ValueError('System registry initial identity differs')
+            self._load(state)
+        else:
+            self._save()
+
+    def capture_state(self):
+        return deepcopy({name: getattr(self, '_' + name) for name in (
+            'current', 'versions', 'candidates', 'training_origins', 'compositions',
+            'receipts', 'rejections', 'pending')})
+
+    def _load(self, state):
+        if not isinstance(state, dict) or state.keys() != self.capture_state().keys():
+            raise ValueError('Invalid system registry state')
+        for name, value in deepcopy(state).items():
+            setattr(self, '_' + name, value)
+
+    def restore_state(self, state):
+        if self.path is not None and self.capture_state() != state:
+            from .recovery import RecoveryRequired
+            raise RecoveryRequired('System registry advanced after checkpoint; reconcile activation before resuming')
+        self._load(state)
+
+    def _save(self):
+        if self.path is not None:
+            from rsisys.snapshot.codec import encode
+            from .files import atomic_write, json_bytes
+            state = encode(self.capture_state())
+            atomic_write(self.path, json_bytes({'state': state,
+                'sha256': hashlib.sha256(json_bytes(state)).hexdigest()}))
 
     @property
     def current(self):
@@ -82,9 +124,9 @@ class SystemRegistry:
     def get(self, version: str):
         return deepcopy(self._versions[version])
 
-    def register(self, candidate: Candidate, *, model: ModelRef | None = None):
+    def register(self, candidate: Candidate, *, model: ModelRef | None = None, models=None):
         """Register a component change relative to its parent's model revision."""
-        return self._register(candidate, model=model, origin=None)
+        return self._register(candidate, model=model, models=models, origin=None)
 
     def register_training(self, result: TrainingResult, *, origin: TrainingOrigin):
         """Validate training initialization independently of experiment ancestry.
@@ -100,7 +142,7 @@ class SystemRegistry:
             raise ValueError('Training result base differs from origin.initial_model')
         if result.candidate.parent_system != origin.parent_system:
             raise ValueError('Training candidate parent differs from submitted origin')
-        return self._register(result.candidate, model=result.model, origin=origin)
+        return self._register(result.candidate, model=result.model, models=None, origin=origin)
 
     def training_origin(self, candidate_id: str) -> TrainingOrigin | None:
         """Return retained submission provenance; ordinary candidates have none."""
@@ -108,15 +150,30 @@ class SystemRegistry:
             raise KeyError(candidate_id)
         return deepcopy(self._training_origins.get(candidate_id))
 
-    def _register(self, candidate, *, model, origin):
+    def _register(self, candidate, *, model, models, origin):
         if not isinstance(candidate, Candidate) or not candidate.parent_system:
             raise ValueError('System candidate requires an explicit parent_system')
         parent = self._versions[candidate.parent_system]
-        if origin is None and parent.model is not None and candidate.base_version != parent.model.revision:
-            raise ValueError('Candidate model base revision differs from its parent model')
+        if model is not None and models is not None:
+            raise ValueError('Select model with one affected role or explicit models, not both')
+        bindings = dict(models or {})
+        if model is not None:
+            if len(candidate.affected_roles) != 1:
+                raise ValueError('Model updates require one affected role or explicit target bindings')
+            bindings[candidate.affected_roles[0]] = model
+        for target in bindings:
+            if target not in candidate.affected_roles:
+                raise ValueError('Model target is outside candidate affected_roles')
+        targets = set(bindings) or set(candidate.affected_roles)
+        if origin is None:
+            for target in targets:
+                base = parent.model_for(target)
+                if base is not None and candidate.model_bases.get(target, candidate.base_version) != base.revision:
+                    raise ValueError('Candidate model base revision differs from its parent model')
+        inherited = dict(parent.models)
         target = SystemVersion(candidate.candidate_id,
             {**parent.components, **candidate.changes},
-            model if model is not None else parent.model, parent.version)
+            model if model is not None else parent.model, parent.version, {**inherited, **bindings})
         previous = self._versions.get(target.version)
         if previous is not None:
             if (previous != target or self._candidates.get(target.version) != candidate
@@ -127,6 +184,7 @@ class SystemRegistry:
         self._candidates[target.version] = deepcopy(candidate)
         if origin is not None:
             self._training_origins[target.version] = deepcopy(origin)
+        self._save()
         return deepcopy(target)
 
     def compose(self, candidate_ids: Iterable[str], *, version: str) -> SystemVersion:
@@ -141,24 +199,38 @@ class SystemRegistry:
         parents = {candidate.parent_system for candidate in candidates}
         if len(parents) != 1:
             raise ValueError('Composition requires the same explicit parent system')
-        component_bases = {candidate.base_version for candidate in candidates
-                           if candidate.candidate_id not in self._training_origins}
-        if len(component_bases) > 1:
-            raise ValueError('Composition requires the same model base revision for component changes')
         parent = self._versions[candidates[0].parent_system]
+        unknown_bases = {}
+        for candidate in candidates:
+            if candidate.candidate_id in self._training_origins:
+                continue
+            for role in candidate.affected_roles:
+                if parent.model_for(role) is None:
+                    base = candidate.model_bases.get(role, candidate.base_version)
+                    if role in unknown_bases and unknown_bases[role] != base:
+                        raise ValueError('Composition requires the same model base for an unknown target')
+                    unknown_bases[role] = base
         changes = {}
         model = parent.model
+        bindings, changed_models = dict(parent.models), {}
         for candidate in candidates:
             for name, ref in candidate.changes.items():
                 if name in changes and changes[name] != ref:
                     raise ValueError(f'Conflicting component changes: {name}')
                 changes[name] = ref
-            proposed_model = self._versions[candidate.candidate_id].model
-            if proposed_model != parent.model:
-                if model != parent.model and model != proposed_model:
-                    raise ValueError('Conflicting model changes in composition')
-                model = proposed_model
-        target = SystemVersion(version, {**parent.components, **changes}, model, parent.version)
+            proposed = self._versions[candidate.candidate_id]
+            for name, ref in proposed.models.items():
+                if ref == parent.model_for(name):
+                    continue
+                if name in changed_models and changed_models[name] != ref:
+                    raise ValueError(f'Conflicting model changes in composition: {name}')
+                changed_models[name] = ref
+                bindings[name] = ref
+        # Preserve legacy single-model readers for one target. Multiple targets
+        # always use model_for(target), retaining the original default binding.
+        if len(changed_models) == 1:
+            model = next(iter(changed_models.values()))
+        target = SystemVersion(version, {**parent.components, **changes}, model, parent.version, bindings)
         previous = self._versions.get(version)
         if previous is not None:
             if previous != target or self._compositions.get(version) != ids:
@@ -166,6 +238,7 @@ class SystemRegistry:
             return deepcopy(previous)
         self._versions[version] = deepcopy(target)
         self._compositions[version] = ids
+        self._save()
         return deepcopy(target)
 
     def adopt(self, candidate_ids: Iterable[str], *, version: str,
@@ -202,19 +275,38 @@ class SystemRegistry:
         if target.parent_version != self._current.version:
             raise ValueError('Candidate parent is stale; rebase explicitly before application')
         self._pending = intent
+        self._save()  # Intent must reach storage before any external activation.
         # Preserve the intent on any exception: external work may already have run.
         try:
             actual = self.activator.activate(deepcopy(target), idempotency_key=idempotency_key)
         except SystemActivationRejected as exc:
             self._rejections[idempotency_key] = (candidate_id, str(exc))
             self._pending = None
+            self._save()
             raise
         if actual != target:
             raise ValueError('Activator returned a different system manifest')
         self._current = deepcopy(target)
         self._receipts[idempotency_key] = (candidate_id, deepcopy(target))
         self._pending = None
+        self._save()
         return deepcopy(target)
+
+
+class SystemRegistryState:
+    state_id = 'system-registry/v1'
+
+    def __init__(self, registry, *, configuration=None):
+        self.registry, self._configuration = registry, deepcopy(configuration)
+
+    def configuration(self):
+        return deepcopy(self._configuration)
+
+    def capture(self):
+        return self.registry.capture_state()
+
+    def restore(self, state):
+        self.registry.restore_state(state)
 
 
 def system_adoption_capability(registry: SystemRegistry,

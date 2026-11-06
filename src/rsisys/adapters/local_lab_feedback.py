@@ -54,6 +54,9 @@ class RoutedLab:
     def shutdown(self, mode):
         return self.lab.shutdown(mode)
 
+    def require_admission(self):
+        return self.lab.require_admission()
+
     def close(self):
         return self.lab.close()
 

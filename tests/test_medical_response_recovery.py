@@ -28,6 +28,7 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.open_backend_index = 0
         self.responses, self.requests = [], []
         case = self
         class Handler(BaseHTTPRequestHandler):
@@ -67,7 +68,11 @@ class MedicalResponseRecoveryTests(unittest.TestCase):
     def open_backend(self, max_calls=10):
         tokenizer = Mock()
         tokenizer.apply_chat_template.return_value = list(range(42))
-        return RecordedBackend(self.serving, tokenizer, self.root, max_calls=max_calls)
+        # Independent synthetic scenarios use independent accounts. Production
+        # accounts cannot be reset merely by constructing another client.
+        account = self.root if self.open_backend_index == 0 else self.root / f'case-{self.open_backend_index}'
+        self.open_backend_index += 1
+        return RecordedBackend(self.serving, tokenizer, account, max_calls=max_calls)
 
     def test_open_lab_recovers_actual_invalid_json_without_changing_action_contract(self):
         self.responses = [reply('{"kind":"invoke","arguments":{"timeout_seconds”:60}}'), reply()]

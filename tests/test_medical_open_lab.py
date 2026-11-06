@@ -172,6 +172,8 @@ class MedicalOpenLabTests(unittest.TestCase):
                     extra = (['--lab-endpoint', 'http://explicit.invalid/v1', '--lab-model-id', 'explicit-candidate']
                         if mode == 'external' else ['--workspace-mode', 'candidate_scaffold'] if mode == 'managed' else [])
                     open_lab_experiment.main(['--root', str(root / ('run-'+mode)), '--task', str(inputs / 'task.json'),
+                        '--execution-policy', json.dumps({'read_only': list(__import__(
+                            'rsisys.runtime.isolation', fromlist=['system_runtime_paths']).system_runtime_paths())}),
                         '--model-path', str(model), '--python', sys.executable,
                         '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
                         '--resource-allocation', json.dumps({'physical_devices': list(map(int, physical)),

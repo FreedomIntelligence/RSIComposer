@@ -34,6 +34,21 @@ SHA before admission. Its identity binds code, weights/configuration and the
 registered base's weight/tokenizer manifests. Later workspace edits cannot modify
 an accepted candidate. Mutation of the frozen copy invalidates the score.
 
+Formal inference runs with a read-only bundle and registered base, installed
+runtime mounts and fresh writable scratch. It has no research workspace, host
+protocol/gold/account files, model broker or network access. Helpers, configuration
+and other mutable candidate dependencies must be included in the bundle. An
+absolute read of a mutable research-side dependency fails rather than producing
+a score under an incomplete candidate identity. Candidate-owned inference still
+controls all loading, prompting and decoding inside this boundary.
+
+`runtime_sha256` binds the execution policy, interpreter and installed non-OS
+runtime file bytes, checked before and after inference. The common installed
+runtime identity enters `protocol_sha256`; the chosen registered base is also
+bound by its complete file inventory. OS libraries belong to the trusted host
+image and are identified by OS build; operators must keep that image unchanged
+during a run. This is not an attestation against a malicious host or kernel.
+
 The installed Python executes the entrypoint with the frozen directory as its
 working directory. The script reads one JSON object from stdin:
 
@@ -53,10 +68,25 @@ with optional whitespace/period, and never scans explanation text for letters.
 Missing/duplicate/unknown predictions fail evaluation. A malformed answer counts
 as incorrect. Scores and adoption cannot be supplied by candidate code.
 
-The protocol/source/budget hash and dataset SHA identify a comparison. Inference
+The protocol/source/runtime/budget hash and dataset SHA identify a comparison. Inference
 code belongs to candidate identity, so different inference methods may compete
 under one host protocol. This measures the whole candidate pipeline; claims about
 training alone require a comparison with the same inference implementation.
+
+## Candidate changes and the comparison rule
+
+The meta-agent builds the candidate itself: it may write and debug inference code,
+change prompts or decoding, and train weights or adapters. The host executes the
+submitted pipeline and computes the official score from its predictions. It does
+not choose the research method or supply the candidate's answers.
+
+Research code may also create diagnostic tests, training rewards or exploratory
+metrics. Official comparisons retain the host's dataset identity, answer parser,
+scoring rule and declared execution budget. Changing an official rule creates a
+different protocol; it cannot silently replace the rule for a competing candidate.
+For illustration, two pipelines scoring 60/100 and 65/100 on the same fixed tasks
+can be compared under that protocol. Dropping failed tasks or changing how correct
+answers are counted would change the comparison, even with the same checkpoint.
 
 ## Public and closed data
 
@@ -71,9 +101,10 @@ service, without gold. Its writable files, logs and network cannot carry data
 back to the research environment. Only aggregate scores and fixed status codes
 cross back through the gateway; private diagnostics stay at the service.
 
-The existing local Lab is trusted execution under one UID. It cannot enforce
-this boundary against research programs with the same filesystem/process access.
-Therefore closed evaluation is disabled unless an independent gateway is supplied.
+The Open Lab launcher now uses an isolated research executor and a separate
+host evaluator path. Its public inference worker is also isolated. These local
+boundaries do not provision an independent closed-data service. Closed evaluation
+remains disabled unless an independent gateway is supplied.
 No same-UID local fallback exists. This repository defines the client/receipt
 contract and admission ledger; deploying and verifying the isolated service is a
 separate operator step. It has not been provisioned by changing this code.
@@ -107,14 +138,15 @@ The gateway config contains no closed dataset paths:
 {
   "argv": ["/operator/bin/isolated-medical-evaluation-client"],
   "service_id": "operator-assigned-service",
-  "dataset_sha256": {"closed-benchmark": "<64 hexadecimal characters>"}
+  "dataset_sha256": {"closed-benchmark": "<64 hexadecimal characters>"},
+  "runtime_sha256": "<64 hexadecimal characters identifying the isolated runtime>"
 }
 ```
 
 The command is an operator-owned transport to the isolated service, not the
 submitted inference entrypoint. It receives JSON on stdin containing campaign,
 submission and candidate IDs, protocol hash, frozen bundle path/manifest/hash,
-and the execution budget. It imports the bundle into immutable service storage,
+the expected `runtime_sha256` and the execution budget. It imports the bundle into immutable service storage,
 validates hashes and registered bases, enforces quota, executes the inference
 worker under the isolation described above, and writes one receipt to stdout.
 Transport/import details depend on the deployment. It must never execute submitted
@@ -122,12 +154,12 @@ code with access to service gold files, private logs or research network/storage
 
 A success receipt echoes `protocol_sha256`, `campaign_id`, `submission_id`,
 `candidate_id`, `submission_sha256`, the configured `service_id` and
-`dataset_sha256`; it adds `status: "succeeded"` and
+`dataset_sha256` and `runtime_sha256`; it adds `status: "succeeded"` and
 `metrics: {"closed-benchmark": {"accuracy": 0.5, "n": 2}}`.
 A failed candidate returns the same identities and `status: "failed"`.
 The client reconstructs an allowlisted record, drops all other fields and
 suppresses transport stdout/stderr and exception text from Lab logs. Gateway
-identity, dataset identity and metric types/ranges are checked before publication.
+identity, dataset/runtime identity and metric types/ranges are checked before publication.
 
 ## Validation scope
 

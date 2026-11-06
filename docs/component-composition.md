@@ -16,6 +16,12 @@ RSISys 使用 `ModuleAssembly` 作为统一装配入口。可选的 `ComponentGr
 harness 和 Lab，也可以在内部使用组件图；两种形式都通过 `ModuleAssembly` 接入。
 不要求拆出候选生成、训练、推理、评测、选择等固定阶段，也不要求所有组件都能自修改。
 
+整套方法还定义 meta-agent 与 Lab 对象的 **coevolution**；其中改进 meta-agent 自身
+harness、工具、memory 机制或训练其模型的过程统一称为 **reflect**。执行可以使用 Lab，
+归属按改进对象确定。Reflect 策略属于 RSI 优化器，可整体封装或作为其内部组件。
+触发时机由方法决定，不是每轮必经阶段；完整语义见
+[共同演化与 reflect](architecture.md#共同演化与-reflect)。
+
 `methods.py` 提供版本化的 `rsisys-method/v1` 接入协议：
 
 ```python
@@ -44,7 +50,11 @@ host 显式注册可信实现；选择文件只有 `method` 和 `config`，不�
 | 可选兼容执行端点 | 现有 accept/advance/inspect/cancel/acknowledge 协议 | 旧 directive 工作流；仅 Lab 工具运行可使用默认空适配 |
 | 可选恢复与资源能力 | 显式 state ports，以及适用时的 shutdown/close | 实现自己的状态格式、任务重连和 owned 资源退出 |
 
-方法调用模型时仍需接入 host 的受控后端或用量观察；不自动截获任意 SDK 调用。
+`ModuleAssembly(model_session=...)` 在构造组件之前把同一个 `HostModelSession` 接到
+`context.model_session` / `context.backends`，同时检查角色模型属于该会话。
+医疗入口强制选择的方法继续使用本轮同一本账，不能换一个 client 重置预算。
+不可信研究脚本通过 Unix broker 查询；直接网络访问由隔离执行器阻止。
+可信 host Python 插件须使用该会话，不自动截获任意进程内 SDK 调用。
 内部组件可以共用已有接口，host 不递归读取实现私有字段。
 
 完整 CPU 示例通过相同启动入口选择 `whole`（整体实现）或 `composed`（内部组件组合）：
@@ -72,6 +82,7 @@ PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
 | 推理引擎 | 模型加载、服务或离线生成的执行适配 | host 选择实现及资源；不要求训练和推理使用同一个引擎 |
 | Meta-agent harness | 输入、记忆接线、工具调用、结果交付 | host 装配；可通过审核后的候选替换 |
 | Lab harness | Lab 内部训练/推理任务的编排和执行 | 可作为独立组件；不等于 meta-agent harness |
+| 进化触发与编排 | 决定是否、何时以及对哪一侧启动改进，允许跳过或延后 | 可由整套方法内部实现，也可组合独立策略；不要求每轮产出候选 |
 | RSI 决策策略 | 如何提出、选择、调度和接受下一次改进 | 公共 `DecisionPolicy.decide(DecisionInput)` 是可选子模块；整套方法通过上述方法协议接入 |
 | memory/归档 | harness 内的存储、检索、分页及显式修订；原始归档由 host 保留 | 已有 `ResearchAssembly` 管理这些接线；它不等于整个 RSI 算法 |
 | 正式评测协议 | Lab 流程中的数据身份、解析、计分、预算、提交配额 | host 固定；研究代码不能提交自己计算的正式分数 |
@@ -80,6 +91,34 @@ PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
 训练和推理脚本；也可以另开实验，允许提出引擎或 harness 候选。正式评测规则始终单独管理。
 医疗候选允许提交 checkpoint/LoRA **及推理脚本**，公开/封闭划分和每 1800 秒一次的
 封闭提交规则见[评测协议](evaluation-protocol.md)。本轮没有部署独立封闭评测服务。
+
+## 共同演化的组件边界
+
+方法可整体提供进化逻辑，也可按需组合触发策略、证据选择、候选构建、验证与版本选择。
+这些职责可以由同一个 meta-agent 完成；独立组件不意味着独立模型或独立研究阶段。
+触发后可以只分析、收集证据或决定保持当前版本，候选产物是可选的。
+Meta-agent reflect 与 Lab 侧改进可以复用这些接口，各自选择内部算法、验证规则和节奏。
+
+候选由 meta-agent 自行构建，包括编写工具/harness 代码、修改配置和训练权重；也可
+调用算法提供的生成或训练组件。Host 管理的是执行边界与产物接口，不规定候选内容。
+组件组合优先依赖清晰的输入输出、模型/产物格式、配置和生命周期协议；必要时由适配器
+解决兼容。多个组件共同变化时保留联合候选和版本关系，不要求每项变化独立提交或审批。
+
+候选存在时，方法集成需明确其目标对象、基线版本、受影响组件、代码/配置/权重产物、
+来源和验证协议；验证记录实际使用的两侧版本组合，启用记录实际绑定变化。
+这些是接入与留证要求，不是已新增的强制核心消息字段或内置状态机。
+多个 Lab agent 时还需定位具体对象，不能只凭 `subject=lab` 判断是哪一个 agent。
+
+当前 `Capabilities` 支持显式组合工具描述、参数校验和执行绑定，默认 harness 可注入
+决策策略、上下文压缩、反馈选择、memory 与工具实现，整套 harness 也可替换。
+这些子接口尚未全部提供独立 JSON 槽位。`ResearchAssembly` 的反馈 scheduler 选择已有
+反馈任务，不自动等价于完整进化触发器；`harness_change` 提案也不自动执行或启用改动。
+旧 `policy_training` 提案路径仍限定 meta-agent 目标，Lab 侧训练通过其已安装能力执行；
+共同演化的语义对齐不改变旧消息校验或冻结运行。
+
+通用的候选构建、验收、启用/回滚和状态迁移仍需方法适配。若在一次运行中迭代工具或
+harness，需由固定执行组件显式管理候选版本、切换边界、任务与 memory 状态、权限和
+账本；保持 host 装配身份可追踪，不能绕过固定组件图的恢复检查直接替换运行对象。
 
 ## 显式目录与依赖
 
@@ -158,14 +197,42 @@ PYTHONPATH=src python examples/modular_research.py configs/modular-demo.json
 
 ## 权限和生命周期
 
+权限设计原则是在已装配能力和分配资源内默认尽量开放，由 host 显式限制敏感操作。
+读取、构建、测试和启用可分别配置，分级能力不意味着所有操作默认拒绝，也不意味着
+候选必须人工批准。Host 可预设自动启用条件；模型不能自行改写权限或正式评测边界。
+
 图配置由 host 提供并在一次运行内固定。模型只获得实际装配的 Lab 工具，以及
 `ActionPermissions` 允许的操作和参数范围。依赖契约不会授予修改目录、数据或引擎的权限。
-可通过已有 `ActionPermissions.check(AccessRequest)` 检查具体候选或操作参数；其检查力度
+可通过 `ActionPermissions(check=SensitivePolicy(...))` 配置具名、带版本的显式 deny 规则，
+选择 phase/kind/name、具体参数值或绝对路径前缀；其身份与规则可持久化并在恢复时校验。
+任意 Python `check(AccessRequest)` 回调仍需自己的状态集成，不静默丢弃回调。其检查力度
 取决于领域实现，不会自动推断哪个任意文件属于哪个模块。
 
-目前没有一个通用的“组件级文件修改沙箱”。允许研究程序执行任意代码时，真正的文件、
-进程和网络边界依赖执行后端及 OS 隔离。尤其同 UID 本地执行不能保护研究进程也能访问的
-封闭数据。可信 Python 工厂也不是不可信代码沙箱。
+现有 `ActionPermissions()` 的普通 decision 已允许全部已接入操作和 directive；review
+默认只读是独立的阶段配置。`ActionPermissions.unrestricted()` 可开放 review 的已接入
+操作，配合 `check` 回调实现具体敏感限制。此处对齐设计原则，不更改这些兼容默认值，
+也不把未安装能力视为已经可用。
+
+工具准入与子进程隔离分别执行。`IsolatedProcessBackend` 用 host 的 `ExecutionPolicy`
+限制实际文件、网络和设备可见性；只读运行时不能包含 host 账本、恢复目录或凭据。
+允许编辑与运行工作区程序，不会授予改写 host 策略或访问未分配设备的权限。Linux 显式
+声明设备节点及运行时挂载，不以 `CUDA_VISIBLE_DEVICES` 等变量作为隔离依据。
+隔离设施不可用时拒绝执行；`LocalProcessBackend` 保留其明确的可信本地语义。
+封闭数据仍由独立 gateway 持有。可信 Python 工厂不是不可信代码沙箱。
+
+医疗入口的 `--rsi-method '{"method":"open_lab","config":{"reflect":true}}'` 选择默认
+RSI 优化器。Host 也可给 `run(..., method_catalog=...)` 注册整体实现或组件装配；配置
+不接受候选 Python 导入路径。默认 reflect 可跳过，不要求每轮或每次触发产生候选。
+
+`runtime.evolution.ActivationPort` 由 host 注册 prepare/read/apply 与实现版本。候选由
+meta-agent 在工作区构建，再经 `system_register` 冻结到 artifact store。`system_activate`
+合并兼容目标、先持久写 intent，再应用并逐目标读回；失败时回滚并确认，结果不确定则保留
+pending。`EvolutionState` 与 registry/activation journal 一起恢复，不重建研究任务或
+清空 memory/调用账本。默认医疗端口为 `meta.prompts` 和 `meta.harness` 参数；新权重、
+新工具和整套 harness 的真实部署需要相应激活实现，不默认执行候选提供的 host 代码。
+注册清单可携带 `models: {role: {backend_id, model_id, revision}}` 和
+`model_bases: {role: revision}`；目标必须有已安装的模型端口并出现在 `affected_roles`。
+格式错误返回可修正的工具反馈。停止或绝对截止后禁止注册/启用，系统状态仍可查询。
 
 工厂只构造对象，不提交训练、推理或研究任务；恢复同样遵守这条约定。资源可声明
 `owned=True`，对象必须提供幂等 `close()`。构造失败也保留已经注册的清理；按依赖反序

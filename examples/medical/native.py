@@ -239,25 +239,28 @@ class MedicalServing:
             self.deployments.adapter_paths[model] = path
 
     def prepare_inference(self, system):
-        if system.model is None:
+        if system.model_for('actor') is None:
             raise ValueError('Medical inference requires a model')
-        path = self.adapter_paths.get(system.model)
+        path = self.adapter_paths.get(system.model_for('actor'))
         resolved = self.adapter_path(system) if self.adapter_path is not None else None
         if path is not None and resolved is not None and path != resolved:
             raise ValueError('Adapter callback conflicts with the explicit path mapping')
         if path is not None or resolved is not None:
-            self._bind_path(system.model, path if path is not None else resolved)
-        key = 'medical-inference:' + _hash(encoded(asdict(system.model)))
-        state = self.deployments.prepare(system.model, idempotency_key=key)
+            self._bind_path(system.model_for('actor'), path if path is not None else resolved)
+        key = 'medical-inference:' + _hash(encoded(asdict(system.model_for('actor'))))
+        state = self.deployments.prepare(system.model_for('actor'), idempotency_key=key)
         if state.status in (DeploymentStatus.FAILED, DeploymentStatus.RELEASED):
             raise RuntimeError(f'Medical deployment is {state.status}: {state.error or ""}')
         if not state.ready:
             raise ModelActivationPending(f'Medical deployment {state.deployment.deployment_id}: {state.status}')
-        if state.model != system.model:
+        if state.model != system.model_for('actor'):
             raise ValueError('Deployment returned a different candidate model')
         return system
 
     def activate(self, system, *, idempotency_key):
+        if set(system.models) - {'actor'}:
+            from rsisys.runtime.systems import SystemActivationRejected
+            raise SystemActivationRejected('This deployment activator supports only the actor model target')
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError('A system activation idempotency key is required')
         root = self.deployments.root

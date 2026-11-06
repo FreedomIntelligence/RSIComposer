@@ -51,8 +51,9 @@ registered base are verified before and after public inference. Compare matching
 candidate, including inference. Fix inference code when isolating training gains.
 Historical scores remain unchanged and do not become a baseline automatically.
 
-No closed files are copied to the workspace. The ordinary local executor uses
-the same UID and provides **no closed-data isolation**. Without a separate gateway,
+No closed files are copied to the workspace. This launcher uses an isolated
+research worker and a separate isolated formal-inference worker, but does not
+provision a closed-data service. Without a separate gateway,
 closed evaluation fails before acceptance. The operator must isolate its datasets,
 worker filesystem, network and private logs, and independently enforce campaign
 admission. Merely hiding a path is insufficient. See the
@@ -93,8 +94,9 @@ controller and require no LangMem installation or provider tool-calling API.
 Install `rsisys[langmem]` only for the explicit legacy extraction workflow. Inside a
 scheduler-owned allocation, pass only the GPUs reserved for generated Lab
 programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
-For an explicitly provided external service, opt in with `--lab-endpoint` and
-`--lab-model-id`; this seeds an HTTP candidate example with inference-only access.
+The legacy `--lab-endpoint` / `--lab-model-id` option seeds an HTTP reference
+example only; it does not install a transport or grant access through isolation.
+Use an explicitly installed host broker transport for external query services.
 `RSISYS_LAB_ENDPOINT` no longer implicitly chooses a service.
 
 The default `--max-parallel 2` allows two research programs. An optional research
@@ -114,13 +116,21 @@ and `external_read_only_services`. The declared order must match
 Include timestamped capacity/free-memory observations and separately reserved
 service devices in that declaration. It grants no rights to those external
 devices or services. Resume retains the exact declaration and rejects changed
-child routing before inference. The operator still supplies OS isolation.
+child routing before inference. Linux requires functioning bubblewrap/user
+namespaces and an explicit host `--execution-policy` JSON. Its `read_only` paths
+contain installed runtimes/public inputs; use `system_runtime_paths(python)` to
+inventory the Python environment. Its `devices` must list exact assigned device
+nodes and the driver's required control nodes. Do not mount all of `/dev` or a
+directory containing host accounts, credentials or recovery files. Environment
+visibility alone grants no device rights. Each accelerator/driver combination
+requires separate deployment validation; missing isolation fails before research.
 
 ```bash
 PYTHONPATH=src:. python -m examples.medical.open_lab_experiment \
   --root /absolute/new/run-directory --run-id unique-medical-open-run \
   --task /absolute/fixed/data/task.json --model-path /absolute/Qwen3.5-9B \
   --python /absolute/cuda-training-env/bin/python \
+  --execution-policy "$(cat /absolute/operator/execution-policy.json)" \
   --endpoint http://127.0.0.1:30000/v1 --seconds 600 --max-calls 128
 ```
 
@@ -134,15 +144,25 @@ recorded. Generated programs and results are retained remotely before workspace
 cleanup. Training and validated adoption must be established from their actual
 artifacts; native stdout and model-written interpretations are not attestations.
 
-This is trusted local process execution. OS/data/network isolation and endpoint
-ownership belong to the deployment. Local model configuration and shard sizes
+The host chooses runtime/device mounts and broker sockets. Research programs
+can edit their workspace and use its Unix services, but cannot directly contact
+host TCP endpoints or external APIs. The `project_context.model_session` Unix
+broker exposes registered models through the same host call account, keeping
+credentials outside the worker. The legacy `--lab-endpoint` scaffold does not
+grant network access; its HTTP example requires a separately installed host
+transport to be usable under isolation. Formal inference has no query broker.
+Local model configuration and shard sizes
 are recorded; a full weight digest is not inferred from a serving alias. Each
 controller directory is claimed once, with no automatic replay after failure.
 
 For an absolute end time, set `--deadline-epoch` to the UTC Unix timestamp.
 Initialization and replacement runs cannot extend it. `--max-jobs` and
-`--program-timeout` configure host admission; SIGTERM closes admission and lets
-the application cancel its owned programs before exit. `--revision` records the
+`--program-timeout` configure host admission. SIGTERM requests a graceful pause
+at the current action boundary, then cancels owned programs before checkpointing.
+An absolute deadline or host stop closes new writes, programs, formal submissions
+and system changes even if a provider response arrives late. Read-only status,
+result collection and cancellation remain available during shutdown.
+`--revision` records the
 frozen source identity in the public `monitor.json`, which a separate rsimonitor
 server can read. This launcher uses serial native memory tool calls to keep a
 single feedback reply focused; the provider default remains replaceable. Native

@@ -75,11 +75,13 @@ class _Process:
     error: str | None = None
     readers: list[threading.Thread] = field(default_factory=list)
     logs: dict = field(default_factory=dict)
+    resource_id: str | None = None
+    started_at: float = field(default_factory=time.monotonic)
 
 
 class LocalProcessBackend:
     def __init__(self, root, *, max_output_bytes: int = 1024 * 1024,
-                 max_log_bytes: int = 64 * 1024 * 1024):
+                 max_log_bytes: int = 64 * 1024 * 1024, resource_account=None):
         if type(max_output_bytes) is not int or max_output_bytes < 1:
             raise ValueError('max_output_bytes must be positive')
         if type(max_log_bytes) is not int or max_log_bytes < 1:
@@ -87,6 +89,7 @@ class LocalProcessBackend:
         if not hasattr(os, 'waitid') and not hasattr(select, 'kqueue'):
             raise NotImplementedError('Local process cleanup requires waitid or kqueue exit observation')
         self.root = Path(root).resolve()
+        self.resource_account = resource_account
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_output_bytes = max_output_bytes
         self.max_log_bytes = max_log_bytes
@@ -129,7 +132,10 @@ class LocalProcessBackend:
         # Do not inherit credential environment variables into model-generated commands.
         environment = {'PATH': os.environ.get('PATH', os.defpath), 'HOME': str(root),
                        'TMPDIR': str(root), 'LANG': 'C.UTF-8', 'PYTHONUNBUFFERED': '1'}
+        argv, environment = self.prepare_command(root, request.argv, environment)
         ref = ProcessRef(uuid4().hex, sandbox)
+        if self.resource_account is not None:
+            self.resource_account.reserve(ref.process_id, timeout)
         directory = Path(tempfile.mkdtemp(prefix=ref.process_id + '-', dir=self.log_root))
         logs = {}
         try:
@@ -138,7 +144,7 @@ class LocalProcessBackend:
                 logs[name] = {'path': path, 'tail_path': tail,
                     'file': path.open('x+b', buffering=0), 'tail_file': tail.open('x+b', buffering=0),
                     'observed': 0, 'stored': 0, 'tail': bytearray(), 'sha256': None}
-            process = subprocess.Popen(request.argv, cwd=root, env=environment, stdin=subprocess.DEVNULL,
+            process = subprocess.Popen(argv, cwd=root, env=environment, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         except BaseException:
             for log in logs.values():
@@ -146,7 +152,7 @@ class LocalProcessBackend:
                 log['tail_file'].close()
             shutil.rmtree(directory)
             raise
-        entry = _Process(process, timeout, logs=logs)
+        entry = _Process(process, timeout, logs=logs, resource_id=ref.process_id)
         self._processes[ref] = entry
         try:
             self._process_started(ref, request, entry)
@@ -159,6 +165,10 @@ class LocalProcessBackend:
                 entry.done.set()
             raise
         return ref
+
+    def prepare_command(self, workspace, argv, environment):
+        """Host execution boundary. The local profile intentionally adds no isolation."""
+        return argv, environment
 
     def _process_started(self, ref, request, entry):
         """Optional explicit persistence integration, before starting supervision."""
@@ -269,6 +279,9 @@ class LocalProcessBackend:
                 stderr += '\nDurable log quota reached; retained head/tail coverage is explicit in logs'
             if entry.error:
                 stderr += '\n' + entry.error
+            if self.resource_account is not None:
+                self.resource_account.finish(entry.resource_id,
+                    elapsed=time.monotonic() - entry.started_at, status=status.value)
             entry.state = ProcessState(status, entry.stdout.decode('utf-8', errors='replace'),
                                        stderr, code, False,
                                        'infrastructure' if entry.error else

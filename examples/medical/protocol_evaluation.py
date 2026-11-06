@@ -1,6 +1,6 @@
 """Medical scoring protocol accepting frozen candidate weights AND inference code.
 
-Public inference uses the ordinary trusted Lab executor. Closed evaluation is
+Public inference uses a host-isolated frozen bundle worker. Closed evaluation is
 delegated to an operator's isolated gateway; no closed data is loaded here.
 The gateway must enforce the same campaign quota and freeze/import the bundle
 before executing candidate code in a data-, filesystem- and network-isolated
@@ -25,6 +25,8 @@ from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.evaluation import EvaluationLedger, EvaluationAdmissionError
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.isolation import ExecutionPolicy, ProcessIsolation
+from rsisys.runtime.runtime_identity import inference_policy, runtime_identity
 try:
     from .fixed_evaluation import FixedMedicalLab, fixed_inputs, score_predictions, run_candidate
     from .checkpoint_evaluation import digest, file_digest
@@ -41,7 +43,8 @@ def source_identity():
     root = Path(__file__).resolve().parent
     result = {name: file_digest(root / name)['sha256'] for name in (
         'protocol_evaluation.py', 'fixed_evaluation.py', 'candidate_adapter.py', 'checkpoint_evaluation.py')}
-    for name in ('loops/contracts/evaluation.py', 'runtime/evaluation.py'):
+    for name in ('loops/contracts/evaluation.py', 'runtime/evaluation.py', 'runtime/isolation.py',
+                 'runtime/runtime_identity.py'):
         result['rsisys/' + name] = file_digest(root.parents[1] / 'src/rsisys' / name)['sha256']
     return result
 
@@ -93,7 +96,7 @@ def registered_base_identity(root):
         raise ValueError('Registered base requires config.json')
     # Candidate inference may use generation defaults or other installed base
     # files, so bind the whole registered inventory, not only model shards.
-    files = {str(p.relative_to(root)): file_digest(p) for p in sorted(root.rglob('*')) if p.is_file()}
+    files = bundle_manifest(root)
     return {'files': files, 'sha256': digest(files)}
 
 
@@ -114,10 +117,13 @@ def safe_closed_result(raw, request, gateway):
             or any(raw.get(k) != request[k] for k in (
                 'protocol_sha256', 'campaign_id', 'submission_id', 'candidate_id', 'submission_sha256'))
             or raw.get('service_id') != gateway['service_id']
+            or ('runtime_sha256' in request and raw.get('runtime_sha256') != request['runtime_sha256'])
             or raw.get('dataset_sha256') != gateway['dataset_sha256']):
         raise ValueError('Closed gateway receipt identity mismatch')
     result = {k: raw[k] for k in ('status', 'protocol_sha256', 'campaign_id', 'submission_id',
                                   'candidate_id', 'submission_sha256', 'service_id', 'dataset_sha256')}
+    if 'runtime_sha256' in request:
+        result['runtime_sha256'] = raw['runtime_sha256']
     if raw['status'] == 'succeeded':
         metrics = raw.get('metrics')
         if not isinstance(metrics, dict) or set(metrics) != set(gateway['dataset_sha256']):
@@ -147,6 +153,7 @@ def evaluate(config):
         request = {key: config[key] for key in ('protocol_sha256', 'campaign_id', 'candidate_id', 'submission_id')}
         request.update(submission_sha256=config['submission']['sha256'], bundle_path=str(bundle),
                        submission=config['submission'], protocol=asdict(PROTOCOL),
+                       runtime_sha256=gateway['runtime_sha256'],
                        execution_budget=config['execution_budget'])
         # The configured command is a transport to an isolated service, not a
         # candidate command. Bounded output stays in memory and is allowlisted.
@@ -161,18 +168,25 @@ def evaluate(config):
             raise ValueError('Registered base changed')
         # Template/tokenizer/decoding are candidate-owned. The host passes full
         # questions/options without gold, then scores strict final letters.
-        previous = Path.cwd()
-        try:
-            os.chdir(bundle)
-            os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
-            predictions = run_candidate([config['python'], submission['entrypoint']], payload)
-        finally:
-            os.chdir(previous)
+        policy = ExecutionPolicy.from_dict(config['candidate_execution'])
+        expected_runtime = config['runtime_identity']
+        installed_policy = ExecutionPolicy.from_dict(expected_runtime['policy'])
+        if policy != replace(installed_policy,
+                read_only=(*installed_policy.read_only, submission['base_model_path'])):
+            raise ValueError('Candidate execution exposes undeclared dependencies')
+        if runtime_identity(config['python'], installed_policy) != expected_runtime:
+            raise ValueError('Installed inference runtime changed')
+        isolation = ProcessIsolation(policy)
+        predictions = run_candidate([config['python'], submission['entrypoint']], payload,
+                                    execution=(isolation, bundle))
         metrics, scored = score_predictions(predictions, gold)
         if not verify_base():
             raise ValueError('Registered base changed during inference')
+        if runtime_identity(config['python'], installed_policy) != expected_runtime:
+            raise ValueError('Installed inference runtime changed during inference')
         record = {'status': 'succeeded', 'metrics': metrics, 'predictions': scored,
-                  'dataset_sha256': datasets, 'submission': config['submission']}
+                  'dataset_sha256': datasets, 'submission': config['submission'],
+                  'runtime_sha256': expected_runtime['sha256']}
     if bundle_manifest(bundle) != config['submission']['files']:
         raise ValueError('Frozen submission changed during inference; no score')
     record.update({key: config[key] for key in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256')})
@@ -199,28 +213,39 @@ def run_candidate_gateway(argv, request, timeout):
 
 class ProtocolMedicalLab(FixedMedicalLab):
     def __init__(self, *args, base_model_paths, campaign_id, ledger_path, closed_gateway=None,
-                 resource_policy=None, **kwargs):
+                 resource_policy=None, candidate_execution=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.protocol_runner = Path(__file__).resolve()
         self.closed_gateway = deepcopy(closed_gateway)
         if closed_gateway is not None:
             if (not isinstance(closed_gateway, dict) or set(closed_gateway) != {
-                    'argv', 'service_id', 'dataset_sha256'}
+                    'argv', 'service_id', 'dataset_sha256', 'runtime_sha256'}
                     or not isinstance(closed_gateway['argv'], list) or not closed_gateway['argv']
                     or any(not isinstance(v, str) or not v or '\x00' in v for v in closed_gateway['argv'])
                     or not isinstance(closed_gateway['service_id'], str) or not closed_gateway['service_id']
                     or not isinstance(closed_gateway['dataset_sha256'], dict) or not closed_gateway['dataset_sha256']):
                 raise ValueError('Closed evaluation requires an operator-configured isolated gateway')
+            runtime = closed_gateway['runtime_sha256']
+            if not isinstance(runtime, str) or len(runtime) != 64:
+                raise ValueError('Closed gateway requires a pinned runtime identity')
+            int(runtime, 16)
             for name, sha in closed_gateway['dataset_sha256'].items():
                 if not isinstance(name, str) or not name or not isinstance(sha, str) or len(sha) != 64:
                     raise ValueError('Invalid closed dataset identity')
                 int(sha, 16)
         self.ledger = EvaluationLedger(ledger_path, campaign_id)
+        self.candidate_execution = candidate_execution or inference_policy(self.evaluation_python)
+        if not isinstance(self.candidate_execution, ExecutionPolicy):
+            raise TypeError('candidate_execution must be a host ExecutionPolicy')
+        ProcessIsolation(self.candidate_execution).check()
+        self.installed_runtime = runtime_identity(self.evaluation_python, self.candidate_execution)
         self.formal_configuration = {'evaluation_protocol': asdict(PROTOCOL),
             'source_sha256': source_identity(), 'campaign_id': campaign_id,
             'ledger_path': str(Path(ledger_path).resolve()),
             'base_model_paths': list(dict.fromkeys(str(Path(p).resolve()) for p in base_model_paths)),
             'closed_gateway': self.closed_gateway,
+            'candidate_execution': self.candidate_execution.configuration(),
+            'installed_runtime_sha256': self.installed_runtime['sha256'],
             'execution_budget': {'timeout_seconds': self.timeout_seconds,
                                  'resources': deepcopy(resource_policy)}}
         if not self.formal_configuration['base_model_paths']:
@@ -228,6 +253,8 @@ class ProtocolMedicalLab(FixedMedicalLab):
         # Inference code is part of the candidate, so it is deliberately absent
         # from the common comparison protocol identity.
         self.protocol_sha256 = digest({'protocol': asdict(PROTOCOL), 'source': source_identity(),
+                                      'runtime_sha256': self.installed_runtime['sha256'],
+                                      'closed_runtime_sha256': (closed_gateway or {}).get('runtime_sha256'),
                                       'execution_budget': self.formal_configuration['execution_budget']})
 
     def describe(self):
@@ -255,11 +282,13 @@ class ProtocolMedicalLab(FixedMedicalLab):
                 or any(not isinstance(v, str) or not v.strip() or '\x00' in v for v in args.values())
                 or args['split'] not in ('public', 'closed')):
             raise LabToolError('Submit key, candidate_id, split and submission_path only')
-        if self._closed or not self._accepting:
-            raise RuntimeError('Lab is shutting down; new work is closed')
+        self.require_admission()
         if args['split'] == 'closed' and self.closed_gateway is None:
             raise LabToolError('An isolated closed evaluator has not been configured',
                                data={'reason': 'closed_evaluator_unavailable'})
+        if args['split'] == 'closed' and not self.closed_gateway.get('runtime_sha256'):
+            raise LabToolError('Closed gateway runtime identity is not configured',
+                               data={'reason': 'closed_runtime_identity_unavailable'})
         if self.formal_configuration['source_sha256'] != source_identity():
             raise PermissionError('Host evaluation protocol source changed')
         identity = digest(args)
@@ -277,6 +306,8 @@ class ProtocolMedicalLab(FixedMedicalLab):
             raise LabToolError('Key is already used by a research program')
         if self._status()['active_jobs']:
             raise LabToolError('Release owned programs before evaluation', data={'reason': 'evaluation_devices_busy'})
+        if runtime_identity(self.evaluation_python, self.candidate_execution) != self.installed_runtime:
+            raise PermissionError('Installed runtime changed after campaign configuration')
         source = self.workspace / args['submission_path']
         if (Path(args['submission_path']).is_absolute() or '..' in Path(args['submission_path']).parts
                 or source.is_symlink() or not source.resolve().is_relative_to(self.workspace.resolve())
@@ -289,7 +320,11 @@ class ProtocolMedicalLab(FixedMedicalLab):
         except (ValueError, OSError, KeyError, TypeError) as exc:
             raise LabToolError('Invalid candidate bundle: ' + str(exc)) from exc
         try:
+            self.require_admission()
             admission = self.ledger.reserve(args['key'], identity, args['split'])
+        except RuntimeError:
+            shutil.rmtree(destination)
+            raise
         except EvaluationAdmissionError as exc:
             shutil.rmtree(destination)
             raise LabToolError(str(exc), data=exc.data) from exc
@@ -297,6 +332,10 @@ class ProtocolMedicalLab(FixedMedicalLab):
             shutil.rmtree(destination)
             raise LabToolError('Concurrent submission accepted; reconcile its existing identity',
                                data={'reason': 'accepted_submission_requires_recovery'})
+        candidate_policy = replace(self.candidate_execution,
+            read_only=(*self.candidate_execution.read_only, submission['configuration']['base_model_path']))
+        # The common installed runtime excludes the chosen base, whose complete
+        # inventory is separately bound to submission_sha256.
         config = {'candidate_id': args['candidate_id'], 'split': args['split'],
             'protocol_sha256': self.protocol_sha256, 'source_sha256': source_identity(),
             'campaign_id': self.ledger.campaign_id, 'submission_id': args['key'],
@@ -304,11 +343,13 @@ class ProtocolMedicalLab(FixedMedicalLab):
             'execution_budget': self.formal_configuration['execution_budget'],
             'timeout_seconds': self.timeout_seconds, 'groups': self.evaluation_groups if args['split'] == 'public' else [],
             'closed_gateway': self.closed_gateway if args['split'] == 'closed' else None,
+            'candidate_execution': candidate_policy.configuration(), 'runtime_identity': self.installed_runtime,
             'output': str(self.evaluation_root / (ident + '.json'))}
         config_path = self.evaluation_root / (ident + '-request.json')
         atomic_write(config_path, json_bytes(config))
         command = [self.evaluation_python, str(self.protocol_runner), str(config_path)]
-        result = self._start({'key': args['key'], 'argv': command})
+        result = self._start({'key': args['key'], 'argv': command},
+            executor=getattr(self.backend, 'exec_host', None))
         self._evaluations[result.data['job_id']] = {'arguments': deepcopy(args), 'config': config, 'command': command}
         self.ledger.attach(args['key'], result.data['job_id'])
         return result
@@ -332,6 +373,8 @@ class ProtocolMedicalLab(FixedMedicalLab):
                     or record['adopted'] is not False):
                 raise ValueError('Evaluation receipt identity differs')
             if config['split'] == 'public':
+                if record['runtime_sha256'] != config['runtime_identity']['sha256']:
+                    raise ValueError('Inference runtime receipt identity differs')
                 _, gold, datasets = fixed_inputs(self.evaluation_groups)
                 metrics, scored = score_predictions([{k: v[k] for k in ('benchmark_id', 'id', 'text')}
                                                      for v in record['predictions']], gold)
@@ -343,6 +386,7 @@ class ProtocolMedicalLab(FixedMedicalLab):
             else:
                 request = {k: config[k] for k in ('protocol_sha256', 'campaign_id', 'submission_id', 'candidate_id')}
                 request['submission_sha256'] = config['submission']['sha256']
+                request['runtime_sha256'] = self.closed_gateway['runtime_sha256']
                 safe = safe_closed_result(record, request, self.closed_gateway)
                 if safe['status'] == 'failed':
                     result = replace(result, status=ExecutionStatus.FAILED, error='Closed candidate failed',
@@ -353,6 +397,7 @@ class ProtocolMedicalLab(FixedMedicalLab):
                                             'split', 'metrics', 'dataset_sha256', 'submission_sha256')}
             fixed.update(record_sha256=hashlib.sha256(raw).hexdigest(), adopted=False,
                          evaluator_sha256=config['source_sha256']['protocol_evaluation.py'], verified=True)
+            fixed['runtime_sha256'] = record['runtime_sha256']
             result = replace(result, data={**result.data, 'fixed_evaluation': fixed})
         except Exception:
             # Do not expose gateway payloads, candidate output or private paths

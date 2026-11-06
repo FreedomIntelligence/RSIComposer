@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import time
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -22,6 +23,7 @@ from rsisys.adapters.local_lab_state import RetainedLocalProcessBackend, LocalLa
 from rsisys.loops.contracts.decision import OperationCall
 from rsisys.loops.contracts.model_service import GenerationResponse
 from rsisys.runtime.artifacts import InMemoryArtifactStore
+from rsisys.runtime.isolation import system_runtime_paths
 from rsisys.runtime.recovery import DurableRecovery, RecoveryRequired
 
 
@@ -164,6 +166,47 @@ class OpenLabRecoveryTests(unittest.TestCase):
         finally:
             resumed.close()
 
+    def test_late_provider_response_cannot_start_work_after_absolute_deadline(self):
+        inputs, model, run = self.root / 'inputs', self.root / 'model', self.root / 'late-run'
+        inputs.mkdir()
+        model.mkdir()
+        (model / 'config.json').write_text('{}')
+        row = {'id': 'fixture', 'question': 'fixture', 'options': {'A': 'a', 'B': 'b'}, 'gold': 'A'}
+        for name in ('train.jsonl', 'dev.jsonl'):
+            (inputs / name).write_text(json.dumps(row) + '\n')
+        (inputs / 'task.json').write_text(json.dumps({'train': 'train.jsonl',
+            'development': [{'path': 'dev.jsonl', 'benchmark_id': 'fixture'}]}))
+        clock = SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=time.sleep)
+        class Transport:
+            def __init__(self, *args, **kwargs):
+                pass
+            def _generation_payload(self, request):
+                return {'model': request.model.model_id, 'messages': request.chat_messages()}
+            def generate_with_response_observer(self, request, observer):
+                saved = json.loads((run / 'recovery-launch.json').read_text())
+                clock.time = lambda: saved['arguments']['deadline_epoch'] + 1
+                observer({'body': 'synthetic late response'})
+                return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': 'lab_start',
+                    'arguments': {'key': 'too-late', 'argv': [sys.executable, '-c',
+                        'from pathlib import Path; Path("must-not-run").touch()']}}), request.model, False)
+        transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: Tokenizer()))
+        with patch.dict(sys.modules, {'transformers': transformers}), \
+             patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,13'}), \
+             patch.object(launcher, 'VLLMBackend', Transport), patch.object(launcher, 'time', clock), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            result = launcher.main(['--root', str(run), '--task', str(inputs / 'task.json'),
+                '--model-path', str(model), '--python', sys.executable, '--endpoint', 'http://127.0.0.1:1/v1',
+                '--run-id', 'late-response-fixture', '--seconds', '120', '--max-calls', '5', '--device-type', 'npu',
+                '--execution-policy', json.dumps({'read_only': list(system_runtime_paths())}),
+                '--resource-allocation', json.dumps({'physical_devices': [8,13], 'logical_devices': [0,1]})])
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['stop']['reason'], 'absolute_host_deadline_or_signal')
+        self.assertEqual(result['model_calls'], 1)
+        recovery = json.loads((run / 'application/allocated-workspaces/process-recovery.json').read_text())
+        self.assertEqual(recovery['payload']['processes'], {})
+        self.assertFalse(any((run / 'application/allocated-workspaces').rglob('must-not-run')))
+
     def test_launcher_signal_pause_resume_preserves_state_memory_budget_and_deadline(self):
         inputs, model, run = self.root / 'inputs', self.root / 'model', self.root / 'run'
         inputs.mkdir()
@@ -216,6 +259,25 @@ class OpenLabRecoveryTests(unittest.TestCase):
                 memory.execute(OperationCall('memory_write', {'expected_revision': 1,
                     'memory_id': 'retained-memory', 'content': 'fixture reusable observation',
                     'source_refs': [], 'status': 'unverified'}))
+                # Exercise the real medical optimizer's reflect ports, then
+                # resume with the same task/memory/model/resource accounts.
+                lab = harness.tools.lab
+                manifest = {'candidate_id': 'reflect-fixture', 'parent_system': 'initial',
+                    'base_version': harness.current_model().revision, 'affected_roles': ['decision_maker'],
+                    'components': {'meta.prompts': 'reflect-prompts.json', 'meta.harness': 'reflect-harness.json'}}
+                config = {key: getattr(harness, key) for key in
+                    ('experience_limit', 'memory_limit', 'review_tool_limit', 'max_outstanding')}
+                config['memory_limit'] = 7
+                for name, value in [('candidate.json', manifest), ('reflect-prompts.json',
+                        {'research': 'CPU synthetic reflected research instructions'}), ('reflect-harness.json', config)]:
+                    lab.execute(OperationCall('lab_write_file', {'path': name, 'content': json.dumps(value)}))
+                lab.execute(OperationCall('system_register', {'manifest_path': 'candidate.json'}))
+                lab.execute(OperationCall('system_activate', {'candidate_ids': ['reflect-fixture'],
+                    'version': 'reflected-v1', 'idempotency_key': 'reflect-apply'}))
+                self.assertEqual(harness.memory_limit, 7)
+            if backend.calls == 2:
+                self.assertEqual(harness.memory_limit, 7)
+                self.assertEqual(harness.policy.prompts.render('research'), 'CPU synthetic reflected research instructions')
             original_update(monitor, harness, backend, compactor, step)
         with patches[0], patches[1], patches[2], patch.object(OpenLabMonitor, 'update', update), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -223,6 +285,7 @@ class OpenLabRecoveryTests(unittest.TestCase):
                 '--model-path', str(model), '--python', sys.executable,
                 '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'recovery-fixture',
                 '--seconds', '120', '--max-calls', '5', '--device-type', 'npu',
+                '--execution-policy', json.dumps({'read_only': list(system_runtime_paths())}),
                 '--resource-allocation', json.dumps({'physical_devices': [8,13], 'logical_devices': [0,1]})])
             self.assertEqual(first['status'], 'paused')
             saved = json.loads((run / 'recovery-launch.json').read_text())
@@ -234,6 +297,8 @@ class OpenLabRecoveryTests(unittest.TestCase):
             second = launcher.main(['--root', str(run), '--resume'])
             self.assertEqual(second['status'], 'paused')
             self.assertEqual(second['model_calls'], 2)
+            self.assertEqual(DurableRecovery.read(run / 'application')['components']['evolution']['state']
+                ['registry']['current'].version, 'reflected-v1')
             self.assertEqual(second['compactions'], 3)
             self.assertIn('fixture reusable observation', json.dumps(transports[1].restored_context))
             active = transports[1].restored_context['research_agenda']['active_feedback']

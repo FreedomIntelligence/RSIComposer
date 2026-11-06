@@ -82,6 +82,11 @@ class BudgetedModel:
     def generate(self, request):
         # Bounded model view; the full evidence remains in memory/Experience/files.
         payload = json.loads(request.prompt)
+        # Optional named-model ancestry is additive. Keep the old bounded wire
+        # view when the extension is empty; populated ancestry is never omitted.
+        for candidate in payload.get('candidates', []):
+            if candidate.get('model_bases') == {}:
+                candidate.pop('model_bases')
         omissions = {}
         def render():
             return json.dumps({**payload, 'context_omissions': omissions}, separators=(',', ':'))

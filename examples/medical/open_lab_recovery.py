@@ -27,7 +27,8 @@ def example_identity():
     root = Path(__file__).parent
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
         for name in ('open_lab_experiment.py', 'open_lab_recovery.py', 'fixed_evaluation.py',
-                     'candidate_adapter.py', 'checkpoint_evaluation.py', 'protocol_evaluation.py')}
+                     'candidate_adapter.py', 'checkpoint_evaluation.py', 'protocol_evaluation.py',
+                     'open_lab_evolution.py')}
 
 
 @contextmanager
@@ -78,8 +79,22 @@ class DecisionState:
             raise TypeError('Open Lab recovery needs persistent decision memory')
         if not dm.memory.path.exists():
             dm.memory.backup(dm.memory.path)
+        self._launch_configuration = self._configuration()
+        self._bindings = (dm.policy, dm.context_compactor, dm.memory, dm.research_agenda)
+
+    def _verify_bindings(self):
+        dm = self.loop.harness
+        if any(a is not b for a, b in zip(self._bindings,
+                (dm.policy, dm.context_compactor, dm.memory, dm.research_agenda))):
+            raise TypeError('Decision internals changed; supply an explicit versioned state integration')
+        if self.loop.action_space.permissions.to_dict() != self._launch_configuration['permissions']:
+            raise TypeError('Host permissions changed after assembly')
 
     def configuration(self):
+        self._verify_bindings()
+        return deepcopy(self._launch_configuration)
+
+    def _configuration(self):
         dm = self.loop.harness
         compactor = dm.context_compactor
         return {'model': asdict(dm.current_model()), 'policy': type(dm.policy).__qualname__,
@@ -90,6 +105,7 @@ class DecisionState:
             'project': dm.policy.project_context}
 
     def capture(self):
+        self._verify_bindings()
         dm = self.loop.harness
         return {'state': deepcopy(dm.state), 'memory_digest': digest(dm.memory.export()),
             'agenda': dm.research_agenda.export(), 'compactor': dm.context_compactor.export_state()}
@@ -175,6 +191,8 @@ def state_ports(context, decision, exploration, *, lab, backend):
                 'adapter_sha256': lab.adapter_sha256, 'require_input_contract': lab.require_input_contract,
                 'groups': lab.evaluation_groups, 'python': lab.evaluation_python,
                 'formal_evaluation': getattr(lab, 'formal_configuration', None)})}
+    if hasattr(decision, 'evolution_state'):
+        ports['evolution'] = decision.evolution_state
     memory = getattr(decision.harness, 'agent_memory', None)
     if memory is not None:
         from rsisys.loops.decision_making.harness.agent_memory import AgentMemoryState
@@ -197,6 +215,8 @@ def pause_at_boundary(app, *, timeout=40):
             time.sleep(.02)
         app.runner.decision_making.feedback_service.pause(timeout=max(0, until - time.monotonic()))
         # Same terminal job IDs remain collectable; later actions get new keys.
-        native = getattr(lab, 'lab', lab)
+        native = lab
+        while getattr(native, 'lab', None) is not None:
+            native = native.lab
         native._accepting = True
     app.recovery.mutate('pause', (), settle)

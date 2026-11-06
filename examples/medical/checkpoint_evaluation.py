@@ -268,8 +268,7 @@ class CheckpointMedicalLab(FixedMedicalLab):
                 or any(not isinstance(v, str) or not v.strip() or '\x00' in v for v in args.values())
                 or {'checkpoint_path', 'adapter_path'} <= set(args)):
             raise LabToolError('Submit a registered base and optionally one checkpoint OR adapter; no evaluation overrides')
-        if self._closed or not self._accepting:
-            raise RuntimeError('Lab is shutting down; new work is closed')
+        self.require_admission()
         base = args['base_model_path']
         if base not in self.formal_configuration['bases']:
             raise LabToolError('Unknown registered base_model_path')
