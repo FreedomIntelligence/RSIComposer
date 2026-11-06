@@ -5,6 +5,7 @@ Each working environment has one canonical checkout on `main`:
 | Environment | Checkout |
 | --- | --- |
 | Local | `design/RSISys` |
+| b200 | `/home/snchen/xinyuan/RSISys` |
 | lion | `/home/jovyan/projects/RSISys` |
 | modelmate | `/home/work/user-job-dir/app/slai/user-xiexinyuan/xinyuan/projects/RSISys` |
 | GitHub | `satsuki2486441738/RSISys`, branch `main` |
