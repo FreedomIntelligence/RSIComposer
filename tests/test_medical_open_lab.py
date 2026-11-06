@@ -4,6 +4,7 @@ import hashlib
 from collections import UserDict
 from pathlib import Path
 import os
+import subprocess
 import sys
 import time
 from tempfile import TemporaryDirectory
@@ -63,7 +64,8 @@ class MedicalOpenLabTests(unittest.TestCase):
             (inputs / 'nested').mkdir()
             (inputs / 'task.json').write_text(json.dumps(task))
             for name in ('train.jsonl', 'nested/dev.jsonl'):
-                (inputs / name).write_text('{"id":"fixture"}\n')
+                (inputs / name).write_text(json.dumps({'id': 'fixture', 'question': 'fixture question',
+                    'options': {'A': 'alpha', 'B': 'beta'}, 'gold': 'A'}) + '\n')
             model = root / 'model'
             model.mkdir()
             (model / 'config.json').write_text('{}')
@@ -73,6 +75,12 @@ class MedicalOpenLabTests(unittest.TestCase):
             research_runtime = root / 'research-only-runtime'
             research_runtime.mkdir()
             (research_runtime / 'helper.txt').write_text('not-formal-inference')
+            venv_root = root / 'inference-venv'
+            subprocess.run([str(Path(sys.executable).resolve()), '-m', 'venv', '--without-pip',
+                '--symlinks', str(venv_root)], check=True, capture_output=True)
+            venv_python = venv_root / 'bin/python'
+            packages = venv_root / f'lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'
+            (packages / 'runtime_fixture.py').write_text('VALUE="venv-package"\n')
             backends = []
             def recorded_backend(*args, **kwargs):
                 value = RecordedBackend(*args, **kwargs)
@@ -112,8 +120,13 @@ class MedicalOpenLabTests(unittest.TestCase):
                     self.assertNotIn('argv', specs['medical_evaluate'].input_schema['properties'])
                     self.assertIn('submission_path', specs['medical_evaluate'].input_schema['properties'])
                     self.assertEqual(native.formal_configuration['evaluation_protocol'], formal['evaluation_protocol'])
+                    self.assertEqual(native.evaluation_python, str(venv_python.absolute()))
                     self.assertIn(str(inference_runtime.resolve()), native.candidate_execution.read_only)
                     self.assertNotIn(str(research_runtime.resolve()), native.candidate_execution.read_only)
+                    self.assertEqual(dict(native.candidate_execution.environment)['RSISYS_RUNTIME_FIXTURE'], 'host-selected')
+                    self.assertEqual(dict(native.backend.isolation.policy.environment)['RSISYS_RUNTIME_FIXTURE'], 'host-selected')
+                    self.assertEqual(json.loads((config.data_dir.parent / 'backend-environment.json').read_text())[
+                        'RSISYS_RUNTIME_FIXTURE'], 'host-selected')
                     self.assertEqual(native.installed_runtime['files'][str((inference_runtime / 'driver-metadata.txt').resolve())],
                         hashlib.sha256(b'runtime-fixture-v1').hexdigest())
                     if mode == 'resource_pool':
@@ -156,11 +169,32 @@ class MedicalOpenLabTests(unittest.TestCase):
                     self.assertEqual(resources, json.loads((config.data_dir.parent / 'resource-allocation.json').read_text()))
                     self.assertEqual(resources['memory_availability']['capacity_mib_per_device'], 65536)
                     ident = lab.execute(open_lab_experiment.OperationCall('lab_start', {'key': 'mapping',
-                        'argv': [sys.executable, '-c', 'import os;print(os.environ["ASCEND_RT_VISIBLE_DEVICES"])']})).data['job_id']
+                        'argv': [sys.executable, '-c', 'import os;print(os.environ["ASCEND_RT_VISIBLE_DEVICES"]);'
+                            'print(os.environ["RSISYS_RUNTIME_FIXTURE"])']})).data['job_id']
                     native = lab.lab if hasattr(lab, 'lab') else lab
                     native.backend.wait(native._jobs[ident][0])
                     receipt = lab.execute(open_lab_experiment.OperationCall('lab_result', {'job_id': ident}))
-                    self.assertEqual(receipt.data['stdout'].strip(), resources['visibility_environment']['ASCEND_RT_VISIBLE_DEVICES'])
+                    self.assertEqual(receipt.data['stdout'].splitlines(), [
+                        resources['visibility_environment']['ASCEND_RT_VISIBLE_DEVICES'], 'host-selected'])
+                    bundle = lab.workspace / 'runtime-candidate'
+                    bundle.mkdir()
+                    (bundle / 'submission.json').write_text(json.dumps({'schema': 'candidate-inference-bundle-v1',
+                        'entrypoint': 'infer.py', 'base_model_path': str(model.resolve())}))
+                    (bundle / 'infer.py').write_text('import json,sys,os\nfrom pathlib import Path\n'
+                        'import runtime_fixture\nassert runtime_fixture.VALUE=="venv-package"\n'
+                        'assert os.environ["RSISYS_RUNTIME_FIXTURE"]=="host-selected"\n'
+                        f'assert Path({str(inference_runtime / "driver-metadata.txt")!r}).read_text()=="runtime-fixture-v1"\n'
+                        f'try: Path({str(research_runtime / "helper.txt")!r}).read_text()\n'
+                        'except OSError: pass\nelse: raise AssertionError("research dependency readable")\n'
+                        'p=json.load(sys.stdin)\nprint(json.dumps({"predictions":[{"benchmark_id":r["benchmark_id"],'
+                        '"id":r["id"],"text":"A"} for r in p["items"]]}))\n')
+                    ident = lab.execute(open_lab_experiment.OperationCall('medical_evaluate', {
+                        'key': 'runtime-inference', 'candidate_id': 'runtime-fixture', 'split': 'public',
+                        'submission_path': 'runtime-candidate'})).data['job_id']
+                    state = native.backend.wait(native._jobs[ident][0])
+                    self.assertEqual(state.exit_code, 0, state.stderr)
+                    receipt = lab.execute(open_lab_experiment.OperationCall('lab_result', {'job_id': ident}))
+                    self.assertEqual(receipt.data['fixed_evaluation']['metrics']['fixture'], {'accuracy': 1., 'n': 1})
                 finally:
                     lab.close()
                     for cleanup in reversed(cleanups):
@@ -183,9 +217,10 @@ class MedicalOpenLabTests(unittest.TestCase):
                         if mode == 'external' else ['--workspace-mode', 'candidate_scaffold'] if mode == 'managed' else [])
                     open_lab_experiment.main(['--root', str(root / ('run-'+mode)), '--task', str(inputs / 'task.json'),
                         '--execution-policy', json.dumps({'read_only': list(__import__(
-                            'rsisys.runtime.isolation', fromlist=['system_runtime_paths']).system_runtime_paths()) + [str(research_runtime)]}),
+                            'rsisys.runtime.isolation', fromlist=['system_runtime_paths']).system_runtime_paths()) + [str(research_runtime)],
+                            'environment': [['RSISYS_RUNTIME_FIXTURE', 'host-selected']]}),
                         '--inference-runtime-path', str(inference_runtime),
-                        '--model-path', str(model), '--python', sys.executable,
+                        '--model-path', str(model), '--python', str(venv_python),
                         '--endpoint', 'http://127.0.0.1:1/v1', '--run-id', 'fixture', '--device-type', 'npu',
                         '--resource-allocation', json.dumps({'physical_devices': list(map(int, physical)),
                             'memory_availability': {'capacity_mib_per_device': 65536}}), *extra])

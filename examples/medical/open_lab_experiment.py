@@ -353,7 +353,10 @@ def main(argv=None):
             if (args.closed_evaluator_config and Path(args.evaluation_ledger).resolve().is_relative_to(root)):
                 parser.error('Closed evaluation ledger must be shared outside the individual run directory')
             args.root = str(root)
-            for name in ('task', 'model_path', 'python', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config'):
+            # Python locates a venv from the invoked executable path. Resolving
+            # its symlink selects the system interpreter and drops its packages.
+            args.python = str(Path(args.python).absolute())
+            for name in ('task', 'model_path', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config'):
                 if getattr(args, name):
                     setattr(args, name, str(Path(getattr(args, name)).resolve()))
             args.available_model_path = [str(Path(path).resolve()) for path in args.available_model_path]
@@ -462,18 +465,20 @@ def run(args, *, method_catalog=None):
         'available_models': available_models})
     device_keys = ('CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER') if args.device_type == 'cuda' else (
         'ASCEND_RT_VISIBLE_DEVICES', 'ASCEND_HOME_PATH', 'ASCEND_OPP_PATH', 'ASCEND_AICPU_PATH')
-    environment = {k: os.environ[k] for k in (*device_keys, 'LD_LIBRARY_PATH', 'TORCH_DEVICE_BACKEND_AUTOLOAD')
+    environment = {k: os.environ[k] for k in (*device_keys, 'LD_LIBRARY_PATH', 'CUDA_HOME', 'LIBRARY_PATH',
+                                            'TORCH_DEVICE_BACKEND_AUTOLOAD')
                    if k in os.environ}
     environment.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false',
         OMP_NUM_THREADS='4', PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'src') + ':' +
         str(Path(__file__).resolve().parents[2]))
-    persist_identity('backend-environment.json', environment)
-    resources = allocated_resources(environment, args.device_type, args.resource_allocation)
     supplied_policy = getattr(args, 'execution_policy', None)
     if supplied_policy is None and sys.platform == 'linux':
         raise ValueError('Linux Open Lab requires an explicit --execution-policy with assigned device nodes and runtimes')
     execution_policy = (ExecutionPolicy.from_dict(supplied_policy) if supplied_policy is not None else
         ExecutionPolicy(read_only=system_runtime_paths(args.python)))
+    environment.update(dict(execution_policy.environment))
+    persist_identity('backend-environment.json', environment)
+    resources = allocated_resources(environment, args.device_type, args.resource_allocation)
     resources['enforced_device_nodes'] = list(execution_policy.devices)
     persist_identity('resource-allocation.json', resources)
     if any(root.is_relative_to(Path(p)) for p in execution_policy.read_only):
