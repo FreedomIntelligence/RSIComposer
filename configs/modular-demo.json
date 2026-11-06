@@ -1,0 +1,16 @@
+{
+  "data": {"component": "linear_data"},
+  "train_engine": {"component": "python_vectors"},
+  "infer_engine": {"component": "python_vectors"},
+  "training": {"component": "gradient"},
+  "inference": {"component": "direct"},
+  "rsi": {"component": "single_pass"},
+  "lab": {
+    "component": "linear_lab",
+    "dependencies": {
+      "data": "data", "training": "training", "inference": "inference",
+      "train_engine": "train_engine", "infer_engine": "infer_engine"
+    }
+  },
+  "harness": {"component": "default_harness", "dependencies": {"rsi": "rsi"}}
+}

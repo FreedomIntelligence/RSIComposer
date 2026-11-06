@@ -3,7 +3,9 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
+from rsisys.components import ComponentGraph, ComponentInstances
 from rsisys.experience.retrieval import ExperienceSystem
 from rsisys.loops.contracts.execution import LabExecution
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
@@ -60,6 +62,7 @@ class AssemblyContext:
     action_permissions: ActionPermissions = field(default_factory=ActionPermissions)
     project_context: dict = field(default_factory=dict)
     lab_execution: LabExecution | None = None
+    components: ComponentInstances | None = field(default=None, init=False)
     state_adapters: dict = field(default_factory=dict, init=False, repr=False)
     _cleanup: list[tuple[Callable[[], object], bool]] = field(default_factory=list, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
@@ -127,8 +130,22 @@ class ModuleAssembly:
     feedback_adapter_factory: Callable | None = None
     feedback_options: Mapping = field(default_factory=dict)
     state_factory: Callable | None = None
+    components: ComponentGraph | None = None
+    component_bindings: Mapping = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.components is not None and not isinstance(self.components, ComponentGraph):
+            raise TypeError('components must be a ComponentGraph')
+        bindings = dict(self.component_bindings)
+        if bindings and self.components is None:
+            raise ValueError('Component bindings require a component graph')
+        for role, name in bindings.items():
+            contracts = {'decision': 'decision-factory/v1', 'lab': 'lab-execution/v1',
+                         'exploration': 'exploration-factory/v1'}
+            if role not in contracts:
+                raise ValueError(f'Unknown component binding: {role}')
+            self.components.require(name, contracts[role])
+        object.__setattr__(self, 'component_bindings', MappingProxyType(bindings))
         for name in ('decision_factory', 'exploration_factory', 'lab_factory',
                      'feedback_adapter_factory', 'state_factory'):
             value = getattr(self, name)
@@ -146,6 +163,48 @@ class ModuleAssembly:
         reserved = {'loop', 'assembly', 'owner', 'adapter', 'backend'}
         if reserved.intersection(self.feedback_options):
             raise ValueError('Feedback assembly bindings cannot be overridden by feedback_options')
+
+    @classmethod
+    def from_components(cls, components, *, decision, lab=None, exploration=None, **options):
+        """Bind graph outputs to existing loop/Lab ports without new launcher code.
+
+        decision/exploration outputs are factories using the existing public
+        context signatures; lab is an already constructed LabExecution. Factories
+        remain trusted host code and do not acquire model modification rights.
+        """
+        if not isinstance(components, ComponentGraph):
+            raise TypeError('components must be a ComponentGraph')
+        if set(options) & {'components', 'component_bindings', 'decision_factory', 'lab_factory', 'exploration_factory'}:
+            raise ValueError('Component bindings cannot override assembly factories')
+        components.require(decision, 'decision-factory/v1')
+        if lab is not None:
+            components.require(lab, 'lab-execution/v1')
+        if exploration is not None:
+            components.require(exploration, 'exploration-factory/v1')
+        bindings = {role: name for role, name in (
+            ('decision', decision), ('lab', lab), ('exploration', exploration)) if name is not None}
+        def selected(context, name, methods):
+            value = context.components[name]
+            if any(optional_method(value, method) is None for method in methods):
+                raise TypeError(f'Component {name} does not implement its assembly binding')
+            return value
+        def decision_factory(context, execution):
+            value = context.components[decision]
+            if not callable(value):
+                raise TypeError('Decision component must return a factory')
+            return value(context, execution)
+        def exploration_factory(context):
+            value = context.components[exploration]
+            if not callable(value):
+                raise TypeError('Exploration component must return a factory')
+            return value(context)
+        return cls(components=components, component_bindings=bindings,
+            decision_factory=decision_factory,
+            lab_factory=(lambda context: selected(context, lab, ('describe', 'execute'))) if lab is not None else None,
+            exploration_factory=exploration_factory if exploration is not None else None, **options)
+
+    def component_configuration(self):
+        return {**self.components.configuration(), 'bindings': dict(self.component_bindings)}
 
 
 def module_assembly(modules=None, **legacy):
@@ -169,13 +228,17 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
     modules = module_assembly(modules)
     if context._closed:
         raise RuntimeError('Assembly is closed')
+    if modules.components is not None:
+        if context.components is not None:
+            raise RuntimeError('Components are already assembled')
+        context.components = modules.components.build(context, bindings=modules.component_bindings)
     decision, exploration = assemble_loops(context, decision_factory=modules.decision_factory,
         exploration_factory=modules.exploration_factory, lab_factory=modules.lab_factory)
     # Resolve the current harness at close, including domain configuration before
     # the first step. Owned close retains its dependencies if cleanup must retry.
     def close_decision():
         close = optional_method(decision.harness, 'close')
-        if close is not None:
+        if close is not None and not (context.components is not None and context.components.owns(decision.harness)):
             close()
     context.add_owned_cleanup(close_decision)
     if modules.research is not None:
@@ -188,7 +251,13 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
                 if modules.feedback_adapter_factory else None, **options)
     if modules.state_factory is not None:
         from rsisys.runtime.component_state import validate_adapters, assembly_bindings
-        context.state_adapters = validate_adapters(modules.state_factory(context, decision, exploration))
+        adapters = validate_adapters(modules.state_factory(context, decision, exploration))
+        if context.components is not None:
+            automatic = context.components.state_adapters()
+            if automatic.keys() & adapters.keys():
+                raise ValueError('Explicit state adapters cannot replace component manifest/stateless ports')
+            adapters = {**automatic, **adapters}
+        context.state_adapters = adapters
         context._state_bindings = assembly_bindings(context, decision, exploration)
         context._state_port_bindings = dict(context.state_adapters)
     return AssemblyRunner(decision, exploration, context, run_policy=run_policy,
@@ -203,7 +272,7 @@ def assemble_loops(context: AssemblyContext, *, decision_factory=None,
         if context.lab_execution is None:
             raise TypeError('lab_factory must return a LabExecution provider')
         close = optional_method(context.lab_execution, 'close')
-        if close is not None:
+        if close is not None and not (context.components is not None and context.components.owns(context.lab_execution)):
             context.add_owned_cleanup(close)
     if exploration_factory is not None:
         exploration = exploration_factory(context)
@@ -286,7 +355,14 @@ def _decision_directives(context: AssemblyContext, exploration: ExplorationLoop)
     return DirectiveDefinitions(), modes
 
 
-def build_default_decision(context: AssemblyContext, exploration: ExplorationLoop) -> DecisionMakingLoop:
+def build_default_decision(context: AssemblyContext, exploration: ExplorationLoop, *, policy=None) -> DecisionMakingLoop:
+    """Reuse default tools/harness with an independently supplied public RSI policy.
+
+    Custom policies receive DecisionInput through ContextDecisionPolicy. The
+    host retains its model identity, permissions and execution loop. A policy
+    making model calls must use the host's accounted backend integration.
+    Whole-harness replacement remains the decision_factory boundary.
+    """
     open_lab = context.lab_execution is not None
     directives, modes = (DirectiveDefinitions(()), ()) if open_lab else _decision_directives(context, exploration)
     query_tools = (QueryTools(exploration, artifacts=context.artifacts)
@@ -313,12 +389,16 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     tools.query_tools = query_tools
     tools.research_tools = research_tools
     model = context.roles["decision_maker"]
+    if policy is None:
+        policy = ModelDecisionPolicy(context.backends[model.backend_id], model,
+            allowed_actions=() if open_lab else tuple(spec.name for spec in exploration.action_space.describe()),
+            directives=directives, project_context=context.project_context)
+    else:
+        from rsisys.adapters.decision import ContextDecisionPolicy, DecisionInputAdapter
+        policy = ContextDecisionPolicy(policy, input_adapter=DecisionInputAdapter(directives=directives))
     return DecisionMakingLoop(
         DefaultDecisionHarness(
-            ModelDecisionPolicy(context.backends[model.backend_id], model,
-                                allowed_actions=() if open_lab else tuple(
-                                    spec.name for spec in exploration.action_space.describe()),
-                                directives=directives, project_context=context.project_context),
+            policy,
             tools, context.experience,
             learner=MockDecisionLearner(context.artifacts) if context.with_learning else None,
             experience_limit=context.experience_limit,

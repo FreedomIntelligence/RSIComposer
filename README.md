@@ -94,6 +94,7 @@ src/rsisys/
 ├── adapters/              # 可替换的具体训练 / serving 接入，位于 Harness 外
 ├── snapshot/              # 独立保存与恢复
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
+├── components.py          # host 显式组件目录、依赖契约与配置组合
 ├── research.py            # 研究任务的统一组件装配与配置校验
 ├── application.py         # 本地持久化装配
 ├── config.py              # 内存演示装配
@@ -323,6 +324,16 @@ with Application(config, modules=modules) as app:
 同一接口也支持空闲快照，但需额外声明并实现 `validate_snapshot()`。
 完整接入方式、支持范围和验证见[统一装配与组件状态](docs/review/unified-module-assembly-20261104.md)。
 
+需要独立组合训练策略、推理策略、训推引擎、RSI 算法与 harness 时，可以用
+`ComponentGraph` 声明 host 提供的实现目录、原生参数和依赖，再通过
+`ModuleAssembly.from_components(graph, decision="harness", lab="lab")` 接入同一个启动入口。
+组件兼容性、修改权限和正式评测协议分别管理；配置不会自动授予模型修改引擎或数据的权限。
+完整分类、状态与资源边界见[组件组合说明](docs/component-composition.md)。CPU 组合示例：
+
+```sh
+PYTHONPATH=src python examples/modular_research.py configs/modular-demo.json
+```
+
 开放代码任务使用新的 `lab_factory(context)` 入口：
 
 ```python
@@ -385,7 +396,8 @@ with runner:
     runner.run(demo_config.objective, rounds=demo_config.rounds)
 ```
 
-工厂仅通过 Python 参数注入，不写入 JSON 配置，也不会自动获得快照恢复支持；自定义装配仍需显式集成 Snapshot。
+工厂代码仅通过 Python 注入；可选组件图允许 JSON 选择 host 已注册的实现、参数和依赖，
+不从 JSON 导入任意代码。自定义装配仍需显式集成状态与 Snapshot。
 
 先组合 Harness 与独立 Action Space，再交给 loop。默认实现内部的 policy、tools、memory、learner/evaluator 通过 Harness 构造函数注入：
 

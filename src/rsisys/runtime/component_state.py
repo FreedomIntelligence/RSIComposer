@@ -23,7 +23,8 @@ def assembly_bindings(context, decision, exploration):
     # adapter's responsibility; the host never walks a plugin's object graph.
     return (decision, getattr(decision, 'harness', None), getattr(decision, 'action_space', None),
             exploration, getattr(exploration, 'harness', None), getattr(exploration, 'action_space', None),
-            context.lab_execution, getattr(decision, 'feedback_service', None))
+            context.lab_execution, getattr(decision, 'feedback_service', None),
+            context.components, *(context.components.values() if context.components is not None else ()))
 
 
 class AssemblyRecovery:
@@ -49,6 +50,8 @@ class AssemblyRecovery:
                 adapters.keys() != context._state_port_bindings.keys()):
             raise TypeError('Component state adapters changed after assembly')
         required = {'decision', 'exploration'}
+        if context.components is not None:
+            required.update(context.components.required_state_adapters)
         if context.lab_execution is not None:
             required.add('lab_execution')
         if getattr(app.runner.decision_making, 'feedback_service', None) is not None:
