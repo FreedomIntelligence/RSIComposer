@@ -51,6 +51,16 @@ registered base are verified before and after public inference. Compare matching
 candidate, including inference. Fix inference code when isolating training gains.
 Historical scores remain unchanged and do not become a baseline automatically.
 
+The operator can use `evaluation_subset.freeze_evaluation_subset` to freeze a
+smaller evaluation set, for example 500 rows per benchmark. It selects by the
+declared seed, benchmark and sample ID, preserves original JSONL rows and order,
+and records parent/subset hashes. Keep closed rows and their membership manifest
+outside the Lab. Switch datasets at a reconciled configuration boundary; retain
+the campaign submission ledger and compare candidates on the same subset hash.
+Subset scores are separate from full-dataset results and are not official full
+benchmark scores. Historical full predictions can be scored on that fixed subset
+as explicitly retrospective observations without making another model call.
+
 No closed files are copied to the workspace. This launcher uses an isolated
 research worker and a separate isolated formal-inference worker, but does not
 provision a closed-data service. Without a separate gateway,
