@@ -47,14 +47,52 @@ class ReflectionTests(unittest.TestCase):
         self.report = {'window_id': '1', 'outcome': 'no_change', 'analysis': 'Keep evidence windows intact.',
                        'decision_ids': ['decision-1'], 'system_version': 'initial'}
 
-    def read_page(self, cursor=None):
-        args = {'collection': 'history', 'record_id': 'decision-1:operation', 'cursor': cursor,
+    def read_page(self, cursor=None, record_id='decision-1:operation'):
+        args = {'collection': 'history', 'record_id': record_id, 'cursor': cursor,
                 'evidence_path': None, 'limit': 8}
         result = self.tools._archive(args)
         ident = f'archive-{len(self.memory.history())}'
         self.memory.append(HistoryEntry(ident, 'operation', None, result.summary, False,
             details={'operation': {'name': 'research_archive', 'arguments': args}, 'result': result.payload()}))
         return result.data['next_cursor']
+
+    def test_old_citations_cannot_replace_recent_failure_coverage(self):
+        self.now = 2800
+        self.read_all()
+        self.harness.state.decision_records['recent'] = {'objective': 'Debug current training'}
+        self.memory.append(HistoryEntry('recent:operation', 'operation', None, 'Recent failure', False,
+            details={'decision_id': 'recent', 'operation': {'name': 'training_result', 'arguments': {}},
+                     'result': OperationResult('New failure', (), False, ExecutionStatus.FAILED,
+                                               'collator mismatch').payload()}))
+        self.assertEqual(self.reflection.snapshot()['required_decision_ids'], ['recent'])
+        with self.assertRaisesRegex(LabToolError, 'recent trajectory'):
+            self.reflection.report(self.report)
+        self.assertIsNone(self.read_page(record_id='recent:operation'))
+        receipt = self.reflection.report({**self.report, 'decision_ids': ['recent']}).data
+        self.assertEqual(receipt['required_decision_ids'], ['recent'])
+        self.assertFalse(receipt['improvement_verified'])
+
+    def test_invalid_reviews_exhaust_a_bounded_slot_and_leave_ordinary_research_available(self):
+        self.now = 2800
+        context = DecisionContext('Continue', (),
+            (OperationSpec('lab_poll', 'Poll', {}), OperationSpec('research_archive', 'Archive', {}),
+             *self.reflection.specifications()), ())
+        for i in range(16):
+            ident = 'invalid-' + str(i)
+            self.harness.state.decision_records[ident] = {
+                'objective': 'Scheduled harness reflection window 1. Review slot 1.'}
+            self.memory.append(HistoryEntry(ident, 'operation', None, 'Invalid report', False,
+                details={'decision_id': ident, 'operation': {'name': 'reflect_report', 'arguments': {}},
+                         'result': OperationResult('Rejected', (), False, ExecutionStatus.FAILED,
+                                                   'duplicate decision IDs').payload()}))
+        projected = self.reflection.project_context(context)
+        self.assertEqual(projected.objective, 'Continue')
+        self.assertIn('lab_poll', [spec.name for spec in projected.operations])
+        self.assertNotIn('scheduled_reflection', projected.research_agenda)
+        self.assertEqual(projected.research_agenda['reflection_attention']['status'], 'incomplete_budget_exhausted')
+        self.assertEqual(self.reflection.state['reports'], [])
+        self.now = 4600
+        self.assertIn('scheduled_reflection', self.reflection.project_context(context).research_agenda)
 
     def read_all(self):
         cursor = self.read_page()

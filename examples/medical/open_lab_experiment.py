@@ -282,6 +282,14 @@ across the campaign. Read fixed_evaluation in lab_config.json. Release other
 programs before evaluation. Compare matching protocol and dataset hashes.
 Unverified stdout is exploratory. Retain real optimizer, loss, weight,
 loading and evaluation evidence before claiming training or improvement.
+Use medical_package to copy a saved adapter/checkpoint plus inference entrypoint
+into a fresh bundle; medical_preflight validates layout without consuming an
+evaluation slot or loading a model. Optional templates/infer.py returns raw
+generations for host extraction and emits generation telemetry to stderr.
+templates/train_lora.py and training_support.py are editable starting examples,
+not required algorithms. Public results expose output validity/distribution and
+inference/weight identities. Compare both end-to-end scores and changed axes;
+different inference scripts do not isolate an effect of training.
 '''
 
 
@@ -337,6 +345,8 @@ def main(argv=None):
     parser.add_argument('--closed-evaluator-config', help='Operator-only isolated gateway transport config; never a closed dataset path')
     parser.add_argument('--revision', default='unreported')
     parser.add_argument('--run-id')
+    parser.add_argument('--continuation', help='Operator-cleared immutable handoff from a stopped prior attempt; '
+                        'imports evidence/notes/artifacts, never actions or process identities')
     parser.add_argument('--resume', action='store_true', help='Resume the same durable run using its saved configuration')
     parser.add_argument('--inspect-recovery', action='store_true', help='Read recovery status without constructing or executing modules')
     arguments = list(sys.argv[1:] if argv is None else argv)
@@ -386,12 +396,24 @@ def main(argv=None):
             # Python locates a venv from the invoked executable path. Resolving
             # its symlink selects the system interpreter and drops its packages.
             args.python = str(Path(args.python).absolute())
-            for name in ('task', 'model_path', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config'):
+            for name in ('task', 'model_path', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config', 'continuation'):
                 if getattr(args, name):
                     setattr(args, name, str(Path(getattr(args, name)).resolve()))
             args.available_model_path = [str(Path(path).resolve()) for path in args.available_model_path]
             # Fix the wall deadline once, including setup and future downtime.
             args.deadline_epoch = min(args.deadline_epoch or float('inf'), time.time() + args.seconds)
+            if args.continuation:
+                from rsisys.runtime.continuation import read_continuation
+                handoff, _ = read_continuation(args.continuation)
+                if handoff['identity']['campaign_id'] != args.evaluation_campaign_id:
+                    raise ValueError('Continuation must retain the original campaign')
+                limits = handoff['limits']
+                if not {'deadline_epoch', 'remaining_model_calls'} <= limits.keys():
+                    raise ValueError('Medical continuation requires inherited deadline and remaining call budget')
+                args.deadline_epoch = min(args.deadline_epoch, limits['deadline_epoch'])
+                args.max_calls = min(args.max_calls, limits['remaining_model_calls'])
+                if args.max_calls < 1:
+                    raise ValueError('The inherited campaign model-call budget is exhausted')
             saved_args = {k: v for k, v in vars(args).items() if k not in ('resume', 'inspect_recovery')}
             write(path, {'schema': 1, 'source': example_identity(), 'arguments': saved_args,
                 'required_files': ['application/config.json', 'application/run.json',
@@ -401,6 +423,7 @@ def main(argv=None):
                     'application/research_assembly.json', 'application/lab_execution.json',
                     'application/allocated-workspaces/process-recovery.json',
                     *(['application/agent-memory.json'] if args.feedback_routing == 'agent_memory' else ['memory.sqlite3']),
+                    *(['application/continuation-receipt.json'] if args.continuation else []),
                     'application/system-registry.json', 'application/system-activation.json',
                     'model_calls.json', 'resource-account.json', 'resource-allocation.json']})
         write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),
@@ -660,6 +683,10 @@ def run(args, *, method_catalog=None):
             shutil.copyfile(task_path.parent / name, target)
         write(lab.workspace / 'data/task.json', task)
         shutil.copyfile(Path(__file__).with_name('candidate_adapter.py'), lab.workspace / 'candidate_adapter.py')
+        shutil.copyfile(Path(__file__).with_name('training_support.py'), lab.workspace / 'training_support.py')
+        shutil.copytree(Path(__file__).with_name('templates'), lab.workspace / 'templates',
+                        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        shutil.copyfile(Path(__file__).with_name('training_support.py'), lab.workspace / 'templates/training_support.py')
         if resource_pool:
             (lab.workspace / 'README.md').write_text(RESOURCE_POOL_README)
             write(lab.workspace / 'lab_config.json', project)
@@ -686,6 +713,23 @@ def run(args, *, method_catalog=None):
     else:
         assembly = legacy_memory_assembly(root, args)
     native_labs = []
+    def make_state(context, decision, exploration):
+        if getattr(args, 'continuation', None):
+            if args.feedback_routing != 'agent_memory':
+                raise ValueError('Continuation needs the explicit single-meta agent memory adapter')
+            from rsisys.runtime.continuation import install_continuation
+            from .continuation import continuation_identity
+            from .open_lab_recovery import example_identity
+            lab = native_labs[0]
+            identity = continuation_identity(campaign_id=args.evaluation_campaign_id, run_id=args.run_id,
+                source=example_identity(), groups=lab.evaluation_groups,
+                protocol_sha256=lab.protocol_sha256, runtime_sha256=lab.installed_runtime['sha256'])
+            from rsisys.runtime.json_tools import result_id
+            identity['axes']['evaluation_account'] = result_id(lab.formal_configuration['ledger_path'])
+            decision.continuation_state = install_continuation(args.continuation, identity=identity,
+                harness=decision.harness, workspace=None if args.resume else lab.workspace,
+                receipt_path=context.data_dir / 'continuation-receipt.json', resume=args.resume)
+        return state_ports(context, decision, exploration, lab=native_labs[0], backend=backend)
     def build_method(config):
         nonlocal optimizer_config
         import math
@@ -702,8 +746,7 @@ def run(args, *, method_catalog=None):
         optimizer_config = deepcopy(config)
         return ModuleAssembly(lab_factory=make_lab, decision_factory=make_decision, research=assembly,
         model_session=model_session,
-        state_factory=lambda context, decision, exploration: state_ports(
-            context, decision, exploration, lab=native_labs[0], backend=backend),
+        state_factory=make_state,
         research_backend=backend, feedback_options={'max_calls': args.max_calls, 'max_pending': 8,
             'max_input_tokens': 24000, 'max_output_tokens': 4096})
     optimizer_config = {}

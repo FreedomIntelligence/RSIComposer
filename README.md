@@ -1,5 +1,10 @@
 # RSISys
 
+Feedback、显式 Memory、reflect 近期证据覆盖以及新 attempt 的成果继承见
+[交接与组件边界](docs/attempt-continuation.md)。医疗候选可使用 `medical_package` /
+`medical_preflight` 做无模型调用的打包检查；公开评测的输出质量与比较身份见
+[评测协议](docs/evaluation-protocol.md)。
+
 Current working source follows the [single-checkout version policy](docs/version-policy.md).
 The programmable medical Lab accepts candidate weights **and inference scripts**
 through the [public/closed evaluation protocol](docs/evaluation-protocol.md).

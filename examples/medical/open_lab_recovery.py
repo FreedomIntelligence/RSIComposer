@@ -28,7 +28,9 @@ def example_identity():
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
         for name in ('open_lab_experiment.py', 'open_lab_recovery.py', 'fixed_evaluation.py',
                      'candidate_adapter.py', 'checkpoint_evaluation.py', 'protocol_evaluation.py',
-                     'open_lab_evolution.py', 'open_lab_reflection.py', 'official_protocol.py', 'closed_gateway.py')}
+                     'open_lab_evolution.py', 'open_lab_reflection.py', 'official_protocol.py', 'closed_gateway.py',
+                     'continuation.py', 'submission.py', 'training_support.py',
+                     'templates/infer.py', 'templates/train_lora.py')}
 
 
 @contextmanager
@@ -195,6 +197,8 @@ def state_ports(context, decision, exploration, *, lab, backend):
         ports['evolution'] = decision.evolution_state
     if hasattr(decision, 'reflection_state'):
         ports['reflection'] = decision.reflection_state
+    if hasattr(decision, 'continuation_state'):
+        ports['continuation'] = decision.continuation_state
     memory = getattr(decision.harness, 'agent_memory', None)
     if memory is not None:
         from rsisys.loops.decision_making.harness.agent_memory import AgentMemoryState

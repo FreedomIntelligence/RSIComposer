@@ -25,6 +25,7 @@ from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.evaluation import EvaluationLedger, EvaluationAdmissionError
 from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.evaluation_diagnostics import prediction_diagnostics
 from rsisys.runtime.isolation import ExecutionPolicy, ProcessIsolation
 from rsisys.runtime.runtime_identity import inference_policy, runtime_identity
 try:
@@ -47,7 +48,7 @@ def source_identity():
         'protocol_evaluation.py', 'fixed_evaluation.py', 'candidate_adapter.py', 'checkpoint_evaluation.py',
         'official_protocol.py', 'closed_gateway.py')}
     for name in ('loops/contracts/evaluation.py', 'runtime/evaluation.py', 'runtime/isolation.py',
-                 'runtime/runtime_identity.py'):
+                 'runtime/runtime_identity.py', 'runtime/evaluation_diagnostics.py'):
         result['rsisys/' + name] = file_digest(root.parents[1] / 'src/rsisys' / name)['sha256']
     return result
 
@@ -112,6 +113,23 @@ def frozen_bundle(source, destination, bases):
     base = registered_base_identity(config['base_model_path'])
     return {'configuration': config, 'files': manifest, 'base_identity': base,
             'sha256': digest({'files': manifest, 'base_identity': base})}
+
+
+def candidate_axes(submission):
+    config, files = submission['configuration'], submission['files']
+    roots = [config[name] for name in ('checkpoint_path', 'adapter_path') if name in config]
+    def model_file(name):
+        file = Path(name).name
+        return (file.endswith(('.safetensors', '.bin', '.safetensors.index.json', '.bin.index.json'))
+                or file in ('config.json', 'adapter_config.json'))
+    weights = {name: value for name, value in files.items() if model_file(name)
+               and any(name == root or name.startswith(root.rstrip('/') + '/') for root in roots)}
+    inference = {name: value for name, value in files.items()
+                 if name != 'submission.json' and name not in weights}
+    return {'inference_sha256': digest({'files': inference, 'entrypoint': config['entrypoint']}),
+            'weight_sha256': digest({'base': submission['base_identity']['sha256'],
+                                    'mode': next((k for k in ('checkpoint_path', 'adapter_path') if k in config),
+                                                 'registered_base'), 'files': weights})}
 
 
 def safe_closed_result(raw, request, gateway):
@@ -191,7 +209,9 @@ def evaluate(config):
             raise ValueError('Installed inference runtime changed during inference')
         record = {'status': 'succeeded', 'metrics': metrics, 'predictions': scored,
                   'dataset_sha256': datasets, 'submission': config['submission'],
-                  'runtime_sha256': expected_runtime['sha256']}
+                  'runtime_sha256': expected_runtime['sha256'],
+                  'output_diagnostics': prediction_diagnostics(scored),
+                  **candidate_axes(config['submission'])}
     if bundle_manifest(bundle) != config['submission']['files']:
         raise ValueError('Frozen submission changed during inference; no score')
     record.update({key: config[key] for key in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256')})
@@ -266,7 +286,19 @@ class ProtocolMedicalLab(FixedMedicalLab):
 
     def describe(self):
         text = {'type': 'string', 'minLength': 1}
-        return (*LocalProcessLab.describe(self), OperationSpec('medical_evaluate',
+        return (*LocalProcessLab.describe(self), OperationSpec('medical_preflight',
+            'Validate submission paths, Python syntax and weight layout without loading models, '
+            'starting evaluation or consuming the closed submission slot.',
+            {'type': 'object', 'properties': {'submission_path': text}, 'required': ['submission_path'],
+             'additionalProperties': False}, read_only=True),
+            OperationSpec('medical_package',
+            'Copy an inference entrypoint and optional checkpoint/LoRA from this workspace into a '
+            'fresh self-contained bundle with submission.json. No symlinks or escaping weight paths. '
+            'Additional helper modules must be copied into the bundle before medical_preflight.',
+            {'type': 'object', 'properties': {k: text for k in ('destination_path', 'entrypoint_path',
+                'base_model_path', 'adapter_path', 'checkpoint_path')},
+             'required': ['destination_path', 'entrypoint_path', 'base_model_path'],
+             'additionalProperties': False}), OperationSpec('medical_evaluate',
             'Submit a workspace bundle containing submission.json, inference Python and checkpoint/LoRA '
             'or a registered base reference. You own inference; the host owns data, scoring and budgets. '
             'public returns detailed development evidence; closed returns aggregate scores/status only '
@@ -278,6 +310,32 @@ class ProtocolMedicalLab(FixedMedicalLab):
              'required': ['key', 'candidate_id', 'split', 'submission_path'], 'additionalProperties': False}))
 
     def execute(self, call):
+        if call.name in ('medical_preflight', 'medical_package'):
+            from .submission import preflight, package_submission
+            from rsisys.runtime.bundles import workspace_path
+            from rsisys.loops.contracts.coordination import OperationResult
+            if self._status()['active_jobs']:
+                raise LabToolError('Release active programs before checking or packaging their mutable files',
+                                   data={'reason': 'candidate_artifacts_busy'})
+            try:
+                bases = self.formal_configuration['base_model_paths']
+                args = call.arguments
+                if not isinstance(args, dict):
+                    raise ValueError('Expected an arguments object')
+                if call.name == 'medical_preflight':
+                    if set(args) != {'submission_path'}:
+                        raise ValueError('Supply submission_path only')
+                    result = preflight(workspace_path(self.workspace, args['submission_path']), bases)
+                else:
+                    self.require_admission()
+                    allowed = {'destination_path', 'entrypoint_path', 'base_model_path', 'adapter_path', 'checkpoint_path'}
+                    if set(args) - allowed or not {'destination_path', 'entrypoint_path', 'base_model_path'} <= set(args):
+                        raise ValueError('Supply destination_path, entrypoint_path and base_model_path; optional weights')
+                    result = package_submission(self.workspace, bases, **args)
+                return OperationResult('Candidate bundle checked', (), False, data=result)
+            except (ValueError, OSError, TypeError, KeyError, SyntaxError) as exc:
+                raise LabToolError(str(exc), data={'reason': 'candidate_bundle_invalid',
+                    'evaluation_submitted': False, 'next_operation': 'medical_package'}) from exc
         if call.name != 'medical_evaluate':
             if (call.name == 'lab_start' and isinstance(call.arguments, dict)
                     and call.arguments.get('key') not in self._keys
@@ -391,6 +449,9 @@ class ProtocolMedicalLab(FixedMedicalLab):
                 if (record['status'] != 'succeeded' or record['dataset_sha256'] != datasets
                         or record['metrics'] != metrics or record['predictions'] != scored):
                     raise ValueError('Public evaluation score differs from evidence')
+                if (record.get('output_diagnostics') != prediction_diagnostics(scored)
+                        or any(record.get(k) != v for k, v in candidate_axes(config['submission']).items())):
+                    raise ValueError('Public output diagnostics or candidate identity differs')
                 artifact = self.artifacts.put(raw, kind='public_medical_protocol_evaluation')
                 result = replace(result, artifacts=(*result.artifacts, artifact))
             else:
@@ -408,6 +469,9 @@ class ProtocolMedicalLab(FixedMedicalLab):
             fixed.update(record_sha256=hashlib.sha256(raw).hexdigest(), adopted=False,
                          evaluator_sha256=config['source_sha256']['protocol_evaluation.py'], verified=True)
             fixed['runtime_sha256'] = record['runtime_sha256']
+            if config['split'] == 'public':
+                fixed.update(status=record['status'], output_diagnostics=record['output_diagnostics'],
+                    execution_budget=record['execution_budget'], **candidate_axes(config['submission']))
             result = replace(result, data={**result.data, 'fixed_evaluation': fixed})
         except Exception:
             # Do not expose gateway payloads, candidate output or private paths

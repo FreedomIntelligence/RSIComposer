@@ -65,6 +65,25 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertEqual(self.loop.research_assembly['agent_topology'], 'single_acting_meta_agent')
         self.assertFalse(ResearchAssembly().requires_model)
 
+    def test_plugin_named_feedback_and_recent_failures_survive_intermediate_successful_reads(self):
+        from rsisys.adapters.local_lab_feedback import ImmediateFeedbackWindow
+        failure = self.native(ident='training-error', name='custom_training_result')
+        context = self.view()
+        self.assertEqual(context.research_agenda['previous_feedback']['result'], failure.payload())
+        self.harness.add_context_processor(ImmediateFeedbackWindow())
+        for i in range(12):
+            result = OperationResult('Source read', (), False, data={'content': 'source page'})
+            self.harness.memory.append(HistoryEntry(f'page-{i}', 'operation', None, result.summary, False,
+                details={'operation': {'name': 'lab_read_file', 'arguments': {}}, 'result': result.payload()}))
+            self.harness.state.operation_results.append(result)
+        context = self.view()
+        self.assertIn('training-error', {row.record_id for row in context.history})
+        health = context.research_agenda['feedback_health']['recent_failures']
+        self.assertEqual(health[0]['record_id'], 'training-error')
+        self.assertFalse(health[0]['tracked_by_open_task'])
+        self.assertEqual(self.memory.export()['revision'], 0)
+        self.assertFalse(self.backend.requests)
+
     def test_agent_writes_updates_searches_and_deletes_with_exact_provenance(self):
         result = self.native()
         source = 'result:' + result_id(result.payload())

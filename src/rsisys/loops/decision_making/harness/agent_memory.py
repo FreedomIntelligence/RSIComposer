@@ -98,6 +98,10 @@ class AgentMemory:
                      Path(journal_path).parent / 'agent-memory.json' if journal_path is not None else None)
         if self.path is not None and self.path.exists():
             self._state = self._validated(json.loads(self.path.read_text(encoding='utf-8')))
+            if any(not self.validates_source(ref, note['provenance'][ref])
+                   for note in self._state['memories'].values() for ref in note['source_refs']):
+                raise ValueError('Agent memory belongs to another or incomplete evidence archive; '
+                                 'use an explicit continuation adapter')
 
     @staticmethod
     def _validated(state):
@@ -192,6 +196,22 @@ class AgentMemory:
     def export(self):
         return deepcopy(self._state)
 
+    def seed(self, state):
+        """Host continuation adapter only; ordinary decisions use revisioned CRUD."""
+        if self._state['revision'] or self.harness is None:
+            raise ValueError('Memory seeding requires a fresh bound agent memory')
+        candidate = self._validated(state)
+        sources = self._sources()
+        for note in candidate['memories'].values():
+            if any(sources.get(ref) != note['provenance'][ref] for ref in note['source_refs']):
+                raise ValueError('Inherited memory source is missing or differs')
+        if self.path is not None:
+            if self.path.exists() and self._validated(json.loads(self.path.read_text())) != self._state:
+                from rsisys.runtime.recovery import RecoveryRequired
+                raise RecoveryRequired('Memory changed before continuation import')
+            atomic_write(self.path, json_bytes(candidate))
+        self._state = candidate
+
     def restore(self, state):
         """Same-directory recovery verifies mutations; it never rolls them back."""
         candidate = self._validated(state)
@@ -219,11 +239,23 @@ class AgentMemory:
                 sources['result:' + result_id(result)] = {'history_id': row.record_id, 'sha256': result_id(result)}
         return sources
 
+    def validates_source(self, ref, provenance):
+        """Resolve the recorded occurrence, even after an identical later read."""
+        if not isinstance(provenance, dict):
+            return False
+        row = next((row for row in self._history() if row.record_id == provenance.get('history_id')), None)
+        if row is None:
+            return False
+        if ref == 'history:decision_maker:' + row.record_id or ref in row.source_refs:
+            return provenance.get('sha256') == result_id(asdict(row))
+        result = row.details.get('result')
+        return (isinstance(result, dict) and ref == 'result:' + result_id(result)
+                and provenance.get('sha256') == result_id(result))
+
     @staticmethod
     def _native(row):
-        operation = row.details.get('operation') or {}
-        return (row.kind == 'operation' and operation.get('name', '').startswith(('lab_', 'medical_'))
-                and isinstance(row.details.get('result'), dict)) or row.kind == 'feedback'
+        from .observations import native_observation
+        return native_observation(row)
 
     def validate(self, call):
         if call.name not in SPEC_BY_NAME:
@@ -433,14 +465,31 @@ class AgentMemory:
             pages.append(page)
         agenda = {**context.research_agenda, 'agent_memory': {'revision': self._state['revision'],
             'organization_owner': 'acting_meta_agent', 'background_model_calls': 0,
+            'memory_count': len(self._state['memories']),
+            'open_task_count': len(tasks),
             'task_operation': 'research_task', 'recent_source_refs': [
                 {'record_id': row.record_id, 'source_ref': 'history:decision_maker:' + row.record_id}
                 for row in history if self._native(row)][-4:]},
             'active_feedback': {'tasks': tasks, 'observations': pages,
                 'lifetime': 'until_explicit_task_close', 'archive_unchanged': True}}
+        from .observations import failed_observation
+        failures = [row for row in history if failed_observation(row)]
+        agenda['feedback_health'] = {
+            'authority': 'host_observation_inventory_not_interpretation',
+            'recent_failures': [{'record_id': row.record_id,
+                'source_ref': 'history:decision_maker:' + row.record_id,
+                'source_sha256': result_id(asdict(row)),
+                'tracked_by_open_task': row.record_id in selected,
+                'read_path': {'operation': 'research_archive', 'collection': 'history',
+                              'record_id': row.record_id}}
+                for row in failures[-2:]],
+            'memory_is_agent_authored': True,
+            'instruction': 'Read the original failures. Open/pin a research_task for a continuing '
+                           'investigation; write a memory only when useful. No implicit resolution or improvement.'}
         # An old feedback_route hint must not hide native data in this mode.
         from .research_state import previous_feedback_view
-        previous = previous_feedback_view(replace(context, history=history), include_memory_route=True)
+        previous = previous_feedback_view(replace(context, history=history), include_memory_route=True,
+                                          include_plugin_observations=True)
         agenda.pop('previous_feedback', None)
         if previous is not None:
             resident = next((p for p in pages if p['source_sha256'] == previous['source_sha256']), None)

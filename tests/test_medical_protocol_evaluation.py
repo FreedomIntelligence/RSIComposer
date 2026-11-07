@@ -84,6 +84,63 @@ class MedicalProtocolTests(unittest.TestCase):
             self.assertEqual(self.submit(), ident)
         self.assertEqual(len(json.loads(self.options['ledger_path'].read_text())['submissions']), 1)
 
+    def test_packaging_a_trained_adapter_from_another_workspace_directory_preserves_containment(self):
+        weights = self.lab.workspace / 'baseline/lora_ckpt'
+        weights.mkdir(parents=True)
+        (weights / 'adapter_config.json').write_text('{}')
+        (weights / 'adapter_model.safetensors').write_bytes(b'synthetic-adapter')
+        (self.lab.workspace / 'raw_infer.py').write_text('import json,sys\np=json.load(sys.stdin)\n'
+            'print(json.dumps({"predictions":[{"benchmark_id":r["benchmark_id"],"id":r["id"],'
+            '"text":"J"} for r in p["items"]]}))\n')
+        packaged = self.lab.execute(OperationCall('medical_package', {
+            'destination_path': 'portable', 'entrypoint_path': 'raw_infer.py',
+            'base_model_path': str(self.base), 'adapter_path': 'baseline/lora_ckpt'})).data
+        self.assertEqual(packaged['status'], 'structurally_valid')
+        self.assertFalse(packaged['model_loaded'])
+        config = json.loads((self.lab.workspace / 'portable/submission.json').read_text())
+        self.assertEqual(config['adapter_path'], 'weights')
+        checked = self.lab.execute(OperationCall('medical_preflight', {'submission_path': 'portable'})).data
+        self.assertFalse(checked['evaluation_submitted'])
+        self.assertFalse(self.options['ledger_path'].exists())
+        ident = self.submit(submission_path='portable')
+        fixed = self.complete(ident).data['fixed_evaluation']
+        self.assertEqual(fixed['output_diagnostics']['benchmarks']['public-fixture']['invalid'], 0)
+        self.assertIn('inference_sha256', fixed)
+        self.assertIn('weight_sha256', fixed)
+        config['adapter_path'] = '../baseline/lora_ckpt'
+        (self.lab.workspace / 'portable/submission.json').write_text(json.dumps(config))
+        with self.assertRaisesRegex(LabToolError, 'escape'):
+            self.lab.execute(OperationCall('medical_preflight', {'submission_path': 'portable'}))
+
+    def test_preflight_rejects_symlink_and_does_not_reserve_or_execute(self):
+        (self.lab.workspace / 'linked').symlink_to(self.bundle, target_is_directory=True)
+        with patch.object(self.backend, 'exec', side_effect=AssertionError('preflight must not execute')):
+            with self.assertRaises(LabToolError):
+                self.lab.execute(OperationCall('medical_preflight', {'submission_path': 'linked'}))
+            self.lab.execute(OperationCall('medical_preflight', {'submission_path': 'candidate'}))
+        self.assertFalse(self.options['ledger_path'].exists())
+
+    def test_running_candidate_cannot_mutate_files_during_host_packaging(self):
+        job = self.lab.execute(OperationCall('lab_start', {'key': 'writer',
+            'argv': [sys.executable, '-c', 'import time; time.sleep(30)']})).data['job_id']
+        try:
+            with self.assertRaises(LabToolError) as caught:
+                self.lab.execute(OperationCall('medical_preflight', {'submission_path': 'candidate'}))
+            self.assertEqual(caught.exception.data['reason'], 'candidate_artifacts_busy')
+            self.assertFalse(self.options['ledger_path'].exists())
+        finally:
+            self.lab.execute(OperationCall('lab_cancel', {'job_id': job}))
+
+    def test_public_diagnostics_cannot_be_forged_independently_of_predictions(self):
+        ident = self.submit()
+        self.backend.wait(self.lab._jobs[ident][0])
+        output = Path(self.lab._evaluations[ident]['config']['output'])
+        record = json.loads(output.read_text())
+        record['output_diagnostics']['benchmarks']['public-fixture']['invalid'] = 42
+        output.write_text(json.dumps(record))
+        with self.assertRaises(LabInfrastructureError):
+            self.lab.execute(OperationCall('lab_result', {'job_id': ident}))
+
     def test_no_isolated_gateway_means_no_closed_acceptance_or_dataset_access(self):
         with patch.object(host, 'frozen_bundle', side_effect=AssertionError('no freeze')):
             with self.assertRaises(LabToolError) as error:

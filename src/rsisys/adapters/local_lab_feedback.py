@@ -88,6 +88,8 @@ class ImmediateFeedbackWindow:
             return context
         rows = [h for h in context.history if h.kind == 'operation']
         keep = {h.record_id for h in rows[-self.recent:]} | full_history_ids(context)
+        from rsisys.loops.decision_making.harness.observations import failed_observation
+        keep.update(row.record_id for row in [h for h in rows if failed_observation(h)][-2:])
         archived = archived_operation_result_ids(context)
         retained, memory_ids, history = set(), set(), []
         for row in context.history:

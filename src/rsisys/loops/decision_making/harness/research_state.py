@@ -172,14 +172,19 @@ def factual_fields(value, path=''):
     """
     facts = {}
     if isinstance(value, dict):
+        if isinstance(value.get('sha256'), str) and 'files' in value:
+            # A manifest's inventory stays in the raw archive; its aggregate
+            # identity remains comparable after compaction.
+            return {path + '/sha256': value['sha256']}
         if ({'backend_id', 'model_id', 'revision'} <= value.keys()
                 or {'artifact_id', 'kind', 'uri'} <= value.keys()):
             return {path: deepcopy(value)}
         for key, item in value.items():
             pointer = path + '/' + key.replace('~', '~0').replace('/', '~1')
             if (key in ('metrics', 'status', 'simulated', 'error', 'validation_error',
-                        'mode', 'base_version', 'parent_system', 'digest', 'error_type', 'exception_type', 'exit_code')
-                    or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics'))):
+                        'mode', 'base_version', 'parent_system', 'digest', 'sha256', 'error_type', 'exception_type',
+                        'exit_code', 'failure_origin', 'verified', 'adopted', 'execution_budget', 'output_diagnostics')
+                    or key.endswith(('_id', '_ids', '_ref', '_refs', '_metrics', '_sha256'))):
                 facts[pointer] = deepcopy(item)
             else:
                 facts.update(factual_fields(item, pointer))
@@ -193,7 +198,7 @@ def factual_fields(value, path=''):
 MAX_EVIDENCE_BYTES = 8192
 
 
-def previous_feedback_view(context, *, include_memory_route=False):
+def previous_feedback_view(context, *, include_memory_route=False, include_plugin_observations=False):
     """Deliver the previous native operation before archive/card projection.
 
     One replacing window, never a memory log. Large originals use a mechanical
@@ -217,7 +222,13 @@ def previous_feedback_view(context, *, include_memory_route=False):
             previous = context.research_agenda.get('previous_feedback')
             return deepcopy(previous) if previous and previous.get('source_sha256') == ident else None
     operation = deepcopy(source.details.get('operation')) if source else None
-    if not operation or not operation.get('name', '').startswith(('lab_', 'medical_')):
+    from .observations import native_observation
+    if source is None or not native_observation(source):
+        return None
+    if not include_plugin_observations and not operation.get('name', '').startswith(('lab_', 'medical_')):
+        # Legacy harnesses can have their own smaller wire budgets and need no
+        # second copy of query responses. AgentMemory explicitly opts into the
+        # generic observation adapter; the original operation result is always kept.
         return None
     if (not include_memory_route and operation
             and (operation.get('arguments') or {}).get('feedback_route') == 'memory'):

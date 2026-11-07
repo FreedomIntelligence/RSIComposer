@@ -354,6 +354,61 @@ class OpenLabRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'terminal'):
                 launcher.main(['--root', str(run), '--resume'])
 
+    def test_new_attempt_cli_imports_notes_before_checkpoint_and_resume_does_not_reapply(self):
+        from examples.medical.continuation import export_attempt
+        inputs, model = self.root / 'inputs', self.root / 'model'
+        inputs.mkdir()
+        model.mkdir()
+        (model / 'config.json').write_text('{}')
+        row = {'id': 'fixture', 'question': 'fixture', 'options': {'A': 'a', 'B': 'b'}, 'gold': 'A'}
+        for name in ('train.jsonl', 'dev.jsonl'):
+            (inputs / name).write_text(json.dumps(row) + '\n')
+        (inputs / 'task.json').write_text(json.dumps({'train': 'train.jsonl',
+            'development': [{'path': 'dev.jsonl', 'benchmark_id': 'fixture'}]}))
+        contexts = []
+        class Transport:
+            def __init__(self, *args, **kwargs):
+                pass
+            def _generation_payload(self, request):
+                return {'model': request.model.model_id, 'messages': request.chat_messages()}
+            def generate_with_response_observer(self, request, observer):
+                contexts.append(json.loads(request.prompt))
+                operation = ('memory_search' if len(contexts) > 1 else 'memory_write')
+                arguments = {} if len(contexts) > 1 else {'expected_revision': 0,
+                    'memory_id': 'prior-note', 'content': 'Prior CPU fixture hypothesis',
+                    'source_refs': [], 'status': 'unverified'}
+                os.kill(os.getpid(), signal.SIGTERM)
+                observer({'body': 'synthetic fixture response'})
+                return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': operation,
+                    'arguments': arguments}), request.model, False)
+        transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: Tokenizer()))
+        common = ['--task', str(inputs / 'task.json'), '--model-path', str(model), '--python', sys.executable,
+            '--endpoint', 'http://127.0.0.1:1/v1', '--seconds', '120', '--max-calls', '5', '--device-type', 'npu',
+            '--evaluation-campaign-id', 'continuation-fixture', '--evaluation-ledger', str(self.root / 'campaign.json'),
+            '--execution-policy', json.dumps({'read_only': list(system_runtime_paths())}),
+            '--resource-allocation', json.dumps({'physical_devices': [8,13], 'logical_devices': [0,1]})]
+        old, new, handoff = self.root / 'old', self.root / 'new', self.root / 'handoff'
+        with patch.dict(sys.modules, {'transformers': transformers}), \
+             patch.dict(os.environ, {'ASCEND_RT_VISIBLE_DEVICES': '8,13'}), \
+             patch.object(launcher, 'VLLMBackend', Transport), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(launcher.main(['--root', str(old), '--run-id', 'old', *common])['status'], 'paused')
+            exported = export_attempt(old, handoff)
+            deadline = json.loads((old / 'recovery-launch.json').read_text())['arguments']['deadline_epoch']
+            self.assertEqual(launcher.main(['--root', str(new), '--run-id', 'new', *common,
+                '--continuation', str(handoff), '--deadline-epoch', str(deadline)])['status'], 'paused')
+            self.assertIn('Prior CPU fixture hypothesis', contexts[1]['memory_context'])
+            self.assertEqual(contexts[1]['research_agenda']['continuation']['handoff_sha256'], exported['sha256'])
+            new_launch = json.loads((new / 'recovery-launch.json').read_text())['arguments']
+            self.assertEqual(new_launch['max_calls'], 4)
+            self.assertEqual(new_launch['deadline_epoch'], deadline)
+            first = DurableRecovery.read(new / 'application')
+            self.assertIn('continuation', first['components'])
+            self.assertEqual(first['components']['agent_memory']['state']['revision'], 1)
+            self.assertEqual(launcher.main(['--root', str(new), '--resume'])['status'], 'paused')
+            self.assertEqual(DurableRecovery.read(new / 'application')['components']['agent_memory']['state']['revision'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

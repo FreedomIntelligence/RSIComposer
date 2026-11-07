@@ -161,6 +161,18 @@ class MemoryBuffer:
         """Return a detached, complete snapshot in persistence order."""
         return self._payload(self._history, self._memories)
 
+    def seed(self, entries):
+        """Initialize a fresh buffer with host-approved historical evidence only."""
+        if self._history or self._memories:
+            raise ValueError('Evidence seeding requires a fresh memory buffer')
+        history = {}
+        for entry in entries:
+            self._validate_entry(entry)
+            if entry.record_id in history:
+                raise ValueError('Duplicate inherited history ID')
+            history[entry.record_id] = deepcopy(entry)
+        self._commit(history, {})
+
     def backup(self, path: Path) -> None:
         """Atomically write a complete snapshot without rebinding this buffer."""
         atomic_write(Path(path), json_bytes(self.export()))

@@ -75,7 +75,11 @@ The script can transform prompts for its model and must write one JSON object:
 
 Return one prediction per supplied identity. All provided option letters are
 valid choices, including A–J where present. The host accepts a whole final letter
-with optional whitespace/period, and never scans explanation text for letters.
+with optional whitespace/period under `exact-option-letter-v1`.
+When `medxpertqa-official-zero-shot-ao-v1` is selected, the pinned official answer
+extractor consumes the candidate's returned raw response instead. The example
+inference template returns the whole generated continuation rather than choosing
+the first A–D character itself. Both host scorers retain their versioned rules.
 Missing/duplicate/unknown predictions fail evaluation. A malformed answer counts
 as incorrect. Scores and adoption cannot be supplied by candidate code.
 
@@ -83,6 +87,43 @@ The protocol/source/runtime/budget hash and dataset SHA identify a comparison. I
 code belongs to candidate identity, so different inference methods may compete
 under one host protocol. This measures the whole candidate pipeline; claims about
 training alone require a comparison with the same inference implementation.
+
+### Packaging, preflight and output diagnostics
+
+`medical_package(destination_path, entrypoint_path, base_model_path, adapter_path?)`
+(or `checkpoint_path`) copies workspace weights into a fresh `weights/` directory,
+copies the entrypoint as `infer.py` and writes bundle-relative `submission.json`.
+It rejects symlinks/escaping paths and refuses to overwrite a prior bundle.
+Release active Lab programs before checking or copying their mutable files.
+Copy extra helper modules/configuration into the bundle explicitly.
+
+`medical_preflight(submission_path)` checks paths, inference syntax and checkpoint/
+adapter layout. It does not load weights, execute inference, consume a submission
+slot or certify numerical validity. In particular, `../baseline/lora_ckpt` stays
+invalid; packaging copies that workspace source into the bundle instead of
+weakening containment. Templates under `templates/` and `training_support.py` are
+editable examples, not prescribed training or inference engines.
+
+Public receipts now include host-recomputed `output_diagnostics`: invalid and
+empty responses, extracted answer counts, dominant-answer fraction, mean returned
+length and explicit warnings. A collapse such as 485 C answers out of 500 is
+visible even if its aggregate accuracy looks plausible. This does not change
+official scoring, and cannot diagnose a backend's hidden generation by itself.
+Candidate telemetry in stderr is not host attestation. Closed receipts continue
+to expose only the existing aggregate/status contract; no per-item distribution
+or raw generation crosses that boundary.
+
+Public `inference_sha256` binds entrypoint and nonweight bundle dependencies;
+`weight_sha256` binds the registered base plus checkpoint/adapter tensor/config
+files. Tokenizer/chat-template/generation configuration inside weight directories
+stays part of inference identity. `runtime.evaluation_diagnostics.compare_evaluations`
+checks protocol/data/runtime/budget identities separately from inference/weight
+changes and reports accuracy deltas only for comparable records. A match isolates
+the identity axis, not actual backend weight consumption, statistical improvement
+or adoption. Those still require independent evidence.
+
+Knowledge and artifact transfer to a repaired attempt uses the explicit
+[continuation protocol](attempt-continuation.md), separate from same-directory recovery.
 
 ## Candidate changes and the comparison rule
 
