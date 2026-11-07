@@ -78,6 +78,30 @@ print('confined')
         state = self.execute("from pathlib import Path; Path('escape/key').read_text()")
         self.assertNotEqual(state.exit_code, 0)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux private tmp namespace')
+    def test_multiprocessing_socket_with_long_workspace_and_inference_scratch(self):
+        workspace = self.root / ('workspace-' + 'x' * 120)
+        scratch = self.root / ('scratch-' + 'x' * 120)
+        workspace.mkdir()
+        scratch.mkdir()
+        code = '''import tempfile
+from multiprocessing.connection import Listener
+assert tempfile.gettempdir() == '/tmp'
+with Listener() as listener:
+    assert listener.address.startswith('/tmp/')
+print('socket bound')
+'''
+        for writable in (True, False):
+            with self.subTest(writable=writable):
+                argv, env = self.backend.isolation.command(workspace,
+                    (sys.executable, '-c', code), {}, writable=writable,
+                    scratch=None if writable else scratch)
+                result = subprocess.run(argv, env=env, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(result.stdout.strip(), b'socket bound')
+        self.assertEqual(list(workspace.iterdir()), [])
+        self.assertEqual(list(scratch.iterdir()), [])
+
     def test_raw_network_client_cannot_bypass_host_model_account(self):
         listener = socket.socket()
         self.addCleanup(listener.close)

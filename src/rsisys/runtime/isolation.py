@@ -107,6 +107,10 @@ class ProcessIsolation:
             env.update(HOME=scratch, TMPDIR=scratch, HF_HOME=scratch + '/hf',
                        XDG_CACHE_HOME=scratch + '/cache')
         if self.driver == 'bubblewrap':
+            # This namespace already owns a private /tmp. Workspace and scratch
+            # paths may exceed AF_UNIX's pathname limit (e.g. multiprocessing
+            # resource-sharer sockets), so do not use them as temporary roots.
+            env['TMPDIR'] = '/tmp'
             command = [self.executable, '--die-with-parent', '--new-session', '--unshare-all',
                        '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
             for name in self.policy.read_only:
