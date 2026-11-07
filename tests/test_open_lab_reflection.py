@@ -364,6 +364,43 @@ class ReflectionTests(unittest.TestCase):
         loop.evolution_state.restore(loop.evolution_state.capture())
         self.assertEqual(registry.current.model_for('decision_maker'), model)
 
+    def test_begin_and_resume_keep_archive_for_large_inherited_evidence(self):
+        self.now = 2800
+        results = []
+        for i in range(12):
+            result = OperationResult('Historical failure', (), False,
+                status=ExecutionStatus.FAILED, error=f'failure-{i} ' + 'original diagnostic ' * 800)
+            results.append(result)
+            self.memory.append(HistoryEntry(f'old-{i}', 'operation', None, result.summary, False,
+                details={'operation': {'name': 'lab_poll', 'arguments': {}},
+                         'result': result.payload(), 'continuation_origin': {'attempt': 'old'}}))
+        latest = OperationResult('Current failure', (), False, ExecutionStatus.FAILED, 'missing file')
+        results.append(latest)
+        self.memory.append(HistoryEntry('latest', 'operation', None, latest.summary, False,
+            details={'operation': {'name': 'lab_read_file', 'arguments': {}}, 'result': latest.payload()}))
+        context = DecisionContext('Continue', (),
+            (*(cap.definition.spec for cap in self.tools.describe()),
+             OperationSpec('lab_start', 'Start', {}), *self.reflection.specifications()),
+            tuple(results), history=self.memory.history())
+        original = deepcopy(self.memory.history())
+        config = dict(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
+                      max_target_tokens=40000)
+        measure = lambda view: len(json.dumps(asdict(view)).encode())
+        for phase in ('begin', 'resume'):
+            with self.subTest(phase=phase):
+                projected = self.reflection.project_context(context)
+                self.assertEqual({s.name for s in projected.operations}, {'reflect_begin', 'research_archive'})
+                legacy = replace(projected, operations=tuple(s for s in projected.operations if s.name == 'reflect_begin'))
+                with self.assertRaises(ContextBudgetError):
+                    BasicContextCompactor(**config).compact(legacy, measure=measure)
+                compacted = BasicContextCompactor(**config).compact(projected, measure=measure)
+                self.assertLess(measure(compacted), config['trigger_tokens'])
+                self.assertEqual(compacted.operation_results[-1].payload(), latest.payload())
+                self.assertEqual(self.memory.history(), original)
+            if phase == 'begin':
+                self.reflection.begin({'window_id': '1'})
+                self.now = 8200
+
     def test_report_retry_retains_archive_and_compacts_old_failures(self):
         self.now = 2800
         self.reflection.begin({'window_id': '1'})

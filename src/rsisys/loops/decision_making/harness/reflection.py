@@ -201,9 +201,12 @@ class PeriodicReflection:
     def project_context(self, context):
         """A due review owns decision turns; running Lab jobs are left running."""
         status = self.snapshot()
+        # Keep the authorized archive while awaiting begin. Removing it makes
+        # recoverable historical evidence irreducible to the context compactor.
         if status['timed_out'] and status['due']:
             return replace(context, objective=self._review_prefix() + ' Resume the unfinished backlog with reflect_begin. ' + context.objective,
-                operations=tuple(spec for spec in context.operations if spec.name == 'reflect_begin'),
+                operations=tuple(spec for spec in context.operations if spec.name == 'reflect_begin'
+                    or spec.name == 'research_archive' and spec.read_only),
                 directive_modes=(), research_agenda={**context.research_agenda, 'scheduled_reflection': {
                     'window_id': status['window_id'], 'begin_arguments': {'window_id': status['window_id']}}})
         if (not status['due'] and not status['timed_out']) or not status['required_decision_ids']:
@@ -219,7 +222,8 @@ class PeriodicReflection:
         prefix = self._review_prefix()
         if active is None:
             return replace(context, objective=prefix + ' Start the durable review with reflect_begin. ' + context.objective,
-                operations=tuple(spec for spec in context.operations if spec.name == 'reflect_begin'),
+                operations=tuple(spec for spec in context.operations if spec.name == 'reflect_begin'
+                    or spec.name == 'research_archive' and spec.read_only),
                 directive_modes=(), research_agenda={**context.research_agenda, 'scheduled_reflection': {
                     'window_id': status['window_id'], 'begin_arguments': {'window_id': status['window_id']},
                     'max_review_seconds': self.max_review_seconds}})
