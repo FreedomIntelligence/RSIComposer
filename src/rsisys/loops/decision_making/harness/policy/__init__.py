@@ -398,6 +398,10 @@ class ModelDecisionPolicy:
     def _parse_decision(self, response, context):
         payload = _load_object(response.text)
         kind = payload["kind"]
+        if context.research_agenda.get('memory_consolidation') and (
+                kind != 'invoke' or payload.get('operation') not in {spec.name for spec in context.operations}):
+            raise ValueError('Consider pending Memory evidence before starting another experiment; '
+                             'write a source-cited note or record a reasoned memory_review disposition')
         reason = self._parse_reason(payload)
         lineage = self._parse_lineage(payload, context)
         lineage.update(self._parse_attempt(payload, context))

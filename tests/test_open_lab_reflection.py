@@ -64,45 +64,194 @@ class ReflectionTests(unittest.TestCase):
             details={'decision_id': 'recent', 'operation': {'name': 'training_result', 'arguments': {}},
                      'result': OperationResult('New failure', (), False, ExecutionStatus.FAILED,
                                                'collator mismatch').payload()}))
-        self.assertEqual(self.reflection.snapshot()['required_decision_ids'], ['recent'])
+        self.reflection.begin({'window_id': '1'})
+        self.assertEqual(self.reflection.snapshot()['required_decision_ids'], ['recent', 'decision-1'])
         with self.assertRaisesRegex(LabToolError, 'recent trajectory'):
             self.reflection.report(self.report)
         self.assertIsNone(self.read_page(record_id='recent:operation'))
-        receipt = self.reflection.report({**self.report, 'decision_ids': ['recent']}).data
-        self.assertEqual(receipt['required_decision_ids'], ['recent'])
+        receipt = self.reflection.report({**self.report, 'decision_ids': ['recent', 'decision-1']}).data
+        self.assertEqual(receipt['required_decision_ids'], ['recent', 'decision-1'])
         self.assertFalse(receipt['improvement_verified'])
 
-    def test_invalid_reviews_exhaust_a_bounded_slot_and_leave_ordinary_research_available(self):
+    def test_hour_deadline_survives_restart_and_timeout_keeps_backlog(self):
         self.now = 2800
+        initial = self.reflection.begin({'window_id': '1'}).data
+        self.now = 4000
+        self.assertEqual(self.reflection.begin({'window_id': '1'}).data, initial)
+        replacement = PeriodicReflection(self.reflection.path, 1800, clock=lambda: self.now)
+        replacement.bind(self.harness, self.registry)
+        self.assertEqual(replacement.snapshot()['active_review']['deadline_at'], 6400)
         context = DecisionContext('Continue', (),
             (OperationSpec('lab_poll', 'Poll', {}), OperationSpec('research_archive', 'Archive', {}),
-             *self.reflection.specifications()), ())
-        for i in range(16):
-            ident = 'invalid-' + str(i)
+             *replacement.specifications()), ())
+        in_progress = replacement.project_context(context)
+        self.now = 6400
+        from rsisys.loops.decision_making.harness.reflection import ReflectionTools
+        from unittest.mock import Mock
+        base = Mock()
+        self.harness.state.pending_operation_decision_id = 'late-action'
+        self.harness.state.decision_records['late-action'] = {'objective': in_progress.objective}
+        rejected = ReflectionTools(base, replacement).execute(OperationCall('system_activate', {}))
+        self.assertEqual(rejected.status, ExecutionStatus.CANCELLED)
+        self.assertFalse(rejected.data['executed'])
+        base.execute.assert_not_called()
+        self.harness.state.decision_records['late-action']['objective'] = 'Ordinary research'
+        ReflectionTools(base, replacement).execute(OperationCall('lab_poll', {}))
+        base.execute.assert_called_once()
+        expired = replacement.project_context(context)
+        self.assertEqual(expired.research_agenda['reflection_attention']['status'], 'incomplete_time_limit')
+        self.assertNotIn('reflect_report', [spec.name for spec in expired.operations])
+        self.assertEqual(replacement.state['reports'], [])
+        with self.assertRaises(LabToolError):
+            replacement.report(self.report)
+        with self.assertRaises(LabToolError):
+            replacement.begin({'window_id': '1'})
+        self.now = 8200
+        self.assertEqual([spec.name for spec in replacement.project_context(context).operations], ['reflect_begin'])
+        resumed = replacement.begin({'window_id': '1'}).data
+        self.assertEqual(resumed['required_decision_ids'], initial['required_decision_ids'])
+        self.assertEqual(len(replacement.state['incomplete_reviews']), 1)
+        self.assertEqual(replacement.state['incomplete_reviews'][0]['status'], 'timed_out')
+
+    def test_old_read_evidence_does_not_open_report_before_recent_required_pages(self):
+        self.now = 2800
+        self.read_all()
+        self.harness.state.decision_records['recent'] = {'objective': 'Investigate recent failure'}
+        self.memory.append(HistoryEntry('recent:operation', 'operation', None, 'Recent failure', False,
+            details={'decision_id': 'recent', 'operation': {'name': 'lab_result', 'arguments': {}},
+                'result': OperationResult('Failed', (), False, ExecutionStatus.FAILED, 'loader error').payload()}))
+        self.reflection.begin({'window_id': '1'})
+        context = DecisionContext('Continue', (),
+            (OperationSpec('research_archive', 'Archive', {}), *self.reflection.specifications()), ())
+        due = self.reflection.project_context(context)
+        self.assertEqual([spec.name for spec in due.operations], ['research_archive'])
+        review = due.research_agenda['scheduled_reflection']
+        self.assertEqual(review['next_read']['arguments'], {'collection': 'history',
+            'record_id': 'recent:operation', 'evidence_path': None, 'cursor': None, 'limit': 8})
+        self.assertFalse(review['evidence_progress']['report_ready'])
+        self.read_page(record_id='recent:operation')
+        ready = self.reflection.project_context(context)
+        self.assertIn('reflect_report', [spec.name for spec in ready.operations])
+        self.assertEqual(ready.research_agenda['scheduled_reflection']['report_arguments']['decision_ids'], ['recent', 'decision-1'])
+
+    def test_partial_field_reads_provide_a_full_record_repair_path(self):
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        args = {'collection': 'history', 'record_id': 'decision-1:operation',
+                'evidence_path': '/details/result', 'limit': 8}
+        result = self.tools._archive(args)
+        self.memory.append(HistoryEntry('partial', 'operation', None, result.summary, False,
+            details={'operation': {'name': 'research_archive', 'arguments': args}, 'result': result.payload()}))
+        with self.assertRaises(LabToolError) as raised:
+            self.reflection.report(self.report)
+        data = raised.exception.data
+        self.assertEqual(data['reason'], 'raw_evidence_incomplete')
+        next_read = data['next_reads'][0]['arguments']
+        self.assertIsNone(next_read['evidence_path'])
+        self.assertIsNone(next_read['cursor'])
+        self.assertEqual(next_read['record_id'], 'decision-1:operation')
+        self.assertEqual(self.reflection.state['reports'], [])
+
+    def test_navigation_resumes_furthest_verified_cursor_after_first_page_reread(self):
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        first = self.read_page()
+        second = self.read_page(first)
+        self.assertIsNotNone(second)
+        self.read_page()  # The real model repeatedly restarted at this page.
+        context = DecisionContext('Continue', (),
+            (OperationSpec('research_archive', 'Archive', {}), *self.reflection.specifications()), ())
+        next_read = self.reflection.project_context(context).research_agenda['scheduled_reflection']['next_read']
+        self.assertEqual(next_read['arguments']['cursor'], second)
+        cursor = next_read['arguments']['cursor']
+        while cursor is not None:
+            cursor = self.read_page(cursor)
+        ready = self.reflection.project_context(context)
+        report = next(spec for spec in ready.operations if spec.name == 'reflect_report')
+        self.assertEqual(report.input_schema['properties']['decision_ids']['maxItems'], 1)
+        self.assertEqual(self.reflection.report(self.report).data['outcome'], 'no_change')
+
+    def test_eighty_operations_do_not_remove_build_test_or_activation_ports(self):
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        self.read_all()
+        for i in range(80):
+            ident = f'review-read-{i}'
             self.harness.state.decision_records[ident] = {
                 'objective': 'Scheduled harness reflection window 1. Review slot 1.'}
-            self.memory.append(HistoryEntry(ident, 'operation', None, 'Invalid report', False,
-                details={'decision_id': ident, 'operation': {'name': 'reflect_report', 'arguments': {}},
-                         'result': OperationResult('Rejected', (), False, ExecutionStatus.FAILED,
-                                                   'duplicate decision IDs').payload()}))
-        projected = self.reflection.project_context(context)
-        self.assertEqual(projected.objective, 'Continue')
-        self.assertIn('lab_poll', [spec.name for spec in projected.operations])
-        self.assertNotIn('scheduled_reflection', projected.research_agenda)
-        self.assertEqual(projected.research_agenda['reflection_attention']['status'], 'incomplete_budget_exhausted')
-        self.assertEqual(self.reflection.state['reports'], [])
-        self.now = 4600
-        self.assertIn('scheduled_reflection', self.reflection.project_context(context).research_agenda)
+            self.memory.append(HistoryEntry(ident, 'operation', None, 'Read evidence', False,
+                details={'decision_id': ident, 'operation': {'name': 'research_archive', 'arguments': {}},
+                         'result': OperationResult('Read', (), False).payload()}))
+        context = DecisionContext('Continue', (), tuple(OperationSpec(name, name, {}) for name in
+            ('research_archive', 'lab_write_file', 'lab_start', 'lab_poll', 'lab_result', 'lab_export', 'system_register', 'system_activate'))
+            + self.reflection.specifications(), ())
+        due = self.reflection.project_context(context)
+        self.assertTrue({'lab_write_file', 'lab_start', 'lab_poll', 'lab_result', 'lab_export', 'system_register', 'system_activate'} <= {s.name for s in due.operations})
+        self.assertIsNone(due.research_agenda['scheduled_reflection']['operations_remaining'])
 
     def read_all(self):
         cursor = self.read_page()
         while cursor is not None:
             cursor = self.read_page(cursor)
 
+    def test_review_snapshot_covers_all_old_failures_and_does_not_chase_new_arrivals(self):
+        for i in range(40):
+            ident = f'old-failure-{i}'
+            self.harness.state.decision_records[ident] = {'objective': 'Research'}
+            self.memory.append(HistoryEntry(ident + ':operation', 'operation', None, ident, False,
+                details={'decision_id': ident, 'operation': {'name': 'custom_result', 'arguments': {}},
+                         'result': OperationResult('Failed', (), False, ExecutionStatus.FAILED, ident).payload()}))
+        self.now = 2800
+        started = self.reflection.begin({'window_id': '1'}).data
+        self.assertEqual(len(started['required_decision_ids']), 41)
+        self.harness.state.decision_records['arrived-later'] = {'objective': self.reflection._review_prefix()}
+        self.memory.append(HistoryEntry('arrived-later:operation', 'operation', None, 'New result', False,
+            details={'decision_id': 'arrived-later', 'operation': {'name': 'custom_result', 'arguments': {}},
+                     'result': OperationResult('Candidate test failed', (), False,
+                                               ExecutionStatus.FAILED, 'test assertion').payload()}))
+        for ident in started['required_decision_ids']:
+            cursor = self.read_page(record_id=ident + ':operation')
+            while cursor:
+                cursor = self.read_page(cursor, record_id=ident + ':operation')
+        self.assertEqual(self.reflection.snapshot()['required_decision_ids'], started['required_decision_ids'])
+        result = self.reflection.report({**self.report, 'decision_ids': started['required_decision_ids']})
+        self.assertEqual(len(result.data['archive_evidence']), 41)
+        self.now = 4600
+        next_review = self.reflection.begin({'window_id': '2'}).data
+        self.assertEqual(next_review['required_decision_ids'], ['arrived-later'])
+
+    def test_review_time_is_capped_by_absolute_host_deadline(self):
+        self.now = 2800
+        reflection = PeriodicReflection(self.root / 'short.json', 1800, clock=lambda: self.now,
+            started_at=1000, deadline_epoch=2900)
+        reflection.bind(self.harness, self.registry)
+        self.assertEqual(reflection.begin({'window_id': '1'}).data['deadline_at'], 2900)
+        self.now = 2900
+        with self.assertRaises(LabToolError):
+            reflection.begin({'window_id': '1'})
+        for value in (0, True, 3601):
+            with self.assertRaises(ValueError):
+                PeriodicReflection(self.root / 'bad-limit.json', 1800, max_review_seconds=value)
+
+    def test_reflection_preserves_memory_consolidation_and_custom_host_capabilities(self):
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        self.read_all()
+        context = DecisionContext('Research', (),
+            (OperationSpec('custom_candidate_test', 'Authorized test', {}),
+             OperationSpec('memory_review', 'Disposition', {}), OperationSpec('research_archive', 'Read', {})), (),
+            research_agenda={'memory_consolidation': {'pending_count': 1}})
+        projected = self.reflection.project_context(context)
+        self.assertEqual({s.name for s in projected.operations}, {s.name for s in context.operations})
+        self.harness.agent_memory = SimpleNamespace(require_review=True, pending_review=lambda: {'pending_count': 1})
+        with self.assertRaisesRegex(LabToolError, 'Memory'):
+            self.reflection.report(self.report)
+
     def test_cadence_noop_persistence_and_exact_idempotent_replay(self):
         with self.assertRaises(LabToolError):
             self.reflection.report(self.report)
         self.now = 2800
+        self.reflection.begin({'window_id': '1'})
         self.assertTrue(self.reflection.snapshot()['due'])
         self.read_all()
         receipt = self.reflection.report(self.report).data
@@ -119,6 +268,7 @@ class ReflectionTests(unittest.TestCase):
     def test_late_review_does_not_burst_and_unknown_receipt_blocks_restore(self):
         saved = self.reflection.capture()
         self.now = 10000
+        self.reflection.begin({'window_id': '1'})
         self.read_all()
         self.reflection.report(self.report)
         self.assertEqual(self.reflection.snapshot()['next_due_at'], 11800)
@@ -130,6 +280,7 @@ class ReflectionTests(unittest.TestCase):
 
     def test_report_requires_existing_evidence_and_actual_component_change(self):
         self.now = 2800
+        self.reflection.begin({'window_id': '1'})
         self.read_all()
         for changed in ({'decision_ids': ['invented']}, {'outcome': 'changed'},
                         {'system_version': 'invented'}, {'analysis': ''}):
@@ -150,6 +301,7 @@ class ReflectionTests(unittest.TestCase):
         replacement.bind(self.harness, self.registry)
         self.assertTrue(replacement.snapshot()['due'])
         self.read_all()
+        replacement.begin({'window_id': '1'})
         replacement.report(self.report)
         self.assertEqual(replacement.snapshot()['next_due_at'], 11800)
         self.assertEqual(len(replacement.capture()['reports']), 1)
@@ -159,7 +311,7 @@ class ReflectionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 PeriodicReflection(self.root / 'invalid.json', 1800, clock=lambda: self.now, started_at=value)
 
-    def test_due_turn_cannot_poll_or_report_without_complete_raw_archive_pages(self):
+    def test_due_turn_starts_timer_then_can_test_while_reading_evidence(self):
         operations = (OperationSpec('research_archive', 'Archive', {}),
             OperationSpec('lab_poll', 'Poll running Lab job', {}), *self.reflection.specifications())
         context = DecisionContext('Continue medical research', (), operations, ())
@@ -167,30 +319,24 @@ class ReflectionTests(unittest.TestCase):
         policy.bind_reflection(self.reflection)
         self.assertIs(self.reflection.project_context(context), context)
         self.now = 2800
+        before = self.reflection.capture()
         due = self.reflection.project_context(context)
-        self.assertEqual([s.name for s in due.operations], ['research_archive'])
-        self.assertIn('Scheduled harness reflection window 1', due.objective)
-        self.assertEqual({b['properties']['operation']['const'] for b in policy.decision_schema(due)['oneOf']},
-                         {'research_archive'})
+        self.assertEqual([s.name for s in due.operations], ['reflect_begin'])
+        self.assertEqual(self.reflection.capture(), before)  # Projection cannot start a timer.
+        self.reflection.begin({'window_id': '1'})
+        due = self.reflection.project_context(context)
+        self.assertEqual({s.name for s in due.operations}, {'research_archive', 'lab_poll'})
         response = GenerationResponse(json.dumps({'kind': 'invoke', 'operation': 'lab_poll', 'arguments': {}}),
                                       policy.model, False)
-        with self.assertRaisesRegex(ValueError, 'scheduled reflection'):
-            policy._parse_decision(response, due)
-        cursor = self.read_page()
-        self.assertIsNotNone(cursor)
+        self.assertEqual(policy._parse_decision(response, due).operation.name, 'lab_poll')
         with self.assertRaisesRegex(LabToolError, 'complete raw operation history'):
             self.reflection.report(self.report)
-        while cursor is not None:
-            cursor = self.read_page(cursor)
+        self.read_all()
         ready = self.reflection.project_context(context)
         self.assertIn('reflect_report', [s.name for s in ready.operations])
-        receipt = self.reflection.report(self.report).data
-        self.assertEqual(receipt['archive_evidence']['decision-1']['record_id'], 'decision-1:operation')
-        self.assertIs(self.reflection.project_context(context), context)
+        self.assertEqual(self.reflection.report(self.report).data['outcome'], 'no_change')
         self.now = 4600
-        self.assertEqual([s.name for s in self.reflection.project_context(context).operations], ['research_archive'])
-        with self.assertRaisesRegex(LabToolError, 'complete raw operation history'):
-            self.reflection.report({**self.report, 'window_id': '2'})
+        self.assertIs(self.reflection.project_context(context), context)  # No new work to review.
 
     def test_harness_only_ports_activate_and_restore_without_model_mutation(self):
         model = ModelRef('meta', 'qwen38-27b', 'frozen')
@@ -220,6 +366,7 @@ class ReflectionTests(unittest.TestCase):
 
     def test_report_retry_retains_archive_and_compacts_old_failures(self):
         self.now = 2800
+        self.reflection.begin({'window_id': '1'})
         self.read_all()
         results = []
         for i in range(12):
@@ -228,7 +375,7 @@ class ReflectionTests(unittest.TestCase):
             results.append(result)
             self.memory.append(HistoryEntry(f'failed-{i}', 'operation', None, result.summary, False,
                 details={'operation': {'name': 'lab_poll', 'arguments': {}}, 'result': result.payload()}))
-        for i in range(8):
+        for i in range(15):
             ident = f'review-{i}'
             self.harness.state.decision_records[ident] = {
                 'objective': 'Scheduled harness reflection window 1. Read original evidence.'}
@@ -244,7 +391,7 @@ class ReflectionTests(unittest.TestCase):
             tuple(results), history=self.memory.history())
         original_history = deepcopy(self.memory.history())
         due = self.reflection.project_context(context)
-        self.assertEqual({s.name for s in due.operations}, {'research_archive', 'reflect_report'})
+        self.assertTrue({'research_archive', 'reflect_report', 'lab_poll'} <= {s.name for s in due.operations})
         config = dict(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
                       max_target_tokens=40000)
         measure = lambda view: len(json.dumps(asdict(view)).encode())

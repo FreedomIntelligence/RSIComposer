@@ -1,6 +1,6 @@
 # RSISys：统一术语与架构
 
-更新：2026-11-06。顶层职责是 **host、一个 meta-agent/harness 与 Lab**。
+更新：2026-11-07。顶层职责是 **host、一个 meta-agent/harness 与 Lab**。
 Memory 是 harness 的可替换子模块；正式评测是 Lab 能力，其协议由 host 固定。
 历史审查材料和冻结实验保留当时的两侧称谓；新运行以本文和实际装配配置为准。
 
@@ -103,7 +103,7 @@ UTF-8 原文页、完整性标记、SHA 和精确读取地址，不能把摘要�
 | 信息 | 谁管理 | 生命周期 |
 | --- | --- | --- |
 | **原始即时反馈** | 执行设施交付，同一个 meta-agent 使用 | `previous_feedback` 展示最新原生操作；任务固定的证据见 `active_feedback`，中间读代码/日志和编辑不会挤掉它。 |
-| **实验/调试任务** | meta-agent 调用 `research_task` 的 open/pin/close | open 可固定已有错误，pin 增补原始回执；任务关闭才释放该驻留窗口。任务完成不是单个工具调用结束。 |
+| **实验/调试任务** | meta-agent 调用 `research_task` 的 open/update/pin/close | open 可固定已有错误，pin 增补原始回执；任务关闭才释放该驻留窗口。任务完成不是单个工具调用结束。 |
 | **可检索 memory** | meta-agent 调用 `memory_write`、`memory_delete` | 跨决策保留，显式修订；更新和删除均记录修订证据，不自动把每条 feedback 写成记忆。 |
 | **原始归档** | 宿主持久化 | 独立于任务窗口和记忆；关闭任务或删除记忆不删除实验原文。可选轨迹产品不等于执行账本。 |
 
@@ -114,6 +114,13 @@ UTF-8 原文页、完整性标记、SHA 和精确读取地址，不能把摘要�
 `memory_search` 提供文字匹配和近期检索；`memory_read` 可读当前或历史修订，大记录分页。
 写入需要明确来源，或以无来源的 unverified 假设保存；supported/refuted 是 meta-agent 的判断，
 宿主只校验来源与修订身份，**不把记忆散文升级为已验证评测或事实**。
+
+新的 producer 回执进入独立 Memory 待处理列表，不依赖 task 是否打开。启用
+`require_memory_review=True` 的装配（当前医疗 Open Lab 默认开启）在下一轮实验前，
+同一个 meta-agent 写入来源明确的笔记，或调用 `memory_review` 解释已有记录、暂缺证据或
+无可复用结论。处置进入修订账本；宿主不代写笔记，也不按笔记数量验收。反思使用显式
+`reflect_begin` 固定待审快照与最长一小时的时限，不再限制操作次数。组件实现、限制与
+可选并行扩展见[反思与 Memory 设计](review/research-reflection-memory-20261107.md)。
 
 ## 默认接线与兼容范围
 

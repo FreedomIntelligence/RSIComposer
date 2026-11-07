@@ -34,7 +34,7 @@ class AgentMemoryTests(unittest.TestCase):
         self.loop = self.runner.decision_making
         self.harness = self.loop.harness
         self.backend = Backend()
-        self.service = assemble_research(self.loop, assembly=ResearchAssembly.single_meta(),
+        self.service = assemble_research(self.loop, assembly=ResearchAssembly.single_meta(require_memory_review=True),
             path=self.root / 'feedback.json', backend=self.backend, executor=ImmediateExecutor())
         self.memory = self.harness.agent_memory
 
@@ -65,6 +65,83 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertEqual(self.backend.requests, [])
         self.assertEqual(self.loop.research_assembly['agent_topology'], 'single_acting_meta_agent')
         self.assertFalse(ResearchAssembly().requires_model)
+
+    def test_empty_memory_without_tasks_requires_a_source_disposition_before_new_work(self):
+        from rsisys.loops.contracts.decision import OperationSpec
+        self.native()
+        original = replace(self.view(), operations=(*SPECS, OperationSpec('lab_start', 'Start', {}),
+            OperationSpec('custom_inspect', 'Inspect', {}, True)))
+        before = self.memory.export()
+        view = self.memory.project_context(original)
+        self.assertEqual(view.research_agenda['agent_memory']['memory_health']['pending_count'], 1)
+        self.assertNotIn('lab_start', {s.name for s in view.operations})
+        self.assertIn('custom_inspect', {s.name for s in view.operations})
+        self.assertEqual(self.memory.export(), before)
+        response = GenerationResponse('{"kind":"invoke","operation":"lab_start","arguments":{}}',
+                                      self.harness.policy.model, True)
+        with self.assertRaisesRegex(ValueError, 'pending Memory'):
+            self.harness.policy._parse_decision(response, view)
+        args = view.research_agenda['agent_memory']['memory_review']['review_arguments']
+        result = self.harness.tools.execute(OperationCall('memory_review', {**args,
+            'disposition': 'deferred', 'reason': 'Inspect the loader and rerun before claiming a reusable fix.'}))
+        self.assertEqual(result.status, ExecutionStatus.COMPLETED)
+        self.assertEqual(self.memory.export()['memories'], {})
+        self.assertEqual(self.memory.pending_review()['pending_count'], 0)
+        self.assertIn('lab_start', {s.name for s in self.memory.project_context(original).operations})
+        self.assertNotIn('memory_consolidation', self.memory.project_context(original).research_agenda)
+        self.native('new-failure')
+        self.assertEqual(self.memory.pending_review()['pending_count'], 1)
+        self.assertEqual(self.backend.requests, [])
+
+    def test_dispositions_are_revisioned_recoverable_and_do_not_claim_usage_or_improvement(self):
+        self.native()
+        saved = self.memory.export()
+        self.mutate('memory_review', source_refs=['history:decision_maker:failed-source'],
+            disposition='not_useful', reason='This fixture failure has no transferable conclusion.')
+        self.assertEqual(AgentMemory._validated(self.memory.export()), self.memory.export())
+        with self.assertRaises(RecoveryRequired):
+            self.memory.restore(saved)
+        restored = AgentMemory()
+        restored.bind(self.harness, self.root / 'feedback.json')
+        self.assertEqual(restored.pending_review()['pending_count'], 0)
+        self.assertEqual(restored.pending_review()['dispositions'], {'not_useful': 1})
+        self.assertFalse(restored.pending_review()['usage_verified'])
+        # Re-delivery alone does not manufacture another learning obligation.
+        self.native()
+        self.assertEqual(restored.pending_review()['pending_count'], 0)
+
+    def test_review_rejects_blank_reasons_unknown_sources_and_unlinked_known_claims(self):
+        self.native()
+        before = self.memory.export()
+        valid = dict(source_refs=['history:decision_maker:failed-source'], disposition='deferred', reason='Need a retest')
+        for changes in ({'reason': ' '}, {'source_refs': []}, {'source_refs': ['invented']},
+                        {'disposition': 'already_known'}, {'disposition': 'already_known', 'memory_ids': ['missing']}):
+            with self.subTest(changes=changes), self.assertRaises(OperationArgumentError):
+                self.mutate('memory_review', **(valid | changes))
+            self.assertEqual(self.memory.export(), before)
+
+    def test_existing_note_can_cover_new_evidence_only_by_explicit_link(self):
+        self.native()
+        self.mutate('memory_write', memory_id='input', content='Check canonical user-message consumption.',
+            source_refs=['history:decision_maker:failed-source'], status='supported')
+        self.native('retest')
+        self.assertEqual(self.memory.pending_review()['pending_count'], 1)
+        self.assertEqual(self.memory.search(query='canonical')['items'][0]['memory_id'], 'input')
+        self.mutate('memory_review', source_refs=['history:decision_maker:retest'],
+            disposition='already_known', memory_ids=['input'], reason='Same missing-input mechanism; existing procedure applies.')
+        self.assertEqual(self.memory.pending_review()['pending_count'], 0)
+        self.assertEqual(len(self.memory.export()['memories']), 1)
+        self.assertEqual(AgentMemory._validated(self.memory.export()), self.memory.export())
+
+    def test_memory_backlog_pages_without_dropping_unseen_receipts(self):
+        for i in range(19):
+            self.native(str(i))
+        self.assertEqual(self.memory.pending_review()['pending_count'], 19)
+        for expected in (11, 3, 0):
+            page = self.memory.pending_review()['items']
+            self.mutate('memory_review', source_refs=['history:decision_maker:' + row['record_id'] for row in page],
+                disposition='deferred', reason='Need input-contract retests; these failures are not improvement evidence.')
+            self.assertEqual(self.memory.pending_review()['pending_count'], expected)
 
     def test_plugin_named_feedback_and_recent_failures_survive_intermediate_successful_reads(self):
         from rsisys.adapters.local_lab_feedback import ImmediateFeedbackWindow
@@ -226,6 +303,67 @@ class AgentMemoryTests(unittest.TestCase):
         with self.assertRaisesRegex(OperationArgumentError, 'Stale'):
             self.memory.execute(OperationCall('research_task_read',
                 {'offset': 1, 'expected_revision': page['revision']}))
+
+    def recorded_task_change(self, action, **fields):
+        args = {'expected_revision': self.memory.export()['revision'], 'task_id': 'debug',
+                'action': action, **fields}
+        payload = self.memory.execute(OperationCall('research_task', args))
+        result = OperationResult('Task changed', (), False, data=payload)
+        self.harness.memory.append(HistoryEntry('task-change-' + str(payload['revision']), 'operation', None,
+            result.summary, False, details={'operation': {'name': 'research_task', 'arguments': args},
+                                           'result': result.payload()}))
+
+    def test_new_result_guides_existing_task_review_without_duplicate_open_or_implicit_writes(self):
+        self.native()
+        self.recorded_task_change('open', title='Repair loader', next_step='Retest',
+                                  acceptance_criteria='Real adapter load and fixed evaluation')
+        later = self.native('later', name='custom_evaluation_result')
+        before = self.memory.export()
+        card = self.view().research_agenda['agent_memory']
+        review = card['task_reviews'][0]
+        self.assertEqual(review['task_id'], 'debug')
+        self.assertEqual(review['record_ids'], ['later'])
+        self.assertEqual({x['arguments']['action'] for x in review['action_templates']}, {'pin', 'update', 'close'})
+        self.assertNotIn('suggested_task_action', card)
+        self.assertEqual(self.memory.export(), before)
+        self.assertEqual(self.view().research_agenda['active_feedback']['observations'][-1]['result'], later.payload())
+        self.assertFalse(self.backend.requests)
+
+    def test_pin_does_not_acknowledge_progress_but_explicit_update_does(self):
+        self.native()
+        self.recorded_task_change('open', title='Repair loader')
+        self.native('later', name='custom_evaluation_result')
+        self.recorded_task_change('pin', record_ids=['later'])
+        self.assertEqual(self.view().research_agenda['agent_memory']['task_reviews'][0]['record_ids'], ['later'])
+        self.recorded_task_change('update', next_step='Investigate the second error')
+        card = self.view().research_agenda['agent_memory']
+        self.assertNotIn('task_reviews', card)
+        self.assertEqual(card['memory_review']['source_refs'],
+                         ['history:decision_maker:failed-source', 'history:decision_maker:later'])
+        self.mutate('memory_write', memory_id='loader', content='Inspect the bundle-relative path.',
+                    source_refs=card['memory_review']['source_refs'], status='unverified')
+        self.assertNotIn('memory_review', self.view().research_agenda['agent_memory'])
+
+    def test_memory_inbox_covers_results_even_after_a_task_closes(self):
+        self.native()
+        self.recorded_task_change('open', title='Repair loader')
+        self.native('decisive', name='custom_evaluation_result')
+        self.recorded_task_change('close', outcome='Abandoned after failed retest')
+        self.native('unrelated', name='other_experiment')
+        card = self.view().research_agenda['agent_memory']
+        self.assertEqual(card['memory_review']['source_refs'], ['history:decision_maker:failed-source',
+                         'history:decision_maker:decisive', 'history:decision_maker:unrelated'])
+        self.assertNotIn('task_reviews', card)
+        self.assertEqual(self.memory.export()['memories'], {})
+
+    def test_imported_results_do_not_trigger_new_task_or_note_review(self):
+        self.native('historical')
+        entry = self.harness.memory.history()[-1]
+        self.harness.memory._history[-1] = replace(entry, details={**entry.details,
+            'continuation_origin': {'record_id': 'old'}})
+        self.mutate('research_task', action='open', task_id='debug', title='Inherited investigation')
+        self.assertNotIn('task_reviews', self.view().research_agenda['agent_memory'])
+        self.assertNotIn('memory_review', self.view().research_agenda['agent_memory'])
 
     def test_imported_failures_do_not_implicitly_reopen_historical_work(self):
         result = OperationResult('Old failed experiment', (), False, ExecutionStatus.FAILED, 'old error')
@@ -454,7 +592,8 @@ class AgentMemoryTests(unittest.TestCase):
         requests = []
         def generate(request):
             requests.append(request)
-            return GenerationResponse('{"kind":"finish"}', request.model, True, TokenUsage(101, 9))
+            return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': 'memory_search',
+                'arguments': {'query': 'input'}}), request.model, True, TokenUsage(101, 9))
         with patch.object(self.harness.policy.backend, 'generate', side_effect=generate):
             self.harness._call_policy(self.harness.policy.decide, self.view())
         payload = json.loads(requests[0].prompt)

@@ -51,30 +51,40 @@ The built-in optimizer accepts:
 ```
 
 At the first decision boundary after a review becomes due, the same meta-agent
-enters a scheduled reflection phase. Its schema offers archive reads until it
-has read every chunk of at least one native operation history record. It then
-may build and activate a
-`meta.prompts` or `meta.harness` candidate through versioned host ports. It then
-calls `reflect_report` with decision references, analysis and either `changed`
-or `no_change`. No separate summarizer/model is created. Explicit agent_memory,
-research tasks and accounting persist. No meta-agent model binding port is
-installed with `meta_model_updates=false`; Lab agent training remains available.
+calls `reflect_begin`. This journalled operation fixes the evidence snapshot and
+a wall deadline: at most one hour, or the absolute host deadline if earlier.
+`reflect_max_seconds` may configure 1..3600 seconds. Context projection does not
+start a timer, and retry/resume cannot renew it.
 
-Reflection receipts bind cited decision-record digests, complete archive-read
-receipts and the actual component version. Every cited decision requires a raw
-operation history read in the current review window. Reading does not prove
-comprehension or improved research performance. After eight review operations,
-the next decision must report; a reasoned `no_change` is valid. Ordinary research
-operations resume after a valid report. Running Lab jobs continue independently;
-the review does not preempt an in-flight model call. Missed periods do not cause a burst
-of catch-up requests. Durable state detects an interrupted receipt write rather
-than resetting the schedule.
+The agent keeps authorized archive, code, execution, polling, Memory and system
+activation capabilities throughout the review. There is no review-operation
+count cap. It may interleave reading with building and testing a `meta.prompts`
+or `meta.harness` candidate. Completing `reflect_report` requires complete raw
+operation records for all failures and the latest ordinary operation in the
+snapshot, plus valid distinct citations and the actual activated system version.
+An evidence-based `no_change` is valid. A timeout is incomplete, retains backlog
+and waits until the next original cadence before an explicit continuation.
 
-For an explicit code-changing repair attempt, the host may supply the original
-`reflect_started_at` epoch in the optimizer config. This retains the campaign's
-cadence and makes an already-due review run at the next decision boundary;
-missed windows still produce only one current review, followed by the next
-original half-hour boundary. It does not change the research deadline.
+Pending producer receipts also require explicit Memory consideration: write or
+update source-cited notes, or record a reasoned `memory_review` disposition.
+No independent model or automatic note author is added. Retrieval, writing and
+actual downstream use are different facts. Research tasks and accounting persist.
+`meta_model_updates=false` still installs no meta-agent model binding port;
+Lab agent training remains available.
+
+The wall deadline gates decision/report admission and rejects late decisions;
+it does not add service-side cancellation of an in-flight model HTTP request.
+Running Lab jobs retain their own timeouts and the absolute host lifetime.
+Host supervisors still enforce process cleanup. Review text, source coverage,
+accepted reports and activated configurations are not evidence of improvement.
+
+An explicit code-changing repair attempt may supply the original
+`reflect_started_at` epoch to retain campaign cadence. Missed periods never
+create a burst of catch-up model calls or extend the experiment deadline.
+Reflection state/config identity changed: do not resume an old frozen run with
+this source. Use an explicit continuation with retained evidence and accounts.
+See [the component design](review/research-reflection-memory-20261107.md) for
+Memory handling and the separate, future parallel-worker boundary.
 
 ## Deployment and recovery
 

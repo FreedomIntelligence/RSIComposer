@@ -59,6 +59,13 @@ SPECS = (
          'source_refs': REFS, 'status': {'enum': ['unverified', 'supported', 'refuted']},
          'applicability': {'type': 'string', 'maxLength': 1000}},
         ['expected_revision', 'memory_id', 'content', 'source_refs', 'status']),
+    _spec('memory_review', 'Explicitly disposition original results that do not warrant a new note yet. '
+        'Use deferred only with the missing evidence/next action in reason; not_useful needs an explanation; '
+        'already_known links existing memory_ids. A review is not a finding or verified improvement.',
+        {'expected_revision': REVISION, 'source_refs': {**REFS, 'minItems': 1},
+         'disposition': {'enum': ['deferred', 'not_useful', 'already_known']},
+         'reason': {'type': 'string', 'minLength': 1, 'maxLength': 2000},
+         'memory_ids': {**REFS}}, ['expected_revision', 'source_refs', 'disposition', 'reason']),
     _spec('memory_delete', 'Remove a memory from retrieval. Prior versions remain in the revision archive.',
         {'expected_revision': REVISION, 'memory_id': IDENT}, ['expected_revision', 'memory_id']),
     _spec('research_task', 'Keep native feedback through a debugging/experiment task. '
@@ -86,7 +93,10 @@ class AgentMemory:
     Configuring this provider performs no I/O. The default database is next to
     the feedback journal; explicit paths are useful for custom integrations.
     """
-    def __init__(self, path=None):
+    def __init__(self, path=None, *, require_review=False):
+        if type(require_review) is not bool:
+            raise TypeError('require_review must be a bool')
+        self.require_review = require_review
         self.configured_path = str(Path(path).resolve()) if path is not None else None
         self.path = None
         self.harness = None
@@ -96,7 +106,9 @@ class AgentMemory:
         return {'provider': 'agent_managed', 'path': self.configured_path,
             'default_path': 'agent-memory.json beside feedback journal',
             'retrieval': 'literal_objective_feedback_tasks_and_recency/v2', 'organization_owner': 'acting_meta_agent',
-            'model_calls': 0, 'task_context': 'explicit_progress_evidence_outcome/v2'}
+            'model_calls': 0, 'task_context': 'explicit_progress_evidence_outcome/v2',
+            'consolidation': 'producer_inbox_explicit_disposition/v1',
+            'require_review': self.require_review}
 
     def bind(self, harness, journal_path=None):
         if self.harness is not None:
@@ -130,9 +142,14 @@ class AgentMemory:
             except OperationArgumentError as exc:
                 raise ValueError('Invalid agent memory revision arguments') from exc
             args = row['arguments']
-            if args.get('expected_revision') != i - 1 or row['operation'] not in ('memory_write', 'memory_delete', 'research_task'):
+            if args.get('expected_revision') != i - 1 or row['operation'] not in ('memory_write', 'memory_delete', 'memory_review', 'research_task'):
                 raise ValueError('Agent memory revision does not describe a mutation')
-            if row['operation'] == 'research_task':
+            if row['operation'] == 'memory_review':
+                if row['memories'] or row['tasks']:
+                    raise ValueError('Memory review cannot synthesize notes or task changes')
+                if any(ident not in memories for ident in args.get('memory_ids', [])):
+                    raise ValueError('Memory review references unknown memory')
+            elif row['operation'] == 'research_task':
                 if row['memories'] or set(row['tasks']) != {args['task_id']}:
                     raise ValueError('Invalid task revision delta')
             elif row['tasks'] or set(row['memories']) != {args['memory_id']}:
@@ -299,13 +316,21 @@ class AgentMemory:
                             ('acceptance_criteria', 1000), ('outcome', 2000)):
             if key in args and (not isinstance(args[key], str) or len(args[key]) > length):
                 raise OperationArgumentError('Invalid ' + key)
-        for key, limit in (('source_refs', 16), ('record_ids', 4)):
+        for key, limit in (('source_refs', 16), ('record_ids', 4), ('memory_ids', 16)):
             if key in args:
                 _strings(args[key], key, limit)
         if 'status' in args and args['status'] not in spec.input_schema['properties']['status']['enum']:
             raise OperationArgumentError('Unknown memory status')
         if 'limit' in args and (type(args['limit']) is not int or not 1 <= args['limit'] <= 8):
             raise OperationArgumentError('limit must be in 1..8')
+        if call.name == 'memory_review':
+            _text(args['reason'], 'reason', 2000)
+            if not args['source_refs'] or args['disposition'] not in ('deferred', 'not_useful', 'already_known'):
+                raise OperationArgumentError('Memory review requires sources and a valid disposition')
+            if any(not ref.startswith('history:decision_maker:') for ref in args['source_refs']):
+                raise OperationArgumentError('Memory review requires exact history:decision_maker:<record_id> sources')
+            if args['disposition'] == 'already_known' and not args.get('memory_ids'):
+                raise OperationArgumentError('already_known requires existing memory_ids')
         if call.name == 'research_task':
             if args['action'] not in ('open', 'update', 'pin', 'close'):
                 raise OperationArgumentError('Unknown task action')
@@ -416,10 +441,14 @@ class AgentMemory:
             raise OperationArgumentError(f"Stale memory revision; current revision is {self._state['revision']}")
         state = deepcopy(self._state)
         revision = state['revision'] + 1
-        if call.name == 'memory_write':
+        if call.name in ('memory_write', 'memory_review'):
             sources = self._sources()
             if any(ref not in sources for ref in args['source_refs']):
                 raise OperationArgumentError('Unknown source reference; use exact history:decision_maker:<record_id> or result:<sha256>')
+        if call.name == 'memory_review':
+            if any(ident not in state['memories'] for ident in args.get('memory_ids', [])):
+                raise OperationArgumentError('Review must link existing memory_ids')
+        elif call.name == 'memory_write':
             if args['status'] != 'unverified' and not args['source_refs']:
                 raise OperationArgumentError('Supported/refuted assessments require cited sources')
             row = {**deepcopy(args), 'revision': revision, 'applicability': args.get('applicability', ''),
@@ -464,7 +493,7 @@ class AgentMemory:
         state['revision'] = revision
         state['revisions'].append({'revision': revision, 'operation': call.name, 'arguments': deepcopy(args),
             'memories': ({args['memory_id']: deepcopy(state['memories'].get(args['memory_id']))}
-                         if call.name != 'research_task' else {}),
+                         if call.name in ('memory_write', 'memory_delete') else {}),
             'tasks': ({args['task_id']: deepcopy(state['tasks'][args['task_id']])}
                       if call.name == 'research_task' else {})})
         if self.path is not None:
@@ -472,14 +501,22 @@ class AgentMemory:
         self._state = state
         return {'revision': revision, 'operation': call.name,
             **({'task': deepcopy(state['tasks'][args['task_id']])} if call.name == 'research_task' else
-               {'memory_id': args['memory_id']}), 'model_calls': 0,
+               {'memory_id': args['memory_id']} if 'memory_id' in args else
+               {'disposition': args['disposition'], 'source_refs': deepcopy(args['source_refs'])}), 'model_calls': 0,
             'authority': 'meta_agent_notes_not_verified_evidence'}
+
+    def pending_review(self):
+        from .memory_review import pending_review
+        return pending_review(self)
 
     def project_context(self, context):
         history = self._history()
         indexed = {row.record_id: row for row in history}
         positions = {row.record_id: i for i, row in enumerate(history)}
-        tasks, selected = [], []
+        tasks, selected, task_reviews = [], [], []
+        available = {spec.name for spec in context.operations}
+        recent_closed = sorted((task for task in self._state['tasks'].values() if task['status'] == 'closed'),
+                               key=lambda task: task['revision'], reverse=True)[:4]
         for task in self._state['tasks'].values():
             if task['status'] != 'open':
                 continue
@@ -492,9 +529,44 @@ class AgentMemory:
             # Intermediate successful code/log reads cannot evict it.
             from .observations import task_observation
             produced = [row.record_id for row in history[start + 1:] if task_observation(row)]
+            # Locate the agent's last explicit task change in real operation
+            # history. This is navigation, not an implicit task mutation. An
+            # imported task falls back to its rebound start anchor; imported
+            # results alone never manufacture a new review obligation.
+            changed_at = start
+            for i, row in enumerate(history[start + 1:], start + 1):
+                operation = row.details.get('operation') or {}
+                arguments = operation.get('arguments', {})
+                result = row.details.get('result', {})
+                if (row.kind == 'operation' and operation.get('name') == 'research_task'
+                        and arguments.get('task_id') == task['task_id']
+                        and arguments.get('action') in ('open', 'update')
+                        and type(arguments.get('expected_revision')) is int
+                        and arguments['expected_revision'] < task['revision']
+                        and result.get('status') == 'completed'):
+                    changed_at = i
+            fresh = [ref for ref in produced if not indexed[ref].details.get('continuation_origin')]
+            unreviewed = [ref for ref in fresh if positions[ref] > changed_at]
+            if unreviewed and 'research_task' in available:
+                args = {'expected_revision': self._state['revision'], 'task_id': task['task_id']}
+                actions = [
+                    {'operation': 'research_task', 'arguments': {**args, 'action': 'update'},
+                     'agent_authored_fields': ['next_step']},
+                    {'operation': 'research_task', 'arguments': {**args, 'action': 'close'},
+                     'agent_authored_fields': ['outcome']}]
+                pins = [ref for ref in unreviewed[-2:] if ref not in task['record_ids']]
+                if pins and len(task['record_ids']) + len(pins) <= 4:
+                    actions.insert(0, {'operation': 'research_task',
+                        'arguments': {**args, 'action': 'pin', 'record_ids': pins}, 'agent_authored_fields': []})
+                task_reviews.append({'task_id': task['task_id'], 'new_receipt_count': len(unreviewed),
+                    'record_ids': unreviewed[-2:], 'action_templates': actions,
+                    'instruction': 'Read the new result against your acceptance_criteria. Pin decisive evidence, '
+                        'then update next_step or close with your outcome. A successful process alone does not '
+                        'establish task resolution or improvement.'})
             refs = list(dict.fromkeys([*task['record_ids'], *produced[-2:]]))
             tasks.append({**deepcopy(task), 'resident_record_ids': refs,
-                'later_producer_receipts': len(produced), 'older_results': 'research_archive'})
+                'later_producer_receipts': len(produced), 'unreviewed_producer_receipts': len(unreviewed),
+                'older_results': 'research_archive'})
             selected.extend(ref for ref in refs if ref not in selected)
         pages = []
         from .research_state import archive_available
@@ -524,22 +596,52 @@ class AgentMemory:
             'recent_closed_tasks': [{
                 'task_id': task['task_id'], 'title': task['title'], 'outcome_preview': task.get('outcome', '')[:240],
                 'record_ids': deepcopy(task['record_ids']), 'read_operation': 'research_task_read'}
-                for task in sorted(self._state['tasks'].values(), key=lambda task: task['revision'], reverse=True)
-                if task['status'] == 'closed'][:4],
+                for task in recent_closed],
             'task_operation': 'research_task', 'recent_source_refs': [
                 {'record_id': row.record_id, 'source_ref': 'history:decision_maker:' + row.record_id}
                 for row in history if self._native(row)][-4:]},
             'active_feedback': {'tasks': tasks, 'observations': pages,
                 'lifetime': 'until_explicit_task_close', 'archive_unchanged': True}}
+        if task_reviews:
+            agenda['agent_memory']['task_reviews'] = task_reviews
+        agenda.pop('memory_consolidation', None)
+        review = self.pending_review()
+        agenda['agent_memory']['memory_health'] = {key: value for key, value in review.items() if key != 'items'}
+        if review['pending_count'] and {'memory_write', 'memory_review'} <= available:
+            refs = ['history:decision_maker:' + row['record_id'] for row in review['items']]
+            agenda['agent_memory']['memory_review'] = {
+                'source_refs': refs, 'items': review['items'], 'pending_count': review['pending_count'],
+                'write_arguments': {'expected_revision': self._state['revision']},
+                'review_arguments': {'expected_revision': self._state['revision'], 'source_refs': refs},
+                'agent_authored_fields': ['memory_id', 'content', 'source_refs', 'status', 'applicability'],
+                'instruction': 'Read these original receipts and search existing memory. Before starting another '
+                    'experiment, write/update source-cited reusable findings, or call memory_review with your '
+                    'reason and disposition (already_known, not_useful, deferred). Deferred must explain what '
+                    'evidence/next action is needed. Do not invent notes to fill the store.',
+                'authority': 'host_navigation_not_a_finding', 'required': self.require_review}
+            if not self.require_review:
+                agenda['agent_memory']['memory_review']['instruction'] = (
+                    'Consider the original receipts and search existing memory. Write/update useful source-cited '
+                    'notes or record a reasoned memory_review disposition; this assembly uses advisory review.')
+            if self.require_review:
+                agenda['memory_consolidation'] = {'pending_count': review['pending_count'],
+                    'owner': 'acting_meta_agent', 'completion': 'source_cited_write_or_reasoned_disposition'}
+                # Consolidation is a decision phase, not a separate model. Keep
+                # investigation and lifecycle tools, including completion/cancel of
+                # already-running jobs. Explicit deferral releases the next action.
+                operations = tuple(spec for spec in context.operations if spec.read_only or spec.name in
+                    {*SPEC_BY_NAME, 'research_archive', 'research_read', 'research_patch',
+                     'lab_read_file', 'lab_read_log', 'lab_poll', 'lab_result', 'lab_cancel', 'reflect_begin'})
+                context = replace(context, operations=operations, directive_modes=())
         from .observations import failed_observation
         failures = [row for row in history if failed_observation(row)]
-        tracked = {ref for task in self._state['tasks'].values() for ref in task['record_ids']}
+        tracked = {ref for task in self._state['tasks'].values() for ref in task['record_ids']} | set(selected)
         # Historical failures remain evidence, but importing an archive is not
         # a request to reopen or replay the old investigation.
         untracked = [row for row in failures if row.record_id not in tracked
                      and not row.details.get('continuation_origin')]
         agenda['agent_memory']['untracked_failure_count'] = len(untracked)
-        if untracked and len(tasks) < 2 and any(spec.name == 'research_task' for spec in context.operations):
+        if untracked and not task_reviews and len(tasks) < 2 and 'research_task' in available:
             row = untracked[-1]
             task_id = 'investigate-' + result_id(row.record_id)[:16]
             if task_id in self._state['tasks']:

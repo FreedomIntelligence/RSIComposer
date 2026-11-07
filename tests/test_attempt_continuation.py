@@ -1,6 +1,6 @@
 """New-identity handoff exercises real archives, memory CRUD and artifact files."""
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -117,6 +117,26 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(task['status'], 'closed')
         self.assertTrue(task['record_ids'][0].startswith('prior-'))
         self.assertEqual(self.new.state.decision_records, {})
+
+    def test_inherited_open_task_reviews_only_new_attempt_results(self):
+        from rsisys.loops.decision_making.harness.agent_memory import SPECS
+        def card():
+            context = replace(self.new._context('Continue inherited investigation', None), operations=SPECS)
+            return self.new.agent_memory.project_context(context).research_agenda['agent_memory']
+        self.old.memory.append(HistoryEntry('old-later', 'operation', 'old-job', 'Historical retest', False,
+            details={'operation': {'name': 'custom_training_result', 'arguments': {}},
+                     'result': self.failure.payload()}))
+        receipt = self.freeze(record_ids=['decision-1:operation', 'old-later'])
+        self.install()
+        self.assertNotIn('task_reviews', card())
+        self.assertNotIn('memory_review', card())
+        self.new.memory.append(HistoryEntry('new-result', 'operation', 'new-job', 'Current retest', False,
+            details={'operation': {'name': 'custom_training_result', 'arguments': {}},
+                     'result': self.failure.payload()}))
+        self.assertEqual(card()['task_reviews'][0]['task_id'], 'debug')
+        self.assertEqual(card()['task_reviews'][0]['record_ids'], ['new-result'])
+        self.assertEqual(card()['memory_review']['source_refs'], ['history:decision_maker:new-result'])
+        self.assertEqual(read_continuation(self.bundle)[1], receipt['sha256'])
 
     def test_campaign_or_account_changes_and_incomplete_import_never_replay(self):
         self.freeze()

@@ -680,7 +680,8 @@ def run(args, *, method_catalog=None):
         if optimizer_config.get('reflect_interval_seconds') is not None:
             from .open_lab_reflection import PeriodicReflection
             reflection = PeriodicReflection(context.data_dir / 'reflection-state.json',
-                optimizer_config['reflect_interval_seconds'], started_at=optimizer_config.get('reflect_started_at'))
+                optimizer_config['reflect_interval_seconds'], started_at=optimizer_config.get('reflect_started_at'),
+                max_review_seconds=optimizer_config.get('reflect_max_seconds', 3600), deadline_epoch=args.deadline_epoch)
         def slot():
             return EvolutionLabSlot(RoutedLab(lab) if args.feedback_routing == 'context_or_memory' else lab,
                                     reflection=reflection)
@@ -720,7 +721,7 @@ def run(args, *, method_catalog=None):
         bind_evolution(context, loop, context.lab_execution, backend, model, config=optimizer_config)
         return loop
     if args.feedback_routing == 'agent_memory':
-        assembly = ResearchAssembly.single_meta()
+        assembly = ResearchAssembly.single_meta(require_memory_review=True)
     else:
         assembly = legacy_memory_assembly(root, args)
     native_labs = []
@@ -744,11 +745,13 @@ def run(args, *, method_catalog=None):
     def build_method(config):
         nonlocal optimizer_config
         import math
-        if (set(config) - {'reflect', 'reflect_interval_seconds', 'reflect_started_at', 'meta_model_updates'}
+        if (set(config) - {'reflect', 'reflect_interval_seconds', 'reflect_started_at', 'reflect_max_seconds', 'meta_model_updates'}
                 or any(key in config and type(config[key]) is not bool for key in ('reflect', 'meta_model_updates'))
                 or ('reflect_interval_seconds' in config and (
                     type(config['reflect_interval_seconds']) is not int or config['reflect_interval_seconds'] < 60
                     or config.get('reflect') is False))
+                or ('reflect_max_seconds' in config and ('reflect_interval_seconds' not in config
+                    or type(config['reflect_max_seconds']) is not int or not 1 <= config['reflect_max_seconds'] <= 3600))
                 or ('reflect_started_at' in config and ('reflect_interval_seconds' not in config
                     or type(config['reflect_started_at']) not in (int, float)
                     or not math.isfinite(config['reflect_started_at']) or config['reflect_started_at'] < 0))):

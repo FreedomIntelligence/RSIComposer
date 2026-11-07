@@ -208,6 +208,12 @@ class OpenLabAssemblyTests(unittest.TestCase):
         with Application(config, lab_factory=factory, research=ResearchAssembly()) as app:
             lab = labs[0]
             harness = app.runner.decision_making.harness
+            # This is a tool/feedback integration fixture, with an explicit
+            # request capacity for the expanded Memory tool catalogue. The
+            # generic compactor must not infer capacity from its soft target.
+            from rsisys.loops.decision_making.harness.context import BasicContextCompactor
+            harness.context_compactor = BasicContextCompactor(trigger_tokens=80000, target_tokens=24000,
+                max_target_tokens=72000, target_increment_tokens=12000, input_budget_tokens=120000)
             requests, receipts = [], []
             harness.add_receipt_listener(receipts.append)
             actions = iter(('write_bad', 'start_bad', 'poll', 'result',

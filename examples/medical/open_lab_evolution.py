@@ -90,9 +90,10 @@ class EvolutionLabSlot:
                 *(self.reflection.specifications() if self.reflection is not None else ()))
 
     def execute(self, call):
-        if call.name == 'reflect_report' and self.reflection is not None:
+        if call.name in ('reflect_begin', 'reflect_report') and self.reflection is not None:
             self.lab.require_admission()
-            return self.reflection.report(call.arguments)
+            return (self.reflection.begin(call.arguments) if call.name == 'reflect_begin'
+                    else self.reflection.report(call.arguments))
         return self._evolution.execute(call) if self._evolution is not None else self.lab.execute(call)
 
     def runtime_context(self):

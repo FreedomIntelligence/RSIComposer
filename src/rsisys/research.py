@@ -111,11 +111,11 @@ class ResearchAssembly:
                                and not self.requires_model else 'explicit_custom_workflow')}
 
     @classmethod
-    def single_meta(cls, *, memory_path=None, **components):
+    def single_meta(cls, *, memory_path=None, require_memory_review=False, **components):
         """The meta-agent writes its own memories; storage never calls a model."""
         if {'context_memory', 'memory_processor', 'harness_proposals', 'improvement_proposals'}.intersection(components):
             raise ValueError('single_meta() owns memory and has no independent model processing stages')
-        return cls(context_memory=AgentMemory(memory_path), **components)
+        return cls(context_memory=AgentMemory(memory_path, require_review=require_memory_review), **components)
 
     @classmethod
     def langmem(cls, *, memory_path, namespace, memory_options=None, **components):
@@ -169,7 +169,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     if isinstance(context_memory, AgentMemory):
         # Assembly is reusable configuration. Mutable run state belongs to the
         # new harness, including when the same ModuleAssembly resumes a run.
-        context_memory = AgentMemory(context_memory.configured_path)
+        context_memory = AgentMemory(context_memory.configured_path, require_review=context_memory.require_review)
         context_memory.bind(loop.harness, path)
     enable_feedback_learning(loop, path=path, backend=backend, model=model, model_provider=model_provider,
         adapter=adapter,
