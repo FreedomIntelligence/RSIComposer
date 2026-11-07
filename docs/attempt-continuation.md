@@ -39,6 +39,13 @@ PYTHONPATH=src:. python -m examples.medical.continuation \
 把新 attempt 的上限夹紧到剩余额度；绝对截止只可提前。调用原账本保留，handoff 不代替
 全部 provider usage 总账。历史实验到期后，这个入口不会自动启动新实验。
 
+宿主获得用户新的运行窗口授权后，可以为**新 attempt** 提供
+`--continuation-authorization` JSON：schema 为 `rsisys-host-continuation-renewal/v1`，
+绑定 `handoff_sha256`、`campaign_id`、`target_attempt_id`、`previous_deadline_epoch`，
+并记录新的 `deadline_epoch`、`authorized_at` 和 `reason`。仅允许已到期窗口的明确续期；
+不增加剩余调用额度、不换评测账本，也不修改旧 attempt 或交接包。授权随新 attempt
+冻结并在恢复时核验，修复或恢复本身不会延长窗口。
+
 导出包包含来源 attempt、source/data/protocol/runtime/account 兼容轴、原始记录、
 明确写过的笔记与任务，以及逐文件 SHA/大小。未写过 Memory 时仍保留已有回执与指定产物，
 不会合成笔记或伪造 CRUD。导入时：

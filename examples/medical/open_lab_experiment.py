@@ -294,7 +294,7 @@ different inference scripts do not isolate an effect of training.
 
 
 def main(argv=None):
-    from .open_lab_recovery import controller_lock, example_identity, inspect_recovery
+    from .open_lab_recovery import controller_lock, example_identity, inspect_recovery, digest
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True)
     parser.add_argument('--task')
@@ -347,6 +347,8 @@ def main(argv=None):
     parser.add_argument('--run-id')
     parser.add_argument('--continuation', help='Operator-cleared immutable handoff from a stopped prior attempt; '
                         'imports evidence/notes/artifacts, never actions or process identities')
+    parser.add_argument('--continuation-authorization', help='Host-only explicit authorization for a fresh '
+                        'window after an inherited deadline; never resets calls or evaluation accounts')
     parser.add_argument('--resume', action='store_true', help='Resume the same durable run using its saved configuration')
     parser.add_argument('--inspect-recovery', action='store_true', help='Read recovery status without constructing or executing modules')
     arguments = list(sys.argv[1:] if argv is None else argv)
@@ -378,6 +380,9 @@ def main(argv=None):
                 if previous['status'] in ('completed', 'host_limit_reached', 'deadline_reached_before_start'):
                     raise ValueError('This run is terminal; resuming cannot extend its deadline or budget')
             args = argparse.Namespace(**saved['arguments'], resume=True, inspect_recovery=False)
+            if getattr(args, 'continuation_authorization', None):
+                if digest(json.loads(Path(args.continuation_authorization).read_text())) != args.continuation_authorization_sha256:
+                    raise ValueError('Frozen continuation authorization changed')
         else:
             for name in ('task', 'model_path', 'python', 'endpoint', 'run_id'):
                 if not getattr(args, name):
@@ -396,24 +401,29 @@ def main(argv=None):
             # Python locates a venv from the invoked executable path. Resolving
             # its symlink selects the system interpreter and drops its packages.
             args.python = str(Path(args.python).absolute())
-            for name in ('task', 'model_path', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config', 'continuation'):
+            for name in ('task', 'model_path', 'lab_model_path', 'evaluation_ledger', 'closed_evaluator_config',
+                         'continuation', 'continuation_authorization'):
                 if getattr(args, name):
                     setattr(args, name, str(Path(getattr(args, name)).resolve()))
             args.available_model_path = [str(Path(path).resolve()) for path in args.available_model_path]
             # Fix the wall deadline once, including setup and future downtime.
             args.deadline_epoch = min(args.deadline_epoch or float('inf'), time.time() + args.seconds)
+            if args.continuation_authorization and not args.continuation:
+                raise ValueError('Host continuation authorization requires a continuation bundle')
             if args.continuation:
                 from rsisys.runtime.continuation import read_continuation
-                handoff, _ = read_continuation(args.continuation)
-                if handoff['identity']['campaign_id'] != args.evaluation_campaign_id:
-                    raise ValueError('Continuation must retain the original campaign')
-                limits = handoff['limits']
-                if not {'deadline_epoch', 'remaining_model_calls'} <= limits.keys():
-                    raise ValueError('Medical continuation requires inherited deadline and remaining call budget')
-                args.deadline_epoch = min(args.deadline_epoch, limits['deadline_epoch'])
-                args.max_calls = min(args.max_calls, limits['remaining_model_calls'])
-                if args.max_calls < 1:
-                    raise ValueError('The inherited campaign model-call budget is exhausted')
+                from .continuation import continuation_limits
+                handoff, handoff_sha256 = read_continuation(args.continuation)
+                authorization = (json.loads(Path(args.continuation_authorization).read_text())
+                                 if args.continuation_authorization else None)
+                args.deadline_epoch, args.max_calls = continuation_limits(handoff, handoff_sha256,
+                    campaign_id=args.evaluation_campaign_id, attempt_id=args.run_id,
+                    deadline_epoch=args.deadline_epoch, max_calls=args.max_calls,
+                    authorization=authorization, now=time.time())
+                if authorization is not None:
+                    args.continuation_authorization = str(root / 'continuation-authorization.json')
+                    args.continuation_authorization_sha256 = digest(authorization)
+                    write(Path(args.continuation_authorization), authorization)
             saved_args = {k: v for k, v in vars(args).items() if k not in ('resume', 'inspect_recovery')}
             write(path, {'schema': 1, 'source': example_identity(), 'arguments': saved_args,
                 'required_files': ['application/config.json', 'application/run.json',
@@ -424,6 +434,7 @@ def main(argv=None):
                     'application/allocated-workspaces/process-recovery.json',
                     *(['application/agent-memory.json'] if args.feedback_routing == 'agent_memory' else ['memory.sqlite3']),
                     *(['application/continuation-receipt.json'] if args.continuation else []),
+                    *(['continuation-authorization.json'] if args.continuation_authorization else []),
                     'application/system-registry.json', 'application/system-activation.json',
                     'model_calls.json', 'resource-account.json', 'resource-allocation.json']})
         write(root / 'controller.claim', {'pid': os.getpid(), 'uid': os.getuid(),

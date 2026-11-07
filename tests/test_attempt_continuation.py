@@ -155,6 +155,24 @@ class ContinuationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'explicit continuation'):
             memory.bind(self.new)
 
+    def test_expired_window_requires_bound_host_authorization_and_never_increases_calls(self):
+        from examples.medical.continuation import continuation_limits
+        handoff = {'identity': self.identity, 'limits': {'deadline_epoch': 100, 'remaining_model_calls': 7}}
+        options = dict(campaign_id='campaign', attempt_id='new', deadline_epoch=900, max_calls=100, now=200)
+        self.assertEqual(continuation_limits(handoff, 'a'*64, **options), (100, 7))
+        authorization = {'schema': 'rsisys-host-continuation-renewal/v1', 'handoff_sha256': 'a'*64,
+            'campaign_id': 'campaign', 'target_attempt_id': 'new', 'previous_deadline_epoch': 100,
+            'deadline_epoch': 800, 'authorized_at': 150, 'reason': 'User explicitly requested another window'}
+        self.assertEqual(continuation_limits(handoff, 'a'*64, **options, authorization=authorization), (800, 7))
+        self.assertEqual(continuation_limits(handoff, 'a'*64, **(options | {'max_calls': 3}),
+            authorization=authorization), (800, 3))
+        for changes in ({'handoff_sha256': 'b'*64}, {'target_attempt_id': 'other'},
+                        {'campaign_id': 'other'}, {'previous_deadline_epoch': 99},
+                        {'authorized_at': 50}, {'authorized_at': 201}, {'deadline_epoch': 199},
+                        {'deadline_epoch': float('nan')}, {'max_calls': 1000}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                continuation_limits(handoff, 'a'*64, **options, authorization=authorization | changes)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 """Operator handoff adapter for stopped Open Lab attempts; no model calls."""
 import argparse
 import json
+import math
 from pathlib import Path
 import subprocess
 
@@ -13,6 +14,44 @@ from rsisys.loops.decision_making.harness.memory import DecisionMemory
 from rsisys.loops.decision_making.harness.agent_memory import AgentMemory
 from rsisys.adapters.local_lab_state import process_identity, _read
 from .open_lab_recovery import inspect_recovery, controller_lock
+
+
+def continuation_limits(handoff, handoff_sha256, *, campaign_id, attempt_id,
+                        deadline_epoch, max_calls, authorization=None, now=None):
+    """Keep the account; an expired window needs a new explicit host mandate.
+
+    Renewal applies only to a fresh attempt and never grants additional calls.
+    The launcher freezes the authorization alongside its durable launch state.
+    """
+    if handoff['identity']['campaign_id'] != campaign_id:
+        raise ValueError('Continuation must retain the original campaign')
+    limits = handoff['limits']
+    if not {'deadline_epoch', 'remaining_model_calls'} <= limits.keys():
+        raise ValueError('Medical continuation requires inherited deadline and remaining call budget')
+    inherited_deadline = limits['deadline_epoch']
+    if authorization is not None:
+        required = {'schema', 'handoff_sha256', 'campaign_id', 'target_attempt_id',
+                    'previous_deadline_epoch', 'deadline_epoch', 'authorized_at', 'reason'}
+        if (not isinstance(authorization, dict) or set(authorization) != required
+                or authorization['schema'] != 'rsisys-host-continuation-renewal/v1'
+                or authorization['handoff_sha256'] != handoff_sha256
+                or authorization['campaign_id'] != campaign_id
+                or authorization['target_attempt_id'] != attempt_id
+                or authorization['previous_deadline_epoch'] != inherited_deadline
+                or not isinstance(authorization['reason'], str) or not authorization['reason'].strip()):
+            raise ValueError('Invalid explicit host continuation authorization')
+        for key in ('previous_deadline_epoch', 'deadline_epoch', 'authorized_at'):
+            value = authorization[key]
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError('Invalid host authorization time')
+        if (now is None or not inherited_deadline < authorization['authorized_at']
+                <= now < authorization['deadline_epoch']):
+            raise ValueError('Renewal requires an expired window and a current host authorization')
+        inherited_deadline = authorization['deadline_epoch']
+    calls = min(max_calls, limits['remaining_model_calls'])
+    if calls < 1:
+        raise ValueError('The inherited campaign model-call budget is exhausted')
+    return min(deadline_epoch, inherited_deadline), calls
 
 
 def continuation_identity(*, campaign_id, run_id, source, groups, protocol_sha256, runtime_sha256):

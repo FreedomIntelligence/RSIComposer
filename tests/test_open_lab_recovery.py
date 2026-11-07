@@ -408,6 +408,27 @@ class OpenLabRecoveryTests(unittest.TestCase):
             self.assertEqual(first['components']['agent_memory']['state']['revision'], 1)
             self.assertEqual(launcher.main(['--root', str(new), '--resume'])['status'], 'paused')
             self.assertEqual(DurableRecovery.read(new / 'application')['components']['agent_memory']['state']['revision'], 1)
+            renewal = self.root / 'renewal.json'
+            renewed = self.root / 'renewed'
+            authorization = {'schema': 'rsisys-host-continuation-renewal/v1',
+                'handoff_sha256': exported['sha256'], 'campaign_id': 'continuation-fixture',
+                'target_attempt_id': 'renewed', 'previous_deadline_epoch': deadline,
+                'authorized_at': deadline + 1, 'deadline_epoch': deadline + 3600,
+                'reason': 'Explicit new user-authorized run window'}
+            renewal.write_text(json.dumps(authorization))
+            with patch.object(launcher.time, 'time', return_value=deadline + 2):
+                self.assertEqual(launcher.main(['--root', str(renewed), '--run-id', 'renewed', *common,
+                    '--continuation', str(handoff), '--continuation-authorization', str(renewal),
+                    '--deadline-epoch', str(deadline + 3600)])['status'], 'paused')
+                saved = json.loads((renewed / 'recovery-launch.json').read_text())['arguments']
+                self.assertEqual(saved['deadline_epoch'], deadline + 122)
+                self.assertEqual(saved['max_calls'], 4)
+                self.assertEqual(json.loads((renewed / 'continuation-authorization.json').read_text()), authorization)
+                renewal.write_text('{}')  # external operator file is no longer authoritative
+                self.assertEqual(launcher.main(['--root', str(renewed), '--resume'])['status'], 'paused')
+                (renewed / 'continuation-authorization.json').write_text('{}')
+                with self.assertRaisesRegex(ValueError, 'authorization changed'):
+                    launcher.main(['--root', str(renewed), '--resume'])
 
 
 if __name__ == '__main__':
