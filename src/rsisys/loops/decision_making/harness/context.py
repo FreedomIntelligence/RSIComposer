@@ -92,7 +92,7 @@ class BasicContextCompactor:
     streams = ('history', 'experience', 'memories', 'operation_results')
 
     def __init__(self, *, trigger_tokens=80000, target_tokens=24000, summary_tokens=4096,
-                 max_target_tokens=None, target_increment_tokens=12000):
+                 max_target_tokens=None, target_increment_tokens=12000, input_budget_tokens=None):
         for name, value in (('trigger_tokens', trigger_tokens), ('target_tokens', target_tokens),
                             ('summary_tokens', summary_tokens)):
             if type(value) is not int or value < 1:
@@ -106,6 +106,10 @@ class BasicContextCompactor:
             raise ValueError('Adaptive target must use positive increments up to a ceiling below trigger_tokens')
         self.trigger_tokens, self.target_tokens, self.summary_tokens = trigger_tokens, target_tokens, summary_tokens
         self.max_target_tokens, self.target_increment_tokens = maximum, target_increment_tokens
+        if input_budget_tokens is not None and (type(input_budget_tokens) is not int
+                or input_budget_tokens < trigger_tokens):
+            raise ValueError('input_budget_tokens must cover trigger_tokens and reserve model output separately')
+        self.input_budget_tokens = input_budget_tokens
         self._folded = {name: set() for name in self.streams}
         self._summary = {}
         self._project_evidence = False
@@ -140,7 +144,8 @@ class BasicContextCompactor:
         The configured target stays unchanged; future pressure starts at it again.
         """
         attempts = []
-        for target in range(self.target_tokens, self.max_target_tokens + 1, self.target_increment_tokens):
+        targets = list(range(self.target_tokens, self.max_target_tokens + 1, self.target_increment_tokens))
+        for target in targets:
             try:
                 result = self._compact(context, recent_limit=recent_limit, measure=measure,
                                        summarize=summarize, target_tokens=target)
@@ -150,12 +155,30 @@ class BasicContextCompactor:
                         ('minimum_input_tokens', 'summary_token_limit') if k in self.last_measurement}})
                 self.last_measurement.update(configured_target_tokens=self.target_tokens,
                     max_target_tokens=self.max_target_tokens, target_attempts=deepcopy(attempts))
-                if target == self.max_target_tokens:
-                    raise
+                if target == targets[-1]:
+                    # A compression goal is not the model's context capacity.
+                    # Only an explicitly declared input budget authorizes this
+                    # bounded fallback; reserve output/headroom at the caller.
+                    # Try to leave room for provenance and the rolling summary,
+                    # then at most once use the complete hard input allowance.
+                    hard = self.input_budget_tokens
+                    minimum = self.last_measurement.get('minimum_input_tokens', hard)
+                    if hard is not None and target < hard and minimum <= hard:
+                        proposed = min(hard, max(target + 1,
+                            minimum + self.summary_tokens + 1024))
+                        targets.append(proposed)
+                        if proposed < hard:
+                            targets.append(hard)
+                    else:
+                        self.last_measurement.update(input_budget_tokens=hard,
+                            soft_target_exceeded=target > self.max_target_tokens)
+                        raise
             else:
                 attempts.append({'target_tokens': target, 'status': 'accepted'})
                 self.last_measurement.update(configured_target_tokens=self.target_tokens,
-                    max_target_tokens=self.max_target_tokens, target_attempts=deepcopy(attempts))
+                    max_target_tokens=self.max_target_tokens, target_attempts=deepcopy(attempts),
+                    input_budget_tokens=self.input_budget_tokens,
+                    soft_target_exceeded=target > self.max_target_tokens)
                 return result
 
     def _compact(self, context, *, recent_limit, measure, summarize, target_tokens):

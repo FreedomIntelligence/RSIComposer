@@ -132,6 +132,23 @@ class TimedOpenPolicy(ModelDecisionPolicy):
         return decision
 
 
+def host_context_compactor(config):
+    """Separate compression goals from capacity, reserving the full reply cap."""
+    window = config.get('context_window_tokens', 65536)
+    safety = config.get('context_safety_tokens', 1024)
+    if type(window) is not int or window <= 8192 or type(safety) is not int or safety < 0:
+        raise ValueError('Declare a valid service context window and nonnegative context safety reserve')
+    budget = config.get('context_budget', {})
+    allowed = {'trigger_tokens', 'target_tokens', 'summary_tokens',
+               'max_target_tokens', 'target_increment_tokens'}
+    if not isinstance(budget, dict) or set(budget) - allowed:
+        raise ValueError('Unknown host context compression configuration')
+    return BasicContextCompactor(**{
+        'trigger_tokens': 48000, 'target_tokens': 16000, 'summary_tokens': 2048,
+        'max_target_tokens': 40000, 'target_increment_tokens': 12000, **budget},
+        input_budget_tokens=window - 8192 - safety)
+
+
 class AllocatedProcessBackend(LocalProcessBackend):
     """Explicit host device/environment injection into scrubbed Lab children."""
     def __init__(self, root, environment, *, device_type='cuda'):
@@ -298,6 +315,11 @@ def main(argv=None):
     parser.add_argument('--action-permissions', type=json.loads, default={},
                         help='Host ActionPermissions JSON; explicit sensitive rules, ordinary installed research stays open')
     parser.add_argument('--template-family', choices=('sglang', 'vllm'), default='sglang')
+    parser.add_argument('--context-window-tokens', type=int, default=65536,
+                        help='Actual serving context capacity, including input and output')
+    parser.add_argument('--context-safety-tokens', type=int, default=1024)
+    parser.add_argument('--context-budget', type=json.loads, default={},
+                        help='Host JSON compression goals; input capacity always reserves the full reply cap')
     parser.add_argument('--feedback-routing', choices=('agent_memory', 'legacy', 'context_or_memory'), default='agent_memory',
                         help='Default: one meta-agent with explicit memory tools; other modes opt into legacy extraction')
     parser.add_argument('--seconds', type=int, default=600)
@@ -423,8 +445,7 @@ def run(args, *, method_catalog=None):
         # Finish the current decision boundary, then pause safely. The absolute
         # deadline and call limits still independently stop inference admission.
         backend.pause_requested = True
-    compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000, summary_tokens=2048,
-        max_target_tokens=40000, target_increment_tokens=12000)
+    compactor = host_context_compactor(vars(args))
     prompts = DecisionPrompts({
         'control': 'The host owns stopping. Select and execute your next research action. Do not use wait or finish.',
         'scheduling': 'Use lab_poll to query running programs immediately, or set wait_seconds '

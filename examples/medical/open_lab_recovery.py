@@ -101,7 +101,7 @@ class DecisionState:
             'permissions': self.loop.action_space.permissions.to_dict(),
             'limits': [dm.experience_limit, dm.memory_limit, dm.review_tool_limit, dm.max_outstanding],
             'compactor': {key: getattr(compactor, key) for key in ('trigger_tokens', 'target_tokens',
-                'summary_tokens', 'max_target_tokens', 'target_increment_tokens')},
+                'summary_tokens', 'max_target_tokens', 'target_increment_tokens', 'input_budget_tokens')},
             'project': dm.policy.project_context}
 
     def capture(self):

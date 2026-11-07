@@ -122,6 +122,7 @@ def research_configuration(dm):
             'target_tokens': compactor.target_tokens, 'summary_tokens': compactor.summary_tokens,
             'max_target_tokens': compactor.max_target_tokens,
             'target_increment_tokens': compactor.target_increment_tokens,
+            'input_budget_tokens': compactor.input_budget_tokens,
             'state': compactor.export_state()}
 
 

@@ -48,6 +48,53 @@ class AdaptiveContextBudgetTests(unittest.TestCase):
                          [24000, 36000, 48000, 60000])
         writer.assert_not_called()
 
+    def test_soft_target_exhaustion_uses_explicit_hard_input_budget(self):
+        raw = self.large(41000)
+        saved = deepcopy(raw)
+        kwargs = dict(trigger_tokens=48000, target_tokens=16000,
+            summary_tokens=2048, max_target_tokens=40000)
+        with self.assertRaises(ContextBudgetError):
+            BasicContextCompactor(**kwargs).compact(raw, measure=measure)
+        compactor = BasicContextCompactor(**kwargs, input_budget_tokens=56320)
+        result = compactor.compact(raw, measure=measure)
+        self.assertLessEqual(measure(result), 56320)
+        self.assertLess(measure(result), measure(raw))
+        self.assertEqual(result.history[-2:], raw.history[-2:])
+        self.assertEqual(result.objective, raw.objective)
+        self.assertEqual(raw, saved)
+        self.assertTrue(compactor.last_measurement['soft_target_exceeded'])
+        self.assertEqual(compactor.last_measurement['input_budget_tokens'], 56320)
+        self.assertLessEqual(len(compactor.last_measurement['target_attempts']), 5)
+        self.assertEqual(compactor.compactions, 1)
+
+    def test_real_input_exhaustion_stays_atomic_and_preserves_protected_evidence(self):
+        compactor = BasicContextCompactor(trigger_tokens=48000, target_tokens=16000,
+            summary_tokens=2048, max_target_tokens=40000, input_budget_tokens=56320)
+        raw = self.large(57000)
+        saved, before, writer = deepcopy(raw), compactor.export_state(), Mock()
+        with self.assertRaises(ContextBudgetError):
+            compactor.compact(raw, measure=measure, summarize=writer)
+        self.assertEqual(raw, saved)
+        self.assertEqual(compactor.export_state(), before)
+        writer.assert_not_called()
+        self.assertGreater(compactor.last_measurement['minimum_input_tokens'], 56320)
+
+    def test_declared_hard_budget_is_saved_and_legacy_snapshots_remain_strict(self):
+        compactor = BasicContextCompactor(input_budget_tokens=100000)
+        harness = SimpleNamespace(research_agenda=ResearchAgenda(), context_compactor=compactor)
+        config = research_configuration(harness)
+        restored = SimpleNamespace(research_agenda=ResearchAgenda())
+        restore_research(restored, harness.research_agenda.export(), config)
+        self.assertEqual(restored.context_compactor.input_budget_tokens, 100000)
+        config.pop('input_budget_tokens')
+        restore_research(restored, harness.research_agenda.export(), config)
+        self.assertIsNone(restored.context_compactor.input_budget_tokens)
+
+    def test_hard_input_budget_cannot_undercut_trigger_or_use_noninteger_capacity(self):
+        for budget in (79999, True, '200000', -1):
+            with self.subTest(budget=budget), self.assertRaises(ValueError):
+                BasicContextCompactor(input_budget_tokens=budget)
+
     def test_thirty_five_token_headroom_expands_before_calling_model(self):
         # Deterministic character meter recreates the live 35-token allocation;
         # it is not a claim about a provider tokenizer or a real inference.

@@ -423,6 +423,26 @@ store. `ResearchPolicy` supplies medical JSON parsing/validation to either harne
 DSH owns generation and context management. Both its parser and outer harness use
 `IdentityContextCompactor`, so there is no second Basic compaction layer.
 
+Open Lab declares serving capacity separately from compression goals through
+`--context-window-tokens 200000 --context-safety-tokens 1024`. Pass the following
+JSON to `--context-budget` for a native 200,000-token deployment:
+
+```json
+{
+  "trigger_tokens": 160000,
+  "target_tokens": 48000,
+  "max_target_tokens": 144000,
+  "target_increment_tokens": 24000,
+  "summary_tokens": 2048
+}
+```
+
+The host reserves the full 8,192-token decision reply plus safety, leaving a
+190,784-token hard input allowance. The service must actually be configured for
+this declared capacity. Failing to reach a soft compression goal can use bounded
+headroom within that allowance; exceeding the allowance still fails atomically.
+No second summarizing agent is introduced in single-meta agent-memory mode.
+
 Install the pinned optional SDK in an isolated environment, outside model serving
 or training environments, after reading the [official SDK instructions](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/README.md).
 For the existing Qwen/vLLM Chat Completions endpoint, use an absolute JSON path:
