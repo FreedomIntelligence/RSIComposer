@@ -435,7 +435,9 @@ def run(args, *, method_catalog=None):
     model = ModelRef('meta', args.model_id, args.model_revision)
     transport = VLLMBackend(binding, generation_options={
         'temperature': 0.6, 'chat_template_kwargs': {'enable_thinking': False}}, native_schema_mode='portable')
+    compactor = host_context_compactor(vars(args))
     backend = RecordedBackend(transport, tokenizer, root, max_calls=args.max_calls,
+        max_input_tokens=compactor.input_budget_tokens,
         template_tool_normalizer=sglang_template_tools if args.template_family == 'sglang' else None,
         provider_token_counter=args.template_family == 'vllm', resume=args.resume)
     from .open_lab_monitor import OpenLabMonitor
@@ -445,7 +447,6 @@ def run(args, *, method_catalog=None):
         # Finish the current decision boundary, then pause safely. The absolute
         # deadline and call limits still independently stop inference admission.
         backend.pause_requested = True
-    compactor = host_context_compactor(vars(args))
     prompts = DecisionPrompts({
         'control': 'The host owns stopping. Select and execute your next research action. Do not use wait or finish.',
         'scheduling': 'Use lab_poll to query running programs immediately, or set wait_seconds '

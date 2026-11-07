@@ -1,7 +1,9 @@
 """The host reserves output before deriving any input admission allowance."""
 import unittest
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from examples.medical.open_lab_experiment import host_context_compactor
@@ -9,6 +11,34 @@ from examples.medical import open_lab_experiment as launcher
 
 
 class OpenLabContextBudgetTests(unittest.TestCase):
+    def test_real_launcher_uses_compactor_capacity_for_accounted_admission(self):
+        class BackendConstructed(Exception):
+            pass
+
+        def capture(*args, **kwargs):
+            observed.update(kwargs)
+            raise BackendConstructed
+
+        tokenizer_module = SimpleNamespace(AutoTokenizer=SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: object()))
+        for window, allowance in ((65536, 56320), (200000, 190784)):
+            with self.subTest(window=window), TemporaryDirectory() as directory:
+                observed = {}
+                args = SimpleNamespace(root=directory, model_path='/tmp/weights',
+                    endpoint='http://127.0.0.1:18000/v1', model_id='fixture',
+                    model_revision='test', max_calls=100, template_family='vllm',
+                    resume=False, context_window_tokens=window,
+                    context_budget=({'trigger_tokens': 160000, 'target_tokens': 48000,
+                        'max_target_tokens': 144000, 'target_increment_tokens': 24000}
+                        if window == 200000 else {}))
+                with patch.dict(sys.modules, {'transformers': tokenizer_module}), \
+                        patch.object(launcher, 'RecordedBackend', side_effect=capture), \
+                        self.assertRaises(BackendConstructed):
+                    launcher.run(args)
+                self.assertEqual(observed['max_input_tokens'], allowance)
+                self.assertEqual(observed['max_calls'], 100)
+                self.assertTrue(observed['provider_token_counter'])
+
     def test_production_cli_passes_capacity_to_the_same_host_budget(self):
         with TemporaryDirectory() as directory, patch.object(launcher, 'run',
                 side_effect=lambda args: host_context_compactor(vars(args))) as run:
