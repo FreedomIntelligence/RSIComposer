@@ -135,6 +135,37 @@ class StructuredTransportTests(unittest.TestCase):
             with patch.object(backend, '_request', return_value={'count': bad}), self.assertRaises(ModelResponseError):
                 backend.count_tokens(self.request)
 
+    def test_token_count_response_has_independent_bounded_capacity(self):
+        received = []
+        reply = json.dumps({'count': 300, 'tokens': [123456] * 300}).encode()
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(reply)))
+                self.end_headers()
+                self.wfile.write(reply)
+            def log_message(self, *args): pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        binding = replace(self.binding, endpoint=f'http://127.0.0.1:{server.server_port}/v1',
+                          max_response_bytes=1024)
+        try:
+            backend = VLLMBackend(binding, max_tokenize_response_bytes=4096)
+            self.assertEqual(backend.count_tokens(self.request), 300)
+            self.assertFalse(received[-1]['return_token_strs'])
+            self.assertNotIn('return_tokens', received[-1])
+            with self.assertRaisesRegex(ModelResponseError, 'size limit'):
+                backend.generate(self.request)
+            with self.assertRaisesRegex(ModelResponseError, 'size limit'):
+                VLLMBackend(binding, max_tokenize_response_bytes=1024).count_tokens(self.request)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
+        for value in (True, 0, -1, '4096'):
+            with self.assertRaises(ValueError):
+                VLLMBackend(binding, max_tokenize_response_bytes=value)
+
     def test_unstructured_requests_retain_existing_json_mode(self):
         with patch.object(self.backend, '_request', return_value=self.reply()) as call:
             self.backend.generate(replace(self.request, response_schema=None))

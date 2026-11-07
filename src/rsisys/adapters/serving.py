@@ -27,10 +27,14 @@ class VLLMBackend(RemoteModelBackend):
 
     supports_response_schema = True  # Transport support; server may reject a schema.
 
-    def __init__(self, binding, models=None, *, generation_options=None, native_schema_mode='exact'):
+    def __init__(self, binding, models=None, *, generation_options=None, native_schema_mode='exact',
+                 max_tokenize_response_bytes=64 * 1024 * 1024):
         super().__init__(replace(binding, kind='chat_completions'))
         if native_schema_mode not in ('exact', 'portable'):
             raise ValueError('native_schema_mode must be exact or portable')
+        if type(max_tokenize_response_bytes) is not int or max_tokenize_response_bytes < 1:
+            raise ValueError('max_tokenize_response_bytes must be positive')
+        self.max_tokenize_response_bytes = max_tokenize_response_bytes
         self.native_schema_mode = native_schema_mode
         self.models = {}
         self._aliases = {}  # Historical pins survive release/removal of active bindings.
@@ -207,7 +211,7 @@ class VLLMBackend(RemoteModelBackend):
         """Price the actual chat template at vLLM's root /tokenize endpoint."""
         generation = self._generation_payload(request)
         payload = {'model': generation['model'], 'messages': generation['messages'],
-                   'add_generation_prompt': True, 'return_tokens': False,
+                   'add_generation_prompt': True, 'return_token_strs': False,
                    'chat_template_kwargs': self.generation_options.get('chat_template_kwargs', {})}
         for key in ('tools', 'chat_template'):
             if key in generation:
@@ -219,6 +223,10 @@ class VLLMBackend(RemoteModelBackend):
         return count
 
     def _request(self, route, payload=None, *, response_observer=None):
+        # vLLM always returns token IDs. Counting the uncompressed context may
+        # exceed the generation response bound before compaction can run.
+        response_limit = (self.max_tokenize_response_bytes if route == 'tokenize'
+                          else self.binding.max_response_bytes)
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
         if self.binding.credential_env:
             key = os.environ.get(self.binding.credential_env)
@@ -238,15 +246,15 @@ class VLLMBackend(RemoteModelBackend):
             method='GET' if payload is None else 'POST')
         try:
             with build_opener(NoRedirect).open(request, timeout=self.binding.timeout_seconds) as response:
-                body = response.read(self.binding.max_response_bytes + 1)
+                body = response.read(response_limit + 1)
         except HTTPError as exc:
             code = exc.code
             try:
-                body = exc.read(self.binding.max_response_bytes + 1)
+                body = exc.read(response_limit + 1)
                 if response_observer is not None:
                     response_observer({'body': body.decode('utf-8', errors='replace'),
                         'http_status': code, 'bytes_captured': len(body),
-                        'capture_truncated': len(body) > self.binding.max_response_bytes})
+                        'capture_truncated': len(body) > response_limit})
             finally:
                 exc.close()
             raise ModelTransportError(f'vLLM returned HTTP {code}') from None
@@ -255,8 +263,8 @@ class VLLMBackend(RemoteModelBackend):
         if response_observer is not None:
             response_observer({'body': body.decode('utf-8', errors='replace'),
                                'bytes_captured': len(body),
-                               'capture_truncated': len(body) > self.binding.max_response_bytes})
-        if len(body) > self.binding.max_response_bytes:
+                               'capture_truncated': len(body) > response_limit})
+        if len(body) > response_limit:
             raise ModelResponseError('vLLM response exceeded size limit', reason='response_size_limit')
         # vLLM load/unload handlers may return plain text instead of JSON.
         if route in ('load_lora_adapter', 'unload_lora_adapter'):
