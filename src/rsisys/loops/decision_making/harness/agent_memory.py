@@ -64,10 +64,18 @@ SPECS = (
     _spec('research_task', 'Keep native feedback through a debugging/experiment task. '
         'open pins the latest native receipt unless explicit record_ids are supplied; pin adds sources. '
         'Reading files, editing and retesting do not close the task. close releases its resident feedback '
-        'without erasing archives or automatically writing memory. At most two tasks and four pins each.',
-        {'expected_revision': REVISION, 'task_id': IDENT, 'action': {'enum': ['open', 'pin', 'close']},
+        'without erasing archives or automatically writing memory. Record next_step and acceptance_criteria; '
+        'update progress while working, and record the outcome when closing. At most two tasks and four pins each.',
+        {'expected_revision': REVISION, 'task_id': IDENT, 'action': {'enum': ['open', 'update', 'pin', 'close']},
          'title': {'type': 'string', 'minLength': 1, 'maxLength': 300},
+         'next_step': {'type': 'string', 'maxLength': 1000},
+         'acceptance_criteria': {'type': 'string', 'maxLength': 1000},
+         'outcome': {'type': 'string', 'maxLength': 2000},
          'record_ids': {**REFS, 'maxItems': 4}}, ['expected_revision', 'task_id', 'action']),
+    _spec('research_task_read', 'Read an exact task, including a closed task and its evidence references, '
+        'or list tasks by status. Follow next_offset with expected_revision. No inference or mutation.',
+        {'task_id': IDENT, 'status': {'enum': ['open', 'closed', 'all']}, 'offset': REVISION,
+         'limit': {'type': 'integer', 'minimum': 1, 'maximum': 8}, 'expected_revision': REVISION}, [], True),
 )
 SPEC_BY_NAME = {spec.name: spec for spec in SPECS}
 
@@ -87,8 +95,8 @@ class AgentMemory:
     def configuration(self):
         return {'provider': 'agent_managed', 'path': self.configured_path,
             'default_path': 'agent-memory.json beside feedback journal',
-            'retrieval': 'literal_text_and_recency', 'organization_owner': 'acting_meta_agent',
-            'model_calls': 0, 'task_context': 'explicit_open_pin_close/v1'}
+            'retrieval': 'literal_objective_feedback_tasks_and_recency/v2', 'organization_owner': 'acting_meta_agent',
+            'model_calls': 0, 'task_context': 'explicit_progress_evidence_outcome/v2'}
 
     def bind(self, harness, journal_path=None):
         if self.harness is not None:
@@ -161,7 +169,9 @@ class AgentMemory:
                 memories.pop(ident, None)
                 memories[ident] = value
             for ident, value in row['tasks'].items():
-                if (not isinstance(value, dict) or set(value) != {'task_id', 'title', 'status', 'record_ids', 'start_after', 'revision'}
+                required = {'task_id', 'title', 'status', 'record_ids', 'start_after', 'revision'}
+                if (not isinstance(value, dict) or not required <= set(value)
+                        or set(value) - required - {'next_step', 'acceptance_criteria', 'outcome'}
                         or value['task_id'] != ident or type(value['revision']) is not int or value['revision'] != i
                         or value['status'] not in ('open', 'closed')
                         or value['start_after'] is not None and
@@ -169,13 +179,17 @@ class AgentMemory:
                     raise ValueError('Invalid persisted task record')
                 _text(value['title'], 'title', 300)
                 _strings(value['record_ids'], 'record_ids', 4)
+                for key, maximum in (('next_step', 1000), ('acceptance_criteria', 1000), ('outcome', 2000)):
+                    if key in value and (not isinstance(value[key], str) or len(value[key]) > maximum):
+                        raise ValueError('Invalid persisted task ' + key)
                 action = args['action']
                 if action == 'open':
                     if ident in tasks or sum(task['status'] == 'open' for task in tasks.values()) >= 2:
                         raise ValueError('Invalid task opening revision')
                     if (value['status'] != 'open' or value['title'] != args['title']
                             or 'record_ids' in args and value['record_ids'] != args['record_ids']
-                            or 'record_ids' not in args and len(value['record_ids']) > 1):
+                            or 'record_ids' not in args and len(value['record_ids']) > 1
+                            or any(value.get(key) != args.get(key) for key in ('next_step', 'acceptance_criteria', 'outcome'))):
                         raise ValueError('Task opening differs from its arguments')
                 else:
                     if ident not in tasks or tasks[ident]['status'] != 'open':
@@ -183,8 +197,11 @@ class AgentMemory:
                     expected = {**deepcopy(tasks[ident]), 'revision': i}
                     if action == 'close':
                         expected['status'] = 'closed'
-                    else:
+                    elif action == 'pin':
                         expected['record_ids'] = list(dict.fromkeys([*expected['record_ids'], *args['record_ids']]))
+                    for key in ('title', 'next_step', 'acceptance_criteria', 'outcome'):
+                        if key in args:
+                            expected[key] = args[key]
                     if value != expected:
                         raise ValueError('Task mutation differs from its arguments or prior state')
                 tasks[ident] = value
@@ -278,25 +295,33 @@ class AgentMemory:
         for key, length in (('content', 3000), ('title', 300)):
             if key in args:
                 _text(args[key], key, length)
-        for key, length in (('query', 512), ('applicability', 1000)):
+        for key, length in (('query', 512), ('applicability', 1000), ('next_step', 1000),
+                            ('acceptance_criteria', 1000), ('outcome', 2000)):
             if key in args and (not isinstance(args[key], str) or len(args[key]) > length):
                 raise OperationArgumentError('Invalid ' + key)
         for key, limit in (('source_refs', 16), ('record_ids', 4)):
             if key in args:
                 _strings(args[key], key, limit)
-        if 'status' in args and args['status'] not in ('unverified', 'supported', 'refuted'):
+        if 'status' in args and args['status'] not in spec.input_schema['properties']['status']['enum']:
             raise OperationArgumentError('Unknown memory status')
         if 'limit' in args and (type(args['limit']) is not int or not 1 <= args['limit'] <= 8):
             raise OperationArgumentError('limit must be in 1..8')
         if call.name == 'research_task':
-            if args['action'] not in ('open', 'pin', 'close'):
+            if args['action'] not in ('open', 'update', 'pin', 'close'):
                 raise OperationArgumentError('Unknown task action')
             if args['action'] == 'open' and 'title' not in args:
                 raise OperationArgumentError('Opening a task requires title')
             if args['action'] == 'pin' and not args.get('record_ids'):
                 raise OperationArgumentError('Pin requires explicit record_ids')
-            if args['action'] != 'open' and 'title' in args or args['action'] == 'close' and 'record_ids' in args:
+            allowed = {'open': {'title', 'record_ids', 'next_step', 'acceptance_criteria'},
+                       'update': {'title', 'next_step', 'acceptance_criteria'}, 'pin': {'record_ids'},
+                       'close': {'outcome'}}[args['action']]
+            if set(args) - {'expected_revision', 'task_id', 'action'} - allowed:
                 raise OperationArgumentError('Fields do not match the task action')
+            if args['action'] == 'update' and not set(args).intersection(allowed):
+                raise OperationArgumentError('Updating a task requires a progress field')
+        if call.name == 'research_task_read' and 'task_id' in args and set(args) - {'task_id', 'expected_revision'}:
+            raise OperationArgumentError('Read one task or list tasks, not both')
         return deepcopy(call)
 
     def search(self, *, query='', offset=0, limit=8, expected_revision=None):
@@ -315,10 +340,15 @@ class AgentMemory:
 
     def context(self, query):
         # Literal relevance plus recency, explicitly not semantic retrieval.
-        tokens = set(re.findall(r'\w+', query.objective.casefold()))
+        text = query.objective
+        if query.latest_feedback is not None:
+            text += ' ' + encoded(query.latest_feedback.output)[:8192]
+        text += ' ' + ' '.join(task['title'] + ' ' + task.get('next_step', '')
+                              for task in self._state['tasks'].values() if task['status'] == 'open')
+        tokens = {token for token in re.findall(r'\w+', text.casefold()) if len(token) >= 3}
         values = sorted(self._state['memories'].values(), key=lambda row: row['revision'], reverse=True)
-        values.sort(key=lambda row: sum(t in (row['content'] + ' ' + row['applicability']).casefold()
-                                        for t in tokens), reverse=True)
+        values.sort(key=lambda row: len(tokens.intersection(re.findall(r'\w+',
+            (row['content'] + ' ' + row['applicability']).casefold()))), reverse=True)
         return encoded({'provider': 'agent_managed', 'revision': self._state['revision'],
             'authority': 'meta_agent_interpretations_not_verified_evidence', 'total': len(values),
             'items': [{'memory_id': row['memory_id'], 'status': row['status'],
@@ -332,6 +362,27 @@ class AgentMemory:
         args = call.arguments
         if call.name == 'memory_search':
             return self.search(**args)
+        if call.name == 'research_task_read':
+            revision = self._state['revision']
+            offset, limit = args.get('offset', 0), args.get('limit', 8)
+            if (args.get('expected_revision', revision) != revision
+                    or offset and 'expected_revision' not in args):
+                raise OperationArgumentError('Stale or missing task revision; restart task read')
+            if 'task_id' in args:
+                if args['task_id'] not in self._state['tasks']:
+                    raise OperationArgumentError('Unknown task_id')
+                return {'revision': revision, 'task': deepcopy(self._state['tasks'][args['task_id']]),
+                        'authority': 'meta_agent_task_not_verified_evidence'}
+            tasks = sorted(self._state['tasks'].values(), key=lambda task: task['revision'], reverse=True)
+            status = args.get('status', 'all')
+            tasks = [task for task in tasks if status == 'all' or task['status'] == status]
+            return {'revision': revision, 'items': [{
+                        **{key: deepcopy(task[key]) for key in ('task_id', 'title', 'status', 'revision', 'record_ids')},
+                        **{key: task[key][:240] for key in ('next_step', 'acceptance_criteria', 'outcome') if key in task},
+                        'complete': False, 'read_operation': 'research_task_read'}
+                        for task in tasks[offset:offset + limit]], 'total': len(tasks),
+                    'next_offset': offset + limit if offset + limit < len(tasks) else None,
+                    'authority': 'meta_agent_tasks_not_verified_evidence'}
         if call.name == 'memory_read':
             ident = args['memory_id']
             if 'revision' in args:
@@ -394,18 +445,21 @@ class AgentMemory:
                 pins = args.get('record_ids', list(native)[-1:])
                 tasks[ident] = {'task_id': ident, 'title': args['title'], 'status': 'open',
                     'record_ids': list(pins), 'start_after': history[-1].record_id if history else None,
-                    'revision': revision}
+                    'revision': revision, **{key: args[key] for key in ('next_step', 'acceptance_criteria') if key in args}}
             else:
                 if ident not in tasks or tasks[ident]['status'] != 'open':
                     raise OperationArgumentError('Task is not open')
                 task = tasks[ident]
                 if action == 'close':
                     task['status'] = 'closed'
-                else:
+                elif action == 'pin':
                     pins = list(dict.fromkeys([*task['record_ids'], *args['record_ids']]))
                     if len(pins) > 4:
                         raise OperationArgumentError('A task supports at most four pinned receipts')
                     task['record_ids'] = pins
+                for key in ('title', 'next_step', 'acceptance_criteria', 'outcome'):
+                    if key in args:
+                        task[key] = args[key]
                 task['revision'] = revision
         state['revision'] = revision
         state['revisions'].append({'revision': revision, 'operation': call.name, 'arguments': deepcopy(args),
@@ -434,11 +488,10 @@ class AgentMemory:
             if any(ref not in indexed for ref in task['record_ids']):
                 raise ValueError('Pinned task feedback is missing from the archive')
             start = positions.get(task['start_after'], -1)
-            # Auto-retain the latest terminal producer observations in addition
-            # to explicit pins. Intermediate code/log reads cannot evict pins.
-            produced = [row.record_id for row in history[start + 1:] if self._native(row)
-                and ((row.details.get('operation') or {}).get('name') in ('lab_result', 'medical_diagnose')
-                     or row.kind == 'feedback')]
+            # Auto-retain producer feedback in addition to explicit pins.
+            # Intermediate successful code/log reads cannot evict it.
+            from .observations import task_observation
+            produced = [row.record_id for row in history[start + 1:] if task_observation(row)]
             refs = list(dict.fromkeys([*task['record_ids'], *produced[-2:]]))
             tasks.append({**deepcopy(task), 'resident_record_ids': refs,
                 'later_producer_receipts': len(produced), 'older_results': 'research_archive'})
@@ -467,6 +520,12 @@ class AgentMemory:
             'organization_owner': 'acting_meta_agent', 'background_model_calls': 0,
             'memory_count': len(self._state['memories']),
             'open_task_count': len(tasks),
+            'task_count': len(self._state['tasks']), 'task_read_operation': 'research_task_read',
+            'recent_closed_tasks': [{
+                'task_id': task['task_id'], 'title': task['title'], 'outcome_preview': task.get('outcome', '')[:240],
+                'record_ids': deepcopy(task['record_ids']), 'read_operation': 'research_task_read'}
+                for task in sorted(self._state['tasks'].values(), key=lambda task: task['revision'], reverse=True)
+                if task['status'] == 'closed'][:4],
             'task_operation': 'research_task', 'recent_source_refs': [
                 {'record_id': row.record_id, 'source_ref': 'history:decision_maker:' + row.record_id}
                 for row in history if self._native(row)][-4:]},
@@ -474,6 +533,25 @@ class AgentMemory:
                 'lifetime': 'until_explicit_task_close', 'archive_unchanged': True}}
         from .observations import failed_observation
         failures = [row for row in history if failed_observation(row)]
+        tracked = {ref for task in self._state['tasks'].values() for ref in task['record_ids']}
+        # Historical failures remain evidence, but importing an archive is not
+        # a request to reopen or replay the old investigation.
+        untracked = [row for row in failures if row.record_id not in tracked
+                     and not row.details.get('continuation_origin')]
+        agenda['agent_memory']['untracked_failure_count'] = len(untracked)
+        if untracked and len(tasks) < 2 and any(spec.name == 'research_task' for spec in context.operations):
+            row = untracked[-1]
+            task_id = 'investigate-' + result_id(row.record_id)[:16]
+            if task_id in self._state['tasks']:
+                task_id += '-' + str(self._state['revision'])
+            operation = (row.details.get('operation') or {}).get('name', 'feedback')
+            agenda['agent_memory']['suggested_task_action'] = {
+                'operation': 'research_task', 'arguments': {'expected_revision': self._state['revision'],
+                    'task_id': task_id, 'action': 'open', 'title': 'Investigate ' + operation[:240],
+                    'record_ids': [row.record_id]},
+                'authority': 'host_navigation_not_a_decision',
+                'instruction': 'If continuing this investigation, open this task and supply your next_step '
+                               'and acceptance_criteria. The agent must choose and execute it; no task was created.'}
         agenda['feedback_health'] = {
             'authority': 'host_observation_inventory_not_interpretation',
             'recent_failures': [{'record_id': row.record_id,

@@ -103,6 +103,21 @@ class ContinuationTests(unittest.TestCase):
                 self.freeze(**changes)
             self.assertFalse(self.bundle.exists())
 
+    def test_task_progress_and_negative_outcome_survive_new_attempt_with_rebound_sources(self):
+        self.mutate(self.old, 'research_task', task_id='debug', action='update',
+                    next_step='Check adapter loading', acceptance_criteria='Fixed evaluation uses changed weights')
+        self.mutate(self.old, 'research_task', task_id='debug', action='close',
+                    outcome='Inconclusive: inference ignored the adapter')
+        self.freeze()
+        self.install()
+        task = self.new.agent_memory.execute(OperationCall('research_task_read', {'task_id': 'debug'}))['task']
+        self.assertEqual(task['next_step'], 'Check adapter loading')
+        self.assertEqual(task['acceptance_criteria'], 'Fixed evaluation uses changed weights')
+        self.assertEqual(task['outcome'], 'Inconclusive: inference ignored the adapter')
+        self.assertEqual(task['status'], 'closed')
+        self.assertTrue(task['record_ids'][0].startswith('prior-'))
+        self.assertEqual(self.new.state.decision_records, {})
+
     def test_campaign_or_account_changes_and_incomplete_import_never_replay(self):
         self.freeze()
         for target in ({**self.target, 'campaign_id': 'other'},

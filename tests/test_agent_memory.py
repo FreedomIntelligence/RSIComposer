@@ -11,6 +11,7 @@ from rsisys.config import build_demo
 from rsisys.loops._memory import HistoryEntry
 from rsisys.loops.contracts.decision import OperationArgumentError, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.feedback_context import ContextQuery, FeedbackContextEvent
 from rsisys.loops.contracts.model_service import GenerationResponse, TokenUsage
 from rsisys.loops.decision_making.action_space import OperationResult
 from rsisys.loops.decision_making.action_space.access import ActionPermissions, authorized_space
@@ -163,6 +164,93 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertEqual([row['memory_id'] for row in restored.search()['items']], ['a-new', 'z-old'])
         self.assertEqual(restored.search(), self.memory.search())
 
+    def test_retrieval_follows_current_feedback_and_open_task_not_only_static_objective(self):
+        self.mutate('memory_write', memory_id='adapter', content='Verify LoRA adapter loading before evaluation.',
+                    source_refs=[], status='unverified')
+        for i in range(8):
+            self.mutate('memory_write', memory_id=str(i), content='Unrelated bookkeeping note.',
+                        source_refs=[], status='unverified')
+        query = ContextQuery(objective='Improve medical accuracy', latest_feedback=FeedbackContextEvent(
+            'event', 'job', 'failed', {'error': 'LoRA adapter loading failed'}))
+        self.assertEqual(json.loads(self.memory.context(query))['items'][0]['memory_id'], 'adapter')
+        self.mutate('research_task', action='open', task_id='adapter', title='Verify LoRA adapter loading')
+        self.assertEqual(json.loads(self.memory.context(ContextQuery(objective=query.objective)))
+                         ['items'][0]['memory_id'], 'adapter')
+        self.assertFalse(self.backend.requests)
+
+    def test_task_progress_outcome_and_closed_lookup_survive_recovery(self):
+        self.native()
+        self.mutate('research_task', action='open', task_id='adapter', title='Evaluate trained adapter',
+                    next_step='Check the inference loader', acceptance_criteria='Loaded weights and fixed evaluation')
+        self.mutate('research_task', action='update', task_id='adapter', next_step='Run fixed evaluation')
+        self.mutate('research_task', action='close', task_id='adapter', outcome='No benefit established')
+        restored = AgentMemory()
+        restored.bind(self.harness, self.root / 'feedback.json')
+        task = restored.execute(OperationCall('research_task_read', {'task_id': 'adapter'}))['task']
+        self.assertEqual(task['next_step'], 'Run fixed evaluation')
+        self.assertEqual(task['acceptance_criteria'], 'Loaded weights and fixed evaluation')
+        self.assertEqual(task['outcome'], 'No benefit established')
+        self.assertEqual(task['record_ids'], ['failed-source'])
+        self.assertEqual(task['status'], 'closed')
+        self.assertEqual(restored.export(), self.memory.export())
+        self.assertFalse(self.backend.requests)
+
+    def test_untracked_failure_has_executable_task_guidance_without_implicit_writes(self):
+        original = self.native()
+        for i in range(10):
+            result = OperationResult('Read source', (), False, data={'content': 'source'})
+            self.harness.memory.append(HistoryEntry('read-' + str(i), 'operation', None, result.summary, False,
+                details={'operation': {'name': 'lab_read_file', 'arguments': {}}, 'result': result.payload()}))
+        context = self.view()
+        guidance = context.research_agenda['agent_memory']['suggested_task_action']
+        self.assertEqual(guidance['arguments']['record_ids'], ['failed-source'])
+        self.assertEqual(guidance['arguments']['expected_revision'], 0)
+        self.assertEqual(self.memory.export()['revision'], 0)
+        self.harness.tools.execute(OperationCall(guidance['operation'], guidance['arguments']))
+        self.assertEqual(self.view().research_agenda['active_feedback']['observations'][0]['result'],
+                         original.payload())
+        self.assertFalse(self.backend.requests)
+
+    def test_task_read_pages_are_revision_bound_and_do_not_mutate(self):
+        for i in range(3):
+            self.mutate('research_task', action='open', task_id=str(i), title='Inspect evidence')
+            self.mutate('research_task', action='close', task_id=str(i), outcome='Inconclusive')
+        before = self.memory.export()
+        page = self.memory.execute(OperationCall('research_task_read', {'status': 'closed', 'limit': 1}))
+        self.assertEqual(page['total'], 3)
+        self.assertEqual(page['next_offset'], 1)
+        self.assertEqual(self.memory.export(), before)
+        with self.assertRaisesRegex(OperationArgumentError, 'revision'):
+            self.memory.execute(OperationCall('research_task_read', {'offset': 1}))
+        self.mutate('research_task', action='open', task_id='new', title='Next investigation')
+        with self.assertRaisesRegex(OperationArgumentError, 'Stale'):
+            self.memory.execute(OperationCall('research_task_read',
+                {'offset': 1, 'expected_revision': page['revision']}))
+
+    def test_imported_failures_do_not_implicitly_reopen_historical_work(self):
+        result = OperationResult('Old failed experiment', (), False, ExecutionStatus.FAILED, 'old error')
+        self.harness.memory.append(HistoryEntry('historical', 'operation', None, result.summary, False,
+            details={'operation': {'name': 'lab_result', 'arguments': {}}, 'result': result.payload(),
+                     'continuation_origin': {'record_id': 'old'}}))
+        card = self.view().research_agenda['agent_memory']
+        self.assertEqual(card['untracked_failure_count'], 0)
+        self.assertNotIn('suggested_task_action', card)
+        self.assertEqual(self.memory.export()['revision'], 0)
+
+    def test_task_progress_tampering_is_detected_and_closure_does_not_fabricate_memory(self):
+        self.mutate('research_task', action='open', task_id='work', title='Evaluate', next_step='Load weights')
+        self.mutate('research_task', action='update', task_id='work', next_step='Measure')
+        original = self.memory.export()
+        changed = deepcopy(original)
+        changed['tasks']['work']['next_step'] = 'Forged progress'
+        changed['revisions'][-1]['tasks']['work']['next_step'] = 'Forged progress'
+        with self.assertRaisesRegex(ValueError, 'Task mutation differs'):
+            AgentMemory._validated(changed)
+        self.mutate('research_task', action='close', task_id='work', outcome='Interrupted; no score')
+        self.assertEqual(self.memory.export()['memories'], {})
+        self.assertEqual(self.view().research_agenda['agent_memory']['recent_closed_tasks'][0]
+                         ['outcome_preview'], 'Interrupted; no score')
+
     def test_recovery_does_not_accept_a_modified_index_or_revision(self):
         self.mutate('memory_write', memory_id='one', content='hypothesis', source_refs=[], status='unverified')
         original = self.memory.export()
@@ -219,7 +307,9 @@ class AgentMemoryTests(unittest.TestCase):
         original = self.native()
         self.mutate('research_task', action='open', task_id='adapter-debug', title='Repair message consumption')
         for i in range(12):
-            self.native('read-' + str(i), name='lab_read_file', text='intermediate source page')
+            result = OperationResult('Source page', (), False, data={'content': 'intermediate source page'})
+            self.harness.memory.append(HistoryEntry('read-' + str(i), 'operation', None, result.summary, False,
+                details={'operation': {'name': 'lab_read_file', 'arguments': {}}, 'result': result.payload()}))
         retest = self.native('retest', text='Retest still failed')
         view = self.view().research_agenda['active_feedback']
         by_id = {row['record_id']: row for row in view['observations']}
@@ -230,6 +320,34 @@ class AgentMemoryTests(unittest.TestCase):
         self.mutate('research_task', action='close', task_id='adapter-debug')
         self.assertEqual(self.view().research_agenda['active_feedback']['observations'], [])
         self.assertEqual(self.harness.memory.history(), before)
+        self.assertEqual(self.memory.export()['memories'], {})
+
+    def test_custom_producer_feedback_is_retained_across_reads_and_running_polls(self):
+        from rsisys.loops.contracts.delivery import FeedbackDelivery
+        self.native('original', name='custom_training')
+        self.mutate('research_task', action='open', task_id='custom', title='Check custom producer')
+        def record(ident, result):
+            self.harness.memory.append(HistoryEntry(ident, 'operation', None, result.summary, False,
+                details={'operation': {'name': 'plugin_' + ident, 'arguments': {}}, 'result': result.payload()}))
+        opaque = OperationResult('Opaque producer output', (), False, data={'output': {'native': 'done'}},
+                                 feedback_delivery=FeedbackDelivery('plugin:producer:1'))
+        record('opaque', opaque)
+        measured = OperationResult('Fixed evaluation', (), False, data={'quality_metrics': {'accuracy': 0.0}})
+        record('measured', measured)
+        for i in range(12):
+            record('read-' + str(i), OperationResult('Source page', (), False, data={'content': 'page'}))
+            record('poll-' + str(i), OperationResult('Still running', (), False,
+                                                    data={'job_id': 'job', 'state': 'running'}))
+        rows = {row['record_id']: row for row in self.view().research_agenda['active_feedback']['observations']}
+        self.assertEqual(set(rows), {'original', 'opaque', 'measured'})
+        self.assertEqual(rows['opaque']['result'], opaque.payload())
+        self.assertEqual(rows['measured']['result'], measured.payload())
+        record('terminal', OperationResult('Terminal job', (), False,
+                                           data={'job_id': 'job', 'state': {'status': 'succeeded'}}))
+        rows = self.view().research_agenda['active_feedback']['observations']
+        self.assertEqual({row['record_id'] for row in rows}, {'original', 'measured', 'terminal'})
+        self.assertEqual(self.memory.export()['revision'], 1)
+        self.assertFalse(self.backend.requests)
         self.assertEqual(self.memory.export()['memories'], {})
 
     def test_pin_can_retain_an_older_receipt_and_rejects_missing_ids(self):
@@ -346,10 +464,50 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertEqual(self.harness.state.measured_input_tokens, 101)
         self.assertEqual(self.harness.state.measured_output_tokens, 9)
 
+    def test_same_agent_executes_task_progress_memory_and_closure_through_real_decision_loop(self):
+        native = self.native()
+        requests = []
+        def generate(request):
+            context = json.loads(request.prompt)
+            requests.append(context)
+            revision = context['research_agenda']['agent_memory']['revision']
+            if len(requests) == 1:
+                action = context['research_agenda']['agent_memory']['suggested_task_action']
+                args = {**action['arguments'], 'task_id': 'input-debug',
+                        'next_step': 'Inspect input consumption', 'acceptance_criteria': 'Retest canonical messages'}
+                operation = 'research_task'
+            elif len(requests) == 2:
+                self.assertEqual(context['research_agenda']['active_feedback']['observations'][0]['result'],
+                                 json.loads(encoded(native.payload())))
+                operation, args = 'research_task', {'expected_revision': revision, 'task_id': 'input-debug',
+                                                   'action': 'update', 'next_step': 'Retest the candidate'}
+            elif len(requests) == 3:
+                operation, args = 'memory_write', {'expected_revision': revision, 'memory_id': 'input-contract',
+                    'content': 'Verify canonical user-message consumption before interpreting a score.',
+                    'source_refs': ['history:decision_maker:failed-source'], 'status': 'supported'}
+            elif len(requests) == 4:
+                operation, args = 'research_task', {'expected_revision': revision, 'task_id': 'input-debug',
+                    'action': 'close', 'outcome': 'Interrupted; no successful retest yet'}
+            else:
+                return GenerationResponse('{"kind":"finish"}', request.model, True, TokenUsage(100, 10))
+            return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': operation, 'arguments': args}),
+                                      request.model, True, TokenUsage(100, 10))
+        with patch.object(self.harness.policy.backend, 'generate', side_effect=generate):
+            results = [self.harness.step('Repair input handling', self.loop.action_space) for _ in range(5)]
+        self.assertEqual(results[-1].kind, 'finished')
+        self.assertEqual([x['research_agenda']['agent_memory']['revision'] for x in requests], [0, 1, 2, 3, 4])
+        self.assertEqual(self.memory.export()['tasks']['input-debug']['status'], 'closed')
+        self.assertEqual(self.memory.export()['memories']['input-contract']['source_refs'],
+                         ['history:decision_maker:failed-source'])
+        self.assertEqual(self.harness.state.measured_input_tokens, 500)
+        self.assertEqual(self.backend.requests, [])
+
     def test_forced_compaction_uses_no_hidden_summary_model_request(self):
         for i in range(150):
             self.harness.memory.append(HistoryEntry('old-' + str(i), 'decision', None, 'old note ' * 120, True))
-        self.harness.context_compactor = BasicContextCompactor(trigger_tokens=110000, target_tokens=65000,
+        # Leave room for the installed memory/task schemas; history must still
+        # compact without an extra summarization request.
+        self.harness.context_compactor = BasicContextCompactor(trigger_tokens=130000, target_tokens=80000,
                                                               summary_tokens=1024)
         requests = []
         def generate(request):

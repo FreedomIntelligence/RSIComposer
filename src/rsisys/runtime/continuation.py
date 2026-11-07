@@ -208,14 +208,16 @@ def install_continuation(path, *, identity, harness, workspace, receipt_path, re
             note_origins[note['memory_id']] = {'revision': note['revision'], 'sha256': result_id(note)}
         for task in payload['tasks']:
             mutate('research_task', {'task_id': task['task_id'], 'action': 'open', 'title': task['title'],
-                'record_ids': [prefix + ref for ref in task['record_ids']]})
+                'record_ids': [prefix + ref for ref in task['record_ids']],
+                **{key: task[key] for key in ('next_step', 'acceptance_criteria') if key in task}})
             anchor = prefix + task['start_after'] if task['start_after'] is not None else None
             if anchor is not None and anchor not in {row.record_id for row in rows}:
                 raise ValueError('Inherited task anchor is missing')
             notes._state['tasks'][task['task_id']]['start_after'] = anchor
             notes._state['revisions'][-1]['tasks'][task['task_id']]['start_after'] = anchor
             if task['status'] == 'closed':
-                mutate('research_task', {'task_id': task['task_id'], 'action': 'close'})
+                mutate('research_task', {'task_id': task['task_id'], 'action': 'close',
+                    **({'outcome': task['outcome']} if 'outcome' in task else {})})
         AgentMemory._validated(notes.export())
         changed = sorted(key for key in source['axes'].keys() | identity['axes'].keys()
                          if source['axes'].get(key) != identity['axes'].get(key))

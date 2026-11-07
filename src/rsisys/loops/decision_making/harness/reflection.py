@@ -143,7 +143,7 @@ class PeriodicReflection:
         prefix = self._review_prefix() + f' Review slot {slot}.'
         allowed = {'research_archive'}
         if evidence:
-            allowed |= {'reflect_report', 'research_read', 'research_patch', 'research_task',
+            allowed |= {'reflect_report', 'research_read', 'research_patch', 'research_task', 'research_task_read',
                 'memory_search', 'memory_read', 'memory_write', 'memory_delete',
                 'lab_read_file', 'lab_read_log', 'lab_write_file', 'system_status',
                 'system_register', 'system_activate'}

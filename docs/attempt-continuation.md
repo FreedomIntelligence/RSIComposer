@@ -75,6 +75,32 @@ PYTHONPATH=src:. python -m examples.medical.continuation \
 Memory 来源校验按写入时的 history_id 与 SHA 定位，重复读取相同 `result:<sha>` 不再
 把旧笔记错误绑定到新记录。直接共用一个 Memory 文件却缺失来源归档会失败；应使用交接协议。
 
+### 任务进度与当前问题检索
+
+默认 AgentMemory 的检索同时使用当前目标、最近反馈和打开任务的标题/下一步，
+再以笔记新旧顺序打破同分。它仍是确定性的字面检索，不使用额外模型；匹配笔记
+只提供原文入口，不能代替原始实验回执。
+
+`research_task` 支持 `open/update/pin/close`：打开时可以记录 `next_step` 和
+`acceptance_criteria`，调查中用 `update` 修改下一步或完成条件，`pin` 固定决定性回执，
+关闭时用 `outcome` 保留解决、放弃、中断或尚无结论的原因。任务关闭不会自动写 Memory，
+也不证明实验成功。可复用结论仍由同一 meta-agent 显式调用 `memory_write` 并引用来源。
+
+`research_task_read` 可按 ID 读取完整任务，也可分页查看 open/closed/all 任务；
+后续页绑定 `expected_revision`。关闭任务的结论、下一步和完成条件仍可读取，并在
+显式 continuation 中连同重新绑定的来源一起传递；旧版仅有 open/pin/close 的状态仍可恢复。
+
+当前运行中尚未被任务跟踪的原始失败会获得一个带真实 record_id 和当前 revision 的
+`agent_memory.suggested_task_action`。这是可执行的导航建议，不是宿主自动创建的任务；
+meta-agent 仍要选择、填写真实目标并执行。历史导入失败不会因此被自动重开或重放。
+只读任务查询也不会被误分类为新的 Lab 实验。回归可验证这条调用链可用，但不能据此
+声称真实模型已经采用它，或取得医学收益；后续实跑仍须核对原始工具调用和评测。
+
+任务自动保留后续反馈不再依赖 `lab_result` 等工具名：按生产者 `FeedbackDelivery`、
+测量字段、终态 job 回执或原始失败识别，保留最近两条并维持显式 pin。成功的读文件和
+运行中轮询不会挤掉这些反馈。使用自定义不透明输出的组件可通过 `FeedbackDelivery`
+标识生产者反馈；分类只用于保留原文，不会验证输出中的结论。
+
 ## Reflect
 
 通用实现位于 `harness.reflection.PeriodicReflection`，医疗旧入口仅保留兼容导入。

@@ -490,7 +490,7 @@ def projected_latest_smoke(root, timeout):
             base = harness._context('Read-only latest evidence projection fixture', runner.decision_making.action_space)
             entries = (
                 HistoryEntry('latest-operation-fixture', 'operation', None, result.summary, True,
-                             details={'result': asdict(result)}),
+                             details={'result': result.payload()}),
                 HistoryEntry('latest-feedback-fixture', 'feedback', feedback.directive_id, feedback.summary, True,
                              details={'feedback': asdict(feedback)}),
             )
@@ -507,7 +507,7 @@ def projected_latest_smoke(root, timeout):
             require(len(encoded(asdict(view.last_feedback)).encode()) < 8192, 'Latest feedback is not bounded')
             require(visible.data['facts']['/data/quality_metrics'] == metrics
                     and view.last_feedback.quality_metrics == metrics, 'Projection changed exact metrics')
-            require(visible.data['evidence_card']['sha256'] == result_id(asdict(result)), 'Original result digest changed')
+            require(visible.data['evidence_card']['sha256'] == result_id(result.payload()), 'Original result digest changed')
             require(view.last_feedback.directive_id == feedback.directive_id, 'Projection changed receipt ownership')
             packet = {'operation_results': [asdict(visible)], 'last_feedback': asdict(view.last_feedback),
                       'history': [asdict(entry) for entry in view.history]}
