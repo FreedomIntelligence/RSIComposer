@@ -75,6 +75,12 @@ class ResearchAssembly:
                          proposal_requires_memory=self.proposal_requires_memory)
         self.configuration()
 
+    def prepare(self):
+        """Check optional local runtimes before claiming a new research run."""
+        self.validate()
+        if isinstance(self.context_memory, AgentMemory):
+            self.context_memory.prepare()
+
     @property
     def requires_model(self):
         return FeedbackPipeline(memory_processor=self.memory_processor, harness_proposals=self.harness_proposals,
@@ -111,11 +117,21 @@ class ResearchAssembly:
                                and not self.requires_model else 'explicit_custom_workflow')}
 
     @classmethod
-    def single_meta(cls, *, memory_path=None, require_memory_review=False, **components):
+    def single_meta(cls, *, memory_path=None, require_memory_review=False,
+                    memory_backend='literal', **components):
         """The meta-agent writes its own memories; storage never calls a model."""
         if {'context_memory', 'memory_processor', 'harness_proposals', 'improvement_proposals'}.intersection(components):
             raise ValueError('single_meta() owns memory and has no independent model processing stages')
-        return cls(context_memory=AgentMemory(memory_path, require_review=require_memory_review), **components)
+        return cls(context_memory=AgentMemory(memory_path, require_review=require_memory_review,
+                                              retrieval_backend=memory_backend), **components)
+
+    @classmethod
+    def reme(cls, *, memory_path=None, require_memory_review=False, **components):
+        """Agent-owned ReMe retrieval; optional proposal stages remain explicit."""
+        if {'context_memory', 'memory_processor'}.intersection(components):
+            raise ValueError('reme() owns memory and has no independent memory organizer')
+        return cls(context_memory=AgentMemory(memory_path, require_review=require_memory_review,
+                                              retrieval_backend='reme'), **components)
 
     @classmethod
     def langmem(cls, *, memory_path, namespace, memory_options=None, **components):
@@ -140,7 +156,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     """
     if not isinstance(assembly, ResearchAssembly):
         raise TypeError('Research launches require a ResearchAssembly')
-    assembly.validate()
+    assembly.prepare()
     reserved = {'context_memory', 'processor', 'trajectory_archive', 'assembly_configuration',
                 'memory_processor', 'harness_proposals', 'improvement_proposals',
                 'scheduler', 'proposal_requires_memory', 'failure_policy', 'admission'}
@@ -169,7 +185,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     if isinstance(context_memory, AgentMemory):
         # Assembly is reusable configuration. Mutable run state belongs to the
         # new harness, including when the same ModuleAssembly resumes a run.
-        context_memory = AgentMemory(context_memory.configured_path, require_review=context_memory.require_review)
+        context_memory = context_memory.clone()
         context_memory.bind(loop.harness, path)
     enable_feedback_learning(loop, path=path, backend=backend, model=model, model_provider=model_provider,
         adapter=adapter,

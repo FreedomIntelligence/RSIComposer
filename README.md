@@ -4,6 +4,8 @@ Feedback、显式 Memory、reflect 近期证据覆盖以及新 attempt 的成果
 [交接与组件边界](docs/attempt-continuation.md)。医疗候选可使用 `medical_package` /
 `medical_preflight` 做无模型调用的打包检查；公开评测的输出质量与比较身份见
 [评测协议](docs/evaluation-protocol.md)。
+单 meta-agent 可复用 ReMe BM25 检索；安装、装配与验证见
+[Memory 后端](docs/memory-backends.md)。
 
 Current working source follows the [single-checkout version policy](docs/version-policy.md).
 The programmable medical Lab accepts candidate weights **and inference scripts**

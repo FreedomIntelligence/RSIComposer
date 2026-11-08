@@ -210,8 +210,8 @@ class ExperimentSettings:
         object.__setattr__(self, 'resource_allocation', copy_resource_allocation(self.resource_allocation))
         if type(self.feedback_learning) is not bool:
             raise TypeError('feedback_learning must be boolean')
-        if self.memory_provider not in (None, 'agent_managed', 'journal', 'langmem'):
-            raise ValueError('memory_provider must be agent_managed, journal or langmem')
+        if self.memory_provider not in (None, 'agent_managed', 'reme', 'journal', 'langmem'):
+            raise ValueError('memory_provider must be agent_managed, reme, journal or langmem')
         for name in ('archive_trajectories', 'harness_proposals'):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(name + ' must be boolean')
@@ -1212,9 +1212,11 @@ def run(settings: ExperimentSettings, *, serving_factory=None, converter_factory
         elif settings.effective_memory_provider == 'journal':
             from rsisys.loops.decision_making.feedback import JournalContextMemory
             research = ResearchAssembly(context_memory=JournalContextMemory(), **components)
+        elif settings.effective_memory_provider == 'reme':
+            research = ResearchAssembly.reme(**components)
         else:
             research = ResearchAssembly(**components)
-    research.validate()
+    research.prepare()
     dsh_config = DSHConfig.load(settings.dsh_config) if settings.decision_harness == 'dsh' else None
     if dsh_config is not None and dsh_config.resume:
         raise ValueError('Medical experiment never resumes; use a fresh DSH session')
@@ -1566,7 +1568,7 @@ def parser() -> argparse.ArgumentParser:
                         help='Explicit bounded JSON allocation declaration; omitted means unknown')
     result.add_argument('--feedback-learning', action='store_true',
                         help='Compatibility switch: select LangMem unless --memory-provider is explicit')
-    result.add_argument('--memory-provider', choices=('agent_managed', 'journal', 'langmem'), default=None,
+    result.add_argument('--memory-provider', choices=('agent_managed', 'reme', 'journal', 'langmem'), default=None,
                         help='Default: explicit memory tools for the acting meta-agent; journal/LangMem are compatibility integrations')
     result.add_argument('--no-trajectory-archive', dest='archive_trajectories', action='store_false',
                         help='Disable trajectory extraction; keep execution/recovery records')

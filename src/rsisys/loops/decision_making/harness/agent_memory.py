@@ -93,14 +93,21 @@ SPEC_BY_NAME = {spec.name: spec for spec in SPECS}
 
 
 class AgentMemory:
-    """Single-writer atomic JSON store plus deterministic bounded retrieval.
+    """Single-writer atomic JSON store plus selectable bounded retrieval.
 
     Configuring this provider performs no I/O. The default database is next to
     the feedback journal; explicit paths are useful for custom integrations.
     """
-    def __init__(self, path=None, *, require_review=False):
+    def __init__(self, path=None, *, require_review=False, retrieval_backend='literal'):
         if type(require_review) is not bool:
             raise TypeError('require_review must be a bool')
+        if retrieval_backend not in ('literal', 'reme'):
+            raise ValueError('retrieval_backend must be literal or reme')
+        self.retrieval_backend = retrieval_backend
+        self._retrieval = None
+        if retrieval_backend == 'reme':
+            from .reme_memory import ReMeBM25Retrieval
+            self._retrieval = ReMeBM25Retrieval()
         self.require_review = require_review
         self.configured_path = str(Path(path).resolve()) if path is not None else None
         self.path = None
@@ -108,16 +115,42 @@ class AgentMemory:
         self._state = {'version': 1, 'revision': 0, 'memories': {}, 'tasks': {}, 'revisions': []}
 
     def configuration(self):
-        return {'provider': 'agent_managed', 'path': self.configured_path,
+        config = {'provider': 'agent_managed', 'path': self.configured_path,
             'default_path': 'agent-memory.json beside feedback journal',
             'retrieval': 'literal_objective_feedback_tasks_and_recency/v2', 'organization_owner': 'acting_meta_agent',
             'model_calls': 0, 'task_context': 'receipt_checked_acceptance/v3',
             'consolidation': 'producer_inbox_explicit_disposition/v1',
             'require_review': self.require_review}
+        if self._retrieval is not None:
+            config.update(provider='reme', retrieval='reme_bm25/v1',
+                          retrieval_backend=self._retrieval.configuration())
+        return config
+
+    def clone(self):
+        """Copy configuration, never a prior run's notes, tasks or search cache."""
+        return AgentMemory(self.configured_path, require_review=self.require_review,
+                           retrieval_backend=self.retrieval_backend)
+
+    def prepare(self):
+        if self._retrieval is not None:
+            self._retrieval.prepare()
+
+    def specifications(self):
+        specs = deepcopy(SPECS)
+        if self._retrieval is not None:
+            specs = tuple(replace(spec, description=(
+                'Search your current memory IDs, content and applicability using ReMe BM25 keyword ranking. '
+                'Use related keywords rather than an exact sentence; this is lexical, not semantic search. '
+                'Empty query lists notes by recency. No model/embedding calls. Results are interpretations, '
+                'not verified evidence. Read relevant results with memory_read and use their source references. '
+                'Follow next_offset with expected_revision.')) if spec.name == 'memory_search' else spec
+                for spec in specs)
+        return specs
 
     def bind(self, harness, journal_path=None):
         if self.harness is not None:
             raise ValueError('Agent memory is already bound to a run')
+        self.prepare()
         self.harness = harness
         self.path = (Path(self.configured_path) if self.configured_path else
                      Path(journal_path).parent / 'agent-memory.json' if journal_path is not None else None)
@@ -396,34 +429,59 @@ class AgentMemory:
         revision = self._state['revision']
         if (expected_revision is not None and expected_revision != revision) or (offset and expected_revision is None):
             raise OperationArgumentError('Stale or missing memory revision; restart search')
-        values = [v for v in sorted(self._state['memories'].values(), key=lambda row: row['revision'], reverse=True)
-                  if query.casefold() in (v['content'] + ' ' + v['applicability']).casefold()]
+        retrieval = {}
+        if self._retrieval is None:
+            values = [v for v in sorted(self._state['memories'].values(), key=lambda row: row['revision'], reverse=True)
+                      if query.casefold() in (v['content'] + ' ' + v['applicability']).casefold()]
+        else:
+            values, retrieval = self._rank(query)
         selected = values[offset:offset + limit]
         return {'revision': revision, 'items': [{**{k: deepcopy(v[k]) for k in
             ('memory_id', 'revision', 'status', 'authority')},
             'source_refs': v['source_refs'][:2], 'source_count': len(v['source_refs']),
             'content_preview': v['content'][:240], 'complete': len(v['content']) <= 240,
             'read_operation': 'memory_read'} for v in selected], 'total': len(values),
-            'next_offset': offset + limit if offset + limit < len(values) else None}
+            'next_offset': offset + limit if offset + limit < len(values) else None,
+            **({'retrieval': retrieval} if retrieval else {})}
+
+    def _rank(self, query):
+        values = list(self._state['memories'].values())
+        scores, digest = self._retrieval.rank(query, values)
+        # Empty queries browse all notes. For nonempty queries only actual hits
+        # enter the view; recency never masquerades as a successful retrieval.
+        if query.strip():
+            values = [row for row in values if row['memory_id'] in scores or row['memory_id'] == query]
+        values.sort(key=lambda row: (row['memory_id'] != query, -scores.get(row['memory_id'], 0),
+                                     -row['revision'], row['memory_id']))
+        return values, {'provider': 'reme', 'method': 'bm25' if query.strip() else 'recency',
+            'semantic_search': False, 'model_calls': 0, 'embedding_calls': 0,
+            'corpus_sha256': digest, 'matched_count': len(values),
+            'usage_verified': False}
 
     def context(self, query):
-        # Literal relevance plus recency, explicitly not semantic retrieval.
+        # Both providers use current feedback and task context; neither calls a model.
         text = query.objective
         if query.latest_feedback is not None:
             text += ' ' + encoded(query.latest_feedback.output)[:8192]
         text += ' ' + ' '.join(task['title'] + ' ' + task.get('next_step', '')
                               for task in self._state['tasks'].values() if task['status'] == 'open')
-        tokens = {token for token in re.findall(r'\w+', text.casefold()) if len(token) >= 3}
-        values = sorted(self._state['memories'].values(), key=lambda row: row['revision'], reverse=True)
-        values.sort(key=lambda row: len(tokens.intersection(re.findall(r'\w+',
-            (row['content'] + ' ' + row['applicability']).casefold()))), reverse=True)
-        return encoded({'provider': 'agent_managed', 'revision': self._state['revision'],
+        retrieval = {}
+        if self._retrieval is None:
+            tokens = {token for token in re.findall(r'\w+', text.casefold()) if len(token) >= 3}
+            values = sorted(self._state['memories'].values(), key=lambda row: row['revision'], reverse=True)
+            values.sort(key=lambda row: len(tokens.intersection(re.findall(r'\w+',
+                (row['content'] + ' ' + row['applicability']).casefold()))), reverse=True)
+        else:
+            values, retrieval = self._rank(text)
+        return encoded({'provider': 'reme' if self._retrieval is not None else 'agent_managed',
+            'revision': self._state['revision'],
             'authority': 'meta_agent_interpretations_not_verified_evidence', 'total': len(values),
             'items': [{'memory_id': row['memory_id'], 'status': row['status'],
                        'content_preview': row['content'][:300], 'complete': len(row['content']) <= 300,
                        'source_refs': row['source_refs'][:2], 'source_count': len(row['source_refs']),
                        'read_operation': 'memory_read'} for row in values[:6]],
-            'write_operation': 'memory_write', 'delete_operation': 'memory_delete'})
+            'write_operation': 'memory_write', 'delete_operation': 'memory_delete',
+            **({'retrieval': retrieval} if retrieval else {})})
 
     def execute(self, call):
         call = self.validate(call)
@@ -771,7 +829,7 @@ class MemoryActionSpace:
         return getattr(self.base, name)
 
     def describe(self):
-        return (*self.base.describe(), *deepcopy(SPECS))
+        return (*self.base.describe(), *self.memory.specifications())
 
     def validate(self, call):
         return self.memory.validate(call) if call.name in SPEC_BY_NAME else self.base.validate(call)

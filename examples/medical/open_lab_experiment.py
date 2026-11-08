@@ -338,6 +338,8 @@ def main(argv=None):
                         help='Host JSON compression goals; input capacity always reserves the full reply cap')
     parser.add_argument('--feedback-routing', choices=('agent_memory', 'legacy', 'context_or_memory'), default='agent_memory',
                         help='Default: one meta-agent with explicit memory tools; other modes opt into legacy extraction')
+    parser.add_argument('--memory-backend', choices=('literal', 'reme'), default='literal',
+                        help='Single-meta memory retrieval; reme requires rsisys[reme], no organizing model')
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--max-calls', type=int, default=128)
     parser.add_argument('--deadline-epoch', type=float, help='Absolute host UTC deadline, never extended by initialization or restart')
@@ -366,6 +368,8 @@ def main(argv=None):
         result = inspect_recovery(root)
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
+    if not args.resume:
+        single_meta_memory(args)  # Optional dependency failure must precede controller_lock's mkdir.
     with controller_lock(root, resume=args.resume):
         path = root / 'recovery-launch.json'
         if args.resume:
@@ -467,8 +471,22 @@ def legacy_memory_assembly(root, args):
                 'Absence from the supplied snapshot does not prove absence from the full history.'})
 
 
+def single_meta_memory(args):
+    """Validate the optional memory runtime before allocating any run resources."""
+    memory_backend = getattr(args, 'memory_backend', 'literal')
+    feedback_routing = getattr(args, 'feedback_routing', 'agent_memory')
+    if memory_backend != 'literal' and feedback_routing != 'agent_memory':
+        raise ValueError('memory_backend=reme requires feedback_routing=agent_memory')
+    assembly = (ResearchAssembly.single_meta(require_memory_review=True, memory_backend=memory_backend)
+                if feedback_routing == 'agent_memory' else None)
+    if assembly is not None:
+        assembly.prepare()
+    return assembly
+
+
 def run(args, *, method_catalog=None):
     from .open_lab_recovery import state_ports, pause_at_boundary
+    assembly = single_meta_memory(args)
     root = Path(args.root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     from transformers import AutoTokenizer
@@ -728,9 +746,7 @@ def run(args, *, method_catalog=None):
             loop.harness.add_context_processor(ImmediateFeedbackWindow())
         bind_evolution(context, loop, context.lab_execution, backend, model, config=optimizer_config)
         return loop
-    if args.feedback_routing == 'agent_memory':
-        assembly = ResearchAssembly.single_meta(require_memory_review=True)
-    else:
+    if assembly is None:
         assembly = legacy_memory_assembly(root, args)
     native_labs = []
     def make_state(context, decision, exploration):

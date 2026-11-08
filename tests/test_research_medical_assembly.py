@@ -44,6 +44,17 @@ class MedicalResearchAssemblyTests(unittest.TestCase):
         self.assertIsNotNone(config['context_memory'])
         self.assertEqual(self.read('feedback_learning.json')['jobs'], {})
 
+    @unittest.skipUnless(find_spec('reme') is not None, 'Optional ReMe runtime is not installed')
+    def test_reme_launch_is_single_meta_without_feedback_model_calls(self):
+        result = self.execute([fixture.FINISH], memory_provider='reme')
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['model_calls'], 1)
+        config = self.read('research_assembly.json')
+        self.assertEqual(config['memory_provider'], 'reme')
+        self.assertEqual(config['agent_topology'], 'single_acting_meta_agent')
+        self.assertEqual(config['context_memory']['configuration']['retrieval_backend']['model_calls'], 0)
+        self.assertFalse(self.process.requests)
+
     def test_langmem_requires_native_transport_before_claiming_the_run(self):
         settings = ExperimentSettings(self.task, self.root / 'blocked', self.root / 'model',
                                       memory_provider='langmem')
@@ -67,6 +78,10 @@ class MedicalResearchAssemblyTests(unittest.TestCase):
         self.assertEqual(settings.effective_memory_provider, 'journal')
         self.assertFalse(settings.archive_trajectories)
         self.assertTrue(settings.harness_proposals)
+        reme = vars(parser().parse_args(['--task', str(self.task), '--run-dir', 'new-run',
+            '--model-path', 'model', '--memory-provider', 'reme']))
+        reme['private_exclusions'] = tuple(reme['private_exclusions'])
+        self.assertEqual(ExperimentSettings(**reme).effective_memory_provider, 'reme')
 
     def test_invalid_product_configuration_is_rejected(self):
         for fields in ({'memory_provider': 'disabled'}, {'memory_provider': 'legacy'},

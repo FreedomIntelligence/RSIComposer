@@ -101,6 +101,10 @@ Provision the meta-agent's decision endpoint with JSON-schema responses before
 launching, and pass its actual model ID/revision and local tokenizer path. This
 endpoint supplies the meta-agent, not a preselected research candidate. The default memory tools run in the
 controller and require no LangMem installation or provider tool-calling API.
+For an upstream ReMe keyword retrieval backend, explicitly install `rsisys[reme]`
+and select `--memory-backend reme` in Open Lab (`--memory-provider reme` in the
+traditional experiment launcher). See [Memory backends](../../docs/memory-backends.md).
+The acting meta-agent still owns organization; no additional model is called.
 Install `rsisys[langmem]` only for the explicit legacy extraction workflow. Inside a
 scheduler-owned allocation, pass only the GPUs reserved for generated Lab
 programs through `CUDA_VISIBLE_DEVICES` and set `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
