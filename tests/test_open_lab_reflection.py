@@ -45,6 +45,10 @@ class ReflectionTests(unittest.TestCase):
         self.registry = SimpleNamespace(current=SystemVersion('initial', {}))
         self.reflection.bind(self.harness, self.registry)
         self.report = {'window_id': '1', 'outcome': 'no_change', 'analysis': 'Keep evidence windows intact.',
+                       'behavioral_review': {'failure_pattern': 'Candidate input handling failed.',
+                           'proposed_change': 'Verify full input consumption before another candidate run.',
+                           'validation_plan': 'Retest the same frozen input and compare failure count and calls.',
+                           'no_change_reason': 'Defer prompt activation until a candidate procedure is tested.'},
                        'decision_ids': ['decision-1'], 'system_version': 'initial'}
 
     def read_page(self, cursor=None, record_id='decision-1:operation'):
@@ -55,6 +59,51 @@ class ReflectionTests(unittest.TestCase):
         self.memory.append(HistoryEntry(ident, 'operation', None, result.summary, False,
             details={'operation': {'name': 'research_archive', 'arguments': args}, 'result': result.payload()}))
         return result.data['next_cursor']
+
+    def test_behavior_review_requires_a_concrete_plan_and_no_change_justification(self):
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        self.read_all()
+        for field in ('failure_pattern', 'proposed_change', 'validation_plan', 'no_change_reason'):
+            bad = deepcopy(self.report)
+            bad['behavioral_review'][field] = ' '
+            with self.subTest(field=field), self.assertRaisesRegex(LabToolError, 'behavioral'):
+                self.reflection.report(bad)
+        self.assertEqual(self.reflection.state['reports'], [])
+        receipt = self.reflection.report(self.report).data
+        self.assertEqual(receipt['behavioral_review'], self.report['behavioral_review'])
+        self.assertFalse(receipt['improvement_verified'])
+
+    def test_reflect_read_advances_raw_pages_without_model_cursor_and_survives_restart(self):
+        from rsisys.loops.decision_making.harness.reflection import ReflectionTools
+        self.now = 2800
+        self.reflection.begin({'window_id': '1'})
+        cursors = []
+        def reader(call):
+            self.assertEqual(call.name, 'research_archive')
+            cursors.append(call.arguments['cursor'])
+            return self.tools._archive(call.arguments)
+        wrapper = ReflectionTools(SimpleNamespace(execute=reader), self.reflection)
+        call = OperationCall('reflect_read', {'window_id': '1'})
+        first = wrapper.execute(call)
+        self.assertFalse(self.reflection._review_progress()['report_ready'])
+        def record(result):
+            self.memory.append(HistoryEntry('read-next-' + str(len(self.memory.history())),
+                'operation', None, result.summary, False,
+                details={'operation': asdict(call), 'result': result.payload()}))
+        record(first)
+        replacement = PeriodicReflection(self.reflection.path, 1800, clock=lambda: self.now)
+        replacement.bind(self.harness, self.registry)
+        wrapper = ReflectionTools(SimpleNamespace(execute=reader), replacement)
+        while not replacement._review_progress()['report_ready']:
+            record(wrapper.execute(call))
+        self.assertIsNone(cursors[0])
+        self.assertTrue(all(cursor is not None for cursor in cursors[1:]))
+        self.assertEqual(len(cursors), len(set(cursors)))
+        self.assertTrue(wrapper.execute(call).data['report_ready'])
+        receipt = replacement.report(self.report).data
+        self.assertEqual(list(receipt['archive_evidence']), ['decision-1'])
+        self.assertFalse(receipt['improvement_verified'])
 
     def test_old_citations_cannot_replace_recent_failure_coverage(self):
         self.now = 2800
@@ -124,7 +173,7 @@ class ReflectionTests(unittest.TestCase):
         context = DecisionContext('Continue', (),
             (OperationSpec('research_archive', 'Archive', {}), *self.reflection.specifications()), ())
         due = self.reflection.project_context(context)
-        self.assertEqual([spec.name for spec in due.operations], ['research_archive'])
+        self.assertEqual([spec.name for spec in due.operations], ['research_archive', 'reflect_read'])
         review = due.research_agenda['scheduled_reflection']
         self.assertEqual(review['next_read']['arguments'], {'collection': 'history',
             'record_id': 'recent:operation', 'evidence_path': None, 'cursor': None, 'limit': 8})
@@ -325,7 +374,7 @@ class ReflectionTests(unittest.TestCase):
         self.assertEqual(self.reflection.capture(), before)  # Projection cannot start a timer.
         self.reflection.begin({'window_id': '1'})
         due = self.reflection.project_context(context)
-        self.assertEqual({s.name for s in due.operations}, {'research_archive', 'lab_poll'})
+        self.assertEqual({s.name for s in due.operations}, {'research_archive', 'reflect_read', 'lab_poll'})
         response = GenerationResponse(json.dumps({'kind': 'invoke', 'operation': 'lab_poll', 'arguments': {}}),
                                       policy.model, False)
         self.assertEqual(policy._parse_decision(response, due).operation.name, 'lab_poll')

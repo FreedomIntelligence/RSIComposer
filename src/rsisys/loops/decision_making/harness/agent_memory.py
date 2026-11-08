@@ -15,6 +15,7 @@ from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.decision_making.action_space import OperationResult
 from rsisys.runtime.files import atomic_write, json_bytes
 from rsisys.runtime.json_tools import encoded, result_id
+from .task_acceptance import CHECKS, EVIDENCE, RESOLUTIONS, validate_checks, accept
 
 
 def _text(value, name, maximum):
@@ -72,11 +73,15 @@ SPECS = (
         'open pins the latest native receipt unless explicit record_ids are supplied; pin adds sources. '
         'Reading files, editing and retesting do not close the task. close releases its resident feedback '
         'without erasing archives or automatically writing memory. Record next_step and acceptance_criteria; '
-        'update progress while working, and record the outcome when closing. At most two tasks and four pins each.',
+        'Resolved closure requires acceptance_checks matched against native receipts. Text criteria are not '
+        'machine verified. Close incomplete work explicitly as abandoned/inconclusive/interrupted. '
+        'At most two tasks and four pins each.',
         {'expected_revision': REVISION, 'task_id': IDENT, 'action': {'enum': ['open', 'update', 'pin', 'close']},
          'title': {'type': 'string', 'minLength': 1, 'maxLength': 300},
          'next_step': {'type': 'string', 'maxLength': 1000},
          'acceptance_criteria': {'type': 'string', 'maxLength': 1000},
+         'acceptance_checks': CHECKS,
+         'resolution': {'enum': RESOLUTIONS}, 'acceptance_evidence': EVIDENCE,
          'outcome': {'type': 'string', 'maxLength': 2000},
          'record_ids': {**REFS, 'maxItems': 4}}, ['expected_revision', 'task_id', 'action']),
     _spec('research_task_read', 'Read an exact task, including a closed task and its evidence references, '
@@ -106,7 +111,7 @@ class AgentMemory:
         return {'provider': 'agent_managed', 'path': self.configured_path,
             'default_path': 'agent-memory.json beside feedback journal',
             'retrieval': 'literal_objective_feedback_tasks_and_recency/v2', 'organization_owner': 'acting_meta_agent',
-            'model_calls': 0, 'task_context': 'explicit_progress_evidence_outcome/v2',
+            'model_calls': 0, 'task_context': 'receipt_checked_acceptance/v3',
             'consolidation': 'producer_inbox_explicit_disposition/v1',
             'require_review': self.require_review}
 
@@ -122,6 +127,15 @@ class AgentMemory:
                    for note in self._state['memories'].values() for ref in note['source_refs']):
                 raise ValueError('Agent memory belongs to another or incomplete evidence archive; '
                                  'use an explicit continuation adapter')
+            self._verify_acceptance(self._state)
+
+    def _verify_acceptance(self, state):
+        native = {row.record_id: row for row in self._history() if self._native(row)}
+        for task in state['tasks'].values():
+            if task.get('resolution') == 'resolved':
+                receipt = accept(task, task.get('acceptance_evidence', {}), native)
+                if receipt != task.get('acceptance_receipt'):
+                    raise ValueError('Task acceptance source identity differs from its receipt')
 
     @staticmethod
     def _validated(state):
@@ -188,7 +202,8 @@ class AgentMemory:
             for ident, value in row['tasks'].items():
                 required = {'task_id', 'title', 'status', 'record_ids', 'start_after', 'revision'}
                 if (not isinstance(value, dict) or not required <= set(value)
-                        or set(value) - required - {'next_step', 'acceptance_criteria', 'outcome'}
+                        or set(value) - required - {'next_step', 'acceptance_criteria', 'outcome',
+                            'acceptance_checks', 'resolution', 'acceptance_evidence', 'acceptance_receipt'}
                         or value['task_id'] != ident or type(value['revision']) is not int or value['revision'] != i
                         or value['status'] not in ('open', 'closed')
                         or value['start_after'] is not None and
@@ -200,13 +215,16 @@ class AgentMemory:
                     if key in value and (not isinstance(value[key], str) or len(value[key]) > maximum):
                         raise ValueError('Invalid persisted task ' + key)
                 action = args['action']
+                if args.get('resolution') == 'resolved' and 'acceptance_receipt' not in value:
+                    raise ValueError('Resolved closure is missing its acceptance receipt')
                 if action == 'open':
                     if ident in tasks or sum(task['status'] == 'open' for task in tasks.values()) >= 2:
                         raise ValueError('Invalid task opening revision')
                     if (value['status'] != 'open' or value['title'] != args['title']
                             or 'record_ids' in args and value['record_ids'] != args['record_ids']
                             or 'record_ids' not in args and len(value['record_ids']) > 1
-                            or any(value.get(key) != args.get(key) for key in ('next_step', 'acceptance_criteria', 'outcome'))):
+                            or any(value.get(key) != args.get(key) for key in
+                                   ('next_step', 'acceptance_criteria', 'acceptance_checks', 'outcome'))):
                         raise ValueError('Task opening differs from its arguments')
                 else:
                     if ident not in tasks or tasks[ident]['status'] != 'open':
@@ -214,9 +232,22 @@ class AgentMemory:
                     expected = {**deepcopy(tasks[ident]), 'revision': i}
                     if action == 'close':
                         expected['status'] = 'closed'
+                        if 'acceptance_receipt' in value:
+                            receipt = value['acceptance_receipt']
+                            evidence = args.get('acceptance_evidence', {})
+                            if (args.get('resolution') != 'resolved' or not isinstance(receipt, dict)
+                                    or set(receipt) != {c['id'] for c in expected.get('acceptance_checks', [])}
+                                    or not receipt or any(not isinstance(v, dict)
+                                        or set(v) != {'record_id', 'sha256'} or v['record_id'] != evidence.get(k)
+                                        or not isinstance(v['sha256'], str)
+                                        or re.fullmatch('[a-f0-9]{64}', v['sha256']) is None
+                                        for k, v in receipt.items())):
+                                raise ValueError('Invalid acceptance receipt')
+                            expected['acceptance_receipt'] = receipt
                     elif action == 'pin':
                         expected['record_ids'] = list(dict.fromkeys([*expected['record_ids'], *args['record_ids']]))
-                    for key in ('title', 'next_step', 'acceptance_criteria', 'outcome'):
+                    for key in ('title', 'next_step', 'acceptance_criteria', 'acceptance_checks',
+                                'outcome', 'resolution', 'acceptance_evidence'):
                         if key in args:
                             expected[key] = args[key]
                     if value != expected:
@@ -235,6 +266,7 @@ class AgentMemory:
         if self._state['revision'] or self.harness is None:
             raise ValueError('Memory seeding requires a fresh bound agent memory')
         candidate = self._validated(state)
+        self._verify_acceptance(candidate)
         sources = self._sources()
         for note in candidate['memories'].values():
             if any(sources.get(ref) != note['provenance'][ref] for ref in note['source_refs']):
@@ -249,6 +281,7 @@ class AgentMemory:
     def restore(self, state):
         """Same-directory recovery verifies mutations; it never rolls them back."""
         candidate = self._validated(state)
+        self._verify_acceptance(candidate)
         if self.path is not None and self.path.exists():
             current = self._validated(json.loads(self.path.read_text(encoding='utf-8')))
             if current != candidate:
@@ -338,9 +371,19 @@ class AgentMemory:
                 raise OperationArgumentError('Opening a task requires title')
             if args['action'] == 'pin' and not args.get('record_ids'):
                 raise OperationArgumentError('Pin requires explicit record_ids')
-            allowed = {'open': {'title', 'record_ids', 'next_step', 'acceptance_criteria'},
-                       'update': {'title', 'next_step', 'acceptance_criteria'}, 'pin': {'record_ids'},
-                       'close': {'outcome'}}[args['action']]
+            if 'acceptance_checks' in args:
+                validate_checks(args['acceptance_checks'])
+            if 'resolution' in args and args['resolution'] not in RESOLUTIONS:
+                raise OperationArgumentError('Unknown task resolution')
+            if 'acceptance_evidence' in args and (not isinstance(args['acceptance_evidence'], dict)
+                    or len(args['acceptance_evidence']) > 4
+                    or any(not isinstance(k, str) or not k or len(k) > 128
+                           or not isinstance(v, str) or not v or len(v) > 512
+                           for k, v in args['acceptance_evidence'].items())):
+                raise OperationArgumentError('Acceptance evidence maps check ids to native record_ids')
+            allowed = {'open': {'title', 'record_ids', 'next_step', 'acceptance_criteria', 'acceptance_checks'},
+                       'update': {'title', 'next_step', 'acceptance_criteria', 'acceptance_checks'}, 'pin': {'record_ids'},
+                       'close': {'outcome', 'resolution', 'acceptance_evidence'}}[args['action']]
             if set(args) - {'expected_revision', 'task_id', 'action'} - allowed:
                 raise OperationArgumentError('Fields do not match the task action')
             if args['action'] == 'update' and not set(args).intersection(allowed):
@@ -474,19 +517,28 @@ class AgentMemory:
                 pins = args.get('record_ids', list(native)[-1:])
                 tasks[ident] = {'task_id': ident, 'title': args['title'], 'status': 'open',
                     'record_ids': list(pins), 'start_after': history[-1].record_id if history else None,
-                    'revision': revision, **{key: args[key] for key in ('next_step', 'acceptance_criteria') if key in args}}
+                    'revision': revision, **{key: args[key] for key in
+                        ('next_step', 'acceptance_criteria', 'acceptance_checks') if key in args}}
             else:
                 if ident not in tasks or tasks[ident]['status'] != 'open':
                     raise OperationArgumentError('Task is not open')
                 task = tasks[ident]
                 if action == 'close':
+                    if not args.get('resolution') or not args.get('outcome', '').strip():
+                        raise OperationArgumentError('Close requires explicit resolution and outcome; '
+                            'use resolved only with receipt-checked acceptance, otherwise inconclusive/abandoned/interrupted')
+                    if args['resolution'] == 'resolved':
+                        task['acceptance_receipt'] = accept(task, args.get('acceptance_evidence', {}), native)
+                    elif args.get('acceptance_evidence'):
+                        raise OperationArgumentError('Only resolved closure may claim acceptance_evidence')
                     task['status'] = 'closed'
                 elif action == 'pin':
                     pins = list(dict.fromkeys([*task['record_ids'], *args['record_ids']]))
                     if len(pins) > 4:
                         raise OperationArgumentError('A task supports at most four pinned receipts')
                     task['record_ids'] = pins
-                for key in ('title', 'next_step', 'acceptance_criteria', 'outcome'):
+                for key in ('title', 'next_step', 'acceptance_criteria', 'acceptance_checks',
+                            'outcome', 'resolution', 'acceptance_evidence'):
                     if key in args:
                         task[key] = args[key]
                 task['revision'] = revision
@@ -553,7 +605,7 @@ class AgentMemory:
                     {'operation': 'research_task', 'arguments': {**args, 'action': 'update'},
                      'agent_authored_fields': ['next_step']},
                     {'operation': 'research_task', 'arguments': {**args, 'action': 'close'},
-                     'agent_authored_fields': ['outcome']}]
+                     'agent_authored_fields': ['outcome', 'resolution', 'acceptance_evidence']}]
                 pins = [ref for ref in unreviewed[-2:] if ref not in task['record_ids']]
                 if pins and len(task['record_ids']) + len(pins) <= 4:
                     actions.insert(0, {'operation': 'research_task',
@@ -595,6 +647,8 @@ class AgentMemory:
             'task_count': len(self._state['tasks']), 'task_read_operation': 'research_task_read',
             'recent_closed_tasks': [{
                 'task_id': task['task_id'], 'title': task['title'], 'outcome_preview': task.get('outcome', '')[:240],
+                'resolution': task.get('resolution', 'legacy_unverified'),
+                'acceptance_predicates_verified': bool(task.get('acceptance_receipt')),
                 'record_ids': deepcopy(task['record_ids']), 'read_operation': 'research_task_read'}
                 for task in recent_closed],
             'task_operation': 'research_task', 'recent_source_refs': [
@@ -617,7 +671,9 @@ class AgentMemory:
                 'instruction': 'Read these original receipts and search existing memory. Before starting another '
                     'experiment, write/update source-cited reusable findings, or call memory_review with your '
                     'reason and disposition (already_known, not_useful, deferred). Deferred must explain what '
-                    'evidence/next action is needed. Do not invent notes to fill the store.',
+                    'evidence/next action is needed. Operational procedures, artifact paths, dependency fixes and '
+                    'repeated tool mistakes are reusable knowledge too, even without a scientific gain. '
+                    'A not_useful reason must consider future operational use. Do not invent notes to fill the store.',
                 'authority': 'host_navigation_not_a_finding', 'required': self.require_review}
             if not self.require_review:
                 agenda['agent_memory']['memory_review']['instruction'] = (
@@ -631,7 +687,7 @@ class AgentMemory:
                 # already-running jobs. Explicit deferral releases the next action.
                 operations = tuple(spec for spec in context.operations if spec.read_only or spec.name in
                     {*SPEC_BY_NAME, 'research_archive', 'research_read', 'research_patch',
-                     'lab_read_file', 'lab_read_log', 'lab_poll', 'lab_result', 'lab_cancel', 'reflect_begin'})
+                     'lab_read_file', 'lab_read_log', 'lab_poll', 'lab_result', 'lab_cancel', 'reflect_begin', 'reflect_read'})
                 context = replace(context, operations=operations, directive_modes=())
         from .observations import failed_observation
         failures = [row for row in history if failed_observation(row)]

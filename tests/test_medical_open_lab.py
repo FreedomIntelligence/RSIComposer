@@ -188,6 +188,12 @@ class MedicalOpenLabTests(unittest.TestCase):
                         'except OSError: pass\nelse: raise AssertionError("research dependency readable")\n'
                         'p=json.load(sys.stdin)\nprint(json.dumps({"predictions":[{"benchmark_id":r["benchmark_id"],'
                         '"id":r["id"],"text":"A"} for r in p["items"]]}))\n')
+                    smoke_id = lab.execute(open_lab_experiment.OperationCall('medical_smoke_test', {
+                        'key': 'runtime-smoke', 'submission_path': 'runtime-candidate'})).data['job_id']
+                    smoke_state = native.backend.wait(native._jobs[smoke_id][0])
+                    self.assertEqual(smoke_state.exit_code, 0, smoke_state.stderr)
+                    smoke_receipt = lab.execute(open_lab_experiment.OperationCall('lab_result', {'job_id': smoke_id}))
+                    self.assertTrue(smoke_receipt.data['smoke_test']['verified'])
                     ident = lab.execute(open_lab_experiment.OperationCall('medical_evaluate', {
                         'key': 'runtime-inference', 'candidate_id': 'runtime-fixture', 'split': 'public',
                         'submission_path': 'runtime-candidate'})).data['job_id']

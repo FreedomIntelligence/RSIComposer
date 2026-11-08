@@ -53,6 +53,83 @@ class AgentMemoryTests(unittest.TestCase):
     def view(self):
         return self.harness._context('Repair candidate input handling', self.loop.action_space)
 
+    def test_task_acceptance_rejects_submission_training_and_incomplete_evaluation(self):
+        self.native()
+        checks = [{'id': 'score', 'operation': 'lab_result',
+                   'result_path': '/data/fixed_evaluation/verified', 'expected': True},
+                  {'id': 'count', 'operation': 'lab_result',
+                   'result_path': '/data/fixed_evaluation/metrics/medqa/n', 'expected': 500}]
+        self.mutate('research_task', action='open', task_id='evaluate', title='Evaluate new weights',
+                    acceptance_criteria='A complete fixed MedQA evaluation', acceptance_checks=checks)
+        def receipt(ident, name, data, status=ExecutionStatus.COMPLETED):
+            result = OperationResult('Native fixture', (), False, status, data=data)
+            self.harness.memory.append(HistoryEntry(ident, 'operation', None, result.summary, False,
+                details={'operation': {'name': name, 'arguments': {}}, 'result': result.payload()}))
+        receipt('submitted', 'medical_evaluate', {'state': 'submitted'})
+        receipt('training', 'lab_result', {'state': 'succeeded', 'training_metrics': {'loss': .1}})
+        receipt('partial', 'lab_result', {'state': 'succeeded', 'fixed_evaluation': {
+            'verified': True, 'metrics': {'medqa': {'n': 1}}}})
+        before = self.memory.export()
+        for ident in ('submitted', 'training', 'partial', 'made-up'):
+            with self.subTest(ident=ident), self.assertRaises(OperationArgumentError):
+                self.mutate('research_task', action='close', task_id='evaluate', resolution='resolved',
+                            outcome='Done', acceptance_evidence={'score': ident, 'count': ident})
+            self.assertEqual(self.memory.export(), before)
+        receipt('evaluation', 'lab_result', {'state': 'succeeded', 'fixed_evaluation': {
+            'verified': True, 'metrics': {'medqa': {'n': 500}}}})
+        self.mutate('research_task', action='close', task_id='evaluate', resolution='resolved', outcome='Measured',
+                    acceptance_evidence={'score': 'evaluation', 'count': 'evaluation'})
+        task = self.memory.export()['tasks']['evaluate']
+        self.assertEqual(task['acceptance_receipt']['score']['record_id'], 'evaluation')
+        restored = AgentMemory()
+        restored.bind(self.harness, self.root / 'feedback.json')
+        self.assertEqual(restored.export(), self.memory.export())
+        self.assertFalse(self.backend.requests)
+        # A forged digest passes JSON shape checks but cannot bind to history.
+        forged = self.memory.export()
+        for target in (forged['tasks']['evaluate'], forged['revisions'][-1]['tasks']['evaluate']):
+            target['acceptance_receipt']['score']['sha256'] = 'a' * 64
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            self.memory.restore(forged)
+
+    def test_task_cannot_silently_close_and_non_success_resolution_is_explicit(self):
+        self.mutate('research_task', action='open', task_id='work', title='Unfinished work')
+        for args in ({}, {'outcome': 'Done'}, {'outcome': 'Done', 'resolution': 'resolved'}):
+            before = self.memory.export()
+            with self.assertRaises(OperationArgumentError):
+                self.mutate('research_task', action='close', task_id='work', **args)
+            self.assertEqual(self.memory.export(), before)
+        self.mutate('research_task', action='close', task_id='work', resolution='inconclusive',
+                    outcome='Training succeeded but the fixed evaluation is missing')
+        self.assertNotIn('acceptance_receipt', self.memory.export()['tasks']['work'])
+
+    def test_repeated_failures_surface_operational_memory_without_fabricating_notes(self):
+        self.native('missing-import-1', text='ModuleNotFoundError: candidate_adapter')
+        self.native('missing-import-2', text='ModuleNotFoundError: candidate_adapter')
+        group = self.memory.pending_review()['recurring_failures'][0]
+        self.assertEqual(group['count'], 2)
+        self.assertIn('operational', group['instruction'])
+        self.assertEqual(len(group['source_refs']), 2)
+        self.assertEqual(self.memory.export()['memories'], {})
+        self.assertEqual(self.memory.export()['revision'], 0)
+
+    def test_recurrence_counts_distinct_failed_calls_but_not_repeated_terminal_polls(self):
+        failure = OperationResult('Missing path', (), False, ExecutionStatus.FAILED, 'FileNotFoundError')
+        for ident in ('missing-path-1', 'missing-path-2'):
+            self.harness.memory.append(HistoryEntry(ident, 'operation', None, failure.summary, False,
+                details={'operation': asdict(OperationCall('lab_read_file', {'path': 'missing.py'})),
+                         'result': failure.payload()}))
+        for ident in ('poll-1', 'poll-2'):
+            result = replace(failure, data={'job_id': 'same-failed-job', 'state': 'failed'})
+            self.harness.memory.append(HistoryEntry(ident, 'operation', None, result.summary, False,
+                details={'operation': asdict(OperationCall('lab_poll', {'job_id': 'same-failed-job'})),
+                         'result': result.payload()}))
+        inbox = self.memory.pending_review()
+        self.assertEqual(inbox['pending_count'], 2)  # Identical receipts remain one review obligation.
+        self.assertEqual([(g['operation'], g['count']) for g in inbox['recurring_failures']],
+                         [('lab_read_file', 2)])
+        self.assertEqual(self.memory.export()['memories'], {})
+
     def test_default_has_no_background_model_and_no_implicit_memory_write(self):
         ident = self.service.observe(observation('raw'))
         self.service.refresh()
@@ -260,7 +337,7 @@ class AgentMemoryTests(unittest.TestCase):
         self.mutate('research_task', action='open', task_id='adapter', title='Evaluate trained adapter',
                     next_step='Check the inference loader', acceptance_criteria='Loaded weights and fixed evaluation')
         self.mutate('research_task', action='update', task_id='adapter', next_step='Run fixed evaluation')
-        self.mutate('research_task', action='close', task_id='adapter', outcome='No benefit established')
+        self.mutate('research_task', action='close', task_id='adapter', resolution='inconclusive', outcome='No benefit established')
         restored = AgentMemory()
         restored.bind(self.harness, self.root / 'feedback.json')
         task = restored.execute(OperationCall('research_task_read', {'task_id': 'adapter'}))['task']
@@ -291,7 +368,7 @@ class AgentMemoryTests(unittest.TestCase):
     def test_task_read_pages_are_revision_bound_and_do_not_mutate(self):
         for i in range(3):
             self.mutate('research_task', action='open', task_id=str(i), title='Inspect evidence')
-            self.mutate('research_task', action='close', task_id=str(i), outcome='Inconclusive')
+            self.mutate('research_task', action='close', task_id=str(i), resolution='inconclusive', outcome='Inconclusive')
         before = self.memory.export()
         page = self.memory.execute(OperationCall('research_task_read', {'status': 'closed', 'limit': 1}))
         self.assertEqual(page['total'], 3)
@@ -348,7 +425,7 @@ class AgentMemoryTests(unittest.TestCase):
         self.native()
         self.recorded_task_change('open', title='Repair loader')
         self.native('decisive', name='custom_evaluation_result')
-        self.recorded_task_change('close', outcome='Abandoned after failed retest')
+        self.recorded_task_change('close', resolution='abandoned', outcome='Abandoned after failed retest')
         self.native('unrelated', name='other_experiment')
         card = self.view().research_agenda['agent_memory']
         self.assertEqual(card['memory_review']['source_refs'], ['history:decision_maker:failed-source',
@@ -384,7 +461,7 @@ class AgentMemoryTests(unittest.TestCase):
         changed['revisions'][-1]['tasks']['work']['next_step'] = 'Forged progress'
         with self.assertRaisesRegex(ValueError, 'Task mutation differs'):
             AgentMemory._validated(changed)
-        self.mutate('research_task', action='close', task_id='work', outcome='Interrupted; no score')
+        self.mutate('research_task', action='close', task_id='work', resolution='interrupted', outcome='Interrupted; no score')
         self.assertEqual(self.memory.export()['memories'], {})
         self.assertEqual(self.view().research_agenda['agent_memory']['recent_closed_tasks'][0]
                          ['outcome_preview'], 'Interrupted; no score')
@@ -427,7 +504,7 @@ class AgentMemoryTests(unittest.TestCase):
         self.native('later')
         self.mutate('research_task', action='open', task_id='debug', title='Debug', record_ids=['failed-source'])
         self.mutate('research_task', action='pin', task_id='debug', record_ids=['later'])
-        self.mutate('research_task', action='close', task_id='debug')
+        self.mutate('research_task', action='close', task_id='debug', resolution='inconclusive', outcome='No retest')
         original = self.memory.export()
         self.assertEqual(AgentMemory._validated(original), original)
         for field, value in [('status', 'open'), ('record_ids', []), ('title', 'silently replaced')]:
@@ -455,7 +532,7 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertEqual(by_id['retest']['result'], retest.payload())
         self.assertEqual(len(view['observations']), 2)
         before = self.harness.memory.history()
-        self.mutate('research_task', action='close', task_id='adapter-debug')
+        self.mutate('research_task', action='close', task_id='adapter-debug', resolution='abandoned', outcome='Investigation ended')
         self.assertEqual(self.view().research_agenda['active_feedback']['observations'], [])
         self.assertEqual(self.harness.memory.history(), before)
         self.assertEqual(self.memory.export()['memories'], {})
@@ -626,7 +703,7 @@ class AgentMemoryTests(unittest.TestCase):
                     'source_refs': ['history:decision_maker:failed-source'], 'status': 'supported'}
             elif len(requests) == 4:
                 operation, args = 'research_task', {'expected_revision': revision, 'task_id': 'input-debug',
-                    'action': 'close', 'outcome': 'Interrupted; no successful retest yet'}
+                    'action': 'close', 'resolution': 'interrupted', 'outcome': 'Interrupted; no successful retest yet'}
             else:
                 return GenerationResponse('{"kind":"finish"}', request.model, True, TokenUsage(100, 10))
             return GenerationResponse(json.dumps({'kind': 'invoke', 'operation': operation, 'arguments': args}),

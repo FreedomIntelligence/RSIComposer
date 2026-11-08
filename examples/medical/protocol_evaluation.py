@@ -184,6 +184,11 @@ def evaluate(config):
         record = safe_closed_result(raw, request, gateway)
     else:
         payload, gold, datasets = fixed_inputs(config['groups'])
+        smoke = config['split'] == 'smoke'
+        if smoke:
+            payload = {**payload, 'items': payload['items'][:2]}
+            if not payload['items']:
+                raise ValueError('Smoke test requires public inputs')
         submission = config['submission']['configuration']
         def verify_base():
             return registered_base_identity(submission['base_model_path']) == config['submission']['base_identity']
@@ -202,16 +207,28 @@ def evaluate(config):
         isolation = ProcessIsolation(policy)
         predictions = run_candidate([config['python'], submission['entrypoint']], payload,
                                     execution=(isolation, bundle), timeout_seconds=max(1, config['timeout_seconds'] - 5))
-        metrics, scored = score_predictions(predictions, gold)
+        if smoke:
+            expected = {(x['benchmark_id'], x['id']) for x in payload['items']}
+            if (not isinstance(predictions, list) or len(predictions) != len(expected)
+                    or any(not isinstance(x, dict) or set(x) != {'benchmark_id', 'id', 'text'}
+                           or not isinstance(x['text'], str) or not x['text'].strip()
+                           for x in predictions)
+                    or {(x['benchmark_id'], x['id']) for x in predictions} != expected):
+                raise ValueError('Smoke test did not return predictions for the supplied public inputs')
+        else:
+            metrics, scored = score_predictions(predictions, gold)
         if not verify_base():
             raise ValueError('Registered base changed during inference')
         if runtime_identity(config['python'], installed_policy) != expected_runtime:
             raise ValueError('Installed inference runtime changed during inference')
-        record = {'status': 'succeeded', 'metrics': metrics, 'predictions': scored,
+        record = ({'status': 'succeeded', 'inference_completed': True,
+                   'prediction_count': len(predictions), 'model_load_verified': False,
+                   'runtime_sha256': expected_runtime['sha256']} if smoke else
+                  {'status': 'succeeded', 'metrics': metrics, 'predictions': scored,
                   'dataset_sha256': datasets, 'submission': config['submission'],
                   'runtime_sha256': expected_runtime['sha256'],
                   'output_diagnostics': prediction_diagnostics(scored),
-                  **candidate_axes(config['submission'])}
+                  **candidate_axes(config['submission'])})
     if bundle_manifest(bundle) != config['submission']['files']:
         raise ValueError('Frozen submission changed during inference; no score')
     record.update({key: config[key] for key in ('candidate_id', 'split', 'protocol_sha256', 'source_sha256')})
@@ -238,6 +255,7 @@ def run_candidate_gateway(argv, request, timeout):
 
 class ProtocolMedicalLab(FixedMedicalLab):
     def __init__(self, *args, base_model_paths, campaign_id, ledger_path, closed_gateway=None,
+                 require_smoke_test=True,
                  resource_policy=None, candidate_execution=None, score_protocol=PROTOCOL.score_protocol, **kwargs):
         super().__init__(*args, **kwargs)
         self.protocol_runner = Path(__file__).resolve()
@@ -266,7 +284,11 @@ class ProtocolMedicalLab(FixedMedicalLab):
             raise TypeError('candidate_execution must be a host ExecutionPolicy')
         ProcessIsolation(self.candidate_execution).check()
         self.installed_runtime = runtime_identity(self.evaluation_python, self.candidate_execution)
+        if type(require_smoke_test) is not bool:
+            raise TypeError('require_smoke_test must be bool')
         self.formal_configuration = {'evaluation_protocol': asdict(self.evaluation_protocol),
+            'admission': 'same_bundle_runtime_public_smoke/v1',
+            'require_smoke_test': require_smoke_test,
             'source_sha256': source_identity(), 'campaign_id': campaign_id,
             'ledger_path': str(Path(ledger_path).resolve()),
             'base_model_paths': list(dict.fromkeys(str(Path(p).resolve()) for p in base_model_paths)),
@@ -286,7 +308,13 @@ class ProtocolMedicalLab(FixedMedicalLab):
 
     def describe(self):
         text = {'type': 'string', 'minLength': 1}
-        return (*LocalProcessLab.describe(self), OperationSpec('medical_preflight',
+        return (*LocalProcessLab.describe(self), OperationSpec('medical_smoke_test',
+            'Execute this frozen bundle on up to two public inputs in the formal inference isolation/runtime. '
+            'Collect with lab_poll/lab_result. Required before formal evaluation for the exact bundle/runtime. '
+            'No scoring, closed data or closed slot; real inference uses assigned Lab devices and time. '
+            'A passing run verifies execution, not model loading or medical improvement.',
+            {'type': 'object', 'properties': {'key': text, 'submission_path': text},
+             'required': ['key', 'submission_path'], 'additionalProperties': False}), OperationSpec('medical_preflight',
             'Validate submission paths, Python syntax and weight layout without loading models, '
             'starting evaluation or consuming the closed submission slot.',
             {'type': 'object', 'properties': {'submission_path': text}, 'required': ['submission_path'],
@@ -304,12 +332,15 @@ class ProtocolMedicalLab(FixedMedicalLab):
             'public returns detailed development evidence; closed returns aggregate scores/status only '
             'through an isolated gateway, at most once per 1800 seconds across this campaign. '
             'An accepted failure consumes its slot. Reuse the same key only to query the same submission. '
+            'First collect a successful medical_smoke_test for these exact files/runtime. '
             'Release active research programs first. Collect with lab_poll then lab_result.',
             {'type': 'object', 'properties': {'key': text, 'candidate_id': text,
                 'split': {'enum': ['public', 'closed']}, 'submission_path': text},
              'required': ['key', 'candidate_id', 'split', 'submission_path'], 'additionalProperties': False}))
 
     def execute(self, call):
+        if call.name == 'medical_smoke_test':
+            return self._smoke_start(call.arguments)
         if call.name in ('medical_preflight', 'medical_package'):
             from .submission import preflight, package_submission
             from rsisys.runtime.bundles import workspace_path
@@ -384,6 +415,11 @@ class ProtocolMedicalLab(FixedMedicalLab):
             submission = frozen_bundle(source, destination, self.formal_configuration['base_model_paths'])
         except (ValueError, OSError, KeyError, TypeError) as exc:
             raise LabToolError('Invalid candidate bundle: ' + str(exc)) from exc
+        if self.formal_configuration['require_smoke_test'] and not self._smoke_passed(submission):
+            shutil.rmtree(destination)
+            raise LabToolError('Run and collect medical_smoke_test for the exact current bundle/runtime first',
+                               data={'reason': 'candidate_smoke_required', 'evaluation_submitted': False,
+                                     'closed_slot_consumed': False})
         try:
             self.require_admission()
             admission = self.ledger.reserve(args['key'], identity, args['split'])
@@ -423,6 +459,8 @@ class ProtocolMedicalLab(FixedMedicalLab):
     def _observe(self, ident):
         result = LocalProcessLab._observe(self, ident)
         binding = self._evaluations.get(ident)
+        if binding is not None and binding.get('kind') == 'smoke':
+            return self._smoke_observe(ident, result, binding)
         if (binding is None or result.data['state'] != 'succeeded'
                 or 'fixed_evaluation' in result.data or 'fixed_evaluation_error' in result.data):
             return result
@@ -482,6 +520,95 @@ class ProtocolMedicalLab(FixedMedicalLab):
         self._terminal[ident] = result
         return result
 
+    def _smoke_start(self, args):
+        from rsisys.runtime.bundles import workspace_path
+        if (not isinstance(args, dict) or set(args) != {'key', 'submission_path'}
+                or any(not isinstance(v, str) or not v.strip() or '\x00' in v for v in args.values())):
+            raise LabToolError('Supply smoke key and submission_path only')
+        self.require_admission()
+        if args['key'] in self._keys:
+            ident, _ = self._keys[args['key']]
+            previous = self._evaluations.get(ident)
+            if previous is None or previous.get('kind') != 'smoke' or previous['arguments'] != args:
+                raise LabToolError('Smoke key already identifies a different submission')
+            # Idempotent identity lookup, never rerun an accepted mutation.
+            return self._start({'key': args['key'], 'argv': previous['command']})
+        if self._status()['active_jobs']:
+            raise LabToolError('Release owned programs before smoke inference')
+        if runtime_identity(self.evaluation_python, self.candidate_execution) != self.installed_runtime:
+            raise PermissionError('Installed runtime changed after campaign configuration')
+        if self.formal_configuration['source_sha256'] != source_identity():
+            raise PermissionError('Host evaluation protocol source changed')
+        try:
+            source = workspace_path(self.workspace, args['submission_path'])
+            ident = uuid4().hex
+            destination = self.evaluation_root / (ident + '-smoke-bundle')
+            submission = frozen_bundle(source, destination, self.formal_configuration['base_model_paths'])
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            raise LabToolError('Invalid candidate smoke bundle: ' + str(exc)) from exc
+        try:
+            self.require_admission()
+        except RuntimeError:
+            shutil.rmtree(destination)
+            raise
+        config = {'candidate_id': 'smoke-only', 'split': 'smoke', 'protocol_sha256': self.protocol_sha256,
+            'source_sha256': source_identity(), 'evaluation_protocol': asdict(self.evaluation_protocol),
+            'submission': submission, 'bundle_path': str(destination), 'python': self.evaluation_python,
+            'execution_budget': self.formal_configuration['execution_budget'],
+            'timeout_seconds': min(300, self.timeout_seconds), 'groups': self.evaluation_groups,
+            'candidate_execution': replace(self.candidate_execution,
+                read_only=(*self.candidate_execution.read_only,
+                           submission['configuration']['base_model_path'])).configuration(),
+            'runtime_identity': self.installed_runtime,
+            'output': str(self.evaluation_root / (ident + '-smoke.json'))}
+        config_path = self.evaluation_root / (ident + '-smoke-request.json')
+        atomic_write(config_path, json_bytes(config))
+        command = [self.evaluation_python, str(self.protocol_runner), str(config_path)]
+        result = self._start({'key': args['key'], 'argv': command},
+                             executor=getattr(self.backend, 'exec_host', None))
+        self._evaluations[result.data['job_id']] = {'kind': 'smoke', 'arguments': deepcopy(args),
+                                                   'config': config, 'command': command}
+        return result
+
+    def _smoke_observe(self, ident, result, binding):
+        if result.data['state'] != 'succeeded' or 'smoke_test' in result.data or 'smoke_error' in result.data:
+            return result
+        config = binding['config']
+        try:
+            record = json.loads(Path(config['output']).read_bytes())
+            if (record['status'] != 'succeeded' or record['inference_completed'] is not True
+                    or type(record['prediction_count']) is not int or not 1 <= record['prediction_count'] <= 2
+                    or record['runtime_sha256'] != self.installed_runtime['sha256']
+                    or any(record[k] != config[k] for k in
+                           ('protocol_sha256', 'source_sha256', 'candidate_id', 'split'))
+                    or record['submission_sha256'] != config['submission']['sha256']
+                    or bundle_manifest(config['bundle_path']) != config['submission']['files']):
+                raise ValueError('Smoke receipt identity mismatch')
+            result = replace(result, data={**result.data, 'smoke_test': {
+                'verified': True, 'inference_completed': True, 'model_load_verified': False,
+                'submission_sha256': record['submission_sha256'],
+                'runtime_sha256': record['runtime_sha256'], 'protocol_sha256': record['protocol_sha256'],
+                'prediction_count': record['prediction_count'], 'scored': False,
+                'closed_slot_consumed': False}})
+        except Exception:
+            result = replace(result, status=ExecutionStatus.FAILED, error='Smoke receipt verification failed',
+                             data={**result.data, 'smoke_error': 'receipt_verification_failed'})
+        self._terminal[ident] = result
+        return result
+
+    def _smoke_passed(self, submission):
+        for ident, binding in self._evaluations.items():
+            if (binding.get('kind') != 'smoke'
+                    or binding['config']['submission']['sha256'] != submission['sha256']):
+                continue
+            result = self._observe(ident)
+            receipt = (result.data or {}).get('smoke_test', {})
+            if (result.status == ExecutionStatus.COMPLETED and receipt.get('verified') is True
+                    and receipt['runtime_sha256'] == self.installed_runtime['sha256']
+                    and receipt['protocol_sha256'] == self.protocol_sha256):
+                return True
+        return False
+
 
 if __name__ == '__main__':
     configuration = json.loads(Path(sys.argv[1]).read_text())
@@ -490,7 +617,7 @@ if __name__ == '__main__':
         print(json.dumps({'status': value['status'], 'split': value['split']}), flush=True)
     except Exception:
         # Gateway errors can include closed questions. Never print their text.
-        if configuration['split'] == 'public':
+        if configuration['split'] in ('public', 'smoke'):
             import traceback
             traceback.print_exc()
         else:

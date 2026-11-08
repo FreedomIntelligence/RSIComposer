@@ -92,7 +92,8 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(copied.read_bytes(), (self.weights / 'adapter.safetensors').read_bytes())
         copied.write_bytes(b'next-candidate')
         self.assertEqual((self.bundle / 'artifacts/trained-adapter/adapter.safetensors').read_bytes(), b'actual-test-bytes')
-        self.mutate(self.new, 'research_task', task_id='debug', action='close')
+        self.mutate(self.new, 'research_task', task_id='debug', action='close',
+                    resolution='inconclusive', outcome='No retest')
         self.install(resume=True).restore(state)
         self.assertEqual(self.new.agent_memory.export()['tasks']['debug']['status'], 'closed')
         self.assertEqual(read_continuation(self.bundle)[1], receipt['sha256'])
@@ -106,7 +107,7 @@ class ContinuationTests(unittest.TestCase):
     def test_task_progress_and_negative_outcome_survive_new_attempt_with_rebound_sources(self):
         self.mutate(self.old, 'research_task', task_id='debug', action='update',
                     next_step='Check adapter loading', acceptance_criteria='Fixed evaluation uses changed weights')
-        self.mutate(self.old, 'research_task', task_id='debug', action='close',
+        self.mutate(self.old, 'research_task', task_id='debug', action='close', resolution='inconclusive',
                     outcome='Inconclusive: inference ignored the adapter')
         self.freeze()
         self.install()
@@ -117,6 +118,25 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(task['status'], 'closed')
         self.assertTrue(task['record_ids'][0].startswith('prior-'))
         self.assertEqual(self.new.state.decision_records, {})
+
+    def test_resolved_acceptance_rebinds_to_cleared_receipt_without_promoting_legacy_closure(self):
+        self.old.memory.append(HistoryEntry('retest', 'operation', None, 'Verified fixture retest', False,
+            details={'operation': {'name': 'lab_result', 'arguments': {}}, 'result':
+                OperationResult('Retest', (), False, data={'state': 'succeeded', 'passed': True}).payload()}))
+        self.mutate(self.old, 'research_task', task_id='debug', action='update', acceptance_checks=[
+            {'id': 'retest', 'operation': 'lab_result', 'result_path': '/data/passed', 'expected': True}])
+        self.mutate(self.old, 'research_task', task_id='debug', action='close', resolution='resolved',
+                    outcome='Fixture retest passed', acceptance_evidence={'retest': 'retest'})
+        with self.assertRaisesRegex(ValueError, 'cleared'):
+            self.freeze()
+        self.freeze(record_ids=['decision-1:operation', 'retest'])
+        self.install()
+        task = self.new.agent_memory.export()['tasks']['debug']
+        self.assertEqual(task['resolution'], 'resolved')
+        self.assertTrue(task['acceptance_evidence']['retest'].startswith('prior-'))
+        self.assertNotEqual(task['acceptance_receipt'],
+                            self.old.agent_memory.export()['tasks']['debug']['acceptance_receipt'])
+        self.new.agent_memory._verify_acceptance(self.new.agent_memory.export())
 
     def test_inherited_open_task_reviews_only_new_attempt_results(self):
         from rsisys.loops.decision_making.harness.agent_memory import SPECS

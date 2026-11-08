@@ -284,8 +284,16 @@ Unverified stdout is exploratory. Retain real optimizer, loss, weight,
 loading and evaluation evidence before claiming training or improvement.
 Use medical_package to copy a saved adapter/checkpoint plus inference entrypoint
 into a fresh bundle; medical_preflight validates layout without consuming an
-evaluation slot or loading a model. Optional templates/infer.py returns raw
-generations for host extraction and emits generation telemetry to stderr.
+evaluation slot or loading a model.
+Before medical_evaluate, run medical_smoke_test on the exact bundle and collect
+lab_result. It executes up to two public inputs in the formal isolation/runtime;
+missing imports and startup/inference failures must be fixed before evaluation.
+Any bundle or runtime change invalidates admission. Smoke success is execution
+evidence, not proof of correct weights or improved accuracy. It consumes real
+Lab resources/time, no closed slot. Include all imported helper modules in the
+bundle (for example candidate_adapter.py); structural preflight does not import them.
+Optional templates/infer.py returns raw generations for host extraction and
+emits generation telemetry to stderr.
 templates/train_lora.py and training_support.py are editable starting examples,
 not required algorithms. Public results expose output validity/distribution and
 inference/weight identities. Compare both end-to-end scores and changed axes;

@@ -76,8 +76,10 @@ def freeze_continuation(destination, *, identity, history, agent_state, record_i
     for ident in task_ids:
         task = deepcopy(state['tasks'][ident])
         if (not set(task['record_ids']) <= selected
+                or not set(task.get('acceptance_evidence', {}).values()) <= selected
                 or task['start_after'] is not None and task['start_after'] not in selected):
-            raise ValueError('Task pins/anchor require cleared source records')
+            raise ValueError('Task pins/anchor/acceptance require cleared source records')
+        cleared._verify_acceptance({'tasks': {ident: task}})
         tasks.append(task)
     artifacts = artifacts or {}
     if any(not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', name) for name in artifacts):
@@ -209,7 +211,7 @@ def install_continuation(path, *, identity, harness, workspace, receipt_path, re
         for task in payload['tasks']:
             mutate('research_task', {'task_id': task['task_id'], 'action': 'open', 'title': task['title'],
                 'record_ids': [prefix + ref for ref in task['record_ids']],
-                **{key: task[key] for key in ('next_step', 'acceptance_criteria') if key in task}})
+                **{key: task[key] for key in ('next_step', 'acceptance_criteria', 'acceptance_checks') if key in task}})
             anchor = prefix + task['start_after'] if task['start_after'] is not None else None
             if anchor is not None and anchor not in {row.record_id for row in rows}:
                 raise ValueError('Inherited task anchor is missing')
@@ -217,7 +219,10 @@ def install_continuation(path, *, identity, harness, workspace, receipt_path, re
             notes._state['revisions'][-1]['tasks'][task['task_id']]['start_after'] = anchor
             if task['status'] == 'closed':
                 mutate('research_task', {'task_id': task['task_id'], 'action': 'close',
-                    **({'outcome': task['outcome']} if 'outcome' in task else {})})
+                    'resolution': task.get('resolution', 'inconclusive'),
+                    'outcome': task.get('outcome') or 'Historical closure without verified acceptance.',
+                    **({'acceptance_evidence': {k: prefix + ref for k, ref in task['acceptance_evidence'].items()}}
+                       if task.get('resolution') == 'resolved' else {})})
         AgentMemory._validated(notes.export())
         changed = sorted(key for key in source['axes'].keys() | identity['axes'].keys()
                          if source['axes'].get(key) != identity['axes'].get(key))

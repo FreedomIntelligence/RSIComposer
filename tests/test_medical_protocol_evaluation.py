@@ -48,6 +48,9 @@ class MedicalProtocolTests(unittest.TestCase):
         self.backend = RetainedAllocatedProcessBackend(self.root / 'executor',
             {'CUDA_VISIBLE_DEVICES': '0', 'PYTHONPATH': str(repo / 'src') + ':' + str(repo)})
         self.options = {'python': sys.executable, 'evaluation_root': self.root / 'evaluations',
+            # Existing scoring/privacy tests exercise formal evaluation directly.
+            # Smoke admission itself is exercised separately below with the default enabled.
+            'require_smoke_test': getattr(self, 'require_smoke_test', False),
             'evaluation_groups': [{'benchmark_id': 'public-fixture', 'path': str(self.data),
                 'sha256': hashlib.sha256(self.data.read_bytes()).hexdigest()}],
             'base_model_paths': [self.base], 'campaign_id': 'campaign',
@@ -285,3 +288,101 @@ print(json.dumps(result))
             self.assertTrue(restored.execute(OperationCall('medical_evaluate', self.args)).data['replayed'])
             result = restored.execute(OperationCall('lab_result', {'job_id': ident}))
             self.assertEqual(result.data['fixed_evaluation']['metrics']['public-fixture']['accuracy'], 1.)
+
+
+class MedicalSmokeTests(unittest.TestCase):
+    """Real isolated subprocesses on symbolic public input; no medical/model claims."""
+    require_smoke_test = True
+    setUp = MedicalProtocolTests.setUp
+
+    def smoke(self, key='smoke-1'):
+        result = self.lab.execute(OperationCall('medical_smoke_test',
+            {'key': key, 'submission_path': 'candidate'}))
+        ident = result.data['job_id']
+        self.backend.wait(self.lab._jobs[ident][0])
+        return ident, self.lab.execute(OperationCall('lab_result', {'job_id': ident}))
+
+    def test_missing_import_fails_before_formal_acceptance_and_closed_slot(self):
+        (self.bundle / 'infer.py').write_text('import candidate_adapter\n' + INFERENCE)
+        ident, result = self.smoke()
+        self.assertNotIn('smoke_test', result.data)
+        self.assertIn('ModuleNotFoundError', self.backend.poll(self.lab._jobs[ident][0]).stderr)
+        with self.assertRaises(LabToolError) as error:
+            self.lab.execute(OperationCall('medical_evaluate', self.args))
+        self.assertEqual(error.exception.data['reason'], 'candidate_smoke_required')
+        self.assertFalse(self.options['ledger_path'].exists())
+        # Copying the real dependency into the bundle fixes the observed failure.
+        (self.bundle / 'candidate_adapter.py').write_text('# symbolic bundled dependency\n')
+        _, passed = self.smoke('smoke-fixed')
+        self.assertTrue(passed.data['smoke_test']['verified'])
+        self.assertNotIn('fixed_evaluation', passed.data)
+        self.assertNotIn('metrics', passed.data['smoke_test'])
+        job = self.lab.execute(OperationCall('medical_evaluate', self.args)).data['job_id']
+        self.backend.wait(self.lab._jobs[job][0])
+        scored = self.lab.execute(OperationCall('lab_result', {'job_id': job}))
+        self.assertTrue(scored.data['fixed_evaluation']['verified'])
+
+    def test_smoke_is_not_a_score_or_proof_of_model_loading_and_is_idempotent(self):
+        ident, result = self.smoke()
+        receipt = result.data['smoke_test']
+        self.assertTrue(receipt['inference_completed'])
+        self.assertFalse(receipt['model_load_verified'])
+        self.assertFalse(receipt['scored'])
+        self.assertFalse(receipt['closed_slot_consumed'])
+        self.assertFalse(self.options['ledger_path'].exists())
+        with patch.object(self.backend, 'exec', side_effect=AssertionError('never replay')):
+            same = self.lab.execute(OperationCall('medical_smoke_test',
+                {'key': 'smoke-1', 'submission_path': 'candidate'}))
+        self.assertEqual(same.data['job_id'], ident)
+        self.assertTrue(same.data['replayed'])
+
+    def test_changed_bundle_invalidates_pass_and_does_not_reserve_evaluation(self):
+        self.smoke()
+        (self.bundle / 'infer.py').write_text(INFERENCE + '\n# changed candidate\n')
+        with self.assertRaises(LabToolError) as error:
+            self.lab.execute(OperationCall('medical_evaluate', self.args))
+        self.assertEqual(error.exception.data['reason'], 'candidate_smoke_required')
+        self.assertFalse(self.options['ledger_path'].exists())
+        self.smoke('new-bundle')
+        submitted = self.lab.execute(OperationCall('medical_evaluate', self.args))
+        self.assertEqual(submitted.data['state'], 'submitted')
+
+    def test_empty_or_wrong_prediction_set_cannot_satisfy_smoke(self):
+        for index, predictions in enumerate(([], [{'benchmark_id': 'wrong', 'id': '1', 'text': 'J'}])):
+            (self.bundle / 'infer.py').write_text('import json,sys\njson.load(sys.stdin)\n'
+                f'print(json.dumps({{"predictions":{predictions!r}}}))\n')
+            _, result = self.smoke('bad-' + str(index))
+            self.assertNotIn('smoke_test', result.data)
+        self.assertFalse(self.options['ledger_path'].exists())
+
+    def test_smoke_success_recovers_and_allows_admission_without_reexecution(self):
+        ident, _ = self.smoke()
+        def port(lab):
+            return LocalLabState(lab, capture_extra=lambda: deepcopy(lab._evaluations),
+                restore_extra=lambda v: setattr(lab, '_evaluations', v), configuration=lab.formal_configuration)
+        state = port(self.lab).capture()
+        self.lab.close()
+        backend = RetainedAllocatedProcessBackend(self.root / 'executor', self.backend.environment)
+        restored = host.ProtocolMedicalLab(backend, self.lab.artifacts, defer_session=True, **self.options)
+        self.addCleanup(restored.close)
+        with patch.object(backend, 'exec', side_effect=AssertionError('no restart')):
+            port(restored).restore(state)
+            self.assertTrue(restored.execute(OperationCall('medical_smoke_test',
+                {'key': 'smoke-1', 'submission_path': 'candidate'})).data['replayed'])
+            binding = restored._evaluations[ident]
+            self.assertTrue(restored._smoke_passed(binding['config']['submission']))
+
+    def test_deadline_closing_during_smoke_freeze_starts_nothing(self):
+        gate = [True]
+        original = host.frozen_bundle
+        def freeze(*args):
+            result = original(*args)
+            gate[0] = False
+            return result
+        self.lab.admission_open = lambda: gate[0]
+        with patch.object(host, 'frozen_bundle', freeze), self.assertRaises(HostAdmissionStop):
+            self.lab.execute(OperationCall('medical_smoke_test',
+                {'key': 'late', 'submission_path': 'candidate'}))
+        self.assertEqual(self.lab._jobs, {})
+        self.assertFalse(self.options['ledger_path'].exists())
+        self.assertEqual(list(self.lab.evaluation_root.iterdir()), [])

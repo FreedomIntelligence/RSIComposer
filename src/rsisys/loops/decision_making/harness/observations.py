@@ -2,7 +2,7 @@
 
 HOUSEKEEPING = frozenset(('research_archive', 'research_read', 'research_patch',
     'research_task', 'research_task_read', 'memory_read', 'memory_search', 'memory_write', 'memory_delete',
-    'reflect_begin', 'reflect_report', 'memory_review', 'system_status'))
+    'reflect_begin', 'reflect_read', 'reflect_report', 'memory_review', 'system_status'))
 
 
 def native_observation(row):

@@ -13,7 +13,7 @@ from pathlib import Path
 import time
 
 from rsisys.loops.contracts.coordination import OperationResult
-from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.runtime.files import atomic_write, json_bytes
@@ -70,7 +70,7 @@ class PeriodicReflection:
     def configuration(self):
         return {'interval_seconds': self.interval, 'path': str(self.path),
                 'scope': ['meta.prompts', 'meta.harness'], 'meta_weight_updates': False,
-                'scheduling': 'durable_timed_review/v4',
+                'scheduling': 'durable_behavior_review/v5',
                 'max_review_seconds': self.max_review_seconds, 'deadline_epoch': self.deadline_epoch,
                 'max_review_operations_per_interval': None}
 
@@ -141,7 +141,9 @@ class PeriodicReflection:
             operation = row.details.get('operation') or {}
             result = row.details.get('result', {})
             args, data = operation.get('arguments', {}), result.get('data', {})
-            if (operation.get('name') != 'research_archive' or result.get('status') != 'completed'
+            if operation.get('name') == 'reflect_read':
+                args = data.get('archive_request', {})
+            if (operation.get('name') not in ('research_archive', 'reflect_read') or result.get('status') != 'completed'
                     or args.get('collection') != 'history' or args.get('evidence_path') not in (None, '')):
                 continue
             for item in data.get('items', []):
@@ -174,7 +176,7 @@ class PeriodicReflection:
                 continue
             operation = original.details.get('operation') or {}
             decision_id = original.details.get('decision_id')
-            if (operation.get('name') not in ('research_archive', 'reflect_report')
+            if (operation.get('name') not in ('research_archive', 'reflect_read', 'reflect_report')
                     and decision_id in self.harness.state.decision_records):
                 evidence[decision_id] = {'record_id': ident, 'sha256': hashlib.sha256(raw.encode()).hexdigest()}
         required = self._required_ids()
@@ -214,7 +216,7 @@ class PeriodicReflection:
         active = self.state.get('active_review')
         if status['timed_out']:
             return replace(context, operations=tuple(spec for spec in context.operations
-                if spec.name not in ('reflect_begin', 'reflect_report')),
+                if spec.name not in ('reflect_begin', 'reflect_read', 'reflect_report')),
                 research_agenda={**context.research_agenda, 'reflection_attention': {
                     'status': 'incomplete_time_limit', 'window_id': status['window_id'],
                     'deadline_at': active['deadline_at'], 'retry_at': status['retry_at'],
@@ -255,7 +257,11 @@ class PeriodicReflection:
             'required_decision_ids': self._required_ids(),
             'required_raw_record_ids': status['required_raw_record_ids'],
             'evidence_progress': progress,
+            'review_scope': ['decision_policy', 'tool_use', 'memory_use', 'task_acceptance',
+                             'meta.prompts', 'meta.harness'],
+            'behavioral_review_fields': ['failure_pattern', 'proposed_change', 'validation_plan', 'no_change_reason'],
             'next_read': progress['next_reads'][0] if progress['next_reads'] else None,
+            'next_page_operation': {'name': 'reflect_read', 'arguments': {'window_id': status['window_id']}},
             'report_arguments': {'window_id': status['window_id'],
                 'decision_ids': progress['required_decision_ids'] or list(evidence)[-1:],
                 'system_version': self.registry.current.version},
@@ -265,11 +271,19 @@ class PeriodicReflection:
             'operations_remaining': None,
             'ordinary_research_resumes_after_report': True}}
         return replace(context, objective=prefix + ' Read complete raw operation history using research_archive, '
-            'with evidence_path=null, following the supplied next_read and next_cursor until every chunk is read. '
-            'A /details/result read is not a full operation record. Analyze the real trajectory and failures; '
+            'Prefer reflect_read(window_id) to read the next missing raw page without managing cursors; '
+            'it advances only through pages actually returned in history. Alternatively use research_archive '
+            'with evidence_path=null and follow next_read/next_cursor until every chunk is read. '
+            'A /details/result read is not a full operation record. Improve your research behavior: repeated '
+            'path guessing, pagination restarts, ignored memory and premature task closure are legitimate '
+            'meta.prompts/meta.harness improvement targets even when tools are correct. '
+            'Analyze the real trajectory and failures; '
             'optionally change meta.prompts/meta.harness, then submit reflect_report citing read decision IDs. '
             'Cite the required recent decision and latest failure, not just early preparation. '
-            'Use distinct decision IDs. A reasoned no_change is valid. '
+            'Use distinct decision IDs. Supply a behavioral_review with the failure pattern, concrete proposed '
+            'change and a falsifiable validation plan (same frozen task, repeats/completion/calls/time). '
+            'For no_change explain why no change is warranted or why a specific proposal is deferred; '
+            'correctly functioning tools alone do not justify no_change. Do not claim improvement without validation. '
             'Existing Lab jobs continue independently. Research objective after this review: ' + context.objective,
             operations=tuple(operations), directive_modes=(), research_agenda=agenda)
 
@@ -309,7 +323,7 @@ class PeriodicReflection:
                     if row.details['decision_id'] in required] if self.harness is not None else [],
                 'archive': {'operation': 'research_archive', 'collection': 'history', 'limit': 8},
                 'raw_feedback_record_ids': [row.record_id for row in self._history() if row.kind == 'operation'
-                    and (row.details.get('operation') or {}).get('name') not in ('research_archive', 'reflect_report')][-8:],
+                    and (row.details.get('operation') or {}).get('name') not in ('research_archive', 'reflect_read', 'reflect_report')][-8:],
                 'instruction': ('Review existing decision trajectories and raw failures using research_archive. '
                     'Prioritize this review when due. Build/register/activate a meta.prompts or meta.harness '
                     'candidate only when evidence warrants it, then call reflect_report. '
@@ -323,17 +337,39 @@ class PeriodicReflection:
         return (OperationSpec('reflect_begin', 'Start or resume a durable reflection session. No operation-count cap; '
             'the host fixes a wall deadline and a snapshot of the unreviewed evidence. Retries do not reset time.',
             {'type': 'object', 'properties': {'window_id': text}, 'required': ['window_id'],
-             'additionalProperties': False}), OperationSpec('reflect_report',
+             'additionalProperties': False}), OperationSpec('reflect_read',
+            'Read the next missing raw page of the active reflection snapshot. Repeated calls advance '
+            'using verified returned history, not a model-maintained cursor. No inference, summary or mutation.',
+            {'type': 'object', 'properties': {'window_id': text}, 'required': ['window_id'],
+             'additionalProperties': False}, read_only=True), OperationSpec('reflect_report',
             'Finish a scheduled trajectory review. Cite existing decision IDs; report no_change or an '
             'actually activated harness system version. This is a self-report, not proof of improvement.',
             {'type': 'object', 'properties': {'window_id': text, 'outcome': {'enum': ['no_change', 'changed']},
-                'analysis': text, 'decision_ids': {'type': 'array', 'items': text, 'minItems': 1,
+                'analysis': text, 'behavioral_review': {'type': 'object', 'properties': {
+                    k: {'type': 'string', 'maxLength': 2000} for k in
+                    ('failure_pattern', 'proposed_change', 'validation_plan', 'no_change_reason')},
+                    'required': ['failure_pattern', 'proposed_change', 'validation_plan', 'no_change_reason'],
+                    'additionalProperties': False},
+                'decision_ids': {'type': 'array', 'items': text, 'minItems': 1,
                     'uniqueItems': True}, 'system_version': text},
-             'required': ['window_id', 'outcome', 'analysis', 'decision_ids', 'system_version'],
+             'required': ['window_id', 'outcome', 'analysis', 'behavioral_review', 'decision_ids', 'system_version'],
              'additionalProperties': False}),)
 
+    def read_next(self, args, reader):
+        status = self.snapshot()
+        if (args != {'window_id': status['window_id']} or not self.state.get('active_review')
+                or status['timed_out'] or not status['due']):
+            raise LabToolError('Read pages only within the active reflection window')
+        progress = self._review_progress()
+        if not progress['next_reads']:
+            return OperationResult('Required reflection records have been read', (), False,
+                data={'report_ready': True, 'required_decision_ids': progress['required_decision_ids']})
+        request = progress['next_reads'][0]['arguments']
+        result = reader(OperationCall('research_archive', request))
+        return replace(result, data={**(result.data or {}), 'archive_request': deepcopy(request)})
+
     def report(self, args):
-        required = {'window_id', 'outcome', 'analysis', 'decision_ids', 'system_version'}
+        required = {'window_id', 'outcome', 'analysis', 'behavioral_review', 'decision_ids', 'system_version'}
         if not isinstance(args, dict) or set(args) != required:
             raise LabToolError('Invalid reflection report fields')
         # Exact replay after a confirmed receipt is harmless; a changed report
@@ -374,6 +410,14 @@ class PeriodicReflection:
                       'suggested_decision_ids': progress['required_decision_ids']})
         if not isinstance(args['analysis'], str) or not args['analysis'].strip() or len(args['analysis']) > 16000:
             raise LabToolError('Reflection analysis must be nonempty and at most 16000 characters')
+        behavior = args['behavioral_review']
+        fields = {'failure_pattern', 'proposed_change', 'validation_plan', 'no_change_reason'}
+        if (not isinstance(behavior, dict) or set(behavior) != fields
+                or any(not isinstance(v, str) or len(v) > 2000 for v in behavior.values())
+                or any(not behavior[k].strip() for k in fields - {'no_change_reason'})
+                or args['outcome'] == 'no_change' and not behavior['no_change_reason'].strip()):
+            raise LabToolError('Describe the behavioral failure, proposed change and validation plan; '
+                               'no_change also requires an explicit justification or deferral')
         current = self.registry.current
         if args['system_version'] != current.version or args['outcome'] not in ('no_change', 'changed'):
             raise LabToolError('Report the current actual system version and a valid outcome')
@@ -432,4 +476,6 @@ the next decision gets the ordinary context. No synthetic agent action is made.
                 ExecutionStatus.CANCELLED, 'reflection_time_limit', data={
                     'deadline_at': active['deadline_at'], 'executed': False,
                     'improvement_verified': False, 'next_action': 'continue_with_fresh_host_context'})
+        if call.name == 'reflect_read':
+            return reflection.read_next(call.arguments, self.base.execute)
         return self.base.execute(call)
