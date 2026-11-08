@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1240" viewBox="0 0 1800 1240" role="img" aria-labelledby="title desc">
-<title id="title">RSISys：单 meta-agent 代码映射</title>
-<desc id="desc">meta-agent 的 agent_memory.py 提供显式记忆和任务窗口。Lab 提供执行与正式评测。反馈设施保留归档与显式兼容处理器；默认没有独立整理 agent。</desc>
+<title id="title">RSISys：决策器与 Labs 代码映射</title>
+<desc id="desc">Registry 注册决策器与 Labs；meta-agent 的 agent_memory.py 提供可选显式记忆和任务窗口。反馈设施保留归档与显式兼容处理器；默认没有独立整理 agent。</desc>
 <defs>
 <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#8493A8"/></marker>
 <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8.7" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#2365CB"/></marker>
@@ -10,11 +10,11 @@
 </defs>
 <rect width="1800" height="1240" fill="#F6F8FC"/>
 <text x="72" y="78" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="40" font-weight="750" fill="#14243B" text-anchor="start">RSISys / 模块与代码映射</text>
-<text x="72" y="121" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">默认 ResearchAssembly() / single_meta()；旧 Python 类型与持久化键保持兼容。</text>
+<text x="72" y="121" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="23" font-weight="400" fill="#52637B" text-anchor="start">库外接入使用 rsisys.api；默认执行适配复用既有端点、权限与回执。</text>
 <rect x="1538" y="50" width="190" height="34" rx="17" fill="#E8EEF8" stroke="none" stroke-width="0"/>
-<text x="1633.0" y="74" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#2365CB" text-anchor="middle">2026-11-06</text>
+<text x="1633.0" y="74" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="18" font-weight="600" fill="#2365CB" text-anchor="middle">2026-11-08</text>
 <rect x="72" y="220" width="480" height="520" rx="18" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.5"/>
-<text x="96" y="270" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">唯一 meta-agent</text>
+<text x="96" y="270" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#2365CB" text-anchor="start">RSI 决策器</text>
 <text x="96" y="307" font-family="&#x27;SFMono-Regular&#x27;, &#x27;Menlo&#x27;, &#x27;Consolas&#x27;, &#x27;PingFang SC&#x27;, monospace" font-size="21" font-weight="400" fill="#52637B" text-anchor="start">loops/decision_making/</text>
 <g id="decision">
 <rect x="96" y="345" width="432" height="160" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8"/>
@@ -24,7 +24,7 @@
 </g>
 <g id="memory">
 <rect x="96" y="530" width="432" height="160" rx="16" fill="#FFFFFF" stroke="#2365CB" stroke-width="1.8"/>
-<text x="120" y="570" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#2365CB" text-anchor="start">显式记忆与任务窗口</text>
+<text x="120" y="570" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="24" font-weight="650" fill="#2365CB" text-anchor="start">meta-agent 可选记忆</text>
 <text x="120" y="604" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">harness/agent_memory.py</text>
 <text x="120" y="633" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">memory_* · research_task</text>
 <text x="120" y="662" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">AgentMemoryState</text>
@@ -64,10 +64,10 @@
 <g id="assembly">
 <rect x="72" y="810" width="800" height="190" rx="16" fill="#EAF0F6" stroke="#8493A8" stroke-width="1.8"/>
 <text x="96" y="850" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="28" font-weight="650" fill="#14243B" text-anchor="start">Host / 装配、准入与生命周期</text>
-<text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">application.py · assembly.py · methods.py</text>
+<text x="96" y="884" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">api.py · registry.py · assembly.py · methods.py</text>
 <text x="96" y="913" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">components.py：内部组合可选；整体方法也可接入</text>
 <text x="96" y="942" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/runner.py · run_policy.py · recovery.py</text>
-<text x="96" y="971" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">runtime/component_state.py：必须注册 memory 状态</text>
+<text x="96" y="971" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">component_state.py：恢复须显式注册组件状态</text>
 </g>
 <g id="recovery">
 <rect x="912" y="810" width="816" height="190" rx="16" fill="#EFF5FF" stroke="#2365CB" stroke-width="1.8"/>
@@ -80,5 +80,5 @@
 <rect x="72" y="1070" width="1656" height="100" rx="16" fill="#FFFFFF" stroke="#8493A8" stroke-width="1.8"/>
 <text x="96" y="1110" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="27" font-weight="650" fill="#14243B" text-anchor="start">面向人的看板：src/rsimonitor/ 只读运行投影，不承担模型反馈。</text>
 </g>
-<text x="72" y="1210" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">当前职责以 docs/architecture.md 为准；旧整理侧语义职责已合入唯一 meta-agent。</text>
+<text x="72" y="1210" font-family="&#x27;PingFang SC&#x27;, &#x27;Noto Sans CJK SC&#x27;, &#x27;Microsoft YaHei&#x27;, sans-serif" font-size="20" font-weight="400" fill="#52637B" text-anchor="start">顶层模块是 RSI 决策器与 Labs；meta-agent 是决策器的一种实现。</text>
 </svg>

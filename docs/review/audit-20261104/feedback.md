@@ -14,7 +14,7 @@
 - `src/rsisys/loops/decision_making/harness/learning_harness.py`
 - `src/rsisys/adapters/langchain_model.py`
 
-新增回归：`tests/test_audit_feedback_lifecycle.py`，25 项测试方法，包含额外参数化负例。新增本文档。`service.py`、`components.py`、`knowledge.py`、`evidence.py`、`model_gateway.py`、`research_state.py`、导出和两份组件 prompt 已审查，但本轮没有修改。父任务的 context、engine、monitor、领域收尾修复不在本组修改内。
+新增回归：`tests/regressions/test_audit_feedback_lifecycle.py`，25 项测试方法，包含额外参数化负例。新增本文档。`service.py`、`components.py`、`knowledge.py`、`evidence.py`、`model_gateway.py`、`research_state.py`、导出和两份组件 prompt 已审查，但本轮没有修改。父任务的 context、engine、monitor、领域收尾修复不在本组修改内。
 
 ## 已确认并修复的问题
 
@@ -71,15 +71,15 @@ F02 的结果校验不会证明插件报告的 `charged_calls` 真实；它限�
 
 ```sh
 PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest \
-  tests.test_audit_feedback_lifecycle \
-  tests.test_feedback_candidate_evidence tests.test_feedback_components \
-  tests.test_feedback_decoupling tests.test_feedback_integration \
-  tests.test_feedback_knowledge tests.test_feedback_learning_evidence \
-  tests.test_feedback_learning_integration tests.test_feedback_pipeline \
-  tests.test_feedback_projection tests.test_feedback_required_outputs \
-  tests.test_attempt_learning tests.test_langmem_feedback \
-  tests.test_research_working_state tests.test_research_evidence_projection \
-  tests.test_resident_evidence_window tests.test_tool_calling_transport
+  tests.regressions.test_audit_feedback_lifecycle \
+  tests.feedback.test_feedback_candidate_evidence tests.feedback.test_feedback_components \
+  tests.feedback.test_feedback_decoupling tests.feedback.test_feedback_integration \
+  tests.feedback.test_feedback_knowledge tests.feedback.test_feedback_learning_evidence \
+  tests.feedback.test_feedback_learning_integration tests.feedback.test_feedback_pipeline \
+  tests.feedback.test_feedback_projection tests.feedback.test_feedback_required_outputs \
+  tests.feedback.test_attempt_learning tests.memory.test_langmem_feedback \
+  tests.decision.test_research_working_state tests.decision.test_research_evidence_projection \
+  tests.decision.test_resident_evidence_window tests.decision.test_tool_calling_transport
 ```
 
 最终结果：**171 tests，OK，无失败、无跳过**；其中新增审计文件 **25 tests，OK**。非法内容的 Pydantic 诊断和上游 `Send` 弃用警告是预期测试输出，不代表外部模型调用。相关 tracked 文件 `git diff --check` 通过；新增文件另做空白检查。

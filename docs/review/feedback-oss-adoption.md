@@ -77,7 +77,7 @@ SQLite 此配置**按最近更新检索，不是语义向量检索**，没有暗
 | 业务约束调整前，9 次生成 | 纠错改分数却仍引用旧评测，被校验拦截；历史整理还把 incumbent 写成 initial baseline |
 | 最新配置，8 次生成 | 4 个反馈 job 完成；重复反馈不新增 ID，纠错引用新评测，未评测候选没有借用其他候选分数；仍有下述语义缺口 |
 
-[12 项集成回归](../../tests/test_langmem_feedback.py) 使用真实上游库和 SQLite、fixture 推理，
+[12 项集成回归](../../tests/memory/test_langmem_feedback.py) 使用真实上游库和 SQLite、fixture 推理，
 与真实 endpoint 调用分开。覆盖主动触发、原生 PatchDoc、内部修复计费、限额、身份、完整请求
 准入、默认 harness 消费、active 版本跟随、未改动临时记录兼容、持久化、提交后崩溃恢复、
 未知调用不重放、事务回滚、原文保留及视图上限。

@@ -516,7 +516,10 @@ def dsh_decision_factory(config: DSHConfig, *, on_notification=None):
         harness = DeepSeekDecisionHarness(
             config, previous.tools, context.experience, learner=previous.learner,
             directives=loop.action_space.directives,
-            allowed_actions=tuple(spec.name for spec in exploration.action_space.describe()),
+            # A Lab-only assembly has no legacy exploration action space.
+            # Its callable operations already come from previous.tools.
+            allowed_actions=(() if context.lab_execution is not None else
+                             tuple(spec.name for spec in exploration.action_space.describe())),
             memory=previous.memory, memory_limit=context.memory_limit,
             research_agenda=previous.research_agenda, context_compactor=previous.context_compactor,
             experience_limit=context.experience_limit,

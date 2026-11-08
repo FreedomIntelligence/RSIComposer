@@ -75,7 +75,7 @@
 
 ```sh
 PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest discover -s tests -v
-node --test tests/monitor_frontend/*.test.js
+node --test tests/monitor/frontend/*.test.js
 git diff --check
 ```
 

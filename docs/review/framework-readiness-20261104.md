@@ -34,9 +34,9 @@ Python API 的 step budget 耗尽仍返回 `needs_input`，由持有装配的调
 | --- | --- |
 | 默认 demo | 本地模拟双 loop 跑通 |
 | CLI run → inspect → resume | local_process 运行成功；快照检查、在新目录恢复成功；保留同一 run_id，Experience 从 3 条延续到 6 条 |
-| `examples/open_lab.py` | 实际 CPU 子进程完成写代码、执行、结果读取与收尾；原生输出 value=5；没有模型推理或训练 |
-| `examples/feedback_pipeline.py` | 模拟回执、轨迹归档与提案引用闭环；没有验证 harness 实际应用 |
-| `examples/decision_policy_lab.py` | 轨迹到数据任务再到模拟训练候选闭环；没有真实优化权重或切换 live policy |
+| `examples/components/open_lab.py` | 实际 CPU 子进程完成写代码、执行、结果读取与收尾；原生输出 value=5；没有模型推理或训练 |
+| `examples/components/feedback_pipeline.py` | 模拟回执、轨迹归档与提案引用闭环；没有验证 harness 实际应用 |
+| `examples/components/decision_policy_lab.py` | 轨迹到数据任务再到模拟训练候选闭环；没有真实优化权重或切换 live policy |
 | 医疗 CLI | 使用本地 HTTP fixture 验证正常完成、步数耗尽、运行异常、结果持久化异常、关闭异常及关闭后零推理 |
 | 默认 feedback 连续整理 | 120 条不同原生事件；每 20 条检查实际 Decision 请求中的 memory 投影；最早原始输出仍能完整分页读取 |
 | 完整回归 | 命令、通过/跳过数、耗时与日志 SHA 见 `repros/framework-readiness-validation.json` |

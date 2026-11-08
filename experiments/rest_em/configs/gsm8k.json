@@ -1,0 +1,38 @@
+{
+  "objective": "Two-round ReST^EM pilot with Qwen2.5-7B Base and GSM8K",
+  "data_dir": "../../../runs/rest-em-gsm8k",
+  "max_decision_steps": 12,
+  "framework": {
+    "controller": {
+      "name": "rest_em",
+      "config": {
+        "initial_model": "models/Qwen2.5-7B-d1497293",
+        "train_data": "runs/gsm8k-data/train.jsonl",
+        "eval_data": "runs/gsm8k-data/dev.jsonl",
+        "iterations": 2,
+        "samples_per_prompt": 8,
+        "max_accepted_per_prompt": 4
+      }
+    },
+    "labs": {
+      "math": {
+        "name": "math",
+        "config": {
+          "engine": "transformers",
+          "model_kind": "causal_lm",
+          "prompt_format": "completion",
+          "few_shot_data": "runs/gsm8k-data/few-shot.jsonl",
+          "device": "cuda",
+          "epochs": 1,
+          "learning_rate": 2e-05,
+          "max_new_tokens": 1024,
+          "max_length": 4096,
+          "seed": 73,
+          "generation_batch_size": 32,
+          "train_batch_size": 2,
+          "gradient_accumulation_steps": 4
+        }
+      }
+    }
+  }
+}

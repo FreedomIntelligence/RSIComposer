@@ -61,8 +61,8 @@ workspace 根打开错误、权限拒绝、空间不足及其他存储异常没�
 
 ## 回归与证据
 
-[新增回归](../../tests/test_execution_contract_fixes.py) 共 14 项，覆盖真实 owned CPU 程序、
-故障注入和实际 ModelDecisionPolicy 请求；[底层生命周期测试](../../tests/test_local_process_lifecycle.py)
+[新增回归](../../tests/regressions/test_execution_contract_fixes.py) 共 14 项，覆盖真实 owned CPU 程序、
+故障注入和实际 ModelDecisionPolicy 请求；[底层生命周期测试](../../tests/runtime/test_local_process_lifecycle.py)
 补上 watcher / reader 故障来源断言。模型响应为确定性 fixture，没有真实模型推理或训练。
 
 - 定向 9 模块 122 项通过，涵盖新反例、默认装配、权限、重复交付、操作记录和 run policy。

@@ -76,8 +76,8 @@ factory 仅开放已安装能力，可通过 ExplorationLab 暴露为 Lab 端口
 
 ```bash
 PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest discover -s tests -q
-PYTHONPATH=src .local/langmem-validation/bin/python examples/feedback_pipeline.py
-PYTHONPATH=src .local/langmem-validation/bin/python examples/decision_policy_lab.py
+PYTHONPATH=src .local/langmem-validation/bin/python examples/components/feedback_pipeline.py
+PYTHONPATH=src .local/langmem-validation/bin/python examples/components/decision_policy_lab.py
 ```
 
 实际整仓运行使用本地 validate.py 包装 unittest discover，并保存开始/结束时间、逐项 skip、
@@ -86,8 +86,8 @@ source manifest 和输出日志。可提交的 [验证摘要](repros/feedback-la
 
 新增 22 项测试：
 
-- [test_feedback_lab_boundaries.py](../../tests/test_feedback_lab_boundaries.py)：慢整理不挡真实结果、查询只归档、固定来源、模型提案/原生工具、正式 decision 引用及非法产物拒绝。
-- [test_improvement_lab.py](../../tests/test_improvement_lab.py)：独立构建与训练任务、端到端归档来源、幂等键、取消、缺失能力、来源/recipe/base/角色校验及异常轮询身份。
+- [test_feedback_lab_boundaries.py](../../tests/feedback/test_feedback_lab_boundaries.py)：慢整理不挡真实结果、查询只归档、固定来源、模型提案/原生工具、正式 decision 引用及非法产物拒绝。
+- [test_improvement_lab.py](../../tests/runtime/test_improvement_lab.py)：独立构建与训练任务、端到端归档来源、幂等键、取消、缺失能力、来源/recipe/base/角色校验及异常轮询身份。
 
 本轮首次整仓运行暴露 2 failures / 1 error，均已修正后重新整仓通过：
 

@@ -31,7 +31,7 @@ OperationResult，执行回执保留其证据后仍抛给 host。后者不要求
 
 [decision.py](decision.py) 定义公开的 `DecisionInput`、`DecisionPolicy`、`Decision`、
 `OperationSpec` 和 `OperationCall`。最小策略只有 `decide(input) -> Decision`。
-输入是目标文本、context 文本、当前能力描述和可选 JSON 引用；能力描述用于发现，
+输入是目标文本、最近结构化 `feedback` / `last_operation`、context 文本、当前能力描述和可选 JSON 引用；能力描述用于发现，
 实际权限、参数、身份和执行准入仍由宿主校验。context 与引用内部格式由适配器和实现选择，
 不要求策略维护默认 `Memory`、`HistoryEntry` 或 `DecisionState`。
 

@@ -26,7 +26,7 @@ source、数据、配置、journal 和外部效果；代码或数据变更后不
 操作者指定的 Lab 产物目录。它不读取封闭数据、私有 gateway 日志或模型请求日志。
 
 ```sh
-PYTHONPATH=src:. python -m examples.medical.continuation \
+PYTHONPATH=src:. python -m experiments.medical.continuation \
   --root /operator/stopped-attempt \
   --destination /operator/campaign/handoff-01 \
   --artifact trained-adapter=baseline/lora_ckpt \

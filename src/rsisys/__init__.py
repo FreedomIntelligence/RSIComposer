@@ -1,1 +1,1 @@
-"""RSISys: modular meta-agent and Lab interfaces, with explicitly simulated demos."""
+"""RSISys: pluggable RSI controllers and Labs. External integrations use rsisys.api."""

@@ -124,8 +124,8 @@ assemble_research(
 
 因此本次补齐的是 **M01 的公共契约和接线**，没有把后续执行、上下文和训练模块提前认定为完成。
 
-验证用例：[test_m01_contract_boundaries.py](../../tests/test_m01_contract_boundaries.py)。
-用户这次两点调整的回归用例：[test_feedback_required_outputs.py](../../tests/test_feedback_required_outputs.py)。
-组件启用/关闭/替换与发布边界：[test_feedback_components.py](../../tests/test_feedback_components.py)。
+验证用例：[test_m01_contract_boundaries.py](../../tests/regressions/test_m01_contract_boundaries.py)。
+用户这次两点调整的回归用例：[test_feedback_required_outputs.py](../../tests/feedback/test_feedback_required_outputs.py)。
+组件启用/关闭/替换与发布边界：[test_feedback_components.py](../../tests/feedback/test_feedback_components.py)。
 
 下一步逐句检查：[当前实现、完整 prompt、输入输出及已知插拔缺口](feedback-implementation.md)。

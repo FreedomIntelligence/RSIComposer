@@ -1,0 +1,27 @@
+{
+  "objective": "Verify ReST^EM protocol with simulated numeric math data; no training claim",
+  "data_dir": "../../runs/rest-em-quickstart",
+  "max_decision_steps": 12,
+  "framework": {
+    "controller": {
+      "name": "rest_em",
+      "config": {
+        "initial_model": "fixture-initial",
+        "train_data": "train.jsonl",
+        "eval_data": "eval.jsonl",
+        "iterations": 2,
+        "samples_per_prompt": 4,
+        "max_accepted_per_prompt": 1
+      }
+    },
+    "labs": {
+      "math": {
+        "name": "math",
+        "config": {
+          "engine": "fixture",
+          "data_root": "examples/quickstart/data"
+        }
+      }
+    }
+  }
+}

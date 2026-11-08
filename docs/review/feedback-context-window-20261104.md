@@ -119,7 +119,7 @@ host 的实时状态与证据保护元数据继续在 research_state 等字段�
 
 ## 验证
 
-[16 项专门测试](../../tests/test_feedback_context_window.py) 覆盖最小组件/函数/SDK 接入、
+[16 项专门测试](../../tests/feedback/test_feedback_context_window.py) 覆盖最小组件/函数/SDK 接入、
 实际请求、真实结果先交付、当前视图替换、原生输入与副本隔离、归档查询排除、通知失败与恢复、
 无旧 publish 的外部 harness、关闭后不派发及完整请求容量计量。
 已有 Journal、LangMem、主循环、工作状态与前缀策略回归同步检查。

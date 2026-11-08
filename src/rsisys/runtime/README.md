@@ -290,6 +290,6 @@ review 定时器和取消意图，终态反馈或 ack 丢失只重试交付，�
 其他实验可继续。原始 Directive 不改写，更新是单独的 backend 控制回执。
 
 可运行的 mock 示例：
-`PYTHONPATH=src python3.12 examples/parallel_experiments.py`。
+`PYTHONPATH=src python3.12 examples/components/parallel_experiments.py`。
 它展示两个实验在途、模型同款 capability 调用路径上的更新、乱序反馈和评测比较，
 不声称真实 GPU 并行训练或真实模型自主决策。

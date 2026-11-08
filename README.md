@@ -11,9 +11,15 @@ Current working source follows the [single-checkout version policy](docs/version
 The programmable medical Lab accepts candidate weights **and inference scripts**
 through the [public/closed evaluation protocol](docs/evaluation-protocol.md).
 
-可客制化的 RSI（递归自改进）框架。**一个 meta-agent** 在 **Lab** 中选择并执行研究动作，直接读取原始反馈、调试并管理自己的记忆。Harness 内的 **memory 模块**负责存储与检索；默认不另设整理或总结 agent。Host 定义目标、能力、权限与预算；整套 RSI 方法可以整体接入，也可组合模型、harness、memory、训练和推理后端。
+可客制化的 RSI（递归自改进）框架，顶层分为 **RSI 决策器与 Labs**：
+**RSI 决策器 → Lab 执行 → 反馈 → RSI 决策器**。
+决策器可以是固定算法、搜索策略、LLM meta-agent 或混合实现；Labs 负责领域执行。
+Host 定义目标、能力、权限与预算。用户通过独立 JSON 选择已注册决策器与 Lab，或用库外 Python 文件注册符合接口的实现。
+涉及新的调度、反馈或恢复语义时，需扩展底层库；注册层负责装配已有能力。
+公开入口为 `rsisys.api`，完整接入见[注册与配置指南](docs/registration.md)。
 
-- **一个 meta-agent**：行动选择、反馈解释、上下文管理和记忆组织属于同一工作流。Lab 内部可运行 agent 或直接执行程序。
+- **可替换的 RSI 决策器**：内置 `rrsi` harness 搜索、`rest_em` 算法、`single_loop` 固定迭代模板与 `meta_agent` 自主研究实现；也可注册自己的策略。固定算法不需要模型身份、语义记忆或反思。
+- **meta-agent 实现**：行动选择、反馈解释、上下文管理和记忆组织属于同一工作流；默认不另设整理模型。Lab 内部可运行 agent 或直接执行程序。
 - **共同演化与 reflect**：RSI 优化器决定两侧改进的触发与编排，包含面向 meta-agent 自身的 reflect 策略；Lab 侧改进作用于其中的研究对象。候选由 meta-agent 按需构建，当前接口能力与尚需适配的闭环见[架构说明](docs/architecture.md#共同演化与-reflect)。
 - **任务反馈与长期记忆**：原始错误保留到实验/调试任务关闭；meta-agent 显式决定是否写入、更新或删除 memory，完整原文独立归档。
 - **轻量协同**：框架负责指令、作业、反馈与版本引用，不统一各训练框架的数据格式；跨框架数据对齐由接入方完成。
@@ -24,18 +30,45 @@ through the [public/closed evaluation protocol](docs/evaluation-protocol.md).
 
 [快速开始](#快速开始) · [实验监控](#实验监控) · [系统架构](#系统架构) · [使用指南](#使用指南) · [组件文档](#组件文档)
 
+纯 harness 进化入口为 [RRSI](experiments/rrsi/README.md)：固定同一个模型，迭代修改 Python harness，
+根据真实轨迹、准确率、token 成本和稳定性选择下一轮版本，不引入 RL 或权重训练。
+正式接口定义与测试代码的职责划分见 [API 边界](docs/api-contracts.md)。
+
+ReST^EM 已作为 `rest_em` 决策器注册；[独立数学 Lab 示例](experiments/rest_em/README.md)
+提供无 ML 依赖的协议验收，以及可配置的本地模型 LoRA 执行路径。数学 Lab、校验器和引擎
+已作为[库内组件](src/rsisys/labs/README.md)提供，示例插件只做装配。Qwen2.5-7B Base
+已完成 GSM8K 两轮真实单卡训练；MATH 配置复用相同决策器并使用可选符号校验。
+小规模实验目前未证明质量收益，运行协议通过与能力提升分别记录。
+入门与注册教程见 [examples 导航](examples/README.md)，真实模型配方见 [experiments 导航](experiments/README.md)，回归命令见 [测试导航](tests/README.md)。
+
+无 GPU 跑通内置 ReST^EM：
+
+```sh
+PYTHONPATH=src python3.12 -m rsisys run --config examples/quickstart/rest_em.json
+```
+
 ## 快速开始
 
 Python 3.12+，在仓库根目录安装：
 
 ```sh
 python -m pip install -e .
+rsisys run --config examples/registered/single-loop.json --plugin examples/registered/plugin.py
+# 同一个 Lab，替换为根据反馈决定何时结束的自定义决策器。
+rsisys run --config examples/registered/custom-controller.json --plugin examples/registered/plugin.py
+
+# 原有模拟示例。
 rsisys demo --config configs/demo.json
 
 # 监控单独安装，也可只安装这一项。
 python -m pip install -e ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
+
+`examples/registered/` 可整体复制到库外；安装 RSISys 后在任意目录使用同一命令。
+这两个例子是无模型的 CPU 接口验证，不代表 LLM 训练或 RSI 收益。
+`meta-agent.json` 展示同一个 Lab 的模型驱动配置，运行前填写实际模型服务与权重版本。
+每次运行使用新的 `data_dir`；自定义状态的恢复需显式适配，注册本身不自动提供恢复。
 
 监控默认访问 `http://127.0.0.1:8765/`。未产生 `monitor.json` 时显示空列表；监控不会启动研究或训练。
 
@@ -74,13 +107,14 @@ with MonitorServer(("127.0.0.1", 8765), "runs") as server:
     server.serve_forever()
 ```
 
-生产端原子写入轻量快照；监控不读取 checkpoint、训练样本或任意日志文件，不执行训练控制。监控接口不等于统一训练数据协议。协议、API、接入方法与部署说明见 [Monitor README](src/rsimonitor/README.md)。现有 SwanLab 导出为可选示例，见 [export_swanlab.py](examples/qwen_toy/export_swanlab.py)。
+生产端原子写入轻量快照；监控不读取 checkpoint、训练样本或任意日志文件，不执行训练控制。监控接口不等于统一训练数据协议。协议、API、接入方法与部署说明见 [Monitor README](src/rsimonitor/README.md)。现有 SwanLab 导出为可选示例，见 [export_swanlab.py](experiments/qwen_toy/export_swanlab.py)。
 
 ## 系统架构
 
 ### 模块关系
 
-概念主链路为 **meta-agent → Lab → 原始 feedback → 同一个 meta-agent**。
+概念主链路为 **RSI 决策器 → Lab 执行 → feedback → RSI 决策器**。
+`meta-agent` 是默认模型驱动实现；规则控制器通过同样的执行和反馈边界运行。
 `harness/agent_memory.py` 提供显式记忆工具和任务反馈窗口；`feedback/` 保留原始回执与归档设施，
 独立 LangMem 整理仅作为显式兼容工作流。新的 Lab 通过 `LabExecution.describe/execute` 接入。
 
@@ -104,6 +138,8 @@ src/rsisys/
 ├── assembly.py            # 共享装配上下文、默认工厂与资源清理
 ├── components.py          # host 显式组件目录、依赖契约与配置组合
 ├── methods.py             # 整套 RSI 方法的版本化选择与接入协议
+├── registry.py            # 库外决策器 / Labs / 完整方法注册与配置选择
+├── api.py                 # 库外插件的公开类型与装配入口
 ├── research.py            # 研究任务的统一组件装配与配置校验
 ├── application.py         # 本地持久化装配
 ├── config.py              # 内存演示装配
@@ -113,7 +149,7 @@ src/rsisys/
 
 `src/rsimonitor/` 与 `src/rsisys/` 并列，包含监控 API 与前端资源，通过公开快照读取实验，不依赖双 loop 的内部实现。
 
-`examples/medical/` 位于源码包外，通过统一装配入口组合领域任务、固定评测协议、两个 Harness 与 Runner。
+`experiments/medical/` 位于源码包外，通过统一装配入口组合领域任务、固定评测协议、两个 Harness 与 Runner。
 它使用共享端口和 adapters，不向核心注入医学数据集、验收阈值或训练配方。
 `native.py` 显式包装原始数据、tokenize 回调与进程训练，并保留转化证据；MedicalServing 在评测前
 准备独立候选路由。装配可替换 evaluator_factory 或注入 prepare_inference；默认评测 poll 每次
@@ -161,7 +197,7 @@ Exploration Harness 按模式分派：execute 运行 Actor episode；SFT、promp
 
 训练请求是后端中立（backend-neutral）的接口，只约束模型、非空 method / recipe 字符串与引用元组类型；不把训练算法限定为 sft / rl，也不要求引用非空。Actor 请求允许外部后端自主采样；Decision 请求保留原位置参数，追加 `data_refs=()` 和 `method="sft"`，支持外部数据。提供本地轨迹或系统经验引用时，默认 Harness 仍验证其归属。数据格式和算法能力由具体 learner 校验。
 
-默认 `rl` 保留本地顺序采样循环。可选 `train` 通过 `training_directive()` + `TrainingCommandHandler` + 注入的 learner 配对启用，不属于默认指令映射：Harness 将整个任务作为一个作业提交，后端独立负责算法与 rollout，Harness 负责作业、证据和可选应用。具体接入放在 [adapters/](src/rsisys/adapters/)，不嵌入 Harness；[backend_training.py](examples/backend_training.py) 仍是独立 CPU 标量回归示例。原生训练框架的配置、数据格式和资源分配由适配器及调用方明确提供，装配见[使用指南](#接入整项训练任务)。
+默认 `rl` 保留本地顺序采样循环。可选 `train` 通过 `training_directive()` + `TrainingCommandHandler` + 注入的 learner 配对启用，不属于默认指令映射：Harness 将整个任务作为一个作业提交，后端独立负责算法与 rollout，Harness 负责作业、证据和可选应用。具体接入放在 [adapters/](src/rsisys/adapters/)，不嵌入 Harness；[backend_training.py](examples/components/backend_training.py) 仍是独立 CPU 标量回归示例。原生训练框架的配置、数据格式和资源分配由适配器及调用方明确提供，装配见[使用指南](#接入整项训练任务)。
 
 ### 系统版本、训练来源与部署
 
@@ -294,7 +330,7 @@ PYTHONPATH=src pixi run python -m rsisys run \
 
 外部 Harness 可实现 [QueryProvider](src/rsisys/loops/contracts/queries.py) 的 `describe_queries()` 和 `query(request)` 来暴露其他实验信息；未实现时不广告这些能力。自定义装配可使用 [QueryTools](src/rsisys/loops/decision_making/harness/tools/queries.py) 的 definitions 和 bindings 分别注入 Action Space 与 tools。协议只统一查询封装，不转换训练数据格式，也不要求把执行历史搬进 Experience。
 
-Qwen toy 已绑定同样的查询入口。`tests/test_researcher_integration.py` 使用 CPU HTTP fixture 验证「后端训练进度 → researcher 查询 → 模型判断 → 实验继续完成」；该测试不加载真实 Qwen 权重。
+Qwen toy 已绑定同样的查询入口。`tests/experiments/qwen_toy/test_researcher_integration.py` 使用 CPU HTTP fixture 验证「后端训练进度 → researcher 查询 → 模型判断 → 实验继续完成」；该测试不加载真实 Qwen 权重。
 
 ### 配置能力与权限
 
@@ -339,7 +375,7 @@ with Application(config, modules=modules) as app:
 不要求把研究思考拆成固定流水线。相同启动入口下整体/组合方法的 CPU 示例：
 
 ```sh
-PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
+PYTHONPATH=src python -m examples.components.rsi_methods configs/rsi-method-demo.json
 ```
 
 需要独立组合训练策略、推理策略、训推引擎、RSI 算法与 harness 时，可以用
@@ -349,7 +385,7 @@ PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
 完整分类、状态与资源边界见[组件组合说明](docs/component-composition.md)。CPU 组合示例：
 
 ```sh
-PYTHONPATH=src python examples/modular_research.py configs/modular-demo.json
+PYTHONPATH=src python examples/components/modular_research.py configs/modular-demo.json
 ```
 
 开放代码任务使用新的 `lab_factory(context)` 入口：
@@ -373,7 +409,7 @@ Lab 只需实现 `describe() -> OperationSpec[]` 与 `execute(OperationCall)`。
 无需注册固定研究动作类型。持有后台工作时，Lab 可提供 `shutdown(mode)->bool` 和 `close()`，
 由 host 确认退出并清理。上例本地进程没有 OS 隔离；正式资源、数据权限和训练准入由 executor 落实。
 `run()` 的步数只限制本次调用；后台工作应持续通过 `step()` 驱动至终态，关闭 Application 时取消其 owned 工作。
-CPU 示例：`PYTHONPATH=src python examples/open_lab.py`。
+CPU 示例：`PYTHONPATH=src python examples/components/open_lab.py`。
 完整接口、后台任务、反馈交付与恢复边界见 [M04 实现说明](docs/review/open-lab-execution-20261104.md)。
 
 未传入 `lab_factory` 时，保留下面的旧 exploration 装配方式。
@@ -445,9 +481,9 @@ exploration = ExplorationLoop(
 
 也可直接实现 Harness 协议并整体替换，无需提供 memory 或 tools 子接口。示例：
 
-- [loop_internals.py](examples/loop_internals.py)：训练请求、查询、版本应用和独立评测。
-- [coordination.py](examples/coordination.py)：自定义 policy 消费 last_feedback 并发出下一条指令。
-- [backend_training.py](examples/backend_training.py)：通过可选 train 指令委托独立 CPU 训练进程并回传结果。
+- [loop_internals.py](examples/components/loop_internals.py)：训练请求、查询、版本应用和独立评测。
+- [coordination.py](examples/components/coordination.py)：自定义 policy 消费 last_feedback 并发出下一条指令。
+- [backend_training.py](examples/components/backend_training.py)：通过可选 train 指令委托独立 CPU 训练进程并回传结果。
 
 两个默认 Harness 内部分别使用 DecisionMemory / ExplorationMemory，可在默认实现中替换。DecisionContext 同时包含全部来源的 experience、自身 history 和 memories；ActorContext 读取当前任务 history 与自身 memories，不默认注入系统经验。scope 仅标记反馈来源，优化对象由 Decision policy 选择。
 
@@ -549,7 +585,7 @@ register 不采纳候选；activate 检查父版本等于 current，但不做质
 不部署或修改角色；真实组合需显式 SystemActivator，registry 与外部回执的恢复也需单独集成。
 仅 SystemActivationRejected 确认无副作用或已回滚时释放 pending；未知异常继续冻结原意图。
 
-运行 `pixi run backend-demo` 查看 [backend_training.py](examples/backend_training.py)。示例使用独立子进程在 CPU 上优化标量回归模型，返回真实权重产物与 MSE；它展示训练作业接入，不是 LLM 训练、RL rollout 或 verl 的现成适配。请求字段及结果要求见 [Actor learner](src/rsisys/loops/exploration/harness/learner/README.md) 和 [Decision learner](src/rsisys/loops/decision_making/harness/learner/README.md)。
+运行 `pixi run backend-demo` 查看 [backend_training.py](examples/components/backend_training.py)。示例使用独立子进程在 CPU 上优化标量回归模型，返回真实权重产物与 MSE；它展示训练作业接入，不是 LLM 训练、RL rollout 或 verl 的现成适配。请求字段及结果要求见 [Actor learner](src/rsisys/loops/exploration/harness/learner/README.md) 和 [Decision learner](src/rsisys/loops/decision_making/harness/learner/README.md)。
 
 ### 模型启用与外部引用
 
@@ -596,9 +632,9 @@ with Application.resume(config.data_dir) as app:
 
 ### 自主研究与并行实验
 
-[Qwen toycase](examples/qwen_toy/README.md) 使用模型自主选择的步骤，外部配置能力、权限和预算。提前结束、没有训练或未采纳候选都按实际结果记录，不自动补齐工作流。
+[Qwen toycase](experiments/qwen_toy/README.md) 使用模型自主选择的步骤，外部配置能力、权限和预算。提前结束、没有训练或未采纳候选都按实际结果记录，不自动补齐工作流。
 
-[parallel_experiments.py](examples/parallel_experiments.py) 演示两个隔离实验、乱序完成、运行中更新和候选比较。它使用明确标记的 Mock 后端与脚本 policy，仅验证接口；不代表实际 GPU 并行训练。装配使用 `ConcurrentExplorationHarness(factory, max_in_flight=2)`、`DefaultDecisionHarness(max_outstanding=2)` 与 `Runner(parallel=True)`；factory 决定后端资源放置。
+[parallel_experiments.py](examples/components/parallel_experiments.py) 演示两个隔离实验、乱序完成、运行中更新和候选比较。它使用明确标记的 Mock 后端与脚本 policy，仅验证接口；不代表实际 GPU 并行训练。装配使用 `ConcurrentExplorationHarness(factory, max_in_flight=2)`、`DefaultDecisionHarness(max_outstanding=2)` 与 `Runner(parallel=True)`；factory 决定后端资源放置。
 
 `ExperimentControls(exploration_loop, decision_loop)` 的 definitions / bindings 接入普通 Action Space / tools，可供模型调用 inspect、cancel、update、compare，沿用外部权限。动态更新只对实现 validate_update / update 的后端开放；它不是任意训练参数热更新。比较与候选应用仍检查来源、协议和版本，不隐式改动其他实验的模型。
 
@@ -606,15 +642,15 @@ with Application.resume(config.data_dir) as app:
 
 ### 独立医学研究示例
 
-[medical README](examples/medical/README.md) 提供数据格式、prepare / check / run 命令、Python 装配、
-固定评测及证据边界。领域代码位于 examples/medical，通过两个默认 Harness 与 Runner 独立装配。
+[medical README](experiments/medical/README.md) 提供数据格式、prepare / check / run 命令、Python 装配、
+固定评测及证据边界。领域代码位于 experiments/medical，通过两个默认 Harness 与 Runner 独立装配。
 prepare / check 只读；CLI run 支持 prompt 研究，原生训练通过 Python 注入 learner 与显式输入绑定。
-缓存数据准备 CLI 与单 GPU 自主 LoRA SFT 入口、预算和恢复限制见 [medical README](examples/medical/README.md#single-gpu-autonomous-experiment)。
+缓存数据准备 CLI 与单 GPU 自主 LoRA SFT 入口、预算和恢复限制见 [medical README](experiments/medical/README.md#single-gpu-autonomous-experiment)。
 
 医疗 prompt / evaluate / apply_candidate 声明 `accepts_input_refs=False`，省略 input_ids 即为空，
 显式非空拒绝并可进入有界输出纠错；固定评测后端仍拒绝非空 data_refs。train 保留输入引用。
 原生 worker 的 tokenized JSONL 与医学题目格式不同，转换和消费证据由接入实现提供。
-[native.py](examples/medical/native.py) 的 MedicalTrainingBackend / MedicalServing 提供显式
+[native.py](experiments/medical/native.py) 的 MedicalTrainingBackend / MedicalServing 提供显式
 tokenize / 进程训练包装与候选路由准备；完整接线见上述 README。
 评测可注入 prepare_inference / evaluator_factory，默认 poll 每次至多推进一个样本；明确应用拒绝返回反馈。
 
@@ -648,7 +684,7 @@ policy、评测契约和资源声明；可执行能力仍以当轮 operations/di
 
 长期目标与资源配置不由学习 memory 改写。系统指令规定角色与证据规则；项目配置、memory、
 摘要和动态反馈仍是分层的用户上下文。配置改变的默认 snapshot 会显式拒绝无恢复契约的保存，
-防止恢复时静默丢失配额。医疗配置与启用方式见 [医疗示例](examples/medical/README.md)。
+防止恢复时静默丢失配额。医疗配置与启用方式见 [医疗示例](experiments/medical/README.md)。
 
 完整决策账本留在执行端与前端数据源。模型工作视图保留最近节点、活跃任务、候选来源、
 attempt 代表及它们的依赖/引用/采纳关系；旧节点通过 `research_archive` 的 `decision_graph`
@@ -777,7 +813,7 @@ Harness 在具备 archive 入口时也选择候选/评测/来源窗口，执行�
 学习日志保存到 `feedback_learning.json`，重启不自动重发结果不明的请求；它不等于完整
 Runner 恢复支持，自定义装配的 durable/snapshot 仍需扩展契约。关闭时等待在途学习，
 超时显式报错；后端必须配置有限传输超时，并允许从 worker 线程调用。CPU fixture 示例：
-`PYTHONPATH=src python examples/feedback_learning.py`，不调用真实模型或训练。
+`PYTHONPATH=src python examples/components/feedback_learning.py`，不调用真实模型或训练。
 
 ### 使用 DSH Harness
 
@@ -785,7 +821,7 @@ Runner 恢复支持，自定义装配的 durable/snapshot 仍需扩展契约。�
 
 ```bash
 python -m pip install -e '.[dsh]'
-PYTHONPATH=src python examples/dsh_smoke.py
+PYTHONPATH=src python examples/components/dsh_smoke.py
 ```
 
 smoke 启动真实 DSH runtime 和本地确定性 HTTP 响应服务，验证会话恢复及 RSISys 指令链路；
@@ -831,19 +867,19 @@ DSH 自身 turn 完成只产生一个提案；`finish` 是否结束整个 RSI �
 | `pixi run demo` / `local-demo` | Mock 双 loop、本地进程与持久化 |
 | `pixi run loop-demo` / `coordination-demo` | 本地学习、评测与跨 loop 指令链 |
 | `pixi run backend-demo` | 独立子进程中的真实 CPU 标量回归，不是 LLM 训练 |
-| [Qwen toycase](examples/qwen_toy/README.md) | 模型自主研究、LoRA、评测和候选应用的显式装配 |
-| [决策图示例](examples/decision_graph.py) | 脚本策略、CPU 任务；6 条决策组成 3 个 Attempt，验证并行和采纳汇合 |
-| [医学装配](examples/medical/README.md) | 领域数据、固定评测、研究模型与原生训练接线 |
+| [Qwen toycase](experiments/qwen_toy/README.md) | 模型自主研究、LoRA、评测和候选应用的显式装配 |
+| [决策图示例](examples/components/decision_graph.py) | 脚本策略、CPU 任务；6 条决策组成 3 个 Attempt，验证并行和采纳汇合 |
+| [医学装配](experiments/medical/README.md) | 领域数据、固定评测、研究模型与原生训练接线 |
 
 ```sh
-PYTHONPATH=src python examples/decision_graph.py --run-dir runs/decision-graph-demo
+PYTHONPATH=src python examples/components/decision_graph.py --run-dir runs/decision-graph-demo
 pixi run monitor
-node --test tests/monitor_frontend/*.test.js
+node --test tests/monitor/frontend/*.test.js
 ```
 
 示例目录必须未使用。模型没有选择训练或没有采纳候选时，按实际结果记录，不补齐固定工作流。
 
-可选 `test` extra 提供 JSON Schema 契约验证，不增加运行依赖。真实服务参数回归须显式设置 `RSISYS_LIVE_BASE_URL`（含 `/v1`）与 `RSISYS_LIVE_MODEL`，modelmate 另设 `RSISYS_LIVE_SCHEMA_MODE=portable`，再运行 `PYTHONPATH=src:tests python -m unittest test_live_generation -v`。它核对生成参数、解析与请求准备，不提交训练；默认测试不联网，详见 [测试说明](tests/test_live_generation.py)。
+可选 `test` extra 提供 JSON Schema 契约验证，不增加运行依赖。真实服务参数回归须显式设置 `RSISYS_LIVE_BASE_URL`（含 `/v1`）与 `RSISYS_LIVE_MODEL`，modelmate 另设 `RSISYS_LIVE_SCHEMA_MODE=portable`，再运行 `PYTHONPATH=src python3.12 -m unittest tests.integration.test_live_generation -v`。它核对生成参数、解析与请求准备，不提交训练；默认测试不联网，详见 [测试说明](tests/integration/test_live_generation.py)。
 
 ## 组件文档
 
@@ -858,4 +894,4 @@ node --test tests/monitor_frontend/*.test.js
 | [Snapshot](src/rsisys/snapshot/README.md) | 内置组合保存恢复及自定义边界 |
 | [Monitor](src/rsimonitor/README.md) | 实验可视化、快照协议与只读 API |
 
-全局文档只维护本 README；组件维护各自 README，示例位于 `examples/`，`docs/diagrams/` 仅存架构图与其生成脚本。
+全局文档只维护本 README；组件维护各自 README，入门示例位于 `examples/`，真实模型实验位于 `experiments/`，`docs/diagrams/` 仅存架构图与其生成脚本。

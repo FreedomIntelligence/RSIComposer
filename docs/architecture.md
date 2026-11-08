@@ -1,26 +1,48 @@
 # RSISys：统一术语与架构
 
-更新：2026-11-07。顶层职责是 **host、一个 meta-agent/harness 与 Lab**。
-Memory 是 harness 的可替换子模块；正式评测是 Lab 能力，其协议由 host 固定。
+更新：2026-11-08。顶层业务模块是 **RSI 决策器与 Labs**。
+Host 提供装配、权限、预算和生命周期基础设施。meta-agent 是决策器的一种实现；
+Memory 是该实现内可替换的子模块；正式评测是 Lab 能力，其协议由 host 固定。
 历史审查材料和冻结实验保留当时的两侧称谓；新运行以本文和实际装配配置为准。
 
 ## 一条主链路
 
-**meta-agent → Lab → 原始 feedback → 同一个 meta-agent。**
-meta-agent 直接负责行动选择、结果解释、调试、上下文管理以及记忆的写入、更新和删除。
+**RSI 决策器 → Lab 执行 → 反馈 → RSI 决策器。**
+决策器根据目标、状态与反馈产生下一步行动；可由固定算法、搜索策略、LLM 或混合方式实现。
+反馈是模块间的交互契约，Host/Runner 是执行基础设施，不另设必需的反馈 agent 或研究阶段。
+Lab 内部可以有自己的生成、训练、推理、评测循环，不要求每个方法具有研究/场景双 loop。
+
+在 meta-agent 实现中，同一个 agent 直接负责行动选择、结果解释、调试、上下文管理以及记忆的写入、更新和删除。
 旧“整理侧”的语义判断职责合入这个工作流；默认不再创建独立上下文中的整理模型。
 
 ![系统主链路与信息生命周期](diagrams/system-flow.svg)
 
 | 名称 | 定义与职责 |
 | --- | --- |
+| **RSI 决策器 / controller** | 根据输入和反馈选择下一步行动；不要求持有 LLM、语义 memory 或 reflect。公开策略接口为 `decide(DecisionInput) -> Decision`。 |
 | **meta-agent** | 根据目标、真实状态、当前任务原始反馈和相关记忆选择行动，读写代码、调试和解释结果，并显式管理自己的记忆。`decision侧` 可作为兼容说明，不再另设整理侧。 |
-| **Lab** | 任务与实验的执行环境，包含数据、模型或 agent、工具、harness 和授权资源；内部可以直接运行程序，也可以含 agent。 |
+| **Labs** | 一个或多个命名的任务与实验执行环境，包含数据、模型或 agent、工具、harness 和授权资源；公开接口是 `describe/execute`，内部可以直接运行程序，也可以含 agent。 |
 | **memory 模块** | harness 内的存储、索引、检索和修订服务；默认 `AgentMemory` 使用本地原子 JSON 和确定性文本检索，不发出模型或 embedding 请求。 |
 | **decision** | 一次带身份、参数和来源的行动或任务，不是另一种 agent。 |
 | **Meta-agent harness** | 装配输入、执行工具边界、计量和容量管理；与 Lab harness 分开。 |
 
+### 库外注册与运行
+
+用户从 `rsisys.api` 导入公开类型，在自己的 `register(registry)` 文件中注册决策器和 Labs；
+`rsisys run --config experiment.json --plugin plugin.py` 选择配置并运行。
+配置仅选择注册名称及参数；插件是调用方显式信任并加载的宿主代码。
+内置 `rest_em` 实现生成、筛选、从初始模型训练与评测的迭代规则；`single_loop` 是固定调度模板；
+`meta_agent` 使用已配置模型和 default / dsh harness 自主选择动作。数学 Lab 可复用库内
+校验器与训推引擎。协议验收与真实模型训练效果分别验证。
+多个 Lab 的工具以 `alias.operation` 路由，反馈保留在同一执行账本中。
+方法是决策器与 Lab 的装配，不是第三种执行对象。`RSIController`、`LabRequest`、`LabFeedback`
+是现有协议的公开名称；反馈包含结构化状态、指标和证据。复杂装配可保留使用
+`ModuleAssembly` / `MethodDefinition` 高级接口；新的运行机制仍需扩展核心实现。
+恢复需要组件自己的状态契约；这与是否能注册和运行是独立能力。详见[注册指南](registration.md)。
+
 ## 共同演化与 reflect
+
+本节描述 meta-agent 方法的可选能力，不是所有 RSI 决策器的必需协议。
 
 **Coevolution（共同演化）** 是 meta-agent 与 Lab 中研究对象相互提供反馈、按需改进的
 整体过程。Lab 中的研究对象可以是 agent，也可以是模型或程序；Lab 本身仍是执行环境。
@@ -140,9 +162,10 @@ UTF-8 原文页、完整性标记、SHA 和精确读取地址，不能把摘要�
 
 ## harness、能力与宿主
 
-始终写清归属：**meta-agent harness** 组织 meta-agent 的模型输入、工具调用和研究状态；
+始终写清归属：**决策器 harness** 组织策略输入、执行边界和状态；其中 **meta-agent harness** 组织模型输入、工具调用和研究状态；
 **Lab harness** 组织 Lab 内部的任务执行、推理、训练或评测。修改其中一边不表示另一边也改变。
-同一个 meta-agent 负责行动与语义整理；memory provider 负责存储和检索。第三方 harness 可替换内部实现，但须显式接入记忆工具、上下文与恢复状态。
+在 meta-agent 实现中，同一个 agent 负责行动与语义整理，memory provider 负责存储和检索。
+第三方决策器可使用自己的算法状态；选择记忆或恢复能力时须显式实现对应接口。
 
 开放执行按已安装工具及权限提供编程能力，SFT / RL / evaluate 是可实现的任务，
 不是框架强制给模型的固定算法菜单。模型可以修改 Lab 代码；真正可执行的范围仍由
@@ -204,8 +227,10 @@ meta-agent 完成，不要求独立的研究阶段插件。方法版本与配置
 
 | 现有标识 | 统一解释 |
 | --- | --- |
-| `decision_maker` | 历史 meta-agent 模型角色键；默认唯一的 meta-agent 负责行动、调试与记忆管理。 |
-| `DecisionMakingLoop` / `DefaultDecisionHarness` / `ModelDecisionPolicy` | 唯一 meta-agent 的默认端点、harness 和策略实现。 |
+| `decision_maker` | 模型驱动决策器的兼容模型角色键；规则决策器可省略模型配置。 |
+| `DecisionMakingLoop` / `DefaultDecisionHarness` | 通用决策端点与默认执行适配；可承载模型或规则策略。 |
+| `ModelDecisionPolicy` | meta-agent 的模型驱动策略实现。 |
+| `Registry` / `rsisys.api` | 库外注册、配置选择和公开接入类型。 |
 | `FeedbackLearningService` / `feedback_learning` | 原始回执、归档、交付与兼容处理器管理；默认不调用整理模型，learning 不表示权重训练。 |
 | `AgentMemory` | 默认确定性记忆存储、检索、显式写入和任务反馈驻留；不持有模型。 |
 | `LangMemContextMemory` | 显式选用的旧版独立抽取工作流；不属于默认单 meta-agent 路径。 |

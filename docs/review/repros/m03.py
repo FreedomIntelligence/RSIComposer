@@ -10,7 +10,7 @@ from unittest.mock import Mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from examples.medical.experiment import ResearchPolicy
+from experiments.medical.experiment import ResearchPolicy
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef
 from rsisys.loops.decision_making.action_space import ModularDecisionActionSpace
@@ -95,8 +95,8 @@ def main():
     source_paths = [
         'src/rsisys/loops/decision_making/harness/policy/__init__.py',
         'src/rsisys/loops/decision_making/harness/policy/prompts.py',
-        'examples/medical/experiment.py', 'src/rsisys/snapshot/local.py',
-        'tests/test_m03_decision_policy.py', 'docs/review/repros/m03.py',
+        'experiments/medical/experiment.py', 'src/rsisys/snapshot/local.py',
+        'tests/decision/test_m03_decision_policy.py', 'docs/review/repros/m03.py',
     ]
     source_paths.extend(str(p.relative_to(ROOT)) for p in sorted(
         (ROOT / 'src/rsisys/loops/decision_making/harness/policy/prompts').glob('*.txt')))

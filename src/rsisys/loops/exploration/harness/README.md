@@ -50,7 +50,7 @@ accept 复制并校验请求；advance 推进阶段，execute 会同步运行一
 
 `pending()` 返回当前未 acknowledge 的 ExplorationProgress 副本，包括已经终态但尚未交付确认的回执；空闲时返回 None。`execution_view()` 返回当前 policy 的 ModelRef（若有）和 pending 进度，不执行或轮询后端。elapsed_seconds 从首次 advance 开始用进程内单调时钟计时，终态后固定，不承诺跨进程恢复；尚未开始时为 None。metrics 只来自已取得的 Feedback，等待后端时保持空字典，不补做 poll。
 
-内置本地控制通过 `loop.harness` 使用：`run(directive, loop.action_space)`、`submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning`、`submit_evaluation` / `poll_evaluation` / `cancel_evaluation`，以及 `start_rl` / `step_rl(loop.action_space)` / `cancel_rl`。示例见 [loop_internals.py](../../../../../examples/loop_internals.py)。
+内置本地控制通过 `loop.harness` 使用：`run(directive, loop.action_space)`、`submit_learning` / `poll_learning` / `cancel_learning` / `apply_learning`、`submit_evaluation` / `poll_evaluation` / `cancel_evaluation`，以及 `start_rl` / `step_rl(loop.action_space)` / `cancel_rl`。示例见 [loop_internals.py](../../../../../examples/components/loop_internals.py)。
 
 训练成功后，默认 Harness 按 candidate_id 保存完整 TrainingResult。`candidate_result(id)` 返回副本，`apply_candidate(id)` 在本地空闲边界应用已保存候选，不依赖原训练 job 继续存在。指令路径需显式配对决策侧 `apply_candidate_directive()` 与 `ApplyCandidateHandler()`；验收标准由 policy 或调用方负责，handler 不假定评测通过。应用仍校验 base 是否过时、模型 readiness 和控制占用；同一候选重试不会重复切换绑定。应用成功后的证据写入失败只重试记录。
 

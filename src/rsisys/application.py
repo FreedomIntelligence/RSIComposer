@@ -36,6 +36,7 @@ class ApplicationConfig:
     memory_limit: int = 32
     run_id: str = field(default_factory=lambda: uuid4().hex)
     parent_run_id: str | None = None
+    max_decision_steps: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.objective, str) or not self.objective.strip():
@@ -46,8 +47,11 @@ class ApplicationConfig:
             raise ValueError('rounds and experience_limit must be positive integers')
         if type(self.memory_limit) is not int or self.memory_limit < 1:
             raise ValueError('memory_limit must be a positive integer')
-        if 'decision_maker' not in self.roles or set(self.roles) - {'decision_maker', 'actor'}:
-            raise ValueError('decision_maker is required; actor is an optional legacy exploration role')
+        if self.max_decision_steps is not None and (
+                type(self.max_decision_steps) is not int or self.max_decision_steps < 1):
+            raise ValueError('max_decision_steps must be a positive integer or None')
+        if set(self.roles) - {'decision_maker', 'actor'}:
+            raise ValueError('Unknown model role; use decision_maker or actor')
         RunSource(self.run_id, self.parent_run_id)
         for key, backend in self.backends.items():
             if key != backend.backend_id or backend.kind not in ('mock', 'http', 'chat_completions'):
@@ -67,8 +71,8 @@ class ApplicationConfig:
             raise ValueError('Expected local application mode')
         path = Path(raw.pop('data_dir'))
         data_dir = (base_dir / path).resolve() if not path.is_absolute() else path.resolve()
-        backends = {key: BackendBinding(backend_id=key, **value) for key, value in raw.pop('backends').items()}
-        roles = {key: ModelRef(**value) for key, value in raw.pop('roles').items()}
+        backends = {key: BackendBinding(backend_id=key, **value) for key, value in raw.pop('backends', {}).items()}
+        roles = {key: ModelRef(**value) for key, value in raw.pop('roles', {}).items()}
         return cls(data_dir=data_dir, backends=backends, roles=roles, **raw)
 
     @classmethod
@@ -229,7 +233,8 @@ class Application:
         if self._closed:
             raise RuntimeError('Application is closed')
         return self.runner.run(self.config.objective, self.config.rounds if rounds is None else rounds,
-                               max_decision_steps=max_decision_steps)
+                               max_decision_steps=(self.config.max_decision_steps
+                                                   if max_decision_steps is None else max_decision_steps))
 
     def close(self):
         self._closed = True

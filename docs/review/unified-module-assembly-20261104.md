@@ -99,7 +99,7 @@ restored = restore_snapshot(snapshot, new_workspace, modules=modules)
 
 ## 验证与范围
 
-`tests/test_module_assembly_state.py` 用完全没有默认 policy/state/memory 字段的外部 harness 和原生 Lab 验证：
+`tests/registration/test_module_assembly_state.py` 用完全没有默认 policy/state/memory 字段的外部 harness 和原生 Lab 验证：
 
 - 构造无模型调用、无执行提交；统一 close 不重复关闭已完成资源。
 - 原地恢复计数、既有 Lab 回执、私有 memory；恢复不重新提交工作。

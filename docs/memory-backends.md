@@ -30,7 +30,7 @@ research.prepare()  # 可在申请资源前检查依赖；装配时也会检查�
 医疗 Open Lab 的新实验使用：
 
 ```sh
-python -m examples.medical.open_lab_experiment \
+python -m experiments.medical.open_lab_experiment \
   --feedback-routing agent_memory --memory-backend reme \
   --root NEW_RUN --task TASK_JSON --model-path MODEL \
   --python LAB_PYTHON --endpoint META_ENDPOINT --run-id NEW_RUN_ID
@@ -73,7 +73,7 @@ python -m examples.medical.open_lab_experiment \
 ## 验证
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -B -m unittest tests.test_reme_memory -v
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -B -m unittest tests.memory.test_reme_memory -v
 ```
 
 测试使用真实 ReMe 组件，包含上一轮失败的查询形式、ID 查询、负查询、修订分页、

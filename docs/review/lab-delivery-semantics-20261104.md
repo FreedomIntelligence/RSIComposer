@@ -81,7 +81,7 @@ OperationResult 新字段默认 None，旧 snapshot 解码允许缺少该字段�
 `dataclasses.asdict` 是完整对象展开，不能替代这一兼容序列化入口。
 旧原文及其校验值保持原样，不通过忽略字段或规范化原文放宽身份校验。
 
-新增 [22 项回归](../../tests/test_lab_delivery_semantics.py)，涵盖实际 policy 请求中的错误、
+新增 [22 项回归](../../tests/runtime/test_lab_delivery_semantics.py)，涵盖实际 policy 请求中的错误、
 真实 CPU 程序重复收集及显式重整、失败程序、相同文字的不同程序、journal 重载与写失败、
 真实 host 计费路径的确定性模型 fixture、额度拒绝、原始业务字段隔离及旧快照兼容。
 全量核对还发现：历史回执省略默认 None 后，证据投影使用完整 asdict 计算指纹会匹配失败，

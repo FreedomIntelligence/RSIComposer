@@ -398,10 +398,14 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     """Reuse default tools/harness with an independently supplied public RSI policy.
 
     Custom policies receive DecisionInput through ContextDecisionPolicy. The
-    host retains its model identity, permissions and execution loop. A policy
+    host retains its optional model identity, permissions and execution loop. A policy
     making model calls must use the host's accounted backend integration.
     Whole-harness replacement remains the decision_factory boundary.
     """
+    model = context.roles.get("decision_maker")
+    if policy is None and model is None:
+        raise ValueError('The meta-agent controller requires a decision_maker model; '
+                         'supply a policy or decision_factory for a model-free controller')
     open_lab = context.lab_execution is not None
     directives, modes = (DirectiveDefinitions(()), ()) if open_lab else _decision_directives(context, exploration)
     query_tools = (QueryTools(exploration, artifacts=context.artifacts)
@@ -427,7 +431,6 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
                                          permissions=context.action_permissions)
     tools.query_tools = query_tools
     tools.research_tools = research_tools
-    model = context.roles["decision_maker"]
     if policy is None:
         policy = ModelDecisionPolicy(context.backends[model.backend_id], model,
             allowed_actions=() if open_lab else tuple(spec.name for spec in exploration.action_space.describe()),

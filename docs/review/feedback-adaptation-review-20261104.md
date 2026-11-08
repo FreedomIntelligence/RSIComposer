@@ -52,7 +52,7 @@ Lab 原生字段即使与宿主同名也不被解释成生命周期、metrics �
 - [ExecutionReceipt.from_output](../../src/rsisys/loops/contracts/receipts.py)。
 - [FeedbackLearningService.observe_output](../../src/rsisys/loops/decision_making/feedback/service.py)。
 - [原生证据投影](../../src/rsisys/loops/decision_making/feedback/learning.py)：只裁剪模型视图，原始正文可按 JSON Pointer 读回。
-- [10 项原生接入回归](../../tests/test_feedback_native_output.py)：任意业务键、文本/JSON/文件引用、失败输出、可选证据、大内容、重送、来源隔离与原类型校验。
+- [10 项原生接入回归](../../tests/feedback/test_feedback_native_output.py)：任意业务键、文本/JSON/文件引用、失败输出、可选证据、大内容、重送、来源隔离与原类型校验。
 
 原生入口仍观察终态输出；长任务进度使用执行器的 progress 通道，进度路由在 CP7 审查。
 接收/归档成功不意味着已经把结果交付主 decision，外部执行器仍需履行自己的交付职责。

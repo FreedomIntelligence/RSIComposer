@@ -1,6 +1,7 @@
 # Framework boundaries
 
-统一口径见[系统术语与架构](../../../docs/architecture.md)。默认只有一个 meta-agent、Lab 和 memory 模块；语义整理合入 meta-agent，旧类型名和持久化键保留兼容。
+统一口径见[系统术语与架构](../../../docs/architecture.md)。顶层是 RSI 决策器与 Labs；meta-agent 是模型驱动实现，memory 是其可选子模块。
+库外插件通过 `rsisys.api` 与 [Registry](../../../docs/registration.md) 注册，不必直接使用本目录内部适配器。
 
 These optional adapters run trusted native jobs and call an existing vLLM API.
 The core adapters need only the standard library; the LangChain bridge described
@@ -29,7 +30,8 @@ def choose(window):
 loop.harness.policy = ContextDecisionPolicy(choose, input_adapter=DecisionInputAdapter())
 ```
 
-The ordinary assembly retains the host model binding when replacing its policy.
+The ordinary assembly retains an optional host model binding when replacing its policy.
+Rule-based controllers may omit model roles and backends entirely.
 Other default-harness assemblies supply `model=ModelRef(...)` or a dynamic
 `model_provider` on the harness. These identities are provenance, even when the
 selected feedback modules perform no inference. Native SDK parsing/tool calling
@@ -120,7 +122,7 @@ LocalProcessLab uses the existing trusted LocalProcessBackend, not OS isolation.
 It does not install training libraries, choose accelerators, or infer training
 usage from arbitrary code. Production executors own these restrictions.
 See [implementation review](../../../docs/review/open-lab-execution-20261104.md)
-and [CPU fixture](../../../examples/open_lab.py).
+and [CPU fixture](../../../examples/components/open_lab.py).
 
 ## Lab task bridge
 
@@ -160,7 +162,7 @@ training results retain base identity and target only decision_maker. Constructi
 does not start training, and training returns a candidate without changing the live
 model. Algorithms, resource admission and durable custom-handler recovery remain
 explicit integrations. See the [workflow](../../../docs/review/feedback-workflow.md)
-and [CPU fixture](../../../examples/decision_policy_lab.py).
+and [CPU fixture](../../../examples/components/decision_policy_lab.py).
 
 ## Training
 
@@ -300,7 +302,7 @@ path before unloading. No method mutates shared engine configuration.
 
 ## Verification and primary references
 
-`tests/test_framework_adapters.py` uses real local subprocesses and a real local
+`tests/runtime/test_framework_adapters.py` uses real local subprocesses and a real local
 HTTP server. Its worker/CLI/vLLM payloads are **fixtures**, not framework training,
 LLaMA-Factory installation, GPU execution or real vLLM deployment verification.
 Remote framework proof and medical evaluation belong to their explicit runs.

@@ -115,7 +115,7 @@ Memory 不再占用提案名额；内置 proposer 的内容限制留在其消费
 
 - [service.py](../../src/rsisys/loops/decision_making/feedback/service.py) 138–164：provider.memory 或 adapter.publish 的异常保留待发布状态，但继续向外抛出。
 - [learning_harness.py](../../src/rsisys/loops/decision_making/harness/learning_harness.py) 175–205：project_context 直接 refresh、读取工作视图，没有产品故障边界。
-- [test_feedback_components.py](../../tests/test_feedback_components.py) 150–169：已有测试验证发布失败后重试、不会重复模型调用；本次探针进一步验证异常传播到 _context。
+- [test_feedback_components.py](../../tests/feedback/test_feedback_components.py) 150–169：已有测试验证发布失败后重试、不会重复模型调用；本次探针进一步验证异常传播到 _context。
 
 影响：处理已经完成，单次存储/发布异常仍可能让下一次 decision 无法构造输入。
 当前恢复避免重复推理是正确行为，需要保留；缺口是产品错误如何影响主循环尚未由明确策略控制。

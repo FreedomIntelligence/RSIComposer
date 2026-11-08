@@ -371,7 +371,7 @@ DSH 外层和 parser 强制使用 `IdentityContextCompactor`，只有原生会�
 不每轮重放全部 snapshot，DSH 原生 tool-result pruner 不负责裁剪这些 user JSON。当前动作协议、
 能力 schema 和 run_control 每轮重申，避免它们被原生摘要折叠后丢失。医疗装配通过
 `policy_factory(native_backend, model)` 复用领域解析及校验，并真正替换整个 Harness。
-具体 CLI、JSON 配置和对照边界见[医疗示例](../../../../../examples/medical/README.md#replace-the-decision-harness-with-dsh)。
+具体 CLI、JSON 配置和对照边界见[医疗示例](../../../../../experiments/medical/README.md#replace-the-decision-harness-with-dsh)。
 
 持续运行恢复包含显式 `recovery_id`、`export_recovery_state` 和 `restore_recovery_state`。
 完整缓存提案可恢复；未确认推理保持阻塞，通过 `resume_interrupted_inference(evidence=...)`

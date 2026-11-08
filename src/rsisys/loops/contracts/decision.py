@@ -8,6 +8,7 @@ from uuid import uuid4
 from .directive import Directive
 from .jobs import JobRef
 from .model_service import ModelBackend, TokenUsage
+from .coordination import OperationResult
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,8 @@ class DecisionInput:
     context: str = ''
     capabilities: tuple[dict, ...] = ()
     references: object = ()
+    feedback: OperationResult | None = None
+    last_operation: OperationCall | None = None
 
     def __post_init__(self):
         if not isinstance(self.objective, str) or not isinstance(self.context, str):
@@ -105,6 +108,12 @@ class DecisionInput:
         json.dumps([self.capabilities, self.references], allow_nan=False)
         object.__setattr__(self, 'capabilities', deepcopy(self.capabilities))
         object.__setattr__(self, 'references', deepcopy(self.references))
+        if self.feedback is not None and not isinstance(self.feedback, OperationResult):
+            raise TypeError('Decision feedback must be an OperationResult or None')
+        if self.last_operation is not None and not isinstance(self.last_operation, OperationCall):
+            raise TypeError('Last operation must be an OperationCall or None')
+        object.__setattr__(self, 'feedback', deepcopy(self.feedback))
+        object.__setattr__(self, 'last_operation', deepcopy(self.last_operation))
 
 
 class DecisionPolicy(Protocol):

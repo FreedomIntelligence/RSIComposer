@@ -1,6 +1,6 @@
 # 组件组合与 host 管理边界
 
-更新：2026-11-06。
+更新：2026-11-08。
 
 RSISys 使用 `ModuleAssembly` 作为统一装配入口。可选的 `ComponentGraph` 把组件选择、
 原生参数、依赖和版本记录为一个配置；同一启动代码可以组合不同的研究策略、harness、
@@ -8,15 +8,17 @@ RSISys 使用 `ModuleAssembly` 作为统一装配入口。可选的 `ComponentGr
 
 ## 顶层归属与整套 RSI 方法
 
-顶层职责是 host、meta-agent/harness 和 Lab。Memory 是 harness 可替换的子模块；正式
-评测是 Lab 内的流程或服务入口，由 host 固定协议与权限。反馈解释、实验设计、记忆内容
-组织和下一步选择可以由同一个 meta-agent 完成，不要求 host 分别提供研究阶段组件。
+顶层业务模块是 RSI 决策器和 Labs，host 提供装配与运行基础设施。决策器可以是固定算法、
+搜索策略、meta-agent 或混合实现。Memory 是 meta-agent harness 可选的子模块；正式
+评测是 Lab 内的流程或服务入口，由 host 固定协议与权限。两个顶层对象的公开契约为 RSIController 与 Lab；LabRequest / LabFeedback
+复用现有消息类型。方法是它们的装配，不新增第三种执行对象。简单接入使用 `rsisys.api.Registry`
+注册库外策略和 Lab，再用 CLI 配置选择，见[注册指南](registration.md)。
 
 一套 RSI 方法包含所选实现、接线，以及由这些实现兑现的迭代规则。它可以整体提供
 harness 和 Lab，也可以在内部使用组件图；两种形式都通过 `ModuleAssembly` 接入。
 不要求拆出候选生成、训练、推理、评测、选择等固定阶段，也不要求所有组件都能自修改。
 
-整套方法还定义 meta-agent 与 Lab 对象的 **coevolution**；其中改进 meta-agent 自身
+整套方法可选定义 meta-agent 与 Lab 对象的 **coevolution**；其中改进 meta-agent 自身
 harness、工具、memory 机制或训练其模型的过程统一称为 **reflect**。执行可以使用 Lab，
 归属按改进对象确定。Reflect 策略属于 RSI 优化器，可整体封装或作为其内部组件。
 触发时机由方法决定，不是每轮必经阶段；完整语义见
@@ -45,7 +47,7 @@ host 显式注册可信实现；选择文件只有 `method` 和 `config`，不�
 
 | 方法提供的边界 | 最小协议 | 可自由组织的内部实现 |
 | --- | --- | --- |
-| Meta-agent harness | `step(objective, action_space)`、`pending()`、`receive_feedback(...)`，接到现有 `DecisionMakingLoop` | 策略、SDK、memory、状态、prompt、搜索与迭代方法 |
+| 决策器 harness（高级整体接入） | `step(objective, action_space)`、`pending()`、`receive_feedback(...)`，接到现有 `DecisionMakingLoop` | 策略、SDK、可选 memory、状态、prompt、搜索与迭代方法；普通注册只实现 `decide(input)` |
 | Lab | `describe()`、`execute(call)` | 数据、训练、推理、正式评测入口及内部编排 |
 | 可选兼容执行端点 | 现有 accept/advance/inspect/cancel/acknowledge 协议 | 旧 directive 工作流；仅 Lab 工具运行可使用默认空适配 |
 | 可选恢复与资源能力 | 显式 state ports，以及适用时的 shutdown/close | 实现自己的状态格式、任务重连和 owned 资源退出 |
@@ -60,7 +62,7 @@ host 显式注册可信实现；选择文件只有 `method` 和 `config`，不�
 完整 CPU 示例通过相同启动入口选择 `whole`（整体实现）或 `composed`（内部组件组合）：
 
 ```sh
-PYTHONPATH=src python -m examples.rsi_methods configs/rsi-method-demo.json
+PYTHONPATH=src python -m examples.components.rsi_methods configs/rsi-method-demo.json
 ```
 
 将选择文件的 `method` 从 `whole` 改成 `composed` 即可切换。示例中的任务和调度均为
@@ -111,7 +113,8 @@ Meta-agent reflect 与 Lab 侧改进可以复用这些接口，各自选择内�
 
 当前 `Capabilities` 支持显式组合工具描述、参数校验和执行绑定，默认 harness 可注入
 决策策略、上下文压缩、反馈选择、memory 与工具实现，整套 harness 也可替换。
-这些子接口尚未全部提供独立 JSON 槽位。`ResearchAssembly` 的反馈 scheduler 选择已有
+meta_agent 已支持在配置内选择 default / dsh harness；数学 Lab 已支持复用校验器与
+fixture / Transformers 引擎。其他子接口尚未全部提供独立 JSON 槽位。`ResearchAssembly` 的反馈 scheduler 选择已有
 反馈任务，不自动等价于完整进化触发器；`harness_change` 提案也不自动执行或启用改动。
 旧 `policy_training` 提案路径仍限定 meta-agent 目标，Lab 侧训练通过其已安装能力执行；
 共同演化的语义对齐不改变旧消息校验或冻结运行。
@@ -188,7 +191,7 @@ Lab 对象。可选 `exploration=` 绑定 `exploration-factory/v1`。没有新�
 可直接运行的完整例子：
 
 ```sh
-PYTHONPATH=src python examples/modular_research.py configs/modular-demo.json
+PYTHONPATH=src python examples/components/modular_research.py configs/modular-demo.json
 ```
 
 它用 CPU 线性拟合演示独立的数据、训练、推理、训推运行时、研究调度与 harness 组合。
@@ -274,7 +277,7 @@ stateless 是 host 对实现的承诺，不是自动证明；带计数器、随�
 检查和跨运行组合身份。本次补充图配置、根端口绑定、独立 RSI 策略注入、owned 清理接线
 和组件状态要求，没有重写原生训练或服务引擎。
 
-`tests/test_component_graph.py` 验证 32 种组合，以及非法图提前拒绝、host 权限拒绝、
+`tests/registration/test_component_graph.py` 验证 32 种组合，以及非法图提前拒绝、host 权限拒绝、
 owned 清理重试、恢复/快照、版本/参数/接线变化拒绝和运行中组件重绑定拒绝。另用真实
 本地子进程检查两种 command 策略复用相同 `ProcessTrainingBackend`、构造时不提交任务、
 重复 key 不重启。子进程脚本是测试 fixture，不执行机器学习训练。
@@ -283,11 +286,11 @@ owned 清理重试、恢复/快照、版本/参数/接线变化拒绝和运行�
 仍分别需要相应验收，不能由组件接线通过推导。
 
 首轮组件组合验证（`0da61f2`，Python 3.12.14）：15 项新增测试通过（包含上述 32 种组合）；
-完整 CPU 回归共 1825 项，44 项跳过，无失败。整套方法测试见 `tests/test_rsi_methods.py`，
+完整 CPU 回归共 1825 项，44 项跳过，无失败。整套方法测试见 `tests/runtime/test_rsi_methods.py`，
 覆盖相同入口下整体/组合实现、host 权限、实际端口验证、恢复与快照方法身份。复现命令：
 
 ```sh
-PYTHONPATH=src:tests python -m unittest discover -s tests -t . -q
+PYTHONPATH=src python -m unittest discover -s tests -t . -q
 ```
 
 本轮方法协议验证（2026-11-06，Python 3.12.14）：新增方法测试 11 项及便携快照组件身份

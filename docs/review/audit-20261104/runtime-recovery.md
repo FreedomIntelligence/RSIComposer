@@ -59,12 +59,12 @@ Files changed by this audit:
 - `src/rsisys/runtime/recovery.py`
 - `src/rsisys/snapshot/local.py`
 - `src/rsisys/experience/sqlite.py`
-- `tests/test_audit_runtime_recovery.py`
+- `tests/regressions/test_audit_runtime_recovery.py`
 - `docs/review/audit-20261104/runtime-recovery.md`
 
 `runtime/runner.py` and `snapshot/codec.py` already had uncommitted edits at the
 start; this audit did not modify them. Parent-owned engine/state/context and
-`tests/test_m03_decision_policy.py` were not edited.
+`tests/decision/test_m03_decision_policy.py` were not edited.
 
 Validation was performed with `.local/langmem-validation/bin/python` and
 `PYTHONPATH=src` (or `src:tests` for existing tests' sibling-fixture imports).
@@ -89,13 +89,13 @@ Final validation after the lock/inode protection was complete:
 Reproduction commands (from the RSISys directory):
 
 ```sh
-PYTHONPATH=src .local/langmem-validation/bin/python -m unittest tests.test_audit_runtime_recovery
+PYTHONPATH=src .local/langmem-validation/bin/python -m unittest tests.regressions.test_audit_runtime_recovery
 
 PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest \
-  tests.test_audit_runtime_recovery tests.test_run_policy tests.test_research_cycles \
-  tests.test_coordination tests.test_parallel_experiments tests.test_operation_retry \
-  tests.test_durable_recovery tests.test_exploration_recovery tests.test_experience_boundary \
-  tests.test_external_artifacts tests.test_memory tests.test_run_provenance \
-  tests.test_action_permissions tests.test_system_directives tests.test_research_agenda \
-  tests.test_medical_response_recovery tests.test_medical_experiment
+  tests.regressions.test_audit_runtime_recovery tests.runtime.test_run_policy tests.decision.test_research_cycles \
+  tests.runtime.test_coordination tests.runtime.test_parallel_experiments tests.runtime.test_operation_retry \
+  tests.runtime.test_durable_recovery tests.runtime.test_exploration_recovery tests.memory.test_experience_boundary \
+  tests.runtime.test_external_artifacts tests.memory.test_memory tests.runtime.test_run_provenance \
+  tests.decision.test_action_permissions tests.runtime.test_system_directives tests.decision.test_research_agenda \
+  tests.experiments.medical.test_medical_response_recovery tests.experiments.medical.test_medical_experiment
 ```

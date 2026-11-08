@@ -8,9 +8,9 @@ from rsisys.loops.decision_making.feedback.learning import (
     checked_processor_result, FeedbackLearning, SerializedLearningBackend)
 from rsisys.loops.decision_making.feedback.pipeline import FeedbackPipeline
 from rsisys.loops.decision_making.harness.learning_harness import enable_feedback_learning
-from tests.test_feedback_components import ExternalContext
-from tests.test_feedback_learning_integration import ImmediateExecutor
-from tests.test_feedback_required_outputs import CONFIG, MODEL, EmptyBackend, observation
+from tests.feedback.test_feedback_components import ExternalContext
+from tests.feedback.test_feedback_learning_integration import ImmediateExecutor
+from tests.feedback.test_feedback_required_outputs import CONFIG, MODEL, EmptyBackend, observation
 
 results = {}
 

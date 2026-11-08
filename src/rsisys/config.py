@@ -32,10 +32,10 @@ class DemoConfig:
             raise NotImplementedError("Only the explicit demo mode is available.")
         if type(raw["rounds"]) is not int or raw["rounds"] < 1:
             raise ValueError("rounds must be a positive integer")
-        backends = {key: BackendBinding(backend_id=key, **value) for key, value in raw["backends"].items()}
-        roles = {key: ModelRef(**value) for key, value in raw["roles"].items()}
-        if 'decision_maker' not in roles or set(roles) - {'decision_maker', 'actor'}:
-            raise ValueError('decision_maker is required; actor is an optional legacy exploration role')
+        backends = {key: BackendBinding(backend_id=key, **value) for key, value in raw.get("backends", {}).items()}
+        roles = {key: ModelRef(**value) for key, value in raw.get("roles", {}).items()}
+        if set(roles) - {'decision_maker', 'actor'}:
+            raise ValueError('Unknown model role; use decision_maker or actor')
         for model in roles.values():
             if model.backend_id not in backends:
                 raise ValueError(f"Unknown model backend: {model.backend_id}")

@@ -51,7 +51,7 @@ review、异步、模型升级、持久恢复仍是独立能力，不强加到�
 
 ## 离线验收
 
-新增 [test_decision_module_windows.py](../../tests/test_decision_module_windows.py)，覆盖：
+新增 [test_decision_module_windows.py](../../tests/decision/test_decision_module_windows.py)，覆盖：
 
 - 最小 harness、两种运行模式、权限撤销、guarded 截止、review 两种能力、非法返回。
 - 包装前后有限重试/全失败用量、身份失败、压缩器优先级、作用域异常恢复及后端共享。

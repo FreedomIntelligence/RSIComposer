@@ -75,7 +75,7 @@ with MonitorServer(("127.0.0.1", 8765), "/path/to/runs") as server:
 `RunStore(root)` 只读已有 `monitor.json`；`MonitorServer(address, runs_dir)` 使用同一投影并提供 UI 与 API。
 需要嵌入 CLI 时可调用 `rsimonitor.server.main(argv=None)`，传入参数列表；缺省解析进程参数。
 wheel 内含五个运行资源（HTML、CSS、三个 JavaScript 文件），无需前端构建。前端测试与 demo fixture
-位于 `tests/monitor_frontend/`，不打入 wheel，也不通过 HTTP 发布。
+位于 `tests/monitor/frontend/`，不打入 wheel，也不通过 HTTP 发布。
 
 **一次完整 RSI 系统运行就是一个实验，对应一个 `run_id`；一个项目可以包含多个实验。** 一次实验包含 decision-making loop 与 exploration loop 的多轮交互、训练、评测和调整，单个 decision 或训练 job 不会产生新实验。 API 仅按快照 `project.project_id` 的显式归属分组，项目 ID 使用与运行 ID 相同的有效字符和长度规则。没有有效归属的实验统一列于 `project_id: "unassigned", name: "未归属"`。不按运行名称、目录前缀、`group` 或 `system_id` 推断归属，也不强制 `project_id=run_id`。历史 Qwen / 医疗快照共享的有效项目 ID 会自然聚合；明确声明 `project_id=run_id` 的新实验保持各自独立。历史运行文件保持原样。
 
@@ -260,7 +260,7 @@ Qwen 示例的生产端提供两个暂存 API，均不立即写文件：
 
 ```python
 from pathlib import Path
-from examples.qwen_toy.monitor import Monitor
+from experiments.qwen_toy.monitor import Monitor
 from rsisys.loops.contracts.model_service import ModelRef
 
 run_dir = Path("runs/dashboard-example")
@@ -388,7 +388,7 @@ decision_id=None, attempt_id=None)` 将 `None` 可选参数省略，保留最近
 ```sh
 PYTHONPATH=src python3.12 -m unittest discover -s tests -p 'test_monitor*.py' -v
 node --check src/rsimonitor/static/app.js
-node --test tests/monitor_frontend/*.test.js
+node --test tests/monitor/frontend/*.test.js
 ```
 
 服务测试覆盖显式项目归属与多实验分组、同名不同 ID 隔离、实验名称优先级、跨项目来源、历史文件不变、快照投影、读取边界、错误恢复与只读接口。前端验证重点为独立项目导航与深链接、来源链接、双语与原文保留、按需读取与并发取消、刷新保留展开状态和稳定步骤身份、训练历史及反馈关联。`attempts.test.js` 额外覆盖显式尝试身份、假设标题下调整提示词 / 评测 / 比较 / 采用的逐步选择、并行尝试与多结果汇合、关系优先级和原始证据、收缩成环时保持尝试主图、原始坏数据校验、历史空态与实验日志、双画布交互及刷新保留。`overview.test.js` 覆盖默认不展开详情、并行活动任务、终态运行与陈旧任务冲突、未关联历史及不确定状态、显式历史结果、刷新与双语保留选择和折叠状态、节点移除清空选择、旧实验日志入口及严格任务关联。Node 只用于检查与测试，服务运行不依赖 Node。
@@ -406,17 +406,17 @@ node --test tests/monitor_frontend/*.test.js
 
 ## 生产端与历史记录
 
-[Qwen toycase 的 monitor.py](../../examples/qwen_toy/monitor.py) 从模型的结构化 Decision / ReviewDecision 和实际 Runner 结果生成上述摘要；[worker](../../examples/qwen_toy/worker.py) 在 Trainer callback 中报告真实 global_step、max_steps、耗时及已记录的 loss / learning_rate。UI 从 monitor.json 读取，不直接访问训练服务。
+[Qwen toycase 的 monitor.py](../../experiments/qwen_toy/monitor.py) 从模型的结构化 Decision / ReviewDecision 和实际 Runner 结果生成上述摘要；[worker](../../experiments/qwen_toy/worker.py) 在 Trainer callback 中报告真实 global_step、max_steps、耗时及已记录的 loss / learning_rate。UI 从 monitor.json 读取，不直接访问训练服务。
 
 已完成的旧 toycase 可以显式补导出已有决策记录：
 
 ```sh
-PYTHONPATH=src python examples/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED_RUN
+PYTHONPATH=src python experiments/qwen_toy/monitor.py --run-dir runs/YOUR_COMPLETED_RUN
 ```
 
 导出只从该 run 的 decision_memory.json、result.json 和原监控事件生成公开字段，并原子更新 monitor.json；不改训练结果、时间戳或模型文件，不启动训练。source=history 表示真实历史记录，缺失的时间与中间步数保持未知。这个导出器属于 toycase；其他 Harness 自行生产同样的轻量监控字段，不需要适配统一训练数据格式。
 
-监控生产端保留系统生成的 `decision_id`。采纳仅从成功 `OperationResult` / `Feedback` 的 `adopted_candidate_ids` 与已成功产出的候选来源对应；评测不会变成候选生产者，失败或未知来源不画采纳边。离线导出沿用历史中的明确身份和回执。参考端到端示例 `PYTHONPATH=src:. python examples/decision_graph.py --run-dir runs/decision-graph-demo`；它使用模拟任务验证并行、组合采纳和后续消费，不代表真实模型训练。
+监控生产端保留系统生成的 `decision_id`。采纳仅从成功 `OperationResult` / `Feedback` 的 `adopted_candidate_ids` 与已成功产出的候选来源对应；评测不会变成候选生产者，失败或未知来源不画采纳边。离线导出沿用历史中的明确身份和回执。参考端到端示例 `PYTHONPATH=src:. python examples/components/decision_graph.py --run-dir runs/decision-graph-demo`；它使用模拟任务验证并行、组合采纳和后续消费，不代表真实模型训练。
 
 项目管理页按项目内最近一次实验的 `updated_at` 倒序排列；项目内实验同样按更新时间倒序。缺失或无效时间置后，相同时间保留清单原顺序；自动刷新本身不改变更新时间。
 

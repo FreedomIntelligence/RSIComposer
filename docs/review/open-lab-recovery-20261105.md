@@ -1,6 +1,6 @@
 # Medical Open Lab 原目录恢复接口
 
-`examples.medical.open_lab_experiment` 默认使用 `Application(..., durable=True)`，
+`experiments.medical.open_lab_experiment` 默认使用 `Application(..., durable=True)`，
 通过 `ModuleAssembly.state_factory` 注册 decision、exploration、Lab、feedback、
 模型调用账本五个状态适配器。替换模块仍自行提供 `ComponentState`；没有通用对象图序列化。
 
@@ -13,8 +13,8 @@ memory 工作，随后提交 `pause` checkpoint。`result.status=paused` 才表�
 信号发送成功不代表已经可恢复。须给正在进行的模型请求和清理留出时间。
 
 ```bash
-PYTHONPATH=src:. python -m examples.medical.open_lab_experiment --root /absolute/run --resume
-PYTHONPATH=src:. python -m examples.medical.open_lab_experiment --root /absolute/run --inspect-recovery
+PYTHONPATH=src:. python -m experiments.medical.open_lab_experiment --root /absolute/run --resume
+PYTHONPATH=src:. python -m experiments.medical.open_lab_experiment --root /absolute/run --inspect-recovery
 ```
 
 `--resume` 仅接受原目录；参数、source、数据摘要、模型文件清单、设备环境均沿用原配置，

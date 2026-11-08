@@ -1,0 +1,271 @@
+{
+  "date": "2026-11-08",
+  "scope": "Fixed-harness execution throughput; no RSI controller calls",
+  "hardware": [
+    "0, NVIDIA B20Z, 183359 MiB",
+    "1, NVIDIA B20Z, 183359 MiB",
+    "2, NVIDIA B20Z, 183359 MiB",
+    "3, NVIDIA B20Z, 183359 MiB",
+    "4, NVIDIA B20Z, 183359 MiB",
+    "5, NVIDIA B20Z, 183359 MiB",
+    "6, NVIDIA B20Z, 183359 MiB",
+    "7, NVIDIA B20Z, 183359 MiB"
+  ],
+  "vllm": "0.32.0",
+  "model": "Qwen3.5-9B-c2022362",
+  "policy": {
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_tokens": 2048,
+    "enable_thinking": false,
+    "seed": 73,
+    "trials_per_question": 4,
+    "questions": 128
+  },
+  "controller_sources_unchanged": {
+    "src/rsisys/controllers/rrsi.py": "580ea60e0f4387ef969d3c8a19e04fd509a2e9749941ca1ebe56a9bb40acda63",
+    "src/rsisys/controllers/harness_research.py": "ffd5889af9257d8f1541566d6b3599775ff4bbd76ac8e2ff3f9597ac34964f5b"
+  },
+  "recommended": {
+    "workers": 512,
+    "sandbox_workers": 32,
+    "grading_workers": 16,
+    "replicas": 8,
+    "max_num_seqs": 128,
+    "max_num_batched_tokens": 32768,
+    "enforce_eager": false
+  },
+  "source_archives": {
+    "source-final.tar.gz": "8bf3ec23bc1e1751f0432bf9ffa9d2ac37fc1ff2c5fc4944c5a3d0913385664c",
+    "source.tar.gz": "8a41f3c9649bb18c16c27dbe3623bb82b0a68c182af787f63ecdea1b1e9eeb52",
+    "source-bounded.tar.gz": "7d762136bcc1a81f31c9409955aad5fa1d58398cb3e7e47925acfbd2bc17f7b0"
+  },
+  "results": [
+    {
+      "name": "baseline",
+      "valid": true,
+      "elapsed_seconds": 292.36150466499384,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 547793,
+      "completion_tokens_per_second": 1873.6837485759131,
+      "trials_per_second": 1.7512565499574977,
+      "gpu_mean_utilization": {
+        "0": 28.814671814671815,
+        "1": 27.142857142857142,
+        "2": 27.46718146718147,
+        "3": 28.382239382239383,
+        "4": 27.79150579150579,
+        "5": 27.498069498069498,
+        "6": 28.74131274131274,
+        "7": 27.324324324324323
+      },
+      "accuracy": 0.802734375,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "656e8e41d103105208a7c4f8e86feca930539ccb2a3dffd9f1618cf7082c4e86",
+      "timing": null
+    },
+    {
+      "name": "concurrent-eager",
+      "valid": true,
+      "elapsed_seconds": 110.06663419899996,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 552966,
+      "completion_tokens_per_second": 5023.92031903365,
+      "trials_per_second": 4.651727598704493,
+      "gpu_mean_utilization": {
+        "0": 29.510204081632654,
+        "1": 28.3265306122449,
+        "2": 28.714285714285715,
+        "3": 28.79591836734694,
+        "4": 29.122448979591837,
+        "5": 28.26530612244898,
+        "6": 29.73469387755102,
+        "7": 28.724489795918366
+      },
+      "accuracy": 0.7890625,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "a46d3d20c05891e6a0fb5ad5a62fb970d872b25a7612949b72cc4dd67128ad73",
+      "timing": {
+        "elapsed_seconds": 110.01046418899205,
+        "generation_and_dispatch_seconds": 109.86994592798874,
+        "grading_tail_seconds": 0.140518261003308,
+        "grading_workers": 16,
+        "trials_per_second": 4.654102714450978,
+        "completion_tokens_per_second": 5026.485471873241
+      }
+    },
+    {
+      "name": "graphs-256",
+      "valid": true,
+      "elapsed_seconds": 23.21855291700922,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 548582,
+      "completion_tokens_per_second": 23626.88157013115,
+      "trials_per_second": 22.05133118459437,
+      "gpu_mean_utilization": {
+        "0": 61.095238095238095,
+        "1": 66.52380952380952,
+        "2": 54.857142857142854,
+        "3": 56.42857142857143,
+        "4": 70.42857142857143,
+        "5": 68.52380952380952,
+        "6": 60.333333333333336,
+        "7": 59.095238095238095
+      },
+      "accuracy": 0.796875,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "602d383f5b0d511dcb8f602d8ab599d42ec1eb06f812521700e0b3430e39478f",
+      "timing": {
+        "elapsed_seconds": 23.162174999015406,
+        "generation_and_dispatch_seconds": 23.001371933030896,
+        "grading_tail_seconds": 0.16080306598450989,
+        "grading_workers": 16,
+        "trials_per_second": 22.10500525195775,
+        "completion_tokens_per_second": 23684.390607674777
+      }
+    },
+    {
+      "name": "graphs-512",
+      "valid": false,
+      "elapsed_seconds": 14.893367097014561,
+      "samples": 512,
+      "model_calls": 358,
+      "completion_tokens": 395172,
+      "completion_tokens_per_second": 26533.42239037497,
+      "trials_per_second": 34.377719736904396,
+      "gpu_mean_utilization": {
+        "0": 79.61538461538461,
+        "1": 87.84615384615384,
+        "2": 78.38461538461539,
+        "3": 81.0,
+        "4": 87.76923076923077,
+        "5": 77.6923076923077,
+        "6": 89.38461538461539,
+        "7": 83.6923076923077
+      },
+      "accuracy": 0.533203125,
+      "harness_errors": 154,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "94d2c247c140e004e920d12b32fd6b03bcd8655faebb915f93d9eb21bc660eb6",
+      "timing": {
+        "elapsed_seconds": 14.848356386006344,
+        "generation_and_dispatch_seconds": 14.70835883001564,
+        "grading_tail_seconds": 0.1399975559907034,
+        "grading_workers": 16,
+        "trials_per_second": 34.48193097537235,
+        "completion_tokens_per_second": 26613.85474101532
+      }
+    },
+    {
+      "name": "bounded-512-a",
+      "valid": true,
+      "elapsed_seconds": 17.012873044004664,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 542701,
+      "completion_tokens_per_second": 31899.432776361533,
+      "trials_per_second": 30.094858092203822,
+      "gpu_mean_utilization": {
+        "0": 89.66666666666667,
+        "1": 88.06666666666666,
+        "2": 79.4,
+        "3": 80.66666666666667,
+        "4": 85.66666666666667,
+        "5": 88.8,
+        "6": 88.26666666666667,
+        "7": 80.33333333333333
+      },
+      "accuracy": 0.798828125,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "2852fd946cddb27e823df9d28bed145febec9e5a20fec1c1a71e5d1173b3bf76",
+      "timing": {
+        "elapsed_seconds": 16.954347093007527,
+        "generation_and_dispatch_seconds": 16.731733228021767,
+        "grading_tail_seconds": 0.2226138649857603,
+        "grading_workers": 16,
+        "trials_per_second": 30.19874473439109,
+        "completion_tokens_per_second": 32009.54876191168
+      }
+    },
+    {
+      "name": "bounded-512-b",
+      "valid": true,
+      "elapsed_seconds": 15.57458515604958,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 547435,
+      "completion_tokens_per_second": 35149.25081567016,
+      "trials_per_second": 32.87406983043306,
+      "gpu_mean_utilization": {
+        "0": 84.57142857142857,
+        "1": 78.35714285714286,
+        "2": 84.07142857142857,
+        "3": 84.57142857142857,
+        "4": 76.5,
+        "5": 83.35714285714286,
+        "6": 77.78571428571429,
+        "7": 78.64285714285714
+      },
+      "accuracy": 0.791015625,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "5a9e04882faf0877b9bf85d4d7de762b0259c03c645b77c2c84b36316a59a018",
+      "timing": {
+        "elapsed_seconds": 15.520229564979672,
+        "generation_and_dispatch_seconds": 15.304907730955165,
+        "grading_tail_seconds": 0.21532183402450755,
+        "grading_workers": 16,
+        "trials_per_second": 32.989202759944526,
+        "completion_tokens_per_second": 35272.35197830123
+      }
+    },
+    {
+      "name": "bounded-256",
+      "valid": true,
+      "elapsed_seconds": 19.848516525002196,
+      "samples": 512,
+      "model_calls": 512,
+      "completion_tokens": 549762,
+      "completion_tokens_per_second": 27697.888620919955,
+      "trials_per_second": 25.795378680067042,
+      "gpu_mean_utilization": {
+        "0": 90.77777777777777,
+        "1": 85.38888888888889,
+        "2": 83.0,
+        "3": 79.0,
+        "4": 80.44444444444444,
+        "5": 80.77777777777777,
+        "6": 79.83333333333333,
+        "7": 80.94444444444444
+      },
+      "accuracy": 0.791015625,
+      "harness_errors": 0,
+      "harness_sha256": "64af2477e4b7aa064fd825f85180da0b4264ada87cff27804d3e7f6c48d777d3",
+      "dataset_sha256": "760c2301f3218ec4f09142a105dbf352f12a0d067fce6d969a978ddda89203f6",
+      "traces_sha256": "4d7cab851b2cad58e328404469ed9ab53c158d5ab9418fcc35290085136807f3",
+      "timing": {
+        "elapsed_seconds": 19.793962625961285,
+        "generation_and_dispatch_seconds": 19.65682730701519,
+        "grading_tail_seconds": 0.13713531894609332,
+        "grading_workers": 16,
+        "trials_per_second": 25.86647300871798,
+        "completion_tokens_per_second": 27774.22643402112
+      }
+    }
+  ],
+  "note": "Steady-state end-to-end microbenchmark. Startup excluded. Dynamic batching and warmed prefix-cache state can change individual outputs. Invalid 512-concurrency sandbox-overload run retained and excluded from performance claims.",
+  "evidence_archive_sha256": "e0a7c6197f9d22a3a84bb879ae220ddf12849aa36304209e29f1cbfb3e813c4a"
+}

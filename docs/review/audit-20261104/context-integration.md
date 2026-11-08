@@ -24,7 +24,7 @@
 
 ### C02：最终 monitor 写入失败阻止正式结果落盘（M14/M15）
 
-入口：`examples.medical.experiment.run` 的 finally。
+入口：`experiments.medical.experiment.run` 的 finally。
 
 即使 learner 清理和 serving 释放已经执行，最后一次 `monitor.stage(...)` 抛错仍会跳过 `result.json`。
 现在单独捕获该错误，记录 `cleanup_or_persistence_failed`，继续写正式结果，并通过 `execution_outcome` 保留收尾故障之前的执行结果。
@@ -85,9 +85,9 @@
 
 ## 验证入口
 
-- 本组新增回归：`tests/test_audit_context_monitor.py`。
+- 本组新增回归：`tests/regressions/test_audit_context_monitor.py`。
 - 上下文定向：`test_context_compaction`、`test_adaptive_context_budget`、`test_repeated_receipt_compaction`。
 - 收尾/装配定向：`test_feedback_learning_integration`、`test_assembly`。
 - 监控定向：`test_monitor`、`test_monitor_lineage`、`test_monitor_projects`、`test_medical_monitor_identity`。
-- 前端：`node --test tests/monitor_frontend/*.test.js`，140 项通过。
+- 前端：`node --test tests/monitor/frontend/*.test.js`，140 项通过。
 - 最终全量验证及文件指纹见本目录总报告；不把前几轮的数字冒充当前最终工作树结果。

@@ -49,7 +49,7 @@ context/归档，terminal evidence 和可修正错误进入整理器；相同请
 
 `FixedMedicalLab` 增加 `medical_evaluate(key, candidate_id, argv)`，仍使用同一 owned
 process、并行槽、超时、任务总限额和清理路径。正式代码位于 host 的
-`examples/medical/fixed_evaluation.py`，不复制进可编辑 workspace。
+`experiments/medical/fixed_evaluation.py`，不复制进可编辑 workspace。
 启动前核验源码 SHA，固定 development 文件逐项核验内容 SHA。
 
 候选 stdin 为 `{protocol, items:[{benchmark_id,id,messages}]}`：question/options 固定构造，
@@ -65,7 +65,7 @@ Lab 固定 exact-option-letter-v1 的答案解析与 gold 匹配，按样本 ID 
 
 ## 验收与范围
 
-`tests/test_lion_followup_repair.py` 覆盖真实 CPU 子进程、压缩后的实时状态、busy/replay、
+`tests/runtime/test_lion_followup_repair.py` 覆盖真实 CPU 子进程、压缩后的实时状态、busy/replay、
 日志尾部和 quota gap、跳过整理后的完整 context/轨迹、queued/running 合并边界、
 固定 gold/完整输出解析、正式候选执行，以及真实 LangMem/Trustcall 的容量中止与证据投影。
 合成 fixture 不代表模型训练或医疗效果验证。

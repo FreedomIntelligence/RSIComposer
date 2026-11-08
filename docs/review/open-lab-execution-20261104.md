@@ -104,10 +104,10 @@ Lab 自有状态尚未接入 durable snapshot：明确拒绝自动快照与恢�
 
 ## 验证
 
-新增 [test_open_lab_execution.py](../../tests/test_open_lab_execution.py) 验证两套装配、实际传入模型的
+新增 [test_open_lab_execution.py](../../tests/runtime/test_open_lab_execution.py) 验证两套装配、实际传入模型的
 schema/prompt、任意命名、权限与参数准入、真实 CPU 程序修改/失败/修复、幂等、输出归档、
 终态反馈到 memory/轨迹、到期取消和 owned 清理，以及不支持的恢复被明确拒绝。
-运行 [open_lab.py](../../examples/open_lab.py) 可复现开放代码路径；使用确定性 policy fixture，
+运行 [open_lab.py](../../examples/components/open_lab.py) 可复现开放代码路径；使用确定性 policy fixture，
 不做真实模型推理、SFT、RL 或医学评测，不把 CPU 验证称为自主研究效果。
 完整运行结果与 SHA 清单写入 [validation](repros/open-lab-execution-validation.json)。
 最终全量回归 1578 项：1566 通过、12 跳过，零失败；其中新增 23 项。

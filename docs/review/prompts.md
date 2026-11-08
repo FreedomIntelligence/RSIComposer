@@ -143,7 +143,7 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 
 ## P07：医疗模式控制
 
-代码：[ResearchPolicy._model_context / _control_instructions / _scheduling_instructions / decision_schema](../../examples/medical/experiment.py#L907)。
+代码：[ResearchPolicy._model_context / _control_instructions / _scheduling_instructions / decision_schema](../../experiments/medical/experiment.py#L907)。
 
 - [ ] time 模式让 host 负责停止，模型只选 invoke/explore；system、schema、parser 三者都一致。
 - [ ] 传入的 run_control 是否避免要求模型管理倒计时、训练余量和研究轮次；initial_training_data 的角色明确。
@@ -154,9 +154,9 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 
 ## P08：医疗 envelope 与动作纠正
 
-代码：[ResearchPolicy.ENVELOPE_GUIDANCE](../../examples/medical/experiment.py#L882)、
-[decide 的校验与纠正](../../examples/medical/experiment.py#L1017)、
-[_parse_decision](../../examples/medical/experiment.py#L955)。
+代码：[ResearchPolicy.ENVELOPE_GUIDANCE](../../experiments/medical/experiment.py#L882)、
+[decide 的校验与纠正](../../experiments/medical/experiment.py#L1017)、
+[_parse_decision](../../experiments/medical/experiment.py#L955)。
 
 - [ ] unique keys、train input_ids、origin 不由模型填写、固定 initializer 与父系统绑定等说明逐句核对。
 - [ ] 非规范 action 名称何时允许归一化；不能改变模型具体参数或绕过校验。
@@ -167,7 +167,7 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 
 ## P09：输出截断与格式恢复
 
-代码：[DecisionBackend.generate / _generate_serial](../../examples/medical/experiment.py#L402)。
+代码：[DecisionBackend.generate / _generate_serial](../../experiments/medical/experiment.py#L402)。
 
 - [ ] length/格式错误分别追加哪条固定 correction；保持原始 request、schema 和模型身份。
 - [ ] 部分输出不得升级为 system 指令；每个响应保留并计费。
@@ -178,7 +178,7 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 
 ## P10：医疗 objective 与 project_context
 
-代码：[build_project_context](../../examples/medical/experiment.py#L218)、[experiment.run 的 objective 构造段](../../examples/medical/experiment.py#L1322)。
+代码：[build_project_context](../../experiments/medical/experiment.py#L218)、[experiment.run 的 objective 构造段](../../experiments/medical/experiment.py#L1322)。
 
 - [ ] system 外的这两段完整正文也逐句审：固定目标、标签、baseline、候选生成/评测/采纳、训练/数据与资源说明。
 - [ ] `proposal_only_unless_installed`、固定 initializer、Pareto 与 current incumbent 的真实执行一致。
@@ -259,7 +259,7 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 [WorkspaceTools](../../src/rsisys/loops/decision_making/harness/tools/workspace.py)、
 [QueryTools](../../src/rsisys/loops/decision_making/harness/tools/queries.py)、
 [feedback_learning_read spec](../../src/rsisys/loops/decision_making/harness/learning_harness.py)、
-[ExperimentOperations](../../examples/medical/experiment.py)。
+[ExperimentOperations](../../experiments/medical/experiment.py)。
 
 - [ ] 对本次实际 `context.operations`、`directives` 每个工具逐个审 name/description/input_schema/read_only。
 - [ ] read/archive/patch、反馈 jobs/attempts/proposals 分页、旧记录 ID/JSON Pointer 读回的语义一致。
@@ -289,7 +289,7 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 - [ ] 相同内容不同发生次数的回执、已归档数组、会话恢复和 native compact 后仍能正确解释。
 - [ ] 上游 P02/P04 的 JSON 上下文经过哪些投影；原生 SDK 保留的旧会话内容不能由本次 delta 大小推断。
 
-关联：`test_dsh_harness.py`、`test_dsh_runtime.py`；[examples/dsh_smoke.py](../../examples/dsh_smoke.py) 是独立验证入口，不属于研究流程的生产 prompt。
+关联：`test_dsh_harness.py`、`test_dsh_runtime.py`；[examples/components/dsh_smoke.py](../../examples/components/dsh_smoke.py) 是独立验证入口，不属于研究流程的生产 prompt。
 
 ## P18：DSH feedback 独立上下文
 
@@ -315,8 +315,8 @@ memory_context 为当前 provider 的文本视图；research_state 留给宿主�
 
 ## P20：医疗评测 prompt
 
-代码：[MedicalEvaluator._measure](../../examples/medical/evaluation.py#L90)、[Sample.prompt](../../examples/medical/task.py#L31)、
-[医疗 prompt candidate](../../examples/medical/run.py)。
+代码：[MedicalEvaluator._measure](../../experiments/medical/evaluation.py#L90)、[Sample.prompt](../../experiments/medical/task.py#L31)、
+[医疗 prompt candidate](../../experiments/medical/run.py)。
 
 system 为候选 instructions 加精确合法标签约束，user 为 question/options；逐样本直接调用推理。
 
@@ -328,9 +328,9 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 
 ## P21：医疗 SFT 的训练输入
 
-代码：[_MedicalTokenizer._feature / metadata](../../examples/medical/transformers_runtime.py#L111)、
-[_messages / _render](../../examples/medical/transformers_runtime.py#L66)、
-[Sample.prompt](../../examples/medical/task.py)、[MedicalTrainingBackend](../../examples/medical/native.py)。
+代码：[_MedicalTokenizer._feature / metadata](../../experiments/medical/transformers_runtime.py#L111)、
+[_messages / _render](../../experiments/medical/transformers_runtime.py#L66)、
+[Sample.prompt](../../experiments/medical/task.py)、[MedicalTrainingBackend](../../experiments/medical/native.py)。
 
 - [ ] 显式 system_prompt 与默认单标签说明的优先级；训练/评测 prompt 何时一致、何时故意不同。
 - [ ] chat template、enable_thinking、generation prefix、assistant gold 与 completion-only mask。
@@ -341,7 +341,7 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 
 ## P22：医疗简化装配入口
 
-代码：[MedicalAssembly.run](../../examples/medical/run.py#L266)。
+代码：[MedicalAssembly.run](../../experiments/medical/run.py#L266)。
 
 - [ ] settings.objective 后附 fixed task/protocol/anchor 与操作提示的完整正文。
 - [ ] 与 P10 主实验入口的差别：不能把简化入口的研究控制和提示默认套到夜间/三小时实验。
@@ -351,7 +351,7 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 
 ## P23：Qwen toy researcher
 
-代码：[Qwen toy ResearchDecisionPolicy.decide](../../examples/qwen_toy/run.py#L121)。
+代码：[Qwen toy ResearchDecisionPolicy.decide](../../experiments/qwen_toy/run.py#L121)。
 
 - [ ] 该示例仍把 remaining budget 放入 objective，并允许 finish/research cycle；这是单独路径，需与用户想要的架构分别核对。
 - [ ] 固定 recipe/protocol、NLL 方向、输入数据由后端采样、review_hint 的可选语义。
@@ -361,10 +361,10 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 
 ## P24：Qwen toy Actor、部署探针与 NLL 输入
 
-代码：[ParityActorPolicy / EXECUTION_PROMPT](../../examples/qwen_toy/run.py#L221)、
-[WorkerActivator 的部署探针](../../examples/qwen_toy/adapters.py#L334)、
-[prepare 的训练/评测 prompt](../../examples/qwen_toy/prepare.py#L7)、
-[worker 的 encode/evaluate](../../examples/qwen_toy/worker.py#L239)。
+代码：[ParityActorPolicy / EXECUTION_PROMPT](../../experiments/qwen_toy/run.py#L221)、
+[WorkerActivator 的部署探针](../../experiments/qwen_toy/adapters.py#L334)、
+[prepare 的训练/评测 prompt](../../experiments/qwen_toy/prepare.py#L7)、
+[worker 的 encode/evaluate](../../experiments/qwen_toy/worker.py#L239)。
 
 - [ ] parity 任务的输入数字、严格 JSON 输出、Actor instructions 与部署 JSON smoke 探针分开。
 - [ ] heldout NLL 直接对 eval.jsonl 的 prompt/answer 计算损失，不是一次生成式问答评测。
@@ -375,8 +375,8 @@ system 为候选 instructions 加精确合法标签约束，user 为 question/op
 ## P25：模型最终收到的消息和 schema
 
 代码：[RemoteModelBackend](../../src/rsisys/runtime/model.py)、[VLLMBackend](../../src/rsisys/adapters/serving.py)、
-[医疗 DecisionBackend](../../examples/medical/experiment.py)、[LocalTransformerServing](../../examples/medical/transformers_runtime.py)、
-[toy 服务](../../examples/qwen_toy/serve.py)、[toy transport](../../examples/qwen_toy/adapters.py)。
+[医疗 DecisionBackend](../../experiments/medical/experiment.py)、[LocalTransformerServing](../../experiments/medical/transformers_runtime.py)、
+[toy 服务](../../experiments/qwen_toy/serve.py)、[toy transport](../../experiments/qwen_toy/adapters.py)。
 
 - [ ] GenerationRequest 的 role/model/system/prompt/schema/options 实际如何变成 messages；是否额外插入 JSON system 指令。
 - [ ] canonical response schema 与 portable wire schema 的真实差异、字段顺序和 provider 限制；不能把解码约束当业务校验。

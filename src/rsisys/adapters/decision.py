@@ -4,7 +4,7 @@ from dataclasses import asdict
 import json
 
 from rsisys.loops.contracts.coordination import ReviewDecision
-from rsisys.loops.contracts.decision import DecisionInput
+from rsisys.loops.contracts.decision import DecisionInput, OperationCall
 from rsisys.loops.decision_making.action_space.directives import DirectiveDefinitions
 from rsisys.runtime.capabilities import optional_method
 
@@ -43,8 +43,12 @@ class DecisionInputAdapter:
             text = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
         else:
             text = self.context(view)
+        last = next((entry.details.get('operation') for entry in reversed(view.history)
+                     if entry.kind == 'operation'), None)
         return DecisionInput(view.objective, text, capabilities,
-                             self.references(view) if self.references is not None else ())
+                             self.references(view) if self.references is not None else (),
+                             feedback=view.operation_results[-1] if view.operation_results else None,
+                             last_operation=OperationCall(**last) if last is not None else None)
 
 
 class ContextDecisionPolicy:

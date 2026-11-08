@@ -16,7 +16,7 @@ from rsisys.loops.decision_making.feedback.learning import FeedbackLearning,Seri
 from rsisys.loops.decision_making.feedback.service import FeedbackLearningService
 from rsisys.runtime.files import atomic_write,json_bytes
 from rsisys.runtime.json_tools import result_id
-from tests.test_feedback_candidate_evidence import CALL48
+from tests.feedback.test_feedback_candidate_evidence import CALL48
 
 root=Path('.local/validation/langmem')/('feedback-canary-'+str(time.time_ns()))
 root.mkdir()

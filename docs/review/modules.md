@@ -83,7 +83,7 @@ CP1 / CP2 确认后的 [接口减负自查](feedback-adaptation-review-20261104.
 ## M02：Host、Runner 与停止控制
 
 入口：[runner.py](../../src/rsisys/runtime/runner.py)、[run_policy.py](../../src/rsisys/runtime/run_policy.py)、
-[ExperimentRunPolicy / DecisionBackend](../../examples/medical/experiment.py)。
+[ExperimentRunPolicy / DecisionBackend](../../experiments/medical/experiment.py)。
 
 - [ ] **M02.1 生命周期**：accept → advance/poll → terminal feedback → receive → acknowledge 的所有权、幂等性和崩溃边界。
 - [ ] **M02.2 连续研究**：定时模式、researcher 模式、旧 research cycle 的具体差异；模型等待、宿主等待与终止不能混为一谈。
@@ -104,7 +104,7 @@ Prompt：P07 / P09 / P10；普通计时和调度应由执行逻辑负责。
 
 入口：[ModelDecisionPolicy](../../src/rsisys/loops/decision_making/harness/policy/__init__.py)、
 [MemoryPrefixDecisionPolicy](../../src/rsisys/loops/decision_making/harness/learning_policy.py)、
-[医疗 ResearchPolicy](../../examples/medical/experiment.py)、[DSH 接入](../../src/rsisys/loops/decision_making/harness/dsh.py)。
+[医疗 ResearchPolicy](../../experiments/medical/experiment.py)、[DSH 接入](../../src/rsisys/loops/decision_making/harness/dsh.py)。
 
 - [ ] **M03.1 主指令**：角色、优化对象、研究自由度、证据等级、能力限制是否明确；多处拼接的指令有无冲突。
 - [ ] **M03.2 动作输出**：JSON envelope、reason、strategy、arguments、input_ids 与 lineage 字段是否各司其职。
@@ -254,8 +254,8 @@ Prompt：P19 / P20；RL 的接口和 mock 测试不证明某次实验进行了�
 
 入口：[adapters/training.py](../../src/rsisys/adapters/training.py)、[adapters/serving.py](../../src/rsisys/adapters/serving.py)、
 [training contracts](../../src/rsisys/loops/contracts/training.py)、[backend contracts](../../src/rsisys/loops/contracts/backend.py)、
-[medical/native.py](../../examples/medical/native.py)、[transformers_runtime.py](../../examples/medical/transformers_runtime.py)、
-[ascend_runtime.py](../../examples/medical/ascend_runtime.py)、[sglang_runtime.py](../../examples/medical/sglang_runtime.py)。
+[medical/native.py](../../experiments/medical/native.py)、[transformers_runtime.py](../../experiments/medical/transformers_runtime.py)、
+[ascend_runtime.py](../../experiments/medical/ascend_runtime.py)、[sglang_runtime.py](../../experiments/medical/sglang_runtime.py)。
 
 - [ ] **M11.1 训练输入**：原始数据、tokenized 数据、recipe、completion mask、截断、steps/曝光/loss 的实际语义。
 - [ ] **M11.2 初始化链**：experimental parent 与 initial_model 分离；restart/weights_only/full_state 的承诺；第一 LoRA 后的后续训练兼容。
@@ -269,8 +269,8 @@ Prompt：P09 / P21 / P25；fixture、只读预检、实际训练分别验收。
 ## M12：评测、比较与采纳
 
 入口：[EvaluationExecution](../../src/rsisys/loops/exploration/harness/evaluation/__init__.py)、
-[medical/evaluation.py](../../examples/medical/evaluation.py)、[systems.py](../../src/rsisys/runtime/systems.py)、
-[医疗候选应用](../../examples/medical/run.py)。
+[medical/evaluation.py](../../experiments/medical/evaluation.py)、[systems.py](../../src/rsisys/runtime/systems.py)、
+[医疗候选应用](../../experiments/medical/run.py)。
 
 - [ ] **M12.1 指标有效性**：NaN/Inf、类型、缺失值、异常后端结果必须在成功缓存/持久化前处理。
 - [ ] **M12.2 冻结协议**：candidate/parent/incumbent/initial anchor 分开，题目、合法标签、分母和 failure 的评分契约一致。
@@ -297,9 +297,9 @@ Prompt：P12 / P20；评分和采纳规则应核对代码与原始结果，不�
 
 ## M14：领域装配与实验启动控制
 
-入口：[medical/experiment.py](../../examples/medical/experiment.py)、[medical/run.py](../../examples/medical/run.py)、
-[medical/task.py](../../examples/medical/task.py)、[prepare_benchmarks.py](../../examples/medical/prepare_benchmarks.py)、
-[qwen_toy/run.py](../../examples/qwen_toy/run.py)、[config.py](../../src/rsisys/config.py)、[cli.py](../../src/rsisys/cli.py)。
+入口：[medical/experiment.py](../../experiments/medical/experiment.py)、[medical/run.py](../../experiments/medical/run.py)、
+[medical/task.py](../../experiments/medical/task.py)、[prepare_benchmarks.py](../../experiments/medical/prepare_benchmarks.py)、
+[qwen_toy/run.py](../../experiments/qwen_toy/run.py)、[config.py](../../src/rsisys/config.py)、[cli.py](../../src/rsisys/cli.py)。
 
 - [ ] **M14.1 实际选项**：从启动参数追到 policy/harness/backend/feedback 的真实实例；默认值不等于历史 run 的生效值。
 - [ ] **M14.2 数据边界**：固定 train/dev/protected、排除和曝光，不能把公开视图的删减当原数据变化。
@@ -311,7 +311,7 @@ Prompt：P07–P10 / P20–P25；不启动实验也可以完成静态装配和�
 
 ## M15：监控 API、前端与运行可观测性
 
-入口：[monitor producer](../../examples/qwen_toy/monitor.py)、[rsimonitor/server.py](../../src/rsimonitor/server.py)、
+入口：[monitor producer](../../experiments/qwen_toy/monitor.py)、[rsimonitor/server.py](../../src/rsimonitor/server.py)、
 [app.js](../../src/rsimonitor/static/app.js)、[decisions.js](../../src/rsimonitor/static/decisions.js)、
 [i18n.js](../../src/rsimonitor/static/i18n.js)、[Monitor README](../../src/rsimonitor/README.md)。
 
@@ -320,7 +320,7 @@ Prompt：P07–P10 / P20–P25；不启动实验也可以完成静态装配和�
 - [ ] **M15.3 页面与 API**：项目列表、run 详情、图表范围、错误显示、刷新状态和中英文本；前端不可用时区分服务与隧道。
 - [ ] **M15.4 可复核性**：从页面定位原始 request/response/receipt，不能靠摘要证明训练、部署或系统已改进。
 
-核对测试：`test_monitor.py`、`test_monitor_projects.py`、`test_medical_monitor_identity.py`、`test_monitor_lineage.py`、`tests/monitor_frontend/`。
+核对测试：`test_monitor.py`、`test_monitor_projects.py`、`test_medical_monitor_identity.py`、`test_monitor_lineage.py`、`tests/monitor/frontend/`。
 本模块没有研究模型 prompt；UI 文字另按展示语义审查。
 
 ## 信息类型与审查责任

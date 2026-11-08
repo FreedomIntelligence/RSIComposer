@@ -11,7 +11,7 @@
 ## 已修复的实际缺陷
 
 实现：[LocalProcessBackend](../../src/rsisys/runtime/local_process.py)。
-回归：[test_local_process_lifecycle.py](../../tests/test_local_process_lifecycle.py)。
+回归：[test_local_process_lifecycle.py](../../tests/runtime/test_local_process_lifecycle.py)。
 
 | 级别 | 触发与原行为 | 修复后的行为 |
 | --- | --- | --- |

@@ -158,7 +158,7 @@ FeedbackFailurePolicy 是 host 配置：
 
 ## 验收范围
 
-专门测试：[test_feedback_module_windows.py](../../tests/test_feedback_module_windows.py)。
+专门测试：[test_feedback_module_windows.py](../../tests/feedback/test_feedback_module_windows.py)。
 覆盖最小组件、原生产物、实际 decision 读取导航、模型计费/身份/完整请求容量、归档读回/恢复、
 独立与显式依赖、调度选择/host 并发及发布故障隔离。
 整仓回归 1,527 项：1,515 通过、12 跳过、0 失败/错误；303 个 source/example/test 文件验证期间无变化。

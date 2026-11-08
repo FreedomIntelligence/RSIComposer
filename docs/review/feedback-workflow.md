@@ -97,8 +97,8 @@ meta-agent（decision侧）在 research_agenda.feedback_learning.improvement_pro
 - [Lab capability / factory](../../src/rsisys/adapters/improvement.py)。
 - [归档来源适配器](../../src/rsisys/adapters/trajectory.py)。
 - [提案 prompt](../../src/rsisys/loops/decision_making/feedback/prompts/improvement_proposals.txt)。
-- `PYTHONPATH=src python examples/feedback_pipeline.py`：提案进入正式 decision。
-- `PYTHONPATH=src python examples/decision_policy_lab.py`：原始归档到 Lab 构建数据，再显式训练候选。
+- `PYTHONPATH=src python examples/components/feedback_pipeline.py`：提案进入正式 decision。
+- `PYTHONPATH=src python examples/components/decision_policy_lab.py`：原始归档到 Lab 构建数据，再显式训练候选。
 
 两个示例都是 CPU fixture，不验证真实自主研究、训练、数据标签、memory 语义或质量提升。
 当前 LangMem 的语义限制仍见[原验收记录](feedback-oss-adoption.md#尚未通过的语义验收)。
