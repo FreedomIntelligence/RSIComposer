@@ -55,6 +55,12 @@ Lab 校验两组不重叠、适配集合精确匹配目标题，并拒绝学习�
 boxed Math-Verify 替代上游数学归一化/判分器，优势标准化已单独对照 600 种输入。
 这些验证不意味着整个 verl 或完整 TTRL 奖励器数值等价。
 
+[后续归因审查](../../docs/review/weight-reproduction-diagnosis-20261109.md)补充了重要差异：
+论文 v3 主表按每题 16 次非零温度采样估计 pass@1，本配方只做单次 greedy；
+本地常数学习率和 sequence-mean loss 也没有对齐固定上游的 cosine / token-mean。
+官方判分器重算最终 160 题后分数不变，但相同训练回答上的投票/奖励仍不完全一致。
+上述小规模结果不能用于判断论文收益是否成立。
+
 ## 框架和组件
 
 `TTRLLab(context, config, engine=..., verifier=...)` 可由库外注册工厂装配。

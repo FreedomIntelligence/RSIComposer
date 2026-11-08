@@ -51,6 +51,12 @@ JSON 可分别设置 `inference_python` / `training_python`，以及各自的
 替代 GPT-4.1 判分，选择奖励为每篇文档的平均 F1，报告总体指标为问题平均。
 这会改变奖励口径，不能与论文的 GPT 判分准确率直接比较。
 
+后续[归因审查](../../docs/review/weight-reproduction-diagnosis-20261109.md)还确认：
+本配方使用整段 self-edit 和常数内层学习率；原 conformance 只覆盖上游默认的
+`split_newlines=False` 分支，没有覆盖论文按行拆分及完整 Trainer 行为。
+8 卡冻结 self-edit 对照表明，拆分和学习率日程会明显改变分数及收益方向。
+本配方继续保留原实验设置，不应当作论文对齐配方。
+
 ## 组件替换与证据
 
 `SEALLab(context, config, engine=..., scorer=..., scorer_name=...)` 可在库外 Lab 工厂中装配。
