@@ -38,3 +38,8 @@ CUDA_VISIBLE_DEVICES= RSISYS_REST_EM_CPU_INTEGRATION=1 PYTHONPATH=src \
 符号校验集成通过 RSISYS_MATH_VERIFY_INTEGRATION=1 启用；真实服务回归的环境变量见
 [integration/test_live_generation.py](integration/test_live_generation.py)。未显式启用的外部依赖测试会跳过。
 目录迁移保留了原有 2025 项测试；新增算法继续在对应模块目录补充行为测试。
+
+SEAL / TTRL 的决策回执及注册运行验证位于 `controllers/test_weight_evolution.py` 和
+`integration/test_weight_framework.py`；各 Lab 的泄漏、组件和产物检查位于 `labs/`。
+`integration/test_weight_objectives.py` 在安装 PyTorch / PEFT 后可在 CPU 上验证真实梯度及
+BF16 合并舍入；未安装时跳过，不下载模型。

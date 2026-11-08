@@ -1,0 +1,4 @@
+TTRL implements the method of Zuo et al., arXiv:2504.16084.
+Reference source: PRIME-RL/TTRL, commit 5806e119789132fcb43552beaf2532d7d0447213.
+The local GRPO worker is independently implemented and is not a verl backend.
+Upstream license for reference implementations: Apache-2.0.

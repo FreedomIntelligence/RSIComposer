@@ -16,6 +16,7 @@ from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
 from .controllers.single_loop import SingleLoopController
 from .controllers.rest_em import RestEMController
+from .controllers.weight_evolution import SEALController, TTRLController
 from .controllers.rrsi import RRSIController, build_rrsi
 from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
 from .adapters.lab_group import LabGroup
@@ -57,6 +58,14 @@ class Registry:
         self._controllers, self._labs, self._methods = {}, {}, {}
         self._plugins = []
         if builtins:
+            for implementation in (SEALController, TTRLController):
+                self.register_controller(implementation.method,
+                    lambda context, config, cls=implementation: cls(**config), version='1',
+                    validate_config=implementation.validate_config)
+            from .labs.seal import SEALLab, validate_config as validate_seal
+            self.register_lab('seal', SEALLab, version='1', validate_config=validate_seal)
+            from .labs.ttrl import TTRLLab, validate_config as validate_ttrl
+            self.register_lab('ttrl', TTRLLab, version='1', validate_config=validate_ttrl)
             self.register_controller('rrsi', build_rrsi,
                                      version='1', validate_config=RRSIController.validate_config)
             self.register_controller('rest_em', lambda context, config: RestEMController(**config),
@@ -194,6 +203,20 @@ class Registry:
                 context.add_owned_cleanup(close)
             if not callable(policy) and not callable(getattr(policy, 'decide', None)):
                 raise TypeError('Controller factory must return decide(input) or a callable')
+            report = optional_method(policy, 'report')
+            if report is not None:
+                context.controller_report = report
+            required = optional_method(policy, 'required_operations')
+            if required is not None:
+                names = required()
+                if (not isinstance(names, tuple) or any(not isinstance(n, str) or not n for n in names)
+                        or len(set(names)) != len(names)):
+                    raise TypeError('required_operations() must return distinct operation names as a tuple')
+                provider = context.lab_execution
+                available = {spec.name for spec in provider.describe()} if provider is not None else set()
+                missing = sorted(set(names) - available)
+                if missing:
+                    raise ValueError('Controller requires missing Lab operations: ' + ', '.join(missing))
             return build_default_decision(context, execution, policy=policy)
 
         research = None

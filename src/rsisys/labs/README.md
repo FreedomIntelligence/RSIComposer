@@ -80,3 +80,21 @@ answer_format 默认为 numeric，latex 时提示模型输出 boxed LaTeX 最终
 Lab 不决定采用哪个版本，也不更新模型权重。可替换的模型访问和隔离执行组件位于
 [harness_runtime.py](harness_runtime.py)，实验依赖及运行方式见
 [RRSI 配方](../../../experiments/rrsi/README.md)。
+
+## 更新权重的嵌套 SFT 与 RL
+
+内置 `seal` 和 `ttrl` Labs 复用 [WeightEngine](weight_engine.py) 及不可变阶段产物设施。
+正式方法分别见 [SEAL 配方](../../../experiments/seal/README.md) 与
+[TTRL 配方](../../../experiments/ttrl/README.md)。它们的迭代阶段由注册决策器发起；
+Lab 根据显式请求完成生成、内层训练、测量及参数更新，不自行增加 RSI 轮次。
+
+engine 提供 `name` / `simulated`、`generate(model, prompts, directory, *, sample, ...)` 和
+`train(model, rows, directory, checkpoint, *, algorithm, ...)`；SEAL 另需要
+`adapt(model, episodes, directory, ...)`。其返回结构及示例见 WeightEngine 的方法定义。
+自定义工厂可把 SEALLab 的 engine / scorer，或 TTRLLab 的 engine / verifier 替换掉，
+不改变顶层注册对象种类。`scorer_name` 必须带版本；回执中保留判分组件身份。
+
+推理和训练通过独立解释器运行，调用结束清理所拥有的进程组；`gpu_ids` 为物理编号，
+不得超出继承的 CUDA_VISIBLE_DEVICES。多 Lab 并发的统一 GPU lease 尚未实现。
+当前是同步终态执行；持久化恢复、异步作业及统一成本控制的具体缺口见
+[架构检查](../../../docs/review/weight-evolution-architecture-20261109.md)。

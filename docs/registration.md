@@ -186,6 +186,19 @@ def register(registry):
 
 ## 结果、状态与验收边界
 
+决策器可选实现两个能力，正式协议从 `rsisys.api` 导入：
+
+- `ControllerOperationRequirements.required_operations() -> tuple[str, ...]`：返回带 Lab
+  alias 的必需操作名，如 `('ttrl.rollout', 'ttrl.reward', 'ttrl.train', 'ttrl.evaluate')`。
+  注册装配时检查这些操作存在，避免训练开始后才发现 Lab 不匹配。schema 及语义仍需运行验证。
+- `ControllerReportProvider.report() -> dict`：返回方法自己的 JSON 状态。
+  `Application.controller_report()` 读取它，CLI 将其放入 `result.json.controller_report`。
+  内置 SEAL / TTRL 报告算法状态、训练轮数、当前 checkpoint 和真实训练信息。
+
+无需继承 Protocol；未提供这些方法的旧决策器继续按原接口运行。
+`finished` 是 host 生命周期状态，不能代替 `controller_report.status` 或论文收益验收。
+host 仅校验报告为 JSON，不根据分数替方法做成功判定或模型选择。
+
 运行保存 `result.json`、操作账本及装配身份。通用入口不推断领域任务是否真实训练或模拟，
 这两个汇总字段为 `null`，须查看原始回执与训练证据。
 内置注册组合当前不自动序列化任意算法状态或第三方作业，报告 `snapshot_supported=false`；

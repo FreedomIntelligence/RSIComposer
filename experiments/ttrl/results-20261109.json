@@ -1,0 +1,158 @@
+{
+  "date": "2026-11-09",
+  "method": "ttrl",
+  "reproduction_level": "small_scale_method_port",
+  "paper_result_reproduced": false,
+  "learning_gain_observed": false,
+  "model": {
+    "repository": "Qwen/Qwen2.5-7B",
+    "revision": "d149729398750b98c0af14eb82c78cfe92750796"
+  },
+  "framework_entrypoint": "rsisys run --config experiment.json",
+  "registered_controller": "ttrl",
+  "registered_lab": "ttrl",
+  "run_name": "ttrl-rl-20261109-v1",
+  "source_archive_sha256": "886b3668ad3b35a1966dc845bd7c693f1f4f0218e9c5ce4965230f091f456154",
+  "experiment_sha256": "59bdbfdf892536e714b9cd1f316f9957cf4264da39ea4aea0b3afb83b8d2e081",
+  "evidence_archive": {
+    "sha256": "b4f0a44d4cb7d56d19509cf46f05101af1ae272bd8e556d5d401fd273d77d564",
+    "bytes": 14439327,
+    "path": ".local/ttrl-rl-20261109-v1/evidence.tar.gz"
+  },
+  "decision_steps": 9,
+  "receipt_count": 8,
+  "all_terminal_receipts_completed": true,
+  "data": {
+    "upstream_revision": "5806e119789132fcb43552beaf2532d7d0447213",
+    "source_sha256": "c1680e2e2e034486ad1b7f5aa6dec7ce47ec801769d011cc5d6934ac139fcd46",
+    "seed": 7309,
+    "target": 32,
+    "transfer": 128,
+    "files": {
+      "unlabeled.json": "0808650a1a064c575c5b8b90f3f016e6f3bbb0ec47373117a78e103ab0c7b948",
+      "evaluation.json": "d5daaa3c76464369e4871cdd9b85cafc1eac1d2dc35a758d8ae5c260e3641e47"
+    }
+  },
+  "initial_metrics": {
+    "target_accuracy": 0.71875,
+    "target_questions": 32,
+    "transfer_accuracy": 0.71875,
+    "transfer_questions": 128
+  },
+  "final_metrics": {
+    "target_accuracy": 0.71875,
+    "target_questions": 32,
+    "transfer_accuracy": 0.6875,
+    "transfer_questions": 128
+  },
+  "training": [
+    {
+      "after_sha256": "460e250b1f9811acce9ca332e97cc55ab6ef2cf9f260c82634fa3d33b3e85611",
+      "algorithm": "grpo",
+      "before_sha256": "2c56346cf1c5474990b1c93d316f745505e231bae29ac43659075e042a090d7f",
+      "loss_first": -0.22133859992027283,
+      "loss_last": -0.14674535393714905,
+      "max_gradient_norm": 0.4781663715839386,
+      "mean_ratio_deviation": 0.004910620892587758,
+      "mean_sample_kl": 0.0002874236597989466,
+      "negative_advantages": 148,
+      "positive_advantages": 236,
+      "rank_weights_identical": true,
+      "reference_model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+      "samples": 512,
+      "steps": 64,
+      "temperature": 0.6,
+      "weights_changed": true,
+      "world_size": 8
+    },
+    {
+      "after_sha256": "05d7deeb17b5bc1b922ce94e384c1293f6585b5b607e1fd9ad36e8573887d85a",
+      "algorithm": "grpo",
+      "before_sha256": "e15296bdac7c8055b6e229d13f896f9f3aaab2fed409d05a5dab10f8de2691b5",
+      "loss_first": 0.033849477767944336,
+      "loss_last": 0.7309381365776062,
+      "max_gradient_norm": 0.41355517506599426,
+      "mean_ratio_deviation": 0.005141698396982974,
+      "mean_sample_kl": 0.00028986451991386275,
+      "negative_advantages": 137,
+      "positive_advantages": 231,
+      "rank_weights_identical": true,
+      "reference_model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+      "samples": 512,
+      "steps": 64,
+      "temperature": 0.6,
+      "weights_changed": true,
+      "world_size": 8
+    }
+  ],
+  "checkpoint_audit": {
+    "all_published_models_changed": true,
+    "changed_elements_from_parent": [
+      45903720,
+      44536235
+    ],
+    "checked_elements_per_checkpoint": 7615616512
+  },
+  "decision_boundary_audit": {
+    "controller_request_replay": true,
+    "operations": 8,
+    "derived_controller_report": {
+      "method": "ttrl",
+      "status": "completed",
+      "reason": "ttrl configured rounds completed; inspect independent evaluation receipts",
+      "rounds_completed": 2,
+      "iterations": 2,
+      "initial_model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+      "current_model": "/home/snchen/xinyuan/RSISys/.local/ttrl-rl-20261109-v1/run/ttrl/round-2/model",
+      "training_performed": true,
+      "real_training_rounds": 2,
+      "evaluations": [
+        {
+          "round": 0,
+          "model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+          "metrics": {
+            "target_accuracy": 0.71875,
+            "target_questions": 32,
+            "transfer_accuracy": 0.71875,
+            "transfer_questions": 128
+          },
+          "simulated": false
+        },
+        {
+          "round": 2,
+          "model": "/home/snchen/xinyuan/RSISys/.local/ttrl-rl-20261109-v1/run/ttrl/round-2/model",
+          "metrics": {
+            "target_accuracy": 0.71875,
+            "target_questions": 32,
+            "transfer_accuracy": 0.6875,
+            "transfer_questions": 128
+          },
+          "simulated": false
+        }
+      ]
+    },
+    "gold_absent_from_learning_reward_training": true,
+    "sampled_token_ids_preserved": true
+  },
+  "conformance": {
+    "revision": "5806e119789132fcb43552beaf2532d7d0447213",
+    "advantage_cases": 600,
+    "passed": true,
+    "scope": "group-normalized advantages; not full verl/backend equivalence"
+  },
+  "limitations_document": "README.md",
+  "gpus": {
+    "world_size": 8,
+    "hardware": "NVIDIA B20Z",
+    "final_memory_mib": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}

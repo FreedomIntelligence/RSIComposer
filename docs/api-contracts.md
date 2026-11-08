@@ -7,6 +7,7 @@
 | 决策器：`decide(DecisionInput) -> Decision` | [decision.py](../src/rsisys/loops/contracts/decision.py)、[公开别名](../src/rsisys/loops/contracts/rsi.py) | 验证合法决策、输入隔离、反馈及失败处理 |
 | Lab：`describe()`、`execute(LabRequest) -> LabFeedback` | [execution.py](../src/rsisys/loops/contracts/execution.py)、[回执](../src/rsisys/loops/contracts/coordination.py) | 验证操作描述、执行、反馈真实性和生命周期 |
 | 模块注册与装配 | [registry.py](../src/rsisys/registry.py) | 验证配置、插件加载、模块替换与库外运行 |
+| 可选决策器能力：`required_operations()`、`report()` | [rsi.py](../src/rsisys/loops/contracts/rsi.py) | 验证装配前兼容检查、算法状态与 host 生命周期区分 |
 | 可复用数学校验器与训推引擎 | [labs](../src/rsisys/labs/README.md) | 验证各组件遵守库中定义的行为 |
 
 统一导入入口为 `rsisys.api`，开发指南见 [registration](registration.md)。

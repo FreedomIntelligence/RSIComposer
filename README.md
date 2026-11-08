@@ -34,6 +34,11 @@ Host 定义目标、能力、权限与预算。用户通过独立 JSON 选择已
 根据真实轨迹、准确率、token 成本和稳定性选择下一轮版本，不引入 RL 或权重训练。
 正式接口定义与测试代码的职责划分见 [API 边界](docs/api-contracts.md)。
 
+含 SFT 的嵌套自适应见 [SEAL](experiments/seal/README.md)，含真实策略梯度的无标签
+自适应见 [TTRL](experiments/ttrl/README.md)。两者均已注册并完成两轮 8 卡小规模实跑，
+本轮未测得质量收益，不能当作论文数值复现。两模块设计及当前恢复、调度边界见
+[SFT / RL 架构检查](docs/review/weight-evolution-architecture-20261109.md)。
+
 ReST^EM 已作为 `rest_em` 决策器注册；[独立数学 Lab 示例](experiments/rest_em/README.md)
 提供无 ML 依赖的协议验收，以及可配置的本地模型 LoRA 执行路径。数学 Lab、校验器和引擎
 已作为[库内组件](src/rsisys/labs/README.md)提供，示例插件只做装配。Qwen2.5-7B Base

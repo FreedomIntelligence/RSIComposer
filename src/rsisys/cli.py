@@ -89,6 +89,9 @@ def main() -> None:
                           'snapshot': snapshot, 'experience_records': len(app.store.records()), **asdict(result)}
                 if app.custom_assembly:
                     output['framework'] = app.modules.configuration()
+                report = app.controller_report()
+                if report is not None:
+                    output['controller_report'] = report
             atomic_write(app.config.data_dir / 'result.json', json_bytes(output))
         print(json.dumps(output, ensure_ascii=False, indent=2))
     except (TypeError, ValueError, OSError, RuntimeError) as exc:

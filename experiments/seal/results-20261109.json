@@ -1,0 +1,164 @@
+{
+  "date": "2026-11-09",
+  "method": "seal",
+  "reproduction_level": "small_scale_method_port",
+  "paper_result_reproduced": false,
+  "learning_gain_observed": false,
+  "model": {
+    "repository": "Qwen/Qwen2.5-7B",
+    "revision": "d149729398750b98c0af14eb82c78cfe92750796"
+  },
+  "framework_entrypoint": "rsisys run --config experiment.json",
+  "registered_controller": "seal",
+  "registered_lab": "seal",
+  "run_name": "seal-sft-20261109-v1",
+  "source_archive_sha256": "09877273f01d64ad4216d573b13887f0aff9c07228f3e60a1fe1e5615a1ec97c",
+  "experiment_sha256": "fbe1fc1e1dead80d4f5629a0dcfd69ade063b6712187ac2cd2c72e0ba5614a46",
+  "evidence_archive": {
+    "sha256": "af5360f337ce5a5aacbf36a3f50139bceb9d08d7e127950c42fcb72b61232f39",
+    "bytes": 6237226,
+    "path": ".local/seal-sft-20261109-v1/evidence.tar.gz"
+  },
+  "decision_steps": 11,
+  "receipt_count": 10,
+  "all_terminal_receipts_completed": true,
+  "data": {
+    "upstream_revision": "6d9c9f9ee392c6cc618e771f399d436d190f6ca4",
+    "seed": 7309,
+    "source": {
+      "squad_train.json": "a9ae931fdea96dc0f5dcd6f0afac59dd8876849d8417e3425cc87972a26b508a",
+      "squad_val.json": "f9a4538b00006b6bed12c00d1274807b11cc33ba5b1068d797e1457ed4f74992"
+    },
+    "outputs": {
+      "train.json": {
+        "sha256": "7e05df728506976be0572fbf5168a9e279ba85a0351e7e5a30da1a1a25a91dba",
+        "documents": 8,
+        "questions": 42
+      },
+      "heldout.json": {
+        "sha256": "e31ad9ea234be2d410241cdc8bf60157bb9985ce8ab618457b1eaafd15cc47cd",
+        "documents": 8,
+        "questions": 45
+      }
+    }
+  },
+  "initial_metrics": {
+    "adapted_em": 0.15555555555555556,
+    "adapted_f1": 0.3123207613965091,
+    "documents": 8,
+    "no_adapt_f1": 0.37555555555555553,
+    "questions": 45
+  },
+  "final_metrics": {
+    "adapted_em": 0.15555555555555556,
+    "adapted_f1": 0.2863926169603575,
+    "documents": 8,
+    "no_adapt_f1": 0.3706724844820083,
+    "questions": 45
+  },
+  "training": [
+    {
+      "after_sha256": "b487856c75b899c7586e0915f14ed42e9cffcf9e84fb7d291867ee1e9c9dd8ae",
+      "algorithm": "sft",
+      "before_sha256": "2c56346cf1c5474990b1c93d316f745505e231bae29ac43659075e042a090d7f",
+      "loss_first": 0.5811832547187805,
+      "loss_last": 0.3101860284805298,
+      "max_gradient_norm": 0.43896958231925964,
+      "rank_weights_identical": true,
+      "samples": 8,
+      "steps": 2,
+      "weights_changed": true,
+      "world_size": 8
+    },
+    {
+      "after_sha256": "2c05af40c43e2c2c394fd8ffebc72c146b9b93c56d7c9fe439492d8c8fc66b97",
+      "algorithm": "sft",
+      "before_sha256": "e15296bdac7c8055b6e229d13f896f9f3aaab2fed409d05a5dab10f8de2691b5",
+      "loss_first": 0.4073270261287689,
+      "loss_last": 0.20346063375473022,
+      "max_gradient_norm": 0.40007761120796204,
+      "rank_weights_identical": true,
+      "samples": 8,
+      "steps": 2,
+      "weights_changed": true,
+      "world_size": 8
+    }
+  ],
+  "checkpoint_audit": {
+    "all_published_models_changed": true,
+    "changed_elements_from_parent": [
+      3313972349,
+      3281622043
+    ],
+    "checked_elements_per_checkpoint": 7615616512
+  },
+  "decision_boundary_audit": {
+    "controller_request_replay": true,
+    "operations": 10,
+    "derived_controller_report": {
+      "method": "seal",
+      "status": "completed",
+      "reason": "seal configured rounds completed; inspect independent evaluation receipts",
+      "rounds_completed": 2,
+      "iterations": 2,
+      "initial_model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+      "current_model": "/home/snchen/xinyuan/RSISys/.local/seal-sft-20261109-v1/run/seal/round-2/model",
+      "training_performed": true,
+      "real_training_rounds": 2,
+      "evaluations": [
+        {
+          "round": 0,
+          "model": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+          "metrics": {
+            "adapted_em": 0.15555555555555556,
+            "adapted_f1": 0.3123207613965091,
+            "documents": 8,
+            "no_adapt_f1": 0.37555555555555553,
+            "questions": 45
+          },
+          "simulated": false
+        },
+        {
+          "round": 2,
+          "model": "/home/snchen/xinyuan/RSISys/.local/seal-sft-20261109-v1/run/seal/round-2/model",
+          "metrics": {
+            "adapted_em": 0.15555555555555556,
+            "adapted_f1": 0.2863926169603575,
+            "documents": 8,
+            "no_adapt_f1": 0.3706724844820083,
+            "questions": 45
+          },
+          "simulated": false
+        }
+      ]
+    },
+    "exact_model_edits_selected_by_controller_lab": true
+  },
+  "conformance": {
+    "revision": "6d9c9f9ee392c6cc618e771f399d436d190f6ca4",
+    "sequence_cases": 80,
+    "selection_cases": 800,
+    "prompt_exact": true,
+    "passed": true
+  },
+  "limitations_document": "README.md",
+  "gpus": {
+    "world_size": 8,
+    "hardware": "NVIDIA B20Z",
+    "final_memory_mib": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "inner_sft": {
+    "episodes": 48,
+    "optimizer_steps": 960,
+    "all_weights_changed": true
+  }
+}

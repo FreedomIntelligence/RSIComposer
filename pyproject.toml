@@ -26,6 +26,7 @@ langmem = ["langmem==0.0.30", "trustcall==0.0.39", "langgraph==1.2.19",
 test = ["jsonschema>=4,<5"]
 
 [tool.setuptools.package-data]
+"rsisys.labs" = ["SEAL_NOTICE.txt"]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
 "rsisys.loops.decision_making.feedback" = ["prompts/*.txt"]
 "rsisys.loops.decision_making.harness.policy" = ["prompts/*.txt"]
