@@ -78,6 +78,16 @@ print('confined')
         state = self.execute("from pathlib import Path; Path('escape/key').read_text()")
         self.assertNotEqual(state.exit_code, 0)
 
+    def test_interpreter_parent_alias_uses_mounted_runtime_and_preserves_venv(self):
+        alias = self.root / 'unmounted-interpreter-parent'
+        alias.symlink_to(Path(sys.executable).parent.resolve(), target_is_directory=True)
+        command, env = self.backend.isolation.command(self.lab.workspace,
+            (str(alias / Path(sys.executable).name), '-c', 'import sys; print(sys.prefix)'), {})
+        result = subprocess.run(command, env=env, cwd=self.lab.workspace,
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(Path(result.stdout.decode().strip()).resolve(), Path(sys.prefix).resolve())
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux private tmp namespace')
     def test_multiprocessing_socket_with_long_workspace_and_inference_scratch(self):
         workspace = self.root / ('workspace-' + 'x' * 120)

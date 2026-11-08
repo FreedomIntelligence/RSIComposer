@@ -5,7 +5,7 @@
 开放 Lab 可直接实现 `LabExecution.describe/execute`。动作由 meta-agent（decision侧）选择，
 返回原始结果给同一个 meta-agent；它决定如何调试、整理与写入记忆。
 
-接收系统 Directive，并通过 Harness 推进执行、学习、评测或 prompt 配置。构造方式为 `ExplorationLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../README.md#系统架构)。
+接收系统 Directive，并通过 Harness 推进执行、学习、评测或 prompt 配置。构造方式为 `ExplorationLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../docs/usage.md#系统架构)。
 
 [loop.py](loop.py) 是薄端点，提供 `accept` / `advance` / `inspect` / `cancel` / `acknowledge`。`advance` 将独立的 Action Space 传给 Harness；指令分派、状态和业务流程由 Harness 实现。
 

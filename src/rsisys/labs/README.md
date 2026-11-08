@@ -98,3 +98,6 @@ engine 提供 `name` / `simulated`、`generate(model, prompts, directory, *, sam
 不得超出继承的 CUDA_VISIBLE_DEVICES。多 Lab 并发的统一 GPU lease 尚未实现。
 当前是同步终态执行；持久化恢复、异步作业及统一成本控制的具体缺口见
 [架构检查](../../../docs/review/weight-evolution-architecture-20261109.md)。
+
+同一 run 内装配多个 SEAL/TTRL Lab 时，分别设置不同的 `output_subdir`（简单目录名），
+默认仍为 `seal` / `ttrl`。产物隔离不提供 GPU 调度，设备应由调用方分配。

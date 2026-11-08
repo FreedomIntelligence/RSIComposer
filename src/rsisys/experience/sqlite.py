@@ -27,6 +27,15 @@ class SQLiteExperienceStore:
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path)
+        try:
+            self._initialize_schema()
+        except BaseException:
+            # The caller cannot register cleanup until construction returns.
+            # A malformed restored DB or failed PRAGMA must not leak this handle.
+            self.connection.close()
+            raise
+
+    def _initialize_schema(self):
         # SQLite lower() only folds ASCII. Match the in-memory store's Unicode
         # search semantics before ORDER BY/LIMIT selects the most recent rows.
         self.connection.create_function('casefold', 1, str.casefold, deterministic=True)
@@ -43,7 +52,6 @@ class SQLiteExperienceStore:
         ''')
         row = self.connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
         if row is not None and row[0] != '2':
-            self.connection.close()
             raise ValueError('Unsupported experience schema version')
         with self.connection:
             self.connection.execute("INSERT OR IGNORE INTO metadata VALUES ('schema_version', '2')")

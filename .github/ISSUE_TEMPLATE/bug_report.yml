@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible framework failure
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic inputs and redact secrets. For vulnerabilities, follow SECURITY.md.
+  - type: textarea
+    id: version
+    attributes:
+      label: Version and environment
+      description: Commit/release, Python, OS, optional dependencies and hardware if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Command, minimal config/plugin and synthetic inputs. Include expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant receipts or traceback
+      description: Redacted excerpt only; no API keys, private datasets or full raw requests.

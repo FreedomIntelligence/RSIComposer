@@ -2,6 +2,7 @@
 from tests import ROOT as REPO_ROOT
 
 from copy import deepcopy
+from contextlib import closing
 from dataclasses import replace
 from hashlib import sha256
 import fcntl
@@ -413,8 +414,20 @@ class PersistenceAuditTests(unittest.TestCase):
         store.close()
         with self.assertRaisesRegex(ValueError, 'schema'):
             SQLiteExperienceStore(path)
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             self.assertEqual(connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0], '999')
+
+    def test_sqlite_initialization_failure_closes_unpublished_connection(self):
+        path = self.root / 'malformed.sqlite3'
+        connection = sqlite3.connect(path)
+        self.addCleanup(connection.close)
+        connection.execute('CREATE TABLE metadata (wrong_column TEXT)')
+        connection.commit()
+        with patch('rsisys.experience.sqlite.sqlite3.connect', return_value=connection):
+            with self.assertRaises(sqlite3.OperationalError):
+                SQLiteExperienceStore(path)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute('SELECT 1')
 
     def test_snapshot_store_rejects_escape_and_placeholders_remain_explicit(self):
         with self.assertRaises(ValueError):

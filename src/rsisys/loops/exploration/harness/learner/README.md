@@ -32,7 +32,7 @@ checkpoint，后端不支持时明确拒绝。SystemVersion / SystemRegistry 管
 ProcessTrainingBackend 组合持久作业目录、原生命令与结果解析，默认 worker 可执行
 Transformers / PEFT SFT；其他 CLI 通过显式命令和 result_reader 接入。
 训练配置、tokenized 数据、设备和可选依赖均由调用方提供，见
-[使用指南](../../../../../../README.md#接入整项训练任务)。领域任务装配和验收规则留在
+[使用指南](../../../../../../docs/usage.md#接入整项训练任务)。领域任务装配和验收规则留在
 [experiments/medical/](../../../../../../experiments/medical/)，不写入 learner。
 
 成功结果默认形成候选。显式 `apply_learning`、`SFTSpec(apply_result=True)`、`TrainSpec(apply_result=True)` 或默认 RL 内部更新改变 Actor 绑定；应用要求 policy 支持 ModelUpdatable、当前模型与训练 base 一致，且无环境交互或其他活跃训练。同一 job 重复应用不再次更新；这些操作不验收质量，也不自动更新 meta-agent（decision侧）。
@@ -45,7 +45,7 @@ Transformers / PEFT SFT；其他 CLI 通过显式命令和 result_reader 接入�
 
 默认 `rl` 仍由 Harness 顺序执行本地 rollout → learner 训练 → 应用版本 → 下一轮 rollout；只有 rollout 调用 ActorPolicy.act 和 Actor Action Space。SFT 与 RL 的训练阶段直接调用 learner。
 
-可选 `train` 需要配对注册 [training_directive()](../../../decision_making/action_space/directives.py) 和 [TrainingCommandHandler](command.py)，并注入 learner。handler 将 TrainSpec 与 Directive.input_refs 转为 ActorTrainingRequest，保留 origin；base 缺省时先使用 origin.initial_model，无 origin 才捕获角色模型。单个后端作业独立负责整个任务，不启动本地 RL 循环。提交重试、轮询、取消、证据记录及可选应用复用 Harness 的作业流程。装配方法见[使用指南](../../../../../../README.md#接入整项训练任务)。
+可选 `train` 需要配对注册 [training_directive()](../../../decision_making/action_space/directives.py) 和 [TrainingCommandHandler](command.py)，并注入 learner。handler 将 TrainSpec 与 Directive.input_refs 转为 ActorTrainingRequest，保留 origin；base 缺省时先使用 origin.initial_model，无 origin 才捕获角色模型。单个后端作业独立负责整个任务，不启动本地 RL 循环。提交重试、轮询、取消、证据记录及可选应用复用 Harness 的作业流程。装配方法见[使用指南](../../../../../../docs/usage.md#接入整项训练任务)。
 
 [backend_training.py](../../../../../../examples/components/backend_training.py) 演示独立子进程中的真实 CPU 标量回归优化与产物回传，不是 LLM 训练，也不是 verl 的现成适配；该示例不演示 RL rollout。
 

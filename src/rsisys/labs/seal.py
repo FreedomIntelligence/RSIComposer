@@ -47,7 +47,7 @@ def select_edits(rows):
 
 
 def validate_config(config):
-    allowed = {'data_root', 'gpu_ids', 'inference_python', 'training_python', 'worker_timeout',
+    allowed = {'data_root', 'output_subdir', 'gpu_ids', 'inference_python', 'training_python', 'worker_timeout',
                'seed', 'max_length', 'max_tokens', 'lora_rank', 'inner_rank', 'inner_epochs',
                'outer_epochs', 'batch_size', 'inner_lr', 'outer_lr', 'gradient_checkpointing',
                'temperature', 'enforce_eager', 'inference_cuda_home', 'training_cuda_home'}

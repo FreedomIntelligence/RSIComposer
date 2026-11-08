@@ -126,7 +126,7 @@ def load_runtime(config):
     from transformers import (AutoConfig, AutoTokenizer, AutoModelForCausalLM,
                               AutoModelForImageTextToText, GenerationConfig)
     if config['device_type'] == 'npu':
-        import torch_npu  # noqa: F401; registers the installed device backend
+        import torch_npu  # noqa: F401  # Registers the installed device backend.
         torch.npu.set_compile_mode(jit_compile=False)
     base = config['base_model_path']
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, trust_remote_code=False)

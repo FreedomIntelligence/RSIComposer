@@ -5,6 +5,7 @@ Every request, worker log and response remains under the owning Lab artifact.
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,10 @@ from .math_parallel import run_workers
 
 
 def validate_engine(config):
+    subdir = config.get('output_subdir')
+    if 'output_subdir' in config and (not isinstance(subdir, str) or
+            not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', subdir)):
+        raise ValueError('output_subdir must be a simple run-local directory name')
     for key in ('inference_python', 'training_python', 'data_root', 'inference_cuda_home', 'training_cuda_home'):
         if key in config and (not isinstance(config[key], str) or not config[key].strip()):
             raise ValueError(f'{key} must be a nonempty executable')

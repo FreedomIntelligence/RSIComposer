@@ -30,7 +30,7 @@ class WeightArtifacts:
                 or any(not callable(getattr(self.engine, name, None)) for name in self.engine_methods)):
             raise TypeError('Weight engine must declare name/version, simulated bool, and required operations')
         self.simulated = self.engine.simulated
-        self.root = Path(context.data_dir).resolve() / self.method
+        self.root = Path(context.data_dir).resolve() / config.get('output_subdir', self.method)
         self.root.mkdir(parents=True, exist_ok=False)
         self.input_root = Path(config.get('data_root', Path.cwd())).resolve()
         self.hashes, self.inputs, self.models, self.seen = {}, {}, {}, set()

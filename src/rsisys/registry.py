@@ -126,6 +126,22 @@ class Registry:
             raise TypeError('Expected MethodDefinition')
         self._methods[name] = definition
 
+    def describe(self):
+        """Return detached registration metadata without constructing resources.
+
+        A name/version catalog describes availability, not runtime compatibility
+        or optional dependency readiness. Plugin loading remains explicit.
+        """
+        return {
+            'controllers': {name: {'version': item.version}
+                            for name, item in sorted(self._controllers.items())},
+            'labs': {name: {'version': item.version}
+                     for name, item in sorted(self._labs.items())},
+            'methods': {name: {'version': item.version}
+                        for name, item in sorted(self._methods.items())},
+            'plugins': deepcopy(self._plugins),
+        }
+
     def load_plugin(self, path):
         """Execute an explicitly trusted Python file with register(registry)."""
         path = Path(path).resolve(strict=True)
