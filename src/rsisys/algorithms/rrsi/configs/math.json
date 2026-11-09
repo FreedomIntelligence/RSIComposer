@@ -6,7 +6,7 @@
     "controller": {
       "name": "rrsi",
       "config": {
-        "initial_harness": "src/rsisys/algorithms/rrsi/seed_harness.py",
+        "initial_harness": "src/rsisys/labs/math/seed_harness.py",
         "search_data": "runs/rrsi-data/search.jsonl",
         "heldout_data": "runs/rrsi-data/heldout.jsonl",
         "lab": "harness",

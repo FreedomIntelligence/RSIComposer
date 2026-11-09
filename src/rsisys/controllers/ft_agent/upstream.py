@@ -21,7 +21,6 @@ from typing import Any, Dict, Generic, TypeVar
 from rsisys.runtime.upstream import checkout
 
 FT_AGENT_REVISION = '484776c211e4fbbeef03e0ec00d6bbee7362a4f4'
-LLAMA_FACTORY_REVISION = 'ca75f1edf3cb50343ed1c98605141c3e22075b5f'
 
 
 class Workspace:

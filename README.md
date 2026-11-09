@@ -50,28 +50,39 @@ It does not choose an algorithm's winner from scores.
 
 New algorithms normally need only external registration. Changes to shared
 scheduling, delivery, cancellation or recovery semantics belong in the core.
-Built-in methods live in `src/rsisys/algorithms/<method>/`: `controller.py`
-implements decisions, `lab.py` implements method-specific execution, and `configs/`
-selects the registered combination. Each method owns its controller and
-registration; method-specific workers, graders and upstream bridges stay in their
-method package. Reusable mathematical Labs and shared engines remain
-in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
-Controllers are roles inside method packages, not a separate top-level directory:
+The implementation layer has two roles: **controllers** process feedback and
+choose actions; **Labs** execute experiments and return evidence. A controller
+may be a state machine, search policy, LLM meta-agent or a hybrid. Neither side
+is required to use a harness, memory or an LLM.
 
 ```text
+controllers/
+  single_loop/ meta_agent/       # reusable rule/model-driven controllers
+  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # method-specific policies
+  training_schedule.py          # shared staged-training controller
+labs/
+  math/ local_process/          # task/execution scenes
+  seal/ ttrl/ aide/ ft_agent/    # method-specific experiment execution
+  harness/ training/            # reusable execution components
+  self_reflection/              # optional scaffold
 algorithms/
-  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # method-owned implementations
-  single_loop/      # fixed-iteration template and registration
-  meta_agent/       # model-driven template; selects harness and memory integration
-  _shared/          # reusable training-loop policy; not auto-discovered
-  _template/        # copyable user method example
+  <method>/__init__.py           # method declaration, component wiring, registration
+  <method>/configs/             # configuration and declarative task assets
+  _template/                    # self-contained development example
 ```
 
-A method can implement `decide(input)` directly; inheriting a shared template is
-optional. The registry discovers every method's registration entry without
-special cases for `single_loop` or `meta_agent`. Independent research-worker
-transport belongs in `runtime/research_bridge.py`. Harnesses own context/model/tool
-interaction; methods own strategy, candidate selection and stopping.
+Built-in method packages declare and register implementations imported from
+`controllers/` and `labs/`; they do not duplicate execution code. Their registered
+names and configurations remain stable. Each method chooses its controller,
+Labs, harnesses and memory through its single `register(registry)` entry; the
+core registry has no algorithm-specific branches. Independent research-worker
+transport lives in `runtime/research_bridge.py`.
+
+External methods may keep private implementations beside their registration
+entry, as shown by `_template`, without modifying the core or installing their
+components into the library. Promote components into the shared implementation
+layer when they are intended for reuse. Harnesses support context/model/tool
+interaction; a method's controller owns strategy, candidate selection and stopping.
 
 `rsisys.labs` exports the generic Lab contracts, without importing a scene:
 
@@ -88,8 +99,8 @@ labs/
 
 Scenes are pluggable Lab implementations, not required base classes. A future
 coding scene can live in `labs/coding/` or an external method package and register
-through the same interface. Algorithm-specific execution stays in its method
-package; shared components do not depend on a particular scene. The existing
+through the same interface. Built-in execution components live in their Lab package; shared components do
+not depend on a particular scene. The existing
 `local_process` registration provides generic process execution.
 
 Server launchers, historical reports, benchmark scripts and domain demos are
@@ -343,5 +354,5 @@ of Git. Contributions use Apache-2.0; keep discussion respectful and specific.
 Copyright 2026 RSISys contributors. Licensed under [Apache-2.0](LICENSE).
 Third-party origins are linked in the
 corresponding adapters; adapted SEAL code retains its MIT text in
-[seal/lab.py](src/rsisys/algorithms/seal/lab.py). External dependencies, weights and datasets
+[seal/lab.py](src/rsisys/labs/seal/lab.py). External dependencies, weights and datasets
 are obtained separately under their own terms.

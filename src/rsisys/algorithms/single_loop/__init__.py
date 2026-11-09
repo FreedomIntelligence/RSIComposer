@@ -1,5 +1,5 @@
 """Fixed-iteration controller template with its own registration entry."""
-from .controller import SingleLoopController
+from rsisys.controllers.single_loop.controller import SingleLoopController
 
 
 def register(registry):

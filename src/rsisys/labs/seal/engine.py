@@ -22,7 +22,7 @@ def validate_reference_engine(config):
 
 class SEALReferenceEngine(WeightEngine):
     operation_workers = {**WeightEngine.operation_workers,
-                         'adapt': 'rsisys.algorithms.seal.reference_worker'}
+                         'adapt': 'rsisys.labs.seal.reference_worker'}
 
     def __init__(self, config):
         validate_reference_engine(config)
@@ -42,7 +42,7 @@ def validate_paper_engine(config):
 
 class SEALTrainerEngine(SEALReferenceEngine):
     name = 'seal-transformers-trainer-trl-sft-v1'
-    worker_module = 'rsisys.algorithms.seal.worker'
+    worker_module = 'rsisys.labs.seal.worker'
 
     operation_workers = WeightEngine.operation_workers
 

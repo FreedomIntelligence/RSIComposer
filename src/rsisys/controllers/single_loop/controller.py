@@ -1,4 +1,4 @@
-"""Fixed iteration scheduling; algorithm execution belongs to the Lab."""
+"""Fixed iteration scheduling with feedback from a configured Lab operation."""
 from copy import deepcopy
 from rsisys.components import _json
 from rsisys.loops.contracts.decision import Decision, OperationCall
@@ -8,7 +8,7 @@ from rsisys.loops.contracts.lifecycle import ExecutionStatus
 class SingleLoopController:
     """Repeat one Lab iteration, observing its receipt before the next call.
 
-    The Lab owns the actual algorithm (for example generate/filter/train/evaluate).
+    The Lab owns the configured experiment pipeline (for example generate/filter/train/evaluate).
     This controller is a scheduling template, not an implementation of ReST or RL.
     """
     def __init__(self, operation, *, iterations=1, arguments=None, stop_on_failure=True):

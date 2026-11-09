@@ -1,5 +1,5 @@
 """SEAL self-edit, inner adaptation, selection and outer-SFT decisions."""
-from rsisys.algorithms._shared.training_schedule import TrainingScheduleController
+from rsisys.controllers.training_schedule import TrainingScheduleController
 
 
 class SEALController(TrainingScheduleController):

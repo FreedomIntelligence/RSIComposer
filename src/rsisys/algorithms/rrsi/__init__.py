@@ -1,5 +1,5 @@
 """rrsi method package and single registration entry point."""
-from .controller import RRSIController, build_rrsi
+from rsisys.controllers.rrsi.controller import RRSIController, build_rrsi
 
 def register(registry):
     registry.register_controller('rrsi', build_rrsi, version='1', validate_config=RRSIController.validate_config)

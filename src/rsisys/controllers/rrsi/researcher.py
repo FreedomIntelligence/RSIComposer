@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 from rsisys.labs.harness.runtime import ChatPool, digest, sandbox_step, validate_source
-from rsisys.algorithms.rrsi.controller import COMPONENTS, STRUCTURAL
+from rsisys.controllers.rrsi.controller import COMPONENTS, STRUCTURAL
 
 INTERFACE = """The harness is Python defining step(problem: str, history: list[dict]) -> dict.
 The driver calls it in a fresh isolated process before every policy request.

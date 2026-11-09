@@ -9,13 +9,13 @@ from .loops.contracts.rsi import (RSIController, Lab, LabRequest, LabFeedback,
                                 ControllerOperationRequirements, ControllerReportProvider)
 from .methods import MethodDefinition
 from .registry import Registry
-from .algorithms.single_loop import SingleLoopController
-from rsisys.algorithms.rest_em.controller import RestEMController
-from rsisys.algorithms.rrsi.controller import RRSIController
-from rsisys.algorithms.seal.controller import SEALController
-from rsisys.algorithms.ttrl.controller import TTRLController, TTRLVerlController
-from rsisys.algorithms.ft_agent.controller import FTAgentController
-from rsisys.algorithms.aide.controller import AIDEController
+from .controllers.single_loop.controller import SingleLoopController
+from rsisys.controllers.rest_em.controller import RestEMController
+from rsisys.controllers.rrsi.controller import RRSIController
+from rsisys.controllers.seal.controller import SEALController
+from rsisys.controllers.ttrl.controller import TTRLController, TTRLVerlController
+from rsisys.controllers.ft_agent.controller import FTAgentController
+from rsisys.controllers.aide.controller import AIDEController
 
 __all__ = ['Registry', 'SingleLoopController', 'RestEMController', 'RRSIController', 'SEALController', 'TTRLController', 'TTRLVerlController', 'FTAgentController', 'AIDEController', 'DecisionPolicy', 'Decision', 'DecisionInput',
            'RSIController', 'Lab', 'LabRequest', 'LabFeedback',

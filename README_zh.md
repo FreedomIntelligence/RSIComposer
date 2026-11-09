@@ -45,24 +45,34 @@ flowchart LR
 宿主不会根据分数替算法选择赢家。
 
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
-内置方法位于 `src/rsisys/algorithms/<方法>/`：`controller.py` 实现决策，
-`lab.py` 实现专属执行，`configs/` 选择已注册组合。各方法自己的控制器、注册、
-专属 worker、评分器与上游桥接都留在方法目录，
-可复用数学 Lab 与共享引擎仍在 `rsisys.labs`。
-controller 是方法内部的角色，不再单设顶层 `controllers/`：
+实现层分为两种角色：**Controller** 处理反馈并决定行动，**Lab** 执行实验并返回证据。
+Controller 可以是状态机、搜索策略、LLM meta-agent 或混合实现；两侧都不强制使用
+harness、memory 或 LLM。
 
 ```text
+controllers/
+  single_loop/ meta_agent/       # 可复用的规则/模型驱动控制器
+  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # 方法专属决策策略
+  training_schedule.py          # 共享的分阶段训练控制器
+labs/
+  math/ local_process/          # 任务/执行场景
+  seal/ ttrl/ aide/ ft_agent/    # 方法专属实验执行
+  harness/ training/            # 可复用执行组件
+  self_reflection/              # 可选骨架
 algorithms/
-  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # 各方法完整实现
-  single_loop/      # 固定迭代模板及其注册
-  meta_agent/       # 模型驱动模板，自行选择 harness 和记忆集成
-  _shared/          # 可复用训练流程策略，不参与自动发现
-  _template/        # 用户开发示例
+  <方法>/__init__.py             # 方法声明、组件组合和接口注册
+  <方法>/configs/               # 配置与声明式任务资源
+  _template/                   # 完整的用户开发示例
 ```
 
-方法可直接实现 `decide(input)`，无需继承共享模板。注册表统一发现方法入口，
-不再专门处理 `single_loop`、`meta_agent`。独立研究 worker 的通信归
-`runtime/research_bridge.py`。harness 负责上下文、模型和工具交互，方法负责策略、候选选择与停止。
+内置方法包从 `controllers/`、`labs/` 引用实现，只保留声明、装配和注册，不重复放执行代码。
+原有注册名和配置保持兼容。每个方法通过唯一的 `register(registry)` 入口选择控制器、Labs、
+harness 与 memory，核心注册表不增加算法专属分支。独立研究 worker 的通信归
+`runtime/research_bridge.py`。
+
+库外开发仍可像 `_template` 一样，在注册入口旁携带私有实现，无需改核心库或把组件分别
+安装进库中。需要供其他方法复用的能力，再纳入公共实现层。harness 支撑上下文、模型和工具
+交互，具体策略、候选选择及停止由方法的 Controller 决定。
 
 `rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景：
 
@@ -78,7 +88,7 @@ labs/
 ```
 
 场景是可插拔实现，不要求继承特定基类。后续 coding 场景可以放在 `labs/coding/`，
-也可以完全放在库外的方法包内，通过同一接口注册。算法专属执行继续留在方法目录；
+也可以完全放在库外的方法包内，通过同一接口注册。内置方法的执行实现放在对应 Lab 包中；
 共享组件不依赖具体场景。已有 `local_process` 注册提供通用进程执行。
 
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
@@ -281,5 +291,5 @@ PR 说明行为变化、验证与算法偏差；使用合成 fixture，不提交
 
 Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
 第三方来源在对应适配代码中标注，
-改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/algorithms/seal/lab.py)。
+改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/labs/seal/lab.py)。
 外部依赖、模型权重和数据集另行获取，遵循各自条款。

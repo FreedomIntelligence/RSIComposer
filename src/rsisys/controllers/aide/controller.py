@@ -99,7 +99,7 @@ class AIDEController:
         env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3]),
                    PYTHONUNBUFFERED='1', OPENAI_BASE_URL=cfg['endpoint'], OPENAI_API_KEY='local-unused')
         self.bridge = self.bridge_factory([cfg.get('worker_python', sys.executable), '-m',
-            'rsisys.algorithms.aide.worker', str(request)], log=self.root / 'worker.log', env=env)
+            'rsisys.controllers.aide.worker', str(request)], log=self.root / 'worker.log', env=env)
 
     def _invoke(self, name, args):
         path = Path(args['candidate']).resolve(strict=True)
