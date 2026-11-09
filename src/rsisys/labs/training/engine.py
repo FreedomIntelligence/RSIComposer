@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from .math_parallel import run_workers
+from rsisys.runtime.workers import run_workers
 
 
 def validate_engine(config):
@@ -48,15 +48,15 @@ def validate_engine(config):
 
 class WeightEngine:
     name, simulated = 'raw-vllm-torch-lora-v1', False
-    worker_module = 'rsisys.labs.weight_worker'
-    operation_workers = {'generate': 'rsisys.labs.weight_worker'}
+    worker_module = 'rsisys.labs.training.worker'
+    operation_workers = {'generate': 'rsisys.labs.training.worker'}
 
     def __init__(self, config):
         validate_engine(config)
         self.config = dict(config)
 
     def _env(self):
-        root = str(Path(__file__).resolve().parents[2])
+        root = str(Path(__file__).resolve().parents[3])
         return dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get('PYTHONPATH', ''),
                     OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false')
 

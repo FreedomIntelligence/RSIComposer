@@ -37,7 +37,7 @@ import re
 import string
 from collections import Counter
 
-from rsisys.labs.weight_artifacts import WeightArtifacts
+from rsisys.labs.training.artifacts import WeightArtifacts
 from .engine import SEALReferenceEngine, validate_reference_engine
 
 EDIT_PROMPT = ("Let's read the following passage and produce a list of implications "

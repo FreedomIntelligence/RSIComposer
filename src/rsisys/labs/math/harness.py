@@ -10,17 +10,17 @@ from contextlib import ExitStack
 from functools import lru_cache
 from pathlib import Path
 
-from ..loops.contracts.coordination import OperationResult
-from ..loops.contracts.decision import OperationSpec
-from ..loops.contracts.lifecycle import ExecutionStatus
-from .harness_runtime import (
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.labs.harness.runtime import (
     ChatPool,
     HarnessExecutionError,
     digest,
     sandbox_step,
     validate_source,
 )
-from .math_verifiers import MathVerifyVerifier, StrictNumericVerifier
+from rsisys.labs.math.verifiers import MathVerifyVerifier, StrictNumericVerifier
 
 
 @lru_cache(maxsize=1)

@@ -11,11 +11,11 @@ import math
 import re
 from pathlib import Path
 
-from ..loops.contracts.coordination import OperationResult
-from ..loops.contracts.decision import OperationSpec
-from ..loops.contracts.lifecycle import ExecutionStatus
-from .math_engines import FixtureMathEngine, TransformersMathEngine
-from .math_verifiers import StrictNumericVerifier, MathVerifyVerifier
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.labs.math.engines import FixtureMathEngine, TransformersMathEngine
+from rsisys.labs.math.verifiers import StrictNumericVerifier, MathVerifyVerifier
 
 
 def validate_config(config):
@@ -83,7 +83,7 @@ class MathLab:
         self.config = dict(config)
         self.input_root = Path(input_root or config.get('data_root', Path.cwd())).resolve()
         selected = config.get('engine', config.get('mode', 'fixture'))
-        from .math_parallel import ParallelMathEngine
+        from rsisys.labs.math.parallel import ParallelMathEngine
         self.engine = engine if engine is not None else (
             FixtureMathEngine() if selected == 'fixture' else
             (ParallelMathEngine if selected == 'vllm' else TransformersMathEngine)(config, input_root=self.input_root))

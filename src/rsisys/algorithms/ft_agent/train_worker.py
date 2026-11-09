@@ -27,7 +27,7 @@ def main(request):
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from rsisys.labs.weight_worker import merged_change_count
+    from rsisys.labs.training.worker import merged_change_count
     output = Path(recipe['output_dir'])
     states = sorted(output.rglob('trainer_state.json'), key=lambda p: p.stat().st_mtime)
     if not states:

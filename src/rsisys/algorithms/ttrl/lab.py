@@ -10,9 +10,9 @@ import math
 from collections import Counter
 from statistics import mean, stdev
 
-from rsisys.labs.math_verifiers import MathVerifyVerifier, final_boxed
-from rsisys.labs.weight_artifacts import WeightArtifacts
-from rsisys.labs.weight_engine import validate_engine
+from rsisys.labs.math.verifiers import MathVerifyVerifier, final_boxed
+from rsisys.labs.training.artifacts import WeightArtifacts
+from rsisys.labs.training.engine import validate_engine
 
 
 def math_prompt(question):

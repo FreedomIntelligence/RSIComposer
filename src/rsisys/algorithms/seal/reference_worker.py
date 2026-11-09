@@ -4,7 +4,7 @@ import random
 import sys
 from pathlib import Path
 
-from rsisys.labs.weight_worker import load_model, tensor_batch, weights_digest
+from rsisys.labs.training.worker import load_model, tensor_batch, weights_digest
 
 
 def answer_questions(model, tokenizer, questions, max_length):

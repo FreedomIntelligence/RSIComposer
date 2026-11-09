@@ -10,7 +10,7 @@ import traceback
 
 from rsisys.algorithms.aide.controller import AIDE_REVISION
 from rsisys.controllers.research_bridge import emit_event
-from rsisys.labs.harness_runtime import digest
+from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.upstream import checkout
 
 

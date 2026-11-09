@@ -16,7 +16,7 @@ import re
 import sys
 
 from rsisys.controllers.research_bridge import ResearchBridge
-from rsisys.labs.harness_runtime import digest
+from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.upstream import checkout
 from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus

@@ -7,8 +7,8 @@ import json
 
 from .upstream import TTRLReward, TTRL_REVISION, checkout
 from rsisys.algorithms.ttrl.lab import TTRLLab, validate_config as validate_reference
-from rsisys.labs.weight_artifacts import file_hash
-from rsisys.labs.weight_engine import WeightEngine
+from rsisys.labs.training.artifacts import file_hash
+from rsisys.labs.training.engine import WeightEngine
 
 DEFAULTS = dict(total_epochs=10, train_batch_size=32, samples_per_prompt=32,
     eval_samples=16, evaluation_temperature=0.6, evaluation_top_p=0.95,
@@ -45,7 +45,7 @@ class VerlTTRLEngine(WeightEngine):
     def fit(self, model, rows, directory, checkpoint, *, votes):
         import os
         import sys
-        from rsisys.labs.math_parallel import run_workers
+        from rsisys.runtime.workers import run_workers
         root = checkout(self.config['upstream_root'], TTRL_REVISION)
         directory.mkdir(parents=True, exist_ok=False)
         output, request = directory / 'response.json', directory / 'request.json'

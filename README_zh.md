@@ -49,6 +49,21 @@ flowchart LR
 `lab.py` 实现专属执行，`configs/` 选择已注册组合。各方法自己的控制器、注册、
 专属 worker、评分器与上游桥接都留在方法目录，
 可复用数学 Lab 与共享引擎仍在 `rsisys.labs`。
+`rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景：
+
+```text
+labs/
+  __init__.py       # Lab、请求、反馈和生命周期接口
+  math/             # 数学场景：Lab、验证器与数学后端
+  harness/          # 可复用 harness 执行与沙箱组件
+  training/         # 可复用训练引擎、worker 和产物管理
+  self_reflection/  # 可选的自身改进 Lab 骨架
+```
+
+场景是可插拔实现，不要求继承特定基类。后续 coding 场景可以放在 `labs/coding/`，
+也可以完全放在库外的方法包内，通过同一接口注册。算法专属执行继续留在方法目录；
+共享组件不依赖具体场景。已有 `local_process` 注册提供通用进程执行。
+
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。
 

@@ -56,6 +56,23 @@ selects the registered combination. Each method owns its controller and
 registration; method-specific workers, graders and upstream bridges stay in their
 method package. Reusable mathematical Labs and shared engines remain
 in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
+`rsisys.labs` exports the generic Lab contracts, without importing a scene:
+
+```text
+labs/
+  __init__.py       # Lab, LabRequest, LabFeedback and lifecycle interfaces
+  math/             # math scene: Labs, verifiers and mathematical backends
+  harness/          # reusable harness execution and sandbox components
+  training/         # reusable training engines, workers and artifact handling
+  self_reflection/  # optional self-improvement Lab scaffold
+```
+
+Scenes are pluggable Lab implementations, not required base classes. A future
+coding scene can live in `labs/coding/` or an external method package and register
+through the same interface. Algorithm-specific execution stays in its method
+package; shared components do not depend on a particular scene. The existing
+`local_process` registration provides generic process execution.
+
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 

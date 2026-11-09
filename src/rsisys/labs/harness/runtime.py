@@ -103,7 +103,7 @@ def validate_source(source):
 
 
 def sandbox_step(harness, problem, history, *, timeout=5):
-    runner = Path(__file__).with_name("harness_sandbox.py")
+    runner = Path(__file__).with_name("sandbox.py")
     source = Path(harness).resolve(strict=True)
     command = [
         "bwrap",

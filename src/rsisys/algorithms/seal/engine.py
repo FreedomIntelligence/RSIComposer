@@ -1,7 +1,7 @@
 """SEAL reference and Trainer backends, with explicit paper-profile defaults."""
 import math
 
-from rsisys.labs.weight_engine import WeightEngine, validate_engine
+from rsisys.labs.training.engine import WeightEngine, validate_engine
 
 PAPER_DEFAULTS = dict(split_newlines=True, adaptation_seeds=3, evaluation_seeds=1,
     inner_max_length=2048, inner_rank=32, inner_epochs=10, inner_lr=1e-3,

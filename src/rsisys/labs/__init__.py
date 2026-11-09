@@ -1,4 +1,8 @@
-"""Reusable Lab implementations and their optional internal components."""
-from .math import MathLab
+"""Generic Lab interfaces; scenes and backend components live in subpackages.
 
-__all__ = ["MathLab"]
+Scenes register through a method's entry point, not by importing this package.
+"""
+from rsisys.loops.contracts.rsi import Lab, LabRequest, LabFeedback
+from rsisys.loops.contracts.execution import ExecutionLifecycle, LabToolError
+
+__all__ = ['Lab', 'LabRequest', 'LabFeedback', 'ExecutionLifecycle', 'LabToolError']

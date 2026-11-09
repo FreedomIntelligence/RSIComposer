@@ -3,9 +3,9 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
-from ..loops.contracts.coordination import OperationResult
-from ..loops.contracts.decision import OperationSpec
-from ..loops.contracts.lifecycle import ExecutionStatus
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
 
 
 def file_hash(path):
@@ -22,7 +22,7 @@ class WeightArtifacts:
     engine_methods = ('generate', 'train')
 
     def __init__(self, context, config, *, engine=None):
-        from .weight_engine import WeightEngine
+        from rsisys.labs.training.engine import WeightEngine
         self.config = dict(config)
         self.engine = WeightEngine(config) if engine is None else engine
         if (not isinstance(getattr(self.engine, 'name', None), str) or not self.engine.name.strip()

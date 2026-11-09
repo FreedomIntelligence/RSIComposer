@@ -6,7 +6,7 @@ import random
 import sys
 import time
 
-from .math_engines import TransformersMathEngine
+from rsisys.labs.math.engines import TransformersMathEngine
 
 
 def generate(request, output):
@@ -65,10 +65,7 @@ def generate(request, output):
         'device_memory_used_mib': memory}), flush=True)
 
 
-def training_groups(dataset, batch_size, accumulation, world):
-    """Global groups without sampler padding or repeated training examples."""
-    width = batch_size * accumulation * world
-    return [dataset[i:i + width] for i in range(0, len(dataset), width)]
+from rsisys.labs.training.batching import training_groups
 
 
 def train(request):

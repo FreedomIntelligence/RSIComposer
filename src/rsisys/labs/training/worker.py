@@ -134,8 +134,8 @@ def train(request):
     import torch.distributed as dist
     from torch.nn.parallel import DistributedDataParallel as DDP
 
-    from .math_worker import training_groups
-    from .weight_objectives import grpo_objective
+    from rsisys.labs.training.batching import training_groups
+    from rsisys.labs.training.objectives import grpo_objective
     config, algorithm = request['config'], request['algorithm']
     rank, local, world = (int(os.environ[k]) for k in ('RANK', 'LOCAL_RANK', 'WORLD_SIZE'))
     torch.cuda.set_device(local)
