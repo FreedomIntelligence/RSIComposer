@@ -1,0 +1,14 @@
+{
+  "objective": "Learn method registration with literal prompt checks; no LLM or training",
+  "data_dir": "../../../../../runs/custom-prompt",
+  "max_decision_steps": 8,
+  "framework": {
+    "controller": {
+      "name": "custom_prompt",
+      "config": {"max_evaluations": 3}
+    },
+    "labs": {
+      "checker": {"name": "custom_prompt_check", "config": {}}
+    }
+  }
+}

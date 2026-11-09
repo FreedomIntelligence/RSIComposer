@@ -61,74 +61,48 @@ maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 
 ## Register your own method
 
-Keep a complete method in one package directory:
+Use the runnable [_template](src/rsisys/algorithms/_template/__init__.py) as a starting point:
 
 ```text
-my_method/
-  __init__.py       # register(registry): register controller and Labs
-  controller.py    # decisions and method state
-  lab.py           # execution and feedback
-  config.json      # complete controller/Lab selection
+algorithms/_template/
+  __init__.py       # one register(registry) entry for controller and Lab
+  controller.py     # choose the next prompt from Lab feedback; decide when to stop
+  lab.py            # execute checks and return a structured receipt
+  configs/run.json  # select registered names, parameters and Lab aliases
 ```
 
-Only the package entry `register(registry)` is prescribed; the internal file
-layout is yours. Small methods can put the entire implementation in `__init__.py`.
-`__init__.py` can also import `.controller` and `.lab` and register both in one
-`register(registry)` function. Keep custom memory, harnesses and backend adapters
-in this directory as needed; reuse framework components through imports.
-Run `rsisys run --plugin ./my_method --config ./my_method/config.json`.
-No core registry edit is needed. Built-in directories under `rsisys.algorithms`
-use the same entry function and are discovered automatically. Directory plugins
-record a hash of their local package files. Plugins execute trusted host code.
+Run it from a checkout, without GPUs, models or external services:
 
-
-Existing methods run without custom plugins. To develop a new method, save the
-following public-interface implementation as `plugin.py`:
-
-```python
-from rsisys.api import Decision, LabRequest, LabFeedback, OperationSpec
-
-class Controller:
-    def __init__(self, context, config):
-        pass
-
-    def decide(self, window):
-        if window.feedback is not None:
-            return Decision("finish", reason="Received Lab result")
-        return Decision("invoke", operation=LabRequest("demo.step", {}))
-
-class Lab:
-    def __init__(self, context, config):
-        pass
-
-    def describe(self):
-        return (OperationSpec("step", "Run one experiment", {
-            "type": "object", "properties": {}, "additionalProperties": False
-        }),)
-
-    def execute(self, call):
-        return LabFeedback("Example completed", (), False, data={"score": 1})
-
-def register(registry):
-    registry.register_controller("custom", Controller, version="1")
-    registry.register_lab("custom", Lab, version="1")
+```sh
+rsisys run --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/algorithms/_template/configs/run.json \
+  --data-dir runs/custom-prompt
 ```
 
-Save as `plugin.py`, and select it with `experiment.json`:
+The controller evaluates a prompt, reads missing instructions from the Lab, and
+adds one instruction per round. After three evaluations its literal instruction
+coverage is `0 → 0.5 → 1`. This is **synthetic wiring validation**, not measured
+LLM quality or training. See `runs/custom-prompt/result.json` for the controller
+report and inspect operation receipts for feedback. Use a fresh `--data-dir` on reruns.
 
-```json
-{
-  "objective": "Run my RSI method",
-  "data_dir": "runs/custom",
-  "max_decision_steps": 8,
-  "framework": {
-    "controller": {"name": "custom", "config": {}},
-    "labs": {"demo": {"name": "custom", "config": {}}}
-  }
-}
-```
+To create your own method:
 
-Run `rsisys run --config experiment.json --plugin plugin.py`.
+1. Copy `_template` to `src/rsisys/algorithms/my_method/`. Rename its registrations
+   (`custom_prompt`, `custom_prompt_check`) and matching config selections. A package
+   without a leading underscore is discovered automatically; run its config without
+   `--plugin`. No changes to the core registry or `api.py` are needed.
+2. Implement your policy in `controller.py` and execution in `lab.py`. Keep method
+   memory, harnesses and backend adapters in the same directory, importing shared
+   framework components where useful.
+3. Or keep the entire directory **outside the library**, such as `./my_method/`,
+   and run `rsisys run --plugin ./my_method --config ./my_method/configs/run.json --data-dir runs/my-method`.
+
+`_template` is deliberately excluded from automatic discovery so it does not
+appear as a supported research algorithm. Explicit `--plugin` loading runs it.
+Only `register(registry)` is prescribed; the internal layout is yours. Small
+methods may put everything in `__init__.py`. Directory plugins hash their local
+package files and execute trusted host code.
+
 `config` is passed to each factory alongside its assembly context. Optional
 `validate_config` callbacks reject bad parameters before construction.
 Multiple Labs use `alias.operation` names; each Lab receives its native name.

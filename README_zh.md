@@ -54,70 +54,44 @@ flowchart LR
 
 ## 注册自己的算法
 
-一个方法在一个目录内闭环管理：
+可以直接从可运行的 [_template](src/rsisys/algorithms/_template/__init__.py) 开始：
 
 ```text
-my_method/
-  __init__.py       # register(registry)：一次注册决策器与所有 Lab
-  controller.py    # 决策与方法状态
-  lab.py           # 执行与反馈
-  config.json      # 完整组合配置
+algorithms/_template/
+  __init__.py       # 唯一的 register(registry) 入口，统一注册决策器与 Lab
+  controller.py     # 根据 Lab 反馈修改 prompt，决定下一步与何时停止
+  lab.py            # 执行检查，返回结构化回执
+  configs/run.json  # 选择注册名称、参数与 Lab 别名
 ```
 
-框架只约定 `register(registry)` 入口，不强制内部文件结构；简单方法可以全部写在 `__init__.py`。
-也可通过 `.controller`、`.lab` 相对导入，并在同一个 `register(registry)`
-中注册所需对象。专属 memory、harness、后端适配可继续放在该目录，通用能力直接引用框架。
-运行 `rsisys run --plugin ./my_method --config ./my_method/config.json`，无需修改核心注册表。
-库内 `rsisys.algorithms` 下的方法包也提供同一个注册入口，由框架自动发现。
-目录插件记录本地包文件的哈希；插件是显式受信任的宿主代码。
+在仓库根目录运行，无需 GPU、模型或外部服务：
 
-
-已有方法无需插件即可运行。新增算法时，可把以下公开接口实现保存为 `plugin.py`：
-
-```python
-from rsisys.api import Decision, LabRequest, LabFeedback, OperationSpec
-
-class Controller:
-    def __init__(self, context, config):
-        pass
-
-    def decide(self, window):
-        if window.feedback is not None:
-            return Decision("finish", reason="已收到 Lab 结果")
-        return Decision("invoke", operation=LabRequest("demo.step", {}))
-
-class Lab:
-    def __init__(self, context, config):
-        pass
-
-    def describe(self):
-        return (OperationSpec("step", "运行一次实验", {
-            "type": "object", "properties": {}, "additionalProperties": False
-        }),)
-
-    def execute(self, call):
-        return LabFeedback("示例完成", (), False, data={"score": 1})
-
-def register(registry):
-    registry.register_controller("custom", Controller, version="1")
-    registry.register_lab("custom", Lab, version="1")
+```sh
+rsisys run --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/algorithms/_template/configs/run.json \
+  --data-dir runs/custom-prompt
 ```
 
-独立配置 `experiment.json`：
+决策器先提交一个 prompt，读取 Lab 返回的缺失指令，每轮补一条，再交给 Lab 检查。
+三次检查的字面指令覆盖率为 `0 → 0.5 → 1`。这是**合成接口闭环验证**，不代表 LLM
+能力提升或训练。决策器报告位于 `runs/custom-prompt/result.json`，具体反馈见操作回执。
+再次运行时使用新的 `--data-dir`。
 
-```json
-{
-  "objective": "运行自己的 RSI 方法",
-  "data_dir": "runs/custom",
-  "max_decision_steps": 8,
-  "framework": {
-    "controller": {"name": "custom", "config": {}},
-    "labs": {"demo": {"name": "custom", "config": {}}}
-  }
-}
-```
+开发自己的方法时：
 
-执行 `rsisys run --config experiment.json --plugin plugin.py`。
+1. 复制 `_template` 为 `src/rsisys/algorithms/my_method/`，修改注册名
+   `custom_prompt`、`custom_prompt_check`，以及配置中对应的选择。
+   不以下划线开头的方法包会自动发现，运行其配置时不需要 `--plugin`，
+   也不需要改核心注册表或 `api.py`。
+2. 在 `controller.py` 写决策逻辑，在 `lab.py` 接自己的评测、训推引擎或 harness。
+   专属 memory、后端适配等都留在同一个方法目录，共享能力直接引用框架。
+3. 也可把整个目录放在**库外**，例如 `./my_method/`，用以下单条命令运行：
+   `rsisys run --plugin ./my_method --config ./my_method/configs/run.json --data-dir runs/my-method`。
+
+`_template` 特意不参与自动发现，避免把教学模板列为已适配的研究算法；显式 `--plugin`
+即可运行。框架只约定 `register(registry)`，不强制内部文件布局；简单方法可以全部写在
+`__init__.py`。目录插件记录本地包文件的哈希，并作为受信任的宿主代码执行。
+
 工厂接收装配上下文与 `config`；可在注册时传 `validate_config`，于构造前校验参数。
 多个 Lab 通过 `别名.操作名` 路由，Lab 收到自己的原生操作名。
 决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
