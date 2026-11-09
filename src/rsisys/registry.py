@@ -14,8 +14,6 @@ import sys
 
 from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
-from .controllers.single_loop import SingleLoopController
-from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
 from rsisys.runtime.lab_group import LabGroup
 from .methods import MethodCatalog, MethodDefinition, MethodIdentity
 from .runtime.capabilities import optional_method
@@ -37,6 +35,7 @@ class _Registration:
     version: str
     validate_config: object = None
     endpoint: bool = False
+    research_factory: object = None
 
     def validate(self, config):
         if self.validate_config is not None and self.validate_config(deepcopy(config)) is not None:
@@ -57,10 +56,6 @@ class Registry:
         if builtins:
             from .algorithms import register_builtins
             register_builtins(self)
-            self.register_controller('single_loop', lambda context, config: SingleLoopController(**config),
-                                     version='1', validate_config=SingleLoopController.validate_config)
-            self._controllers['meta_agent'] = _Registration(
-                build_meta_agent, '2', validate_meta_agent, endpoint=True)
             self.register_lab('local_process', self._local_lab, version='1', validate_config=self._local_config)
 
     @staticmethod
@@ -94,8 +89,22 @@ class Registry:
             raise TypeError('validate_config must be callable')
         catalog[name] = _Registration(factory, version, validate_config)
 
-    def register_controller(self, name, factory, *, version, validate_config=None):
+    def register_controller(self, name, factory, *, version, validate_config=None,
+                            endpoint=False, research_factory=None):
+        """Register a policy, or an advanced assembled decision endpoint.
+
+        Standard factories accept (context, config) and return a policy.
+        endpoint=True factories accept (context, execution, config) and own the
+        assembled endpoint. Optional research_factory(config) supplies method-owned
+        research integration; the registry makes no harness or memory choices.
+        """
+        if type(endpoint) is not bool:
+            raise TypeError('endpoint must be boolean')
+        if research_factory is not None and not callable(research_factory):
+            raise TypeError('research_factory must be callable')
         self._register(self._controllers, name, factory, version, validate_config)
+        self._controllers[name] = replace(self._controllers[name], endpoint=endpoint,
+                                          research_factory=research_factory)
 
     def register_lab(self, name, factory, *, version, validate_config=None):
         self._register(self._labs, name, factory, version, validate_config)
@@ -231,9 +240,7 @@ class Registry:
                     raise ValueError('Controller requires missing Lab operations: ' + ', '.join(missing))
             return build_default_decision(context, execution, policy=policy)
 
-        research = None
-        if controller.endpoint and options.get('memory', True):
-            from .research import ResearchAssembly
-            research = ResearchAssembly.single_meta()
+        research = (controller.research_factory(deepcopy(options))
+                    if controller.research_factory is not None else None)
         return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory,
                               method_identity=identity, research=research)

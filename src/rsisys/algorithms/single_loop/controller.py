@@ -1,8 +1,8 @@
 """Fixed iteration scheduling; algorithm execution belongs to the Lab."""
 from copy import deepcopy
-from ..components import _json
-from ..loops.contracts.decision import Decision, OperationCall
-from ..loops.contracts.lifecycle import ExecutionStatus
+from rsisys.components import _json
+from rsisys.loops.contracts.decision import Decision, OperationCall
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
 
 
 class SingleLoopController:

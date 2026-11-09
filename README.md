@@ -56,6 +56,23 @@ selects the registered combination. Each method owns its controller and
 registration; method-specific workers, graders and upstream bridges stay in their
 method package. Reusable mathematical Labs and shared engines remain
 in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
+Controllers are roles inside method packages, not a separate top-level directory:
+
+```text
+algorithms/
+  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # method-owned implementations
+  single_loop/      # fixed-iteration template and registration
+  meta_agent/       # model-driven template; selects harness and memory integration
+  _shared/          # reusable training-loop policy; not auto-discovered
+  _template/        # copyable user method example
+```
+
+A method can implement `decide(input)` directly; inheriting a shared template is
+optional. The registry discovers every method's registration entry without
+special cases for `single_loop` or `meta_agent`. Independent research-worker
+transport belongs in `runtime/research_bridge.py`. Harnesses own context/model/tool
+interaction; methods own strategy, candidate selection and stopping.
+
 `rsisys.labs` exports the generic Lab contracts, without importing a scene:
 
 ```text
@@ -196,6 +213,11 @@ Multiple Labs use `alias.operation` names; each Lab receives its native name.
 `DecisionInput` includes `objective`, latest `feedback`, `last_operation`,
 `capabilities`, `context` and `references`. Decisions are `invoke`, `wait` or
 `finish`. Domain arguments must be validated before side effects.
+
+Advanced integrations that already assemble their decision endpoint can register
+with `endpoint=True`; their factory receives `(context, execution, config)`.
+An optional `research_factory(config)` supplies method-owned research/memory
+integration. Ordinary policy factories remain `(context, config)` and need neither.
 
 A Lab with background resources should implement idempotent `close()` and
 `shutdown(mode) -> bool`, returning true only after its own work has stopped.

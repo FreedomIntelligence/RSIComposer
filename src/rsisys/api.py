@@ -8,7 +8,8 @@ from .loops.contracts.lifecycle import ExecutionStatus
 from .loops.contracts.rsi import (RSIController, Lab, LabRequest, LabFeedback,
                                 ControllerOperationRequirements, ControllerReportProvider)
 from .methods import MethodDefinition
-from .registry import Registry, SingleLoopController
+from .registry import Registry
+from .algorithms.single_loop import SingleLoopController
 from rsisys.algorithms.rest_em.controller import RestEMController
 from rsisys.algorithms.rrsi.controller import RRSIController
 from rsisys.algorithms.seal.controller import SEALController

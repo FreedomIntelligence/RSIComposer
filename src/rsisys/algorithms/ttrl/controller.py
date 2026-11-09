@@ -1,8 +1,8 @@
 """TTRL majority-reward GRPO and native continuous-training decisions."""
-from rsisys.controllers.receipt_schedule import ReceiptScheduleController
+from rsisys.algorithms._shared.training_schedule import TrainingScheduleController
 
 
-class TTRLController(ReceiptScheduleController):
+class TTRLController(TrainingScheduleController):
     """One on-policy majority-reward GRPO update per round, no gold rewards."""
     method, option = 'ttrl', 'samples_per_prompt'
     default_width = 16

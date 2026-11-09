@@ -5,7 +5,7 @@ import sys
 from types import SimpleNamespace
 
 from rsisys.algorithms.ft_agent.upstream import ChatBackend, Scenario, load_policy
-from rsisys.controllers.research_bridge import emit_event
+from rsisys.runtime.research_bridge import emit_event
 
 
 def run(config):

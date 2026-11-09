@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import sys
 
-from rsisys.controllers.research_bridge import ResearchBridge
+from rsisys.runtime.research_bridge import ResearchBridge
 from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.upstream import checkout
 from rsisys.loops.contracts.decision import Decision, OperationCall

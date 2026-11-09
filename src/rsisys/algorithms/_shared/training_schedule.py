@@ -1,4 +1,4 @@
-"""Receipt-driven staged controller machinery, independent of any RSI algorithm.
+"""Shared training-loop policy: baseline evaluation, staged updates, final evaluation.
 
 Subclasses define operation phases and method-specific option constraints.
 """
@@ -16,7 +16,7 @@ def _ref(value, label):
     return value
 
 
-class ReceiptScheduleController:
+class TrainingScheduleController:
     method = None
     phases = ()
     option = None

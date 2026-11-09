@@ -49,6 +49,21 @@ flowchart LR
 `lab.py` 实现专属执行，`configs/` 选择已注册组合。各方法自己的控制器、注册、
 专属 worker、评分器与上游桥接都留在方法目录，
 可复用数学 Lab 与共享引擎仍在 `rsisys.labs`。
+controller 是方法内部的角色，不再单设顶层 `controllers/`：
+
+```text
+algorithms/
+  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # 各方法完整实现
+  single_loop/      # 固定迭代模板及其注册
+  meta_agent/       # 模型驱动模板，自行选择 harness 和记忆集成
+  _shared/          # 可复用训练流程策略，不参与自动发现
+  _template/        # 用户开发示例
+```
+
+方法可直接实现 `decide(input)`，无需继承共享模板。注册表统一发现方法入口，
+不再专门处理 `single_loop`、`meta_agent`。独立研究 worker 的通信归
+`runtime/research_bridge.py`。harness 负责上下文、模型和工具交互，方法负责策略、候选选择与停止。
+
 `rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景：
 
 ```text
@@ -163,6 +178,10 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 多个 Lab 通过 `别名.操作名` 路由，Lab 收到自己的原生操作名。
 决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
 输出为 `invoke`、`wait` 或 `finish`。领域参数需在产生副作用前校验。
+
+已有完整决策端点的高级集成可用 `endpoint=True` 注册，工厂接收 `(context, execution, config)`；
+可选的 `research_factory(config)` 提供方法自己的研究/记忆集成。
+普通决策器工厂仍接收 `(context, config)`，无需使用这两个选项。
 
 有后台资源的 Lab 应提供幂等 `close()` 与 `shutdown(mode) -> bool`，确认资源停止后才返回 true。
 异步任务建议暴露 start/poll/result/cancel 操作，并交付终态回执；注册不会自动轮询任意外部作业。

@@ -12,7 +12,7 @@ def validate_config(config):
     if harness == 'default' and 'dsh' in config:
         raise ValueError('dsh configuration requires harness=dsh')
     if harness == 'dsh':
-        from ..loops.decision_making.harness.dsh import DSHConfig
+        from rsisys.loops.decision_making.harness.dsh import DSHConfig
         if not isinstance(config.get('dsh'), dict):
             raise ValueError('harness=dsh requires an explicit dsh configuration object')
         DSHConfig(**config['dsh'])
@@ -21,7 +21,7 @@ def validate_config(config):
 def build_meta_agent(context, execution, config):
     validate_config(config)
     if config.get('harness', 'default') == 'dsh':
-        from ..loops.decision_making.harness.dsh import DSHConfig, dsh_decision_factory
+        from rsisys.loops.decision_making.harness.dsh import DSHConfig, dsh_decision_factory
         return dsh_decision_factory(DSHConfig(**config['dsh']))(context, execution)
-    from ..assembly import build_default_decision
+    from rsisys.assembly import build_default_decision
     return build_default_decision(context, execution)
