@@ -15,9 +15,9 @@ import sys
 from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
 from .controllers.single_loop import SingleLoopController
-from .controllers.rest_em import RestEMController
-from .controllers.weight_evolution import SEALController, TTRLController, TTRLVerlController
-from .controllers.rrsi import RRSIController, build_rrsi
+from rsisys.algorithms.rest_em.controller import RestEMController
+from rsisys.algorithms._weight import SEALController, TTRLController, TTRLVerlController
+from rsisys.algorithms.rrsi.controller import RRSIController, build_rrsi
 from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
 from .adapters.lab_group import LabGroup
 from .methods import MethodCatalog, MethodDefinition, MethodIdentity
@@ -62,13 +62,13 @@ class Registry:
                 self.register_controller(implementation.method,
                     lambda context, config, cls=implementation: cls(**config), version='1',
                     validate_config=implementation.validate_config)
-            from .labs.seal import SEALLab, validate_config as validate_seal
+            from rsisys.algorithms.seal.lab import SEALLab, validate_config as validate_seal
             self.register_lab('seal', SEALLab, version='1', validate_config=validate_seal)
-            from .labs.ttrl import TTRLLab, validate_config as validate_ttrl
+            from rsisys.algorithms.ttrl.lab import TTRLLab, validate_config as validate_ttrl
             self.register_lab('ttrl', TTRLLab, version='1', validate_config=validate_ttrl)
             self.register_controller('ttrl_verl', lambda context, config: TTRLVerlController(**config),
                 version='1', validate_config=TTRLVerlController.validate_config)
-            from .labs.ttrl_verl import TTRLVerlLab, validate_config as validate_ttrl_verl
+            from rsisys.algorithms.ttrl.verl import TTRLVerlLab, validate_config as validate_ttrl_verl
             self.register_lab('ttrl_verl', TTRLVerlLab, version='1', validate_config=validate_ttrl_verl)
             self.register_controller('rrsi', build_rrsi,
                                      version='1', validate_config=RRSIController.validate_config)
@@ -83,12 +83,12 @@ class Registry:
             self.register_lab('math', MathLab, version='1', validate_config=validate_math)
             from .labs.harness_math import HarnessMathLab, validate_config as validate_harness_math
             self.register_lab('harness_math', HarnessMathLab, version='1', validate_config=validate_harness_math)
-            from .controllers.ft_agent import FTAgentController, validate_config as validate_ft_agent
-            from .labs.ft_agent import LLMFinetuneLab, validate_config as validate_llm_finetune
+            from rsisys.algorithms.ft_agent.controller import FTAgentController, validate_config as validate_ft_agent
+            from rsisys.algorithms.ft_agent.lab import LLMFinetuneLab, validate_config as validate_llm_finetune
             self.register_controller('ft_agent', FTAgentController, version='1', validate_config=validate_ft_agent)
             self.register_lab('llm_finetune', LLMFinetuneLab, version='1', validate_config=validate_llm_finetune)
-            from .controllers.aide import build_aide, validate_config as validate_aide
-            from .labs.aide_program import AIDEProgramLab, validate_config as validate_aide_program
+            from rsisys.algorithms.aide.controller import build_aide, validate_config as validate_aide
+            from rsisys.algorithms.aide.lab import AIDEProgramLab, validate_config as validate_aide_program
             self.register_controller('aide', build_aide, version='1', validate_config=validate_aide)
             self.register_lab('aide_program', AIDEProgramLab, version='1', validate_config=validate_aide_program)
 

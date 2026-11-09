@@ -2,7 +2,7 @@
 
 This process has no access to QA labels or candidate-selection logic.
 Inner padding labels intentionally reproduce the pinned upstream behavior.
-See seal.py for the upstream attribution, modification notice and MIT license.
+See rsisys.algorithms.seal.lab for the upstream attribution, modification notice and MIT license.
 """
 import gc
 import json

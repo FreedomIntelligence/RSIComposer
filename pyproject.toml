@@ -46,3 +46,5 @@ dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
 "rsisys.loops.decision_making.feedback" = ["prompts/*.txt"]
 "rsisys.loops.decision_making.harness.policy" = ["prompts/*.txt"]
+
+"rsisys.algorithms" = ["*/configs/*.json", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]

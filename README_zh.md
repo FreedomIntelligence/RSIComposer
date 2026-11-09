@@ -6,7 +6,7 @@
 当前接入 ReST^EM、RRSI、SEAL、TTRL、AIDE；FT-Agent 明确标为部分适配。
 
 **RSI 决策器 → Lab 执行 → 反馈 → RSI 决策器**。
-库内维护算法和公共执行机制，`recipes/` 提供各方法的数据准备、依赖、运行配置与验证范围。
+`rsisys.algorithms` 收纳决策器、专属 Lab 和配置；共享训练引擎与执行服务留在框架组件层。
 Harness、memory、验证器、训推引擎仍是两大模块内部可替换的组件。
 
 当前是早期研究版本。CPU 入门不需要 GPU、API key 或模型服务。
@@ -24,7 +24,7 @@ python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
 rsisys catalog
-rsisys run --config recipes/rest_em/cpu/rest_em.json
+rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json
 ```
 
 这里运行 ReST^EM 决策器与**模拟算术 Lab**，不训练 LLM。
@@ -45,10 +45,11 @@ flowchart LR
 宿主不会根据分数替算法选择赢家。
 
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
-`recipes/<方法>/` 是已适配算法的运行入口；`src/rsisys/controllers/` 和
-`src/rsisys/labs/` 是实际注册实现。当前任务覆盖 GSM8K、MATH 及 SEAL 的 SQuAD 知识适配。
-医疗与 toy-model 实验暂不纳入发布范围。正式协议在[源码](src/rsisys/loops/contracts/rsi.py)，
-公开导入入口为 [rsisys.api](src/rsisys/api.py)。
+内置方法位于 `src/rsisys/algorithms/<方法>/`：`controller.py` 实现决策，
+`lab.py` 实现专属执行，`configs/` 选择已注册组合。SEAL/TTRL 的共用调度放在
+`algorithms/_weight.py`；可复用数学 Lab、训练 worker 留在 `rsisys.labs`，不复制到每个算法。
+服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
+[rsisys.api](src/rsisys/api.py)。
 
 ## 注册自己的算法
 
@@ -124,13 +125,13 @@ def register(registry):
 
 | 决策器 / Lab | 接入范围 | 配置 / 证据 |
 | --- | --- | --- |
-| `rest_em` / `math` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](recipes/rest_em/configs/gsm8k-8gpu.json)、[MATH](recipes/rest_em/configs/math-8gpu.json) |
-| `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](recipes/rrsi/math.json)、[结果](recipes/rrsi/results-20261108.json) |
-| `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](recipes/seal/8gpu.json)、[论文配置](recipes/seal/paper.json)、[结果](recipes/seal/results-20261109.json) |
-| `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](recipes/ttrl/8gpu.json)、[结果](recipes/ttrl/results-20261109.json) |
-| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](recipes/ttrl/paper.json) |
-| `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](recipes/ft_agent/gsm8k.json)、[验证](recipes/ft_agent/validation-20261109.json) |
-| `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](recipes/aide/gsm8k.json)、[验证](recipes/aide/validation-20261109.json) |
+| `rest_em` / `math` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json)、[MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
+| `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](src/rsisys/algorithms/rrsi/configs/math.json) |
+| `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](src/rsisys/algorithms/seal/configs/8gpu.json)、[论文配置](src/rsisys/algorithms/seal/configs/paper.json) |
+| `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
+| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](src/rsisys/algorithms/ttrl/configs/paper.json) |
+| `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 
 SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
 SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练验证，未验收 GPT-4.1
@@ -140,52 +141,24 @@ SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练�
 FT-Agent 完成三次原生 SFT，留出准确率从 48/64 降到 45/64，未接完整 CoSTEER 知识/调试链。
 AIDE 完成三个搜索节点，留出准确率从 28/64 升到 34/64，但调用次数从 29 增到 67，
 token 也增加，不是等算力比较或原始 benchmark 复现。两者均未训练 meta-agent 自身权重。
-这些结果验证接入边界，不能据此把论文收益未复现归咎于论文；结果 JSON 保留实跑范围与失败证据。
+这些结果验证接入边界，不能据此把论文收益未复现归咎于论文；详细实跑与失败证据单独私有维护。
 
-## 真实模型实验
+## 运行已适配方法
 
-命令从仓库根目录执行。准备新的数据/运行目录，修改配置中的模型、解释器、端点与 GPU 分配。
-框架不默认安装 ML 依赖，各可选 GPU 后端使用独立环境。
-
-Qwen2.5-7B Base ReST^EM 需在兼容 CUDA 环境安装 PyTorch、Transformers、PEFT、
-pyarrow、huggingface-hub；八卡推理配方另需 vLLM，MATH 判分需 math extra：
+从方法表选择配置，自行获取模型和数据，设置路径、解释器、端点及互不重叠的 GPU 分配。
+数据 JSON 格式与参数校验以各 Lab 实现为准。命令从仓库根目录执行，例如：
 
 ```sh
-python -m pip install -e '.[math]'
-python recipes/rest_em/prepare_gsm8k.py \
-  --model-dir models/Qwen2.5-7B-d1497293 --data-dir runs/gsm8k-data
-python recipes/rest_em/prepare_math.py --data-dir runs/math-data
-rsisys run --config recipes/rest_em/configs/math-8gpu.json
+rsisys run --config src/rsisys/algorithms/rest_em/configs/math-8gpu.json
 ```
 
-准备脚本下载固定 revision 的模型/数据并记录哈希；配置中的路径须与输出对应。
-八卡配置通过多副本并行推理、DDP 训练；同目录也提供较小配置。
-
-SEAL/TTRL paper profile 使用独立 Python 3.12 环境与
-[seal-ttrl.txt](requirements/seal-ttrl.txt)。已验证组合为 torch 2.7.0+cu128、
-Transformers 4.52.4、TRL 0.18.1、PEFT 0.15.2、vLLM 0.9.1；原生 TTRL 另需 ABI 兼容的
-flash-attn。不要与参考后端的训练环境混装。
-
-```sh
-python recipes/seal/prepare.py --paper --output runs/seal-paper-data
-python recipes/ttrl/prepare.py --paper --output runs/ttrl-paper-data
-# 安装对应依赖并设置真实路径后再运行：
-rsisys run --config recipes/seal/paper.json
-rsisys run --config recipes/ttrl/paper.json
-```
-
-原生 TTRL 另需干净的 `PRIME-RL/TTRL@5806e119789132fcb43552beaf2532d7d0447213` checkout。
-SEAL 语义评分需通过环境变量提供 `OPENAI_API_KEY`，并有可用的 GPT-4.1 兼容服务。
-
-RRSI、FT-Agent、AIDE 需要 Linux bubblewrap/user namespaces 和 OpenAI-compatible 模型服务；
-其 `prepare.py`、`serve.py` 入口提供 `--help`。FT-Agent 需分别安装干净的
-`microsoft/RD-Agent@484776c211e4fbbeef03e0ec00d6bbee7362a4f4`、LLaMA-Factory v0.9.3
-（`ca75f1edf3cb50343ed1c98605141c3e22075b5f`），并安装
-[worker 依赖](recipes/ft_agent/requirements.txt)、PyYAML 与 Math-Verify。
-LLaMA-Factory 训练环境须与 SEAL 的 TRL 环境分开。AIDE 需安装
-`WecoAI/aideml@ad73d227af481bea3de06f884f41b2993dd6453a` 及其
-[worker 依赖](recipes/aide/requirements.txt)。搜索与审查由原生方法决定，宿主负责执行和反馈。
-两种方法均需先固定互不重叠的公开输入与私有开发/留出标签。
+训练需另装 PyTorch/Transformers/PEFT，配置选用 vLLM 时还需对应推理环境。
+SEAL/TTRL 论文后端使用独立环境与
+[requirements/seal-ttrl.txt](requirements/seal-ttrl.txt)；SEAL 语义判分另需配置的 GPT-4.1 服务。
+FT-Agent/AIDE 需要 Linux bubblewrap、模型服务、固定 revision 的干净上游 checkout，及
+[FT-Agent](requirements/ft_agent.txt) / [AIDE](requirements/aide.txt) 依赖。
+源码校验上游版本与允许的执行参数；注册不会安装或启动这些外部依赖与服务。
+配好即可通过统一入口运行，不代表模型、数据或 GPU 环境已随库分发。
 
 ## 监控
 
@@ -215,7 +188,7 @@ FT-Agent/AIDE 原生搜索与同步训练配方重跑需新目录；快照元数
 
 ```sh
 python -m pip install -e '.[dev]'
-ruff check --select E9,F63,F7,F82 src recipes
+ruff check --select E9,F63,F7,F82 src
 python -m build --outdir dist/core .
 python -m build --outdir dist/monitor src/rsimonitor
 python -m twine check --strict dist/core/* dist/monitor/*
@@ -229,5 +202,5 @@ PR 说明行为变化、验证与算法偏差；使用合成 fixture，不提交
 
 Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
 第三方来源在对应适配代码中标注，
-改编 SEAL 代码的 MIT 文本保留在 [seal.py](src/rsisys/labs/seal.py)。
+改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/algorithms/seal/lab.py)。
 外部依赖、模型权重和数据集另行获取，遵循各自条款。

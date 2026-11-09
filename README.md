@@ -7,8 +7,8 @@ and ready-to-configure LLM benchmark recipes: ReST^EM, RRSI, SEAL, TTRL and AIDE
 FT-Agent is available as an explicitly partial adaptation.
 
 **RSI controller → Lab execution → feedback → RSI controller**.
-The library owns method implementations and shared execution; `recipes/` provides
-method-specific data preparation, dependencies, configurations and measured scope.
+The library owns method implementations and shared execution; `rsisys.algorithms` contains each method's controller, specialized Lab and
+configuration; shared engines and execution services stay in framework modules.
 Harnesses, memory, verifiers and training engines remain replaceable components.
 
 Early research release. CPU examples need no GPU, API key or model service.
@@ -26,7 +26,7 @@ python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
 rsisys catalog
-rsisys run --config recipes/rest_em/cpu/rest_em.json
+rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json
 ```
 
 This runs ReST^EM against a **simulated arithmetic Lab**, with no LLM training.
@@ -50,13 +50,13 @@ It does not choose an algorithm's winner from scores.
 
 New algorithms normally need only external registration. Changes to shared
 scheduling, delivery, cancellation or recovery semantics belong in the core.
-`recipes/<method>/` contains maintained algorithm launch recipes, not generic
-application demos. `src/rsisys/controllers/` and `src/rsisys/labs/` contain their
-registered implementations. Supported tasks currently cover GSM8K, MATH and
-SEAL's SQuAD knowledge adaptation. Medical and toy-model experiments are outside
-this release. Formal protocols live in
-[source](src/rsisys/loops/contracts/rsi.py); public imports use
-[rsisys.api](src/rsisys/api.py).
+Built-in methods live in `src/rsisys/algorithms/<method>/`: `controller.py`
+implements decisions, `lab.py` implements method-specific execution, and `configs/`
+selects the registered combination. SEAL/TTRL share schedule machinery in
+`algorithms/_weight.py`; reusable mathematical Labs and training workers remain
+in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
+Server launchers, historical reports, benchmark scripts and domain demos are
+maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 
 ## Register your own method
 
@@ -140,13 +140,13 @@ adds JSON method state to `result.json.controller_report`.
 
 | Controller / Lab | Scope | Configuration / evidence |
 | --- | --- | --- |
-| `rest_em` / `math` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](recipes/rest_em/configs/gsm8k-8gpu.json), [MATH](recipes/rest_em/configs/math-8gpu.json) |
-| `rrsi` / `harness_math` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](recipes/rrsi/math.json), [results](recipes/rrsi/results-20261108.json) |
-| `seal` / `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](recipes/seal/8gpu.json), [paper](recipes/seal/paper.json), [results](recipes/seal/results-20261109.json) |
-| `ttrl` / `ttrl` | Majority rewards with independent LoRA GRPO | [Config](recipes/ttrl/8gpu.json), [results](recipes/ttrl/results-20261109.json) |
-| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](recipes/ttrl/paper.json) |
-| `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](recipes/ft_agent/gsm8k.json), [validation](recipes/ft_agent/validation-20261109.json) |
-| `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](recipes/aide/gsm8k.json), [validation](recipes/aide/validation-20261109.json) |
+| `rest_em` / `math` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json), [MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
+| `rrsi` / `harness_math` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](src/rsisys/algorithms/rrsi/configs/math.json) |
+| `seal` / `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](src/rsisys/algorithms/seal/configs/8gpu.json), [paper](src/rsisys/algorithms/seal/configs/paper.json) |
+| `ttrl` / `ttrl` | Majority rewards with independent LoRA GRPO | [Config](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
+| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](src/rsisys/algorithms/ttrl/configs/paper.json) |
+| `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 
 SEAL and reference TTRL completed two-round, eight-GPU Qwen2.5-7B Base runs;
 **neither reproduced paper gains**. SEAL's paper profile has small native-training
@@ -160,59 +160,29 @@ AIDE completed three search nodes; heldout accuracy rose from 28/64 to 34/64
 with more calls (29 → 67) and tokens. This is not an equal-compute comparison or
 AIDE's original benchmark. Neither adapter trains meta-agent weights.
 These pilots validate integration; they do not justify blaming the papers for
-unreproduced gains. JSON records retain run scope and failure evidence.
+unreproduced gains. Detailed historical run and failure records are maintained privately.
 
-## Real-model setup
+## Run an adapted method
 
-Run commands from the repository root. Use fresh data/run directories and edit
-model paths, interpreters, endpoints and disjoint GPU allocations in configs.
-The core installs no ML stack. Keep optional GPU environments separate.
-
-For Qwen2.5-7B Base ReST^EM, install PyTorch, Transformers, PEFT, pyarrow and
-huggingface-hub in a compatible CUDA environment; add vLLM for the eight-GPU
-inference recipes and the math extra for MATH scoring:
+Choose a configuration from the method table, obtain the required model and data,
+and set its paths, Python interpreters, endpoints and disjoint GPU allocation.
+JSON dataset schemas and validation are defined by each Lab. Start from the
+repository root, for example:
 
 ```sh
-python -m pip install -e '.[math]'
-python recipes/rest_em/prepare_gsm8k.py \
-  --model-dir models/Qwen2.5-7B-d1497293 --data-dir runs/gsm8k-data
-python recipes/rest_em/prepare_math.py --data-dir runs/math-data
-rsisys run --config recipes/rest_em/configs/math-8gpu.json
+rsisys run --config src/rsisys/algorithms/rest_em/configs/math-8gpu.json
 ```
 
-Preparation downloads pinned model/data revisions and records hashes. Configs
-need to match those output paths. Eight-GPU recipes parallelize inference over
-replicas and train with DDP; smaller configs are also under `configs/`.
-
-SEAL/TTRL paper profiles use [seal-ttrl.txt](requirements/seal-ttrl.txt)
-in a separate Python 3.12 environment. Tested stack: torch 2.7.0+cu128,
-Transformers 4.52.4, TRL 0.18.1, PEFT 0.15.2, vLLM 0.9.1; native TTRL also
-needs compatible flash-attn. Do not mix this with the reference training stack.
-Pinned upstream revisions are in configs and the corresponding source adapters.
-
-```sh
-python recipes/seal/prepare.py --paper --output runs/seal-paper-data
-python recipes/ttrl/prepare.py --paper --output runs/ttrl-paper-data
-# Set paths and install each backend's dependencies before launching:
-rsisys run --config recipes/seal/paper.json
-rsisys run --config recipes/ttrl/paper.json
-```
-
-Native TTRL additionally requires a clean checkout of
-`PRIME-RL/TTRL@5806e119789132fcb43552beaf2532d7d0447213`.
-SEAL semantic scoring needs `OPENAI_API_KEY` and a compatible GPT-4.1 service.
-
-RRSI, FT-Agent and AIDE need Linux bubblewrap/user namespaces plus an
-OpenAI-compatible model service. Their `prepare.py` and `serve.py` entrypoints
-provide `--help`. FT-Agent uses separately installed clean checkouts of
-`microsoft/RD-Agent@484776c211e4fbbeef03e0ec00d6bbee7362a4f4` and
-LLaMA-Factory v0.9.3 (`ca75f1edf3cb50343ed1c98605141c3e22075b5f`), plus
-[worker requirements](recipes/ft_agent/requirements.txt), PyYAML and Math-Verify.
-LLaMA-Factory's training environment is separate from SEAL's TRL environment.
-AIDE uses `WecoAI/aideml@ad73d227af481bea3de06f884f41b2993dd6453a` and its
-[worker requirements](recipes/aide/requirements.txt). Search/review remains
-native; the host handles execution and feedback. Prepare disjoint public inputs
-and private validation/heldout labels before running either method.
+GPU training requires separately installed PyTorch/Transformers/PEFT and, where
+configured, vLLM. SEAL/TTRL paper backends use
+[requirements/seal-ttrl.txt](requirements/seal-ttrl.txt) in an isolated environment;
+SEAL semantic grading additionally requires the configured GPT-4.1 service.
+FT-Agent and AIDE need Linux bubblewrap, model services, their pinned clean
+upstream checkouts and [FT-Agent](requirements/ft_agent.txt) /
+[AIDE](requirements/aide.txt) dependencies. Pins and allowed execution parameters
+are enforced in the implementation. These dependencies and services are not
+installed or started by registration. Configuration-ready does not mean that
+external models, datasets or optional training stacks are bundled.
 
 ## Monitor
 
@@ -251,7 +221,7 @@ otherwise request a private channel without posting exploit details or secrets.
 
 ```sh
 python -m pip install -e '.[dev]'
-ruff check --select E9,F63,F7,F82 src recipes
+ruff check --select E9,F63,F7,F82 src
 python -m build --outdir dist/core .
 python -m build --outdir dist/monitor src/rsimonitor
 python -m twine check --strict dist/core/* dist/monitor/*
@@ -268,5 +238,5 @@ of Git. Contributions use Apache-2.0; keep discussion respectful and specific.
 Copyright 2026 RSISys contributors. Licensed under [Apache-2.0](LICENSE).
 Third-party origins are linked in the
 corresponding adapters; adapted SEAL code retains its MIT text in
-[seal.py](src/rsisys/labs/seal.py). External dependencies, weights and datasets
+[seal/lab.py](src/rsisys/algorithms/seal/lab.py). External dependencies, weights and datasets
 are obtained separately under their own terms.

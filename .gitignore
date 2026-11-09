@@ -27,3 +27,5 @@ monitor-ui/
 
 # Private domain experiments and development demonstrations
 /examples/
+
+/recipes/
