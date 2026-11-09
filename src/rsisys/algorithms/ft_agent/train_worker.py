@@ -4,6 +4,28 @@ from pathlib import Path
 import sys
 
 
+def checkpoint_sync_callback():
+    """Publish the writer's checkpoint state after a native distributed save.
+
+    Transformers 4.52 checks checkpoint existence before all ranks finish
+    writing. Peers can retain None and skip the end-of-training load barrier.
+    Synchronize the native choice; do not choose another checkpoint or metric.
+    """
+    from transformers import TrainerCallback
+
+    class CheckpointSync(TrainerCallback):
+        def on_save(self, args, state, control, **kwargs):
+            import torch.distributed as dist
+            if args.load_best_model_at_end and dist.is_initialized() and dist.get_world_size() > 1:
+                payload = [(state.best_model_checkpoint, state.best_metric, state.best_global_step)
+                           if dist.get_rank() == 0 else None]
+                dist.broadcast_object_list(payload, src=0)
+                state.best_model_checkpoint, state.best_metric, state.best_global_step = payload[0]
+            return control
+
+    return CheckpointSync()
+
+
 def main(request):
     import faulthandler
     faulthandler.enable()
@@ -19,7 +41,7 @@ def main(request):
                 tokenized_path=str(directory / 'micro-tokens'), save_strategy='no',
                 eval_strategy='no', load_best_model_at_end=False, report_to='none',
                 plot_loss=False)
-        run_exp(args=recipe)
+        run_exp(args=recipe, callbacks=[checkpoint_sync_callback()])
         print('RSISYS_NATIVE_TRAINING_RETURNED ' + mode, flush=True)
         return
     if mode != 'merge':

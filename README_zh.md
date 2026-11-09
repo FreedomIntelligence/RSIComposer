@@ -105,7 +105,8 @@ snapshot/                       # 快照捕获与恢复机制
 场景提供可复用的领域能力或 Lab 实现。后续 coding 场景可以放在 `labs/scenes/coding/`，
 也可以位于库外的方法包内。方法可以引用共享场景或包装它，训推引擎从 `backends/` 接入。
 方法专属 Lab 留在 `algorithms/<方法>/`；`local_process` 提供通用进程执行。
-ReST EM、RRSI 各自维护方法内的 Lab 流程，共享数学验证器留在 scene；
+ReST EM 维护方法内的训练 Lab；RRSI 与 meta-agent 共用 `algorithms/shared/harness_lab.py`
+中的固定模型 harness 测量能力，数学验证器留在 scene；
 接受已格式化输入的 LoRA 训推执行放在 `backends/training/lora/`。
 方法负责提示格式、训练数据选择和模型谱系，backend 不依赖数据集、验证器或 RSI 算法。
 
@@ -271,6 +272,17 @@ Python 装配代码完成，目前没有自动的声明式覆盖层；私有组�
 
 ## 组件组合
 
+`meta_agent` 现在也可以作为完整方法注册运行。[配置](src/rsisys/algorithms/meta_agent/configs/math.json)
+绑定模型决策器、可选研究记忆和有预算限制的数学 Lab。决策器读取初始 harness，提出不可变候选，
+依据搜索反馈决定继续、选择与停止。Lab 与 RRSI 复用同一个固定模型测量引擎，不执行 RRSI 的搜索策略。
+最终留出评测会锁定选择并关闭搜索，初始与选中 harness 使用相同最终评测预算。
+这提供可运行的 meta-agent 方案骨架；长程 self-reflection 仍未实现或验证。
+运行前需要分别配置研究模型服务（`rsisys-research`）、固定任务模型服务（`rsisys-fixed`）和互不重叠的冻结数据集。
+完整 harness 研究方法目前使用 `harness=default`；可复用决策器仍支持 DSH，用于自定义组合。
+配置使用已有 vLLM 后端提供原生 JSON schema、真实 token 计数、有限响应重试与调用记账。
+`run_control.decision_steps` 提供宿主剩余决策预算，由模型决定如何分配。
+只有 Lab 返回实际最终评测回执，才能将方法记为完成。
+
 - `single_loop` 是固定迭代模板；`meta_agent` 使用配置的模型，支持 `harness=default|dsh`。
   在自己的 JSON 配置中填入实际后端、角色与模型身份。
   DSH 需安装 `python -m pip install -e '.[dsh]'`，并设置原生 home/workspace/session 配置。
@@ -292,8 +304,9 @@ Python 装配代码完成，目前没有自动的声明式覆盖层；私有组�
 | `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](src/rsisys/algorithms/ttrl/configs/paper.json) |
 | `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
 | `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
+| `meta_agent` / 方法内 math Lab | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
-SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
+2026 年 11 月 9 日，SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
 SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练验证，未验收 GPT-4.1
 语义服务或完整论文实验。原生 TTRL 完成 32 道目标题、1 epoch 的 GPU 验证，
 未完成 500 题 × 10 epochs；其目标题指标属于 transductive 评估。
@@ -302,6 +315,33 @@ FT-Agent 完成三次原生 SFT，留出准确率从 48/64 降到 45/64，未接
 AIDE 完成三个搜索节点，留出准确率从 28/64 升到 34/64，但调用次数从 29 增到 67，
 token 也增加，不是等算力比较或原始 benchmark 复现。两者均未训练 meta-agent 自身权重。
 这些结果验证接入边界，不能据此把论文收益未复现归咎于论文；详细实跑与失败证据单独私有维护。
+
+2026 年 11 月 10 日，整理后的注册方法完成新一轮复跑，尽量使用互不重叠的 4+4 卡分配。
+这是单种子、小规模任务适配与集成验证，未达到论文规模。权重训练使用 Qwen2.5-7B Base，
+RRSI/AIDE 使用固定的 Qwen3.5-9B。
+
+| 方法 | 评测范围 | 初始 → 最终 |
+| --- | --- | --- |
+| ReST^EM | MATH，500 道留出题 | 239/500 → 255/500 |
+| ReST^EM | GSM8K，完整 1,319 道测试题 | 1073/1319 → 1070/1319 |
+| RRSI | MATH，128 道留出题 × 2 次采样 | 80.47% → 88.67% |
+| SEAL reference | 45 道留出 QA，适配后 F1 | 0.2399 → 0.3533 |
+| TTRL reference | 32 道目标题 / 128 道独立迁移题 | 目标 71.88% → 71.88%；迁移 71.88% → 71.09% |
+| AIDE 任务适配 | GSM8K，64 道留出题 | 32/64 → 31/64 |
+| FT-Agent 部分适配 | GSM8K，64 道留出题；三轮原生 SFT | 48/64 → 51/64 |
+| Meta-agent 骨架 | MATH，128 道留出题 × 2 次采样；模型保留 baseline | 78.91% → 78.91% |
+
+RRSI 平均记录 token 成本从 1,176 增到 2,287，不能视作等算力收益。
+SEAL 不进行内层适配时的 F1 从 0.3756 降到 0.3282。
+ReST^EM 的 GSM8K 开发集从 106/128 提高到 111/128，完整测试集没有提升。
+FT-Agent 研究端使用 Qwen3.8-27B，原生策略选中第 2 轮；原生 Trainer 的 checkpoint 状态竞争
+通过同步写入 rank 已选出的最佳 checkpoint 修复，未替换其选择策略。
+这些单次观察不能证明稳定收益，也不足以把论文收益未复现归咎于论文。
+Meta-agent 使用 Qwen3.8-27B 控制器和固定 Qwen3.5-9B 任务模型，完成 14 次决策/模型调用：
+提出并评测候选后，模型决定保留 baseline，实际完成最终评测再结束。此前的 9B/27B 尝试
+在 32 步内未完成 finalize；补充剩余预算反馈后，一次最终 27B 运行完成闭环。
+这验证可运行性，不代表取得提升，也未训练 meta-agent 权重；长程 self-reflection 仍为占位。
+运行产物、权重和失败记录继续私有保存。
 
 ## 运行已适配方法
 

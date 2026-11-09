@@ -66,6 +66,7 @@ class Runner:
         self._execution_shutdown = execution_shutdown
         self._execution_shutdown_error = None
         self._run_started = None
+        self._decision_step_budget = None
         self._research_round = 1
         self._researcher_finished = False
         self._restart_at = None
@@ -136,7 +137,8 @@ class Runner:
                 'elapsed_seconds': context.elapsed_seconds,
                 'remaining_seconds': max(0.0, seconds - context.elapsed_seconds) if seconds is not None else None,
                 'researcher_finish_ends_run': type(policy) is ResearcherRunPolicy,
-                'goal': asdict(policy.goal) if isinstance(policy, GoalRunPolicy) and isinstance(policy.goal, MetricGoal) else None}
+                'goal': asdict(policy.goal) if isinstance(policy, GoalRunPolicy) and isinstance(policy.goal, MetricGoal) else None,
+                **({'decision_steps': deepcopy(self._decision_step_budget)} if self._decision_step_budget is not None else {})}
 
     def _research_job(self):
         pending = getattr(self.decision_making, 'pending_research_job', None)
@@ -258,7 +260,7 @@ class Runner:
             self._restart_at = self._restart_context = None
             return RunnerStep('progressed', {'run_control': 'research_restarted', 'research_round': self._research_round})
         update = self._control_method('update_run_control')
-        if callable(update) and type(self.run_policy) is not ResearcherRunPolicy:
+        if callable(update) and (type(self.run_policy) is not ResearcherRunPolicy or self._decision_step_budget is not None):
             update(self._control_context(context))
         try:
             result = self._transport_step(objective)
@@ -587,22 +589,30 @@ class Runner:
         if type(limit) is not int or limit < 1:
             raise ValueError('max_decision_steps must be a positive integer')
         events, completed, decision_steps = [], 0, 0
-        while decision_steps < limit:
-            result = self.step(objective)
-            events.append(result.event)
-            decision_steps += result.decision_steps
-            if result.kind == 'finished' and 'feedback' in result.event:
-                completed += 1
-            if result.kind in ('waiting', 'finished'):
-                return RunResult(result.kind, completed, decision_steps, events, result.job, result.directive_id,
-                                 result.event.get('run_stop', {}).get('reason'),
-                                 result.event.get('run_stop', {}).get('shutdown_complete'))
-            if result.kind == 'completed':
-                completed += 1
-                if completed == rounds:
-                    return RunResult('completed', completed, decision_steps, events)
-        return RunResult('step_limit', completed, decision_steps, events)
-
+        previous_budget = self._decision_step_budget
+        try:
+            while decision_steps < limit:
+                self._decision_step_budget = {'scope': 'this_run_invocation', 'limit': limit,
+                                              'used': decision_steps, 'remaining': limit - decision_steps}
+                result = self.step(objective)
+                events.append(result.event)
+                decision_steps += result.decision_steps
+                if result.kind == 'finished' and 'feedback' in result.event:
+                    completed += 1
+                if result.kind in ('waiting', 'finished'):
+                    return RunResult(result.kind, completed, decision_steps, events, result.job, result.directive_id,
+                                     result.event.get('run_stop', {}).get('reason'),
+                                     result.event.get('run_stop', {}).get('shutdown_complete'))
+                if result.kind == 'completed':
+                    completed += 1
+                    if completed == rounds:
+                        return RunResult('completed', completed, decision_steps, events)
+            return RunResult('step_limit', completed, decision_steps, events)
+        finally:
+            self._decision_step_budget = previous_budget
+            update = self._control_method('update_run_control')
+            if callable(update) and self._run_started is not None:
+                update(self._control_context(self._run_context(objective)))
 
 class _DecisionSlot:
     """An ID-scoped view so the proven single-command outbox can be reused."""

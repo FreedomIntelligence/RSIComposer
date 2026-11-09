@@ -1,4 +1,4 @@
-"""Math measurement Lab for fixed-weight, executable harness evolution."""
+"""Shared fixed-model math harness measurement, with no search policy."""
 
 import json
 import multiprocessing
@@ -76,7 +76,7 @@ def validate_config(config):
         raise ValueError("Invalid output_subdir")
 
 
-class RRSIMathLab:
+class FixedModelHarnessLab:
     def __init__(
         self, context, config, *, pool=None, executor=sandbox_step, verifier=None
     ):

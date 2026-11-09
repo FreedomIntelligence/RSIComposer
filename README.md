@@ -119,8 +119,8 @@ Scenes supply reusable domain capabilities or Lab implementations. A future codi
 scene or wraps it with its own execution logic; training and serving engines
 come from `backends/`. The `local_process` registration provides generic process
 execution. Method-specific Labs stay under `algorithms/<method>/`.
-ReST EM and RRSI own their respective Lab pipelines there. Their shared math
-verifiers remain in the scene; prepared-prompt LoRA execution lives in
+ReST EM owns its training Lab; RRSI and meta-agent share fixed-model harness
+measurement in `algorithms/shared/harness_lab.py`. Math verifiers remain in the scene; prepared-prompt LoRA execution lives in
 `backends/training/lora/`. Methods own prompt formatting, training-data selection
 and model lineage; the backend does not know the dataset, verifier or RSI algorithm.
 
@@ -322,6 +322,25 @@ All run outputs are disposable local state. `runs/` and `runtime-output/` are ig
 
 ## Components
 
+`meta_agent` is also a complete registered harness-research method. Its
+[configuration](src/rsisys/algorithms/meta_agent/configs/math.json) binds the
+model-driven controller, optional research memory and a bounded math Lab. The
+controller inspects the baseline, proposes immutable Python harnesses, measures
+search feedback and chooses when and what to finalize. The Lab reuses the shared
+fixed-model measurement engine; it does not run RRSI's search policy. Heldout
+access seals selection and closes further search. Baseline and selected harness
+receive equal final evaluation budgets. This is a runnable meta-agent scaffold,
+not an implementation or validation of long-horizon self-reflection. Supply the
+research-model endpoint (`rsisys-research`), fixed task-model endpoints
+(`rsisys-fixed`) and frozen, disjoint datasets before running the configuration.
+The complete harness-research method currently uses `harness=default`;
+the reusable controller also supports DSH for custom assemblies.
+The example selects the existing vLLM transport for native JSON schemas, measured
+token counts, bounded response recovery and archived model-call accounting.
+`run_control.decision_steps` exposes the host's remaining decision budget;
+the controller decides how to allocate it. A text-only finish cannot replace the
+Lab's finalization receipt.
+
 - `single_loop` provides fixed iteration; `meta_agent` uses the configured model
   with `harness=default|dsh`; set actual backend, role and model identities
   in your own JSON configuration. DSH also needs its native home/workspace/session
@@ -346,8 +365,9 @@ All run outputs are disposable local state. `runs/` and `runtime-output/` are ig
 | `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](src/rsisys/algorithms/ttrl/configs/paper.json) |
 | `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
 | `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
+| `meta_agent` / private math Lab | Model-driven harness proposals, search feedback and sealed heldout selection; no weight training or implemented self-reflection | [Config](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
-SEAL and reference TTRL completed two-round, eight-GPU Qwen2.5-7B Base runs;
+On November 9, 2026, SEAL and reference TTRL completed two-round, eight-GPU Qwen2.5-7B Base runs;
 **neither reproduced paper gains**. SEAL's paper profile has small native-training
 validation using a lexical smoke scorer, not an accepted GPT-4.1/full-paper run.
 Native TTRL has a 32-target-question, one-epoch GPU check, not the full 500-question,
@@ -360,6 +380,38 @@ with more calls (29 → 67) and tokens. This is not an equal-compute comparison 
 AIDE's original benchmark. Neither adapter trains meta-agent weights.
 These pilots validate integration; they do not justify blaming the papers for
 unreproduced gains. Detailed historical run and failure records are maintained privately.
+
+On November 10, 2026, the registered methods were rerun after the refactor,
+using disjoint four-GPU lanes where possible. These are single-seed integration
+pilots with local task adaptations, not paper-scale score reproductions.
+Weight runs use Qwen2.5-7B Base; RRSI/AIDE use a fixed Qwen3.5-9B.
+
+| Method | Evaluation | Before → after |
+| --- | --- | --- |
+| ReST^EM | MATH, 500 heldout questions | 239/500 → 255/500 |
+| ReST^EM | GSM8K, complete 1,319-question test | 1073/1319 → 1070/1319 |
+| RRSI | MATH, 128 heldout questions × 2 trials | 80.47% → 88.67% |
+| SEAL reference | 45 heldout QA pairs, adapted F1 | 0.2399 → 0.3533 |
+| TTRL reference | 32 target / 128 disjoint transfer questions | Target 71.88% → 71.88%; transfer 71.88% → 71.09% |
+| AIDE adaptation | GSM8K, 64 heldout questions | 32/64 → 31/64 |
+| FT-Agent partial adaptation | GSM8K, 64 heldout questions; three native SFT experiments | 48/64 → 51/64 |
+| Meta-agent scaffold | MATH, 128 heldout questions × 2 trials; model retained baseline | 78.91% → 78.91% |
+
+RRSI's average recorded token cost increased from 1,176 to 2,287; this is not an
+equal-compute improvement. SEAL's no-adaptation F1 fell from 0.3756 to 0.3282.
+ReST^EM improved GSM8K dev accuracy (106/128 → 111/128) without improving its
+complete test set. FT-Agent uses Qwen3.8-27B for research and selected experiment 2;
+its native Trainer checkpoint-state race was fixed by synchronizing the writer's
+existing best-checkpoint choice across ranks. None of these observations establishes
+statistically reliable gains or attributes a failed reproduction to the paper.
+The meta-agent uses a Qwen3.8-27B controller and fixed Qwen3.5-9B task model.
+It completed 14 decisions/model calls, measured a candidate on search, chose to
+retain baseline, executed finalization, then finished. Earlier 9B/27B attempts
+exhausted the 32-decision budget without finalization; one final 27B run completed
+after remaining-budget feedback was exposed. This validates a runnable closed
+loop, not a demonstrated improvement or meta-agent weight training. Long-horizon
+self-reflection remains a placeholder. Runtime artifacts, checkpoints and failed
+attempts remain private.
 
 ## Run an adapted method
 
