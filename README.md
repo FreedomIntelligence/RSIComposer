@@ -50,6 +50,25 @@ It does not choose an algorithm's winner from scores.
 
 New algorithms normally need only external registration. Changes to shared
 scheduling, delivery, cancellation or recovery semantics belong in the core.
+The files directly under `src/rsisys/` are the stable framework surface, not run output:
+
+```text
+api.py          # public import facade
+application.py  # application and run lifecycle
+assembly.py     # controller/Lab/harness/backend composition
+registry.py     # algorithm and component registration
+methods.py      # method declarations and method catalogs
+components.py   # component graph and state ports
+config.py       # configuration-to-application builders
+research.py     # optional research-component assembly
+cli.py          # command-line entry point
+```
+
+These modules intentionally remain at the package root so existing integrations can
+import stable paths such as `rsisys.api`, `rsisys.config` and `rsisys.application`.
+The concrete implementation layers live below `controllers/`, `labs/`, `backends/`,
+`runtime/` and `snapshot/`.
+
 The implementation layer has two roles: **controllers** process feedback and
 choose actions; **Labs** execute experiments and return evidence. A controller
 may be a state machine, search policy, LLM meta-agent or a hybrid. Neither side
