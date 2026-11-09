@@ -7,4 +7,3 @@ class SEALController(ReceiptScheduleController):
     method, option = 'seal', 'candidates'
     default_width = 2
     phases = ('generate', 'adapt', 'select', 'train')
-

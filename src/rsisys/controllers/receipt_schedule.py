@@ -150,4 +150,3 @@ class ReceiptScheduleController:
         self.pending = self._call()
         return Decision('invoke', operation=deepcopy(self.pending),
                         reason=f'{self.method} round {self.round}: {self.phase}')
-
