@@ -80,8 +80,13 @@ maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 
 The remaining internal boundaries are:
 
-- `adapters/default_harness/` and `adapters/exploration/` convert existing
-  protocols; `adapters/langchain_model.py` bridges the optional LangChain API.
+- The default harness owns its public-policy bridge in
+  `loops/decision_making/harness/public_policy.py` and Lab tool bindings in
+  `loops/decision_making/harness/tools/lab.py`. The inactive exploration endpoint
+  lives in `loops/exploration/operation_only.py`.
+- `adapters/exploration/` bridges the older exploration endpoint to the Lab task
+  contract; `adapters/langchain_model.py` bridges the optional LangChain API.
+  Implementation-specific integration belongs with its owning implementation.
 - `backends/training/` and `backends/serving/` own training processes, inference
   transports and deployments. These are execution providers; `labs/training/`
   contains reusable Lab-side orchestration and artifact components.

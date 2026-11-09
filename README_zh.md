@@ -71,8 +71,12 @@ labs/
 
 其他内部目录的职责如下：
 
-- `adapters/default_harness/`、`adapters/exploration/` 只做协议转换；
-  `adapters/langchain_model.py` 适配可选的 LangChain 接口。
+- 默认 harness 自己维护 `loops/decision_making/harness/public_policy.py` 中的决策器接入，
+  以及 `harness/tools/lab.py` 中的 Lab 工具绑定；无探索任务时的空端点放在
+  `loops/exploration/operation_only.py`。
+- `adapters/exploration/` 兼容旧 exploration 端点与 Lab 任务契约，
+  `adapters/langchain_model.py` 适配可选 LangChain 接口。
+  某个实现专属的接入逻辑归该实现维护，不集中堆进 adapters。
 - `backends/training/`、`backends/serving/` 负责训练进程、推理传输与部署；
   `labs/training/` 则提供 Lab 侧可复用的调用与产物管理组件。
 - `runtime/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；

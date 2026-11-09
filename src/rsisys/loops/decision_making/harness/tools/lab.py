@@ -3,7 +3,7 @@ from copy import deepcopy
 from functools import partial
 import json
 
-from rsisys.loops.contracts.coordination import ExecutionView, OperationResult
+from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.execution import LabExecution, LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
@@ -58,21 +58,3 @@ class LabExecutionTools(BoundDecisionTools):
         if not isinstance(value, str):
             raise TypeError('Lab runtime_context() must return text')
         return value
-
-
-class OperationOnlyExploration:
-    """Runner compatibility for an assembly using only Lab operation calls.
-
-    No Actor is constructed and no domain commands are inferred. An independent
-    exploration endpoint may still be supplied explicitly by the host.
-    """
-    def pending(self):
-        return None
-
-    def execution_view(self):
-        return ExecutionView()
-
-    def _unsupported(self, *args):
-        raise ValueError('This assembly executes Lab tools through invoke, not exploration directives')
-
-    accept = advance = inspect = cancel = acknowledge = _unsupported
