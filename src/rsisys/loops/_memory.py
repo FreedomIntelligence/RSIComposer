@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import ClassVar, Literal, Protocol
 
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 

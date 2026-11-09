@@ -15,10 +15,10 @@ import shutil
 import tempfile
 from types import SimpleNamespace
 
-from .bundles import tree_manifest
-from .files import atomic_write, json_bytes
-from .json_tools import result_id
-from .recovery import RecoveryRequired
+from rsisys.runtime.storage.bundles import tree_manifest
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.storage.json_tools import result_id
+from rsisys.runtime.state.recovery import RecoveryRequired
 
 
 SCHEMA = 'rsisys-attempt-continuation/v1'

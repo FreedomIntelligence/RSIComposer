@@ -8,7 +8,7 @@ from hashlib import sha256
 
 from rsisys.loops.contracts.queries import QueryProvider, QuerySpec, QueryRequest, QueryResult, MAX_QUERY_OFFSET
 from rsisys.loops.contracts.artifacts import ArtifactRef
-from rsisys.runtime.artifacts import FileArtifactStore
+from rsisys.runtime.storage.artifacts import FileArtifactStore
 from ...action_space import OperationResult
 from ...action_space.queries import query_definitions
 

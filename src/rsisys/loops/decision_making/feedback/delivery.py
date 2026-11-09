@@ -1,7 +1,7 @@
 """Route immutable producer events without inspecting native business fields."""
 from copy import deepcopy
 
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 def producer_delivery(observation, jobs, *, archive_only):

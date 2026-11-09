@@ -18,7 +18,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Dict, Generic, TypeVar
 
-from rsisys.runtime.upstream import checkout
+from rsisys.runtime.execution.upstream import checkout
 
 FT_AGENT_REVISION = '484776c211e4fbbeef03e0ec00d6bbee7362a4f4'
 

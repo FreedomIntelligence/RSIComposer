@@ -11,8 +11,8 @@ from threading import RLock
 from time import monotonic, time
 from typing import Protocol
 
-from .files import atomic_write, json_bytes
-from .run_policy import ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy, MetricGoal
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.orchestration.run_policy import ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy, MetricGoal
 
 
 class RecoveryRequired(RuntimeError):
@@ -112,7 +112,7 @@ def decision_extension(harness):
 
 
 def _capture_book(book):
-    from .jobs import JobBook, MockJobQueue
+    from rsisys.runtime.orchestration.jobs import JobBook, MockJobQueue
     if type(book) is not JobBook:
         raise TypeError('Custom job books need an explicit recovery contract')
     queue = None
@@ -129,7 +129,7 @@ def _capture_book(book):
 
 
 def _restore_book(book, state):
-    from .jobs import JobHandle, _MockJob
+    from rsisys.runtime.orchestration.jobs import JobHandle, _MockJob
     queue = state['queue']
     if queue is not None:
         q = book.backend.jobs
@@ -208,7 +208,7 @@ class DurableRecovery:
     """
     def __init__(self, app, contract=None, *, wall_clock=time):
         self.app = app
-        from .component_state import AssemblyRecovery
+        from rsisys.runtime.state.component_state import AssemblyRecovery
         self.contract = (contract if contract is not None else
                          AssemblyRecovery() if app.assembly.state_adapters else BuiltinRecovery())
         if (not isinstance(getattr(self.contract, 'contract_id', None), str) or not self.contract.contract_id

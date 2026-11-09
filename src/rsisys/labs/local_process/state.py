@@ -16,10 +16,10 @@ import subprocess
 import threading
 
 from rsisys.loops.contracts.jobs import JobStatus
-from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.recovery import RecoveryRequired
-from rsisys.runtime.sandbox import SandboxRef, ExecRequest, ProcessRef, ProcessState
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.execution.local_process import LocalProcessBackend
+from rsisys.runtime.state.recovery import RecoveryRequired
+from rsisys.runtime.execution.sandbox import SandboxRef, ExecRequest, ProcessRef, ProcessState
 
 
 def _write(path, payload):

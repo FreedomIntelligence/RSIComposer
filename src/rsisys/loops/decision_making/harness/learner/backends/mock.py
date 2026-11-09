@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.training import TrainingResult
-from rsisys.runtime.artifacts import ArtifactStore
-from rsisys.runtime.jobs import MockJobQueue
+from rsisys.runtime.storage.artifacts import ArtifactStore
+from rsisys.runtime.orchestration.jobs import MockJobQueue
 
 from .. import DecisionTrainingRequest
 

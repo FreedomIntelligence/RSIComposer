@@ -4,7 +4,7 @@ import json
 import re
 
 from rsisys.loops.contracts.decision import OperationArgumentError
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 CHECKS = {'type': 'array', 'minItems': 1, 'maxItems': 4, 'items': {

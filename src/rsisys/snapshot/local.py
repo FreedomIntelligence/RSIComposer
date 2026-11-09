@@ -11,7 +11,7 @@ import sys
 import tempfile
 from uuid import uuid4
 
-from rsisys.runtime.files import atomic_write, json_bytes, sync_directory, sync_tree
+from rsisys.runtime.storage.files import atomic_write, json_bytes, sync_directory, sync_tree
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.decision_making.harness.state import DecisionState
 from rsisys.loops.exploration.harness.state import ExplorationState
@@ -149,14 +149,14 @@ def validate_local_application(app, *, ongoing=False):
     from inspect import getattr_static
     if getattr_static(getattr_static(app, 'assembly', None), 'lab_execution', None) is not None:
         raise TypeError('Lab execution requires explicit snapshot/recovery integration')
-    from rsisys.runtime.recovery import DurableRecovery
+    from rsisys.runtime.state.recovery import DurableRecovery
     if not ongoing and isinstance(getattr(app, 'recovery', None), DurableRecovery) and app.recovery.intervention is not None:
         raise RuntimeError('Reconcile interrupted durable recovery before creating a snapshot')
     decision_loop, exploration_loop = app.runner.decision_making, app.runner.exploration
     dm, actor = decision_loop.harness, exploration_loop.harness
     if getattr(decision_loop, 'feedback_service', None) is not None:
         raise TypeError('Feedback service requires explicit snapshot/recovery integration')
-    from rsisys.runtime.recovery import decision_extension
+    from rsisys.runtime.state.recovery import decision_extension
     extension = ongoing and decision_extension(dm)
     research_configuration(dm)
     if app.custom_assembly and not (extension and not app.custom_exploration):
@@ -181,7 +181,7 @@ def validate_local_application(app, *, ongoing=False):
                 (actor.local_rl.episodes, actor.episodes), (actor.local_rl.learning, actor.learning))
     if any(actual is not expected for actual, expected in bindings):
         raise TypeError('Custom execution component bindings need explicit snapshot integration')
-    from rsisys.runtime.run_policy import ResearcherRunPolicy
+    from rsisys.runtime.orchestration.run_policy import ResearcherRunPolicy
     if not ongoing and (type(app.runner.run_policy) is not ResearcherRunPolicy
             or app.runner.run_policy != ResearcherRunPolicy()
             or app.runner.cleanup_timeout_seconds != 30):
@@ -269,7 +269,7 @@ def validate_local_application(app, *, ongoing=False):
             or decision_loop.action_space.describe() != LocalDecisionActionSpace(
                 extra_definitions=(*expected_queries.definitions, *research_tools.definitions)).describe()):
         raise TypeError('Custom decision actions need explicit snapshot integration')
-    from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
+    from rsisys.runtime.models.model import MockModelBackend, RemoteModelBackend
     from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
     from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
     from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
@@ -301,7 +301,7 @@ class LocalSnapshotCapture:
         contract = self.contract
         from inspect import getattr_static
         from collections.abc import Mapping
-        from rsisys.runtime.recovery import DurableRecovery
+        from rsisys.runtime.state.recovery import DurableRecovery
         recovery = getattr_static(app, 'recovery', None)
         if contract is None and isinstance(recovery, DurableRecovery):
             from rsisys.runtime.capabilities import optional_method
@@ -309,7 +309,7 @@ class LocalSnapshotCapture:
                 contract = recovery.contract
         adapters = getattr_static(getattr_static(app, 'assembly', None), 'state_adapters', None)
         if contract is None and isinstance(adapters, Mapping) and adapters:
-            from rsisys.runtime.component_state import AssemblyRecovery
+            from rsisys.runtime.state.component_state import AssemblyRecovery
             contract = AssemblyRecovery()
         if contract is not None:
             from .components import capture_components
@@ -369,7 +369,7 @@ def restore_snapshot(directory, target, *, run_id: str | None = None, modules=No
                      recovery_contract=None, run_policy=None):
     """Restore to a new workspace; a new run_id forks with automatic ancestry."""
     from rsisys.application import Application, ApplicationConfig
-    from rsisys.runtime.artifacts import FileArtifactStore
+    from rsisys.runtime.storage.artifacts import FileArtifactStore
     directory, target = Path(directory).resolve(), Path(target).resolve()
     if target.exists():
         raise FileExistsError('Restore target must be a new directory')

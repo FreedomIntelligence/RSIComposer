@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from rsisys.runtime.workers import run_workers
+from rsisys.runtime.execution.workers import run_workers
 
 
 def validate_engine(config):

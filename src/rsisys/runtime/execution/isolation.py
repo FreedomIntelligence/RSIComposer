@@ -14,7 +14,7 @@ import stat
 import subprocess
 import sys
 
-from .local_process import LocalProcessBackend
+from rsisys.runtime.execution.local_process import LocalProcessBackend
 
 
 class IsolationUnavailable(RuntimeError):

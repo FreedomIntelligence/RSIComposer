@@ -8,7 +8,7 @@ from functools import partial
 from ...action_space import OperationCall, OperationResult, OperationSpec
 from ...action_space.capabilities import Capabilities, Capability
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.runtime.json_tools import EvidencePathError, evidence_value
+from rsisys.runtime.storage.json_tools import EvidencePathError, evidence_value
 from ..context import encoded, result_id
 from ..ledger_context import LEDGER_COLLECTIONS
 from ..research import KINDS, MAX_PATCH_CHANGES, ResearchAgenda, ResearchInputRejected, page_limit, page_offset

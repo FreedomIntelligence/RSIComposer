@@ -10,7 +10,7 @@ from typing import Protocol
 from rsisys.loops._memory import Memory
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.receipts import ExecutionReceipt
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 from .learning import validate_publication
 from .components import journal_memory
 from .knowledge import proposal_records

@@ -45,7 +45,7 @@ class VerlTTRLEngine(WeightEngine):
     def fit(self, model, rows, directory, checkpoint, *, votes):
         import os
         import sys
-        from rsisys.runtime.workers import run_workers
+        from rsisys.runtime.execution.workers import run_workers
         root = checkout(self.config['upstream_root'], TTRL_REVISION)
         directory.mkdir(parents=True, exist_ok=False)
         output, request = directory / 'response.json', directory / 'request.json'

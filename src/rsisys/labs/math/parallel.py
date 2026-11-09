@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from rsisys.runtime.workers import run_workers
+from rsisys.runtime.execution.workers import run_workers
 
 from rsisys.labs.math.engines import TransformersMathEngine
 

@@ -13,7 +13,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from rsisys.runtime.model import ModelResponseError, parse_tool_response
+from rsisys.runtime.models.model import ModelResponseError, parse_tool_response
 from rsisys.loops.decision_making.feedback.model_gateway import FeedbackCapacityError, NativeAdmissionAbort
 
 

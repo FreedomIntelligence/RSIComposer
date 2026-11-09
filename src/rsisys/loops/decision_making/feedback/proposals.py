@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.json_tools import encoded, result_id
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.storage.json_tools import encoded, result_id
 from .evidence import admitted_candidate_evidence
 from .learning import _schema, validate_proposals
 from .model_gateway import FeedbackModelGateway

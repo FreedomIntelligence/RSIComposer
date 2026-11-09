@@ -9,7 +9,7 @@ from rsisys.application import Application, ApplicationConfig
 from rsisys.snapshot.local import LocalSnapshotCapture, restore_snapshot, load_manifest
 from rsisys.registry import Registry
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 def main() -> None:

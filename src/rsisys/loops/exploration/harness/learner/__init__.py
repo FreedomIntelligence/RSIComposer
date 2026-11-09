@@ -14,8 +14,8 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
 from rsisys.loops.contracts.metrics import InvalidMetrics, validated_metrics
 from rsisys.loops.contracts.training import ModelActivator, TrainingResult, TrainingOrigin
-from rsisys.runtime.jobs import JobBook, InvalidJobResult
-from rsisys.runtime.model import prepare_model_activation
+from rsisys.runtime.orchestration.jobs import JobBook, InvalidJobResult
+from rsisys.runtime.models.model import prepare_model_activation
 
 from ..policy import ActorPolicy
 

@@ -14,7 +14,7 @@ import sys
 
 from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
-from rsisys.runtime.lab_group import LabGroup
+from rsisys.runtime.orchestration.lab_group import LabGroup
 from .methods import MethodCatalog, MethodDefinition, MethodIdentity
 from .runtime.capabilities import optional_method
 
@@ -60,7 +60,7 @@ class Registry:
 
     @staticmethod
     def _local_config(config):
-        from .runtime.run_policy import positive
+        from rsisys.runtime.orchestration.run_policy import positive
         allowed = {'timeout_seconds', 'max_jobs', 'max_parallel', 'max_file_bytes', 'max_poll_wait_seconds'}
         if set(config) - allowed:
             raise ValueError('Unknown local_process Lab option')

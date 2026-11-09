@@ -71,7 +71,7 @@ class FileArtifactStore:
         from pathlib import Path
         import shutil
         import tempfile
-        from .files import atomic_write, json_bytes, sync_directory
+        from rsisys.runtime.storage.files import atomic_write, json_bytes, sync_directory
         if not isinstance(kind, str) or not kind:
             raise ValueError('Artifact kind is required')
         ident = uuid4().hex

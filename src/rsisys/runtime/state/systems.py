@@ -82,7 +82,7 @@ class SystemRegistry:
         if self.path is not None and self.path.exists():
             from rsisys.snapshot.codec import decode
             raw = json.loads(self.path.read_text())
-            from .files import json_bytes
+            from rsisys.runtime.storage.files import json_bytes
             if hashlib.sha256(json_bytes(raw['state'])).hexdigest() != raw['sha256']:
                 raise ValueError('System registry digest mismatch')
             state = decode(raw['state'])
@@ -105,14 +105,14 @@ class SystemRegistry:
 
     def restore_state(self, state):
         if self.path is not None and self.capture_state() != state:
-            from .recovery import RecoveryRequired
+            from rsisys.runtime.state.recovery import RecoveryRequired
             raise RecoveryRequired('System registry advanced after checkpoint; reconcile activation before resuming')
         self._load(state)
 
     def _save(self):
         if self.path is not None:
             from rsisys.snapshot.codec import encode
-            from .files import atomic_write, json_bytes
+            from rsisys.runtime.storage.files import atomic_write, json_bytes
             state = encode(self.capture_state())
             atomic_write(self.path, json_bytes({'state': state,
                 'sha256': hashlib.sha256(json_bytes(state)).hexdigest()}))

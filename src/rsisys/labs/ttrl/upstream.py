@@ -3,7 +3,7 @@ import ast
 import importlib.util
 import sys
 
-from rsisys.runtime.upstream import checkout
+from rsisys.runtime.execution.upstream import checkout
 
 TTRL_REVISION = '5806e119789132fcb43552beaf2532d7d0447213'
 

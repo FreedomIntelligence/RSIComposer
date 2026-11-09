@@ -16,7 +16,7 @@ from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 class PeriodicReflection:
@@ -299,7 +299,7 @@ class PeriodicReflection:
 
     def restore(self, state):
         if state != self.capture():
-            from rsisys.runtime.recovery import RecoveryRequired
+            from rsisys.runtime.state.recovery import RecoveryRequired
             raise RecoveryRequired('Reflection receipt advanced after checkpoint; reconcile, never replay')
 
     def snapshot(self):

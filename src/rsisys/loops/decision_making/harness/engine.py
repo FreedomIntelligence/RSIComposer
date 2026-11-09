@@ -20,9 +20,9 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.metrics import InvalidMetrics, validated_metrics
 from rsisys.loops.contracts.training import TrainingResult, ModelActivator
-from rsisys.runtime.model import prepare_model_activation
+from rsisys.runtime.models.model import prepare_model_activation
 from rsisys.loops.contracts.model_service import ModelRef, ModelUpdatable
-from rsisys.runtime.jobs import JobBook
+from rsisys.runtime.orchestration.jobs import JobBook
 from rsisys.runtime.capabilities import optional_method
 
 from rsisys.loops.contracts.coordination import LoopStepResult, ExecutionView, ExplorationProgress, ReviewDecision

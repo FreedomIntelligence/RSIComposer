@@ -3,8 +3,8 @@ import hashlib
 from pathlib import Path
 import platform
 
-from .files import json_bytes
-from .isolation import ExecutionPolicy, system_runtime_paths
+from rsisys.runtime.storage.files import json_bytes
+from rsisys.runtime.execution.isolation import ExecutionPolicy, system_runtime_paths
 
 
 def file_identity(path):

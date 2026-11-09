@@ -101,7 +101,7 @@ def _runtime_patch(config):
             'apiKeyEnv': config.api_key_env, 'defaultContextWindow': config.context_window,
             'models': [{'id': config.model, 'contextWindow': config.context_window}],
         }})
-    from rsisys.runtime.files import atomic_write
+    from rsisys.runtime.storage.files import atomic_write
     payload = json.dumps(rows, ensure_ascii=False, sort_keys=True).encode()
     path = config.home / 'rsisys' / (sha256(payload).hexdigest() + '.patch.yml')
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +439,7 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
                 'transport': deepcopy(backend.transport), 'native_compaction': deepcopy(backend.last_compaction)}
 
     def restore_recovery_state(self, state):
-        from rsisys.runtime.recovery import RecoveryRequired
+        from rsisys.runtime.state.recovery import RecoveryRequired
         if state['identity'] != self._recovery_identity():
             raise ValueError('DSH recovery requires the original home/workspace/model/session configuration')
         if self.policy.future is not None or self.policy.backend.session is not None:
@@ -470,7 +470,7 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
         Call inside recovery.reconcile when the Runner journal is interrupted.
         No model input or external research action is sent by this method.
         """
-        from rsisys.runtime.recovery import RecoveryRequired
+        from rsisys.runtime.state.recovery import RecoveryRequired
         from rsisys.loops._memory import HistoryEntry
         future = self.policy.future
         if (future is None or not future.done() or future.cancelled()

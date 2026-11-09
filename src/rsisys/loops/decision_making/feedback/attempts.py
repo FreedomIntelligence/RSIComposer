@@ -1,6 +1,6 @@
 """Versioned, evidence-linked interpretations; never an execution ledger."""
 from copy import deepcopy
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 from .evidence import claim_schema, validate_claims
 
 

@@ -17,7 +17,7 @@ from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.requests import SFTSpec, RLSpec, EvaluationSpec, PromptSpec
 from rsisys.loops.contracts.training import ModelActivationPending
-from rsisys.runtime.jobs import InvalidJobResult
+from rsisys.runtime.orchestration.jobs import InvalidJobResult
 from .learner import ActorTrainingRequest
 from .evaluation import EvaluationRequest
 from .rl import RLPlan

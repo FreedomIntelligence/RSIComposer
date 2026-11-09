@@ -6,7 +6,7 @@ dataset recipe, model inference or training is performed by this adapter.
 from copy import deepcopy
 
 from rsisys.loops.contracts.improvement import TrajectoryRef
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 class FeedbackTrajectorySource:

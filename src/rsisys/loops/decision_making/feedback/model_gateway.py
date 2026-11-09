@@ -4,7 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
 
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 class FeedbackCapacityError(ValueError):

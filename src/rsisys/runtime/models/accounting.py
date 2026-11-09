@@ -11,8 +11,8 @@ from pathlib import Path
 import threading
 import time
 import fcntl
-from .files import atomic_write, json_bytes
-from .model import ModelResponseError
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.models.model import ModelResponseError
 
 
 class HostAdmissionStop(RuntimeError):

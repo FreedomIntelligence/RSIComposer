@@ -12,8 +12,8 @@ from rsisys.loops.contracts.execution import LabInfrastructureError
 from rsisys.loops.contracts.decision import OperationArgumentError
 from rsisys.loops._memory import HistoryEntry
 from rsisys.runtime.evidence.records import ExperienceRecord
-from rsisys.runtime.artifacts import ArtifactStore
-from rsisys.runtime.sandbox import ExecRequest, SandboxBackend, SandboxSpec
+from rsisys.runtime.storage.artifacts import ArtifactStore
+from rsisys.runtime.execution.sandbox import ExecRequest, SandboxBackend, SandboxSpec
 from ...action_space import OperationCall, OperationResult
 
 

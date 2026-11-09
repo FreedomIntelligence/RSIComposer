@@ -9,7 +9,7 @@ from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import TrainingResult, ModelActivator
-from rsisys.runtime.jobs import JobBook
+from rsisys.runtime.orchestration.jobs import JobBook
 from ..action_space import ActionSpace
 from .commands import ExplorationCommands, CommandHandler
 from .environment import Environment, EpisodeExecution

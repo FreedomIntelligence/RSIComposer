@@ -13,8 +13,8 @@ import re
 from rsisys.loops.contracts.decision import OperationArgumentError, OperationCall, OperationSpec
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.decision_making.action_space import OperationResult
-from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.json_tools import encoded, result_id
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.storage.json_tools import encoded, result_id
 from .task_acceptance import CHECKS, EVIDENCE, RESOLUTIONS, validate_checks, accept
 
 
@@ -306,7 +306,7 @@ class AgentMemory:
                 raise ValueError('Inherited memory source is missing or differs')
         if self.path is not None:
             if self.path.exists() and self._validated(json.loads(self.path.read_text())) != self._state:
-                from rsisys.runtime.recovery import RecoveryRequired
+                from rsisys.runtime.state.recovery import RecoveryRequired
                 raise RecoveryRequired('Memory changed before continuation import')
             atomic_write(self.path, json_bytes(candidate))
         self._state = candidate
@@ -318,7 +318,7 @@ class AgentMemory:
         if self.path is not None and self.path.exists():
             current = self._validated(json.loads(self.path.read_text(encoding='utf-8')))
             if current != candidate:
-                from rsisys.runtime.recovery import RecoveryRequired
+                from rsisys.runtime.state.recovery import RecoveryRequired
                 raise RecoveryRequired('Agent memory changed after checkpoint; reconcile the interrupted mutation')
         if self.path is not None:
             atomic_write(self.path, json_bytes(candidate))

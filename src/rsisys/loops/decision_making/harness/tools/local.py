@@ -2,7 +2,7 @@
 
 import json
 
-from rsisys.runtime.artifacts import FileArtifactStore
+from rsisys.runtime.storage.artifacts import FileArtifactStore
 from ...action_space import OperationResult
 from . import BoundDecisionTools
 

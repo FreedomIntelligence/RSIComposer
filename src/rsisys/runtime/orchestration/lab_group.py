@@ -2,8 +2,8 @@
 from copy import deepcopy
 from dataclasses import replace
 import json
-from ..loops.contracts.decision import OperationCall, OperationSpec
-from .capabilities import optional_method
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
+from rsisys.runtime.capabilities import optional_method
 
 
 class LabGroup:

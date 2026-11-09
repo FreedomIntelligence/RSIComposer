@@ -20,7 +20,7 @@ from ..context import BasicContextCompactor, IdentityContextCompactor
 from .prompts import DecisionPrompts
 
 
-from rsisys.runtime.json_tools import load_object as _load_object
+from rsisys.runtime.storage.json_tools import load_object as _load_object
 
 
 class DecisionPolicy(Protocol):

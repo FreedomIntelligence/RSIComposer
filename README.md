@@ -76,7 +76,7 @@ Built-in method packages declare and register implementations imported from
 names and configurations remain stable. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
 core registry has no algorithm-specific branches. Independent research-worker
-transport lives in `runtime/research_bridge.py`.
+transport lives in `runtime/execution/research_bridge.py`.
 
 External methods may keep private implementations beside their registration
 entry, as shown by `_template`, without modifying the core or installing their
@@ -118,9 +118,27 @@ The remaining internal boundaries are:
 - `backends/training/` and `backends/serving/` own training processes, inference
   transports and deployments. These are execution providers; `labs/training/`
   contains reusable Lab-side orchestration and artifact components.
-- `runtime/lab_group.py` owns namespaced routing and Lab lifecycle aggregation.
-  Backend record writes and locks live in `runtime/process_store.py`, so serving
+- `runtime/orchestration/lab_group.py` owns namespaced routing and Lab lifecycle aggregation.
+  Backend record writes and locks live in `runtime/storage/process_store.py`, so serving
   does not depend on a training implementation for persistence.
+
+`runtime/` contains host mechanisms, grouped by responsibility:
+
+```text
+runtime/
+  orchestration/  # run policies, loop scheduling, Lab routing and jobs
+  state/          # recovery, continuation, identities and version activation
+  execution/      # isolation, processes, workers and resource reservations
+  storage/        # artifacts, file access, canonical JSON and process records
+  models/         # model transport, credential broker and usage accounting
+  evaluation/     # evaluation admission and derived diagnostics
+  evidence/       # shared evidence records and persistence
+  capabilities.py # optional component method discovery
+```
+
+Candidate-improvement Lab operations live in `labs/policy_improvement/evolution.py`;
+the generic version activation machinery stays in `runtime/state/`. Evaluation
+admission tracks campaigns and budgets; task scorers remain in Labs.
 
 Shared records, provenance, in-memory/SQLite persistence and basic queries live
 in `runtime/evidence/`. Controller-side feedback selection lives in

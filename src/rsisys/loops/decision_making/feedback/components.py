@@ -8,7 +8,7 @@ from rsisys.loops._memory import Memory
 from rsisys.loops.contracts.feedback_context import ContextMemory
 from rsisys.loops.contracts.feedback_modules import TrajectoryArchive, FeedbackProcessor
 from rsisys.loops.contracts.receipts import receipt_task, receipt_facts
-from rsisys.runtime.json_tools import encoded
+from rsisys.runtime.storage.json_tools import encoded
 from .knowledge import context_record, working_memory, trajectory_records, trajectory_segment, trajectory_snapshot
 
 

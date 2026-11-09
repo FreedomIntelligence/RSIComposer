@@ -2,7 +2,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 
-from .capabilities import optional_method
+from rsisys.runtime.capabilities import optional_method
 
 
 def validate_adapters(adapters):
@@ -68,7 +68,7 @@ class AssemblyRecovery:
 
     def _metadata(self, adapter):
         from rsisys.snapshot.codec import encode
-        from .files import json_bytes
+        from rsisys.runtime.storage.files import json_bytes
         configuration = optional_method(adapter, 'configuration')
         metadata = {'state_id': adapter.state_id,
                     'configuration': deepcopy(configuration()) if configuration else None}
@@ -77,7 +77,7 @@ class AssemblyRecovery:
 
     def capture(self, app):
         from rsisys.snapshot.codec import encode
-        from .files import json_bytes
+        from rsisys.runtime.storage.files import json_bytes
         adapters = self._adapters(app)
         result = {name: {**self._metadata(adapter), 'state': deepcopy(adapter.capture())}
                   for name, adapter in sorted(adapters.items())}

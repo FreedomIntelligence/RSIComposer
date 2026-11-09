@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from rsisys.loops.contracts.feedback_context import ContextQuery, FeedbackContextEvent
 from rsisys.loops.contracts.receipts import receipt_task
-from rsisys.runtime.json_tools import encoded
+from rsisys.runtime.storage.json_tools import encoded
 
 
 def _callable_identity(function):

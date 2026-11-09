@@ -12,7 +12,7 @@ import sys
 from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.controllers.ft_agent.upstream import FT_AGENT_REVISION
-from rsisys.runtime.research_bridge import ResearchBridge
+from rsisys.runtime.execution.research_bridge import ResearchBridge
 
 
 def validate_config(config):

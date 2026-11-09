@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 import json
 
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 KINDS = ('agenda', 'todo', 'stage_summary')
 MAX_PATCH_CHANGES = 32

@@ -4,7 +4,7 @@ from dataclasses import asdict, replace
 from typing import Protocol
 
 
-from rsisys.runtime.json_tools import encoded, result_id
+from rsisys.runtime.storage.json_tools import encoded, result_id
 
 
 class ContextBudgetError(ValueError):

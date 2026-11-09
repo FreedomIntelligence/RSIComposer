@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from .files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 class ResourceAccount:

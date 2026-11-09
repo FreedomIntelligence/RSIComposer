@@ -15,7 +15,7 @@ from rsisys.loops.contracts.model_service import ModelUpdatable
 from rsisys.loops.contracts.training import TrainingResult
 
 from ..action_space import ActionSpace
-from rsisys.runtime.jobs import InvalidJobResult
+from rsisys.runtime.orchestration.jobs import InvalidJobResult
 from .learner import ActorTrainingRequest, LearningExecution
 
 if TYPE_CHECKING:

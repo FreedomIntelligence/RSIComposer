@@ -15,9 +15,9 @@ from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
 from rsisys.loops.contracts.receipts import ExecutionReceipt, receipt_task, receipt_facts
 from rsisys.loops.contracts.feedback_context import ContextQuery
 from rsisys.loops.contracts.feedback_modules import PendingFeedback, FeedbackFailurePolicy
-from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.json_tools import encoded, result_id, EvidencePathError, evidence_value
-from rsisys.runtime.json_tools import load_object as _load_object
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.storage.json_tools import encoded, result_id, EvidencePathError, evidence_value
+from rsisys.runtime.storage.json_tools import load_object as _load_object
 from .attempts import attempt_schema, validate_attempt_updates, apply_attempt_updates, attempt_view
 from .evidence import candidate_evidence, claim_schema, validate_claims, admitted_candidate_evidence
 from .knowledge import proposal_records, interpretation_page, SUBJECTS

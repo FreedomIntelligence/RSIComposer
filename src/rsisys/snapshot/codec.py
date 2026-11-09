@@ -23,8 +23,8 @@ from rsisys.loops.exploration.harness.rl import RLPlan, RLState
 from rsisys.loops.exploration.harness.learner import ActorTrainingRequest
 
 from rsisys.loops.decision_making.harness.decision import Decision
-from rsisys.runtime.runner import RunnerStep
-from rsisys.runtime.run_policy import RunDecision, ExperimentOutcome
+from rsisys.runtime.orchestration.runner import RunnerStep
+from rsisys.runtime.orchestration.run_policy import RunDecision, ExperimentOutcome
 from rsisys.loops.contracts.jobs import JobOutcome
 from rsisys.loops.contracts.coordination import DirectiveUpdate, UpdateReceipt
 from rsisys.runtime.evidence.records import ExperienceRecord

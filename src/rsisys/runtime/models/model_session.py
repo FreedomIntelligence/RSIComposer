@@ -7,7 +7,7 @@ import socketserver
 import threading
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from .accounting import AccountedModelBackend
+from rsisys.runtime.models.accounting import AccountedModelBackend
 
 
 class HostModelSession:

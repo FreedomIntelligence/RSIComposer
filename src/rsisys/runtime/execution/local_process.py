@@ -14,7 +14,7 @@ import time
 from uuid import uuid4
 
 from rsisys.loops.contracts.jobs import JobStatus
-from .sandbox import SandboxSpec, SandboxRef, ExecRequest, ProcessRef, ProcessState, SandboxCapabilities
+from rsisys.runtime.execution.sandbox import SandboxSpec, SandboxRef, ExecRequest, ProcessRef, ProcessState, SandboxCapabilities
 
 
 def _kill_process_group(process):

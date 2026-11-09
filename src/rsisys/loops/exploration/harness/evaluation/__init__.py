@@ -10,7 +10,7 @@ from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
-from rsisys.runtime.jobs import JobBook, InvalidJobResult
+from rsisys.runtime.orchestration.jobs import JobBook, InvalidJobResult
 
 if TYPE_CHECKING:
     from ..state import ExplorationState

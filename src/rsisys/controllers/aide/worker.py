@@ -9,9 +9,9 @@ import sys
 import traceback
 
 from rsisys.controllers.aide.controller import AIDE_REVISION
-from rsisys.runtime.research_bridge import emit_event
+from rsisys.runtime.execution.research_bridge import emit_event
 from rsisys.labs.harness.runtime import digest
-from rsisys.runtime.upstream import checkout
+from rsisys.runtime.execution.upstream import checkout
 
 
 def run(config):

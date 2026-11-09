@@ -68,7 +68,7 @@ algorithms/
 内置方法包从 `controllers/`、`labs/` 引用实现，只保留声明、装配和注册，不重复放执行代码。
 原有注册名和配置保持兼容。每个方法通过唯一的 `register(registry)` 入口选择控制器、Labs、
 harness 与 memory，核心注册表不增加算法专属分支。独立研究 worker 的通信归
-`runtime/research_bridge.py`。
+`runtime/execution/research_bridge.py`。
 
 库外开发仍可像 `_template` 一样，在注册入口旁携带私有实现，无需改核心库或把组件分别
 安装进库中。需要供其他方法复用的能力，再纳入公共实现层。harness 支撑上下文、模型和工具
@@ -104,8 +104,25 @@ labs/
   某个实现专属的接入逻辑归该实现维护，不集中堆进 adapters。
 - `backends/training/`、`backends/serving/` 负责训练进程、推理传输与部署；
   `labs/training/` 则提供 Lab 侧可复用的调用与产物管理组件。
-- `runtime/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
-  后端的记录写入、文件锁放在 `runtime/process_store.py`，推理后端不再借用训练实现做持久化。
+- `runtime/orchestration/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
+  后端的记录写入、文件锁放在 `runtime/storage/process_store.py`，推理后端不再借用训练实现做持久化。
+
+`runtime/` 按宿主机制的职责分组：
+
+```text
+runtime/
+  orchestration/  # 运行策略、循环调度、Lab 路由和作业
+  state/          # 恢复、续跑、身份和版本激活
+  execution/      # 隔离、进程、worker 和资源预留
+  storage/        # 产物、文件访问、规范 JSON 和进程记录
+  models/         # 模型通信、凭证代理和用量记账
+  evaluation/     # 评测准入和派生诊断
+  evidence/       # 共享证据记录与持久化
+  capabilities.py # 可选组件方法发现
+```
+
+候选改进的 Lab 操作放在 `labs/policy_improvement/evolution.py`，通用版本激活
+机制留在 `runtime/state/`。评测准入负责批次和预算，场景评分仍由 Lab 负责。
 
 通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
 决策侧的反馈选择放在 `controllers/memory/`，决定哪些证据进入决策上下文。

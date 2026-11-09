@@ -8,7 +8,7 @@ from dataclasses import asdict, replace
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.feedback_context import ContextQuery
 from rsisys.loops.contracts.decision import OperationArgumentError
-from rsisys.runtime.json_tools import EvidencePathError
+from rsisys.runtime.storage.json_tools import EvidencePathError
 from rsisys.runtime.capabilities import optional_method
 from rsisys.loops.contracts.model_service import ModelRef
 

@@ -7,7 +7,7 @@ establish evaluation metrics for a candidate.
 from copy import deepcopy
 from math import isfinite
 
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 from rsisys.loops.contracts.receipts import receipt_task, receipt_facts
 
 

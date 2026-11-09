@@ -1,8 +1,8 @@
 from dataclasses import asdict
 import json
 
-from rsisys.runtime.artifacts import ArtifactStore
-from rsisys.runtime.jobs import MockJobQueue
+from rsisys.runtime.storage.artifacts import ArtifactStore
+from rsisys.runtime.orchestration.jobs import MockJobQueue
 
 from . import EvaluationRequest, EvaluationResult
 

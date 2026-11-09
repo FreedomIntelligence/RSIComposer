@@ -1,6 +1,6 @@
 """Optional memory admission for LocalProcessLab receipts; not a Lab protocol."""
 from rsisys.loops.contracts.feedback_modules import FeedbackAdmission
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 class LocalLabMemoryAdmission:

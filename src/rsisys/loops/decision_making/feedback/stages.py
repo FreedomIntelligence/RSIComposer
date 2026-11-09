@@ -1,7 +1,7 @@
 """Bind public product functions and isolate the old journal-shaped workflow."""
 from copy import deepcopy
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.runtime.files import json_bytes
+from rsisys.runtime.storage.files import json_bytes
 from .context_memory import feedback_context_event, _callable_identity
 from .model_gateway import FeedbackModelGateway
 

@@ -15,8 +15,8 @@ from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobStatus
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.runtime.artifacts import ArtifactStore
-from rsisys.runtime.sandbox import ExecRequest, SandboxBackend, SandboxRef, SandboxSpec
+from rsisys.runtime.storage.artifacts import ArtifactStore
+from rsisys.runtime.execution.sandbox import ExecRequest, SandboxBackend, SandboxRef, SandboxSpec
 
 from ...action_space import Action, ActionSpace
 from ..policy import ActorContext, ActorPolicy

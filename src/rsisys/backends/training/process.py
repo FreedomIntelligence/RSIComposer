@@ -20,8 +20,8 @@ from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, JobProgre
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.metrics import validated_metrics
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
-from rsisys.runtime.local_process import _kill_process_group, _wait_for_process_exit
-from rsisys.runtime.process_store import _json, _write, _lock
+from rsisys.runtime.execution.local_process import _kill_process_group, _wait_for_process_exit
+from rsisys.runtime.storage.process_store import _json, _write, _lock
 
 _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
     'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',

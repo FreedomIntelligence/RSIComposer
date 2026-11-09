@@ -21,7 +21,7 @@ from rsisys.loops.decision_making.action_space.directives import (
     DirectiveDefinition, DirectiveDefinitions, DirectiveSpec, _arguments)
 from rsisys.loops.decision_making.harness.learner import DecisionTrainingRequest
 from rsisys.loops.exploration.harness.commands import CommandHandler
-from rsisys.runtime.jobs import JobBook
+from rsisys.runtime.orchestration.jobs import JobBook
 
 
 class _ImprovementCommand(CommandHandler):

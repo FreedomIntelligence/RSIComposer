@@ -18,7 +18,7 @@ from rsisys.loops.decision_making.feedback.context_memory import validate_contex
 from rsisys.loops.decision_making.feedback.archive import validate_archive
 from rsisys.loops.decision_making.feedback.scheduling import validate_scheduler
 from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer, FeedbackAdmissionPolicy
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 from rsisys.loops.decision_making.harness.agent_memory import AgentMemory, install_agent_memory
 
 

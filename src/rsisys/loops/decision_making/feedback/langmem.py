@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from rsisys.adapters.langchain_model import BackendChatModel
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.runtime.json_tools import result_id
-from rsisys.runtime.files import json_bytes
+from rsisys.runtime.storage.json_tools import result_id
+from rsisys.runtime.storage.files import json_bytes
 from .evidence import admitted_candidate_evidence, validate_claims, claim_schema
 from .knowledge import context_record, WorkingMemoryPolicy
 from .model_gateway import FeedbackModelGateway, NativeAdmissionAbort

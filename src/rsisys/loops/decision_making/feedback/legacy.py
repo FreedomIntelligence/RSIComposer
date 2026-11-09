@@ -2,7 +2,7 @@
 from importlib import resources
 
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from rsisys.runtime.json_tools import encoded, result_id
+from rsisys.runtime.storage.json_tools import encoded, result_id
 
 
 class LegacyFeedbackInterpreter:

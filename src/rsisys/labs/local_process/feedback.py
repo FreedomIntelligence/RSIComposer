@@ -8,7 +8,7 @@ from rsisys.loops.decision_making.action_space import OperationResult
 from rsisys.loops.decision_making.harness.research_state import (
     archive_available, archived_operation_result_ids, full_history_ids,
 )
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 class RoutedLab:

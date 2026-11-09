@@ -39,10 +39,10 @@ from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLear
 from rsisys.loops.exploration.harness.memory import ExplorationMemory
 from rsisys.loops.exploration.harness.policy import ModelActorPolicy
 from rsisys.loops.exploration.loop import ExplorationLoop
-from rsisys.runtime.run_policy import RunPolicy
-from rsisys.runtime.artifacts import ArtifactStore
-from rsisys.runtime.runner import Runner
-from rsisys.runtime.sandbox import SandboxBackend
+from rsisys.runtime.orchestration.run_policy import RunPolicy
+from rsisys.runtime.storage.artifacts import ArtifactStore
+from rsisys.runtime.orchestration.runner import Runner
+from rsisys.runtime.execution.sandbox import SandboxBackend
 from rsisys.runtime.capabilities import optional_method
 
 
@@ -141,7 +141,7 @@ class ModuleAssembly:
 
     def __post_init__(self):
         if self.model_session is not None:
-            from rsisys.runtime.model_session import HostModelSession
+            from rsisys.runtime.models.model_session import HostModelSession
             if not isinstance(self.model_session, HostModelSession):
                 raise TypeError('model_session must be a host-accounted HostModelSession')
         if self.method_identity is not None and not isinstance(self.method_identity, MethodIdentity):
@@ -286,7 +286,7 @@ def assemble_runner(context: AssemblyContext, *, modules: ModuleAssembly | None 
             owner=context, adapter=modules.feedback_adapter_factory(decision.harness)
                 if modules.feedback_adapter_factory else None, **options)
     if modules.state_factory is not None:
-        from rsisys.runtime.component_state import validate_adapters, assembly_bindings
+        from rsisys.runtime.state.component_state import validate_adapters, assembly_bindings
         adapters = validate_adapters(modules.state_factory(context, decision, exploration))
         automatic = {}
         if context.components is not None:

@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 
 from rsisys.loops.contracts.evaluation import EvaluationProtocol
-from rsisys.runtime.files import atomic_write, json_bytes
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 class EvaluationAdmissionError(ValueError):

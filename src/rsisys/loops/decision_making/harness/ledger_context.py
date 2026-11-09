@@ -7,7 +7,7 @@ by identity. Missing from a view never means untested, failed or unadopted.
 from copy import deepcopy
 from dataclasses import asdict, replace
 
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 from .research_state import archive_available, live_evidence_ids
 
 

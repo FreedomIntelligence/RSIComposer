@@ -12,8 +12,8 @@ from rsisys.loops.contracts.coordination import (
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
-from .recovery import durable_mutation
-from .run_policy import (RunPolicy, ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy,
+from rsisys.runtime.state.recovery import durable_mutation
+from rsisys.runtime.orchestration.run_policy import (RunPolicy, ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy,
                          RunContext, RunDecision, ExperimentOutcome, MetricGoal, positive)
 
 

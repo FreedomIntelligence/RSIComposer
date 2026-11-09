@@ -3,8 +3,8 @@ from copy import deepcopy
 from dataclasses import asdict
 
 from rsisys.loops.contracts.feedback_modules import ArchiveEvent
-from rsisys.runtime.files import json_bytes
-from rsisys.runtime.json_tools import EvidencePathError, result_id
+from rsisys.runtime.storage.files import json_bytes
+from rsisys.runtime.storage.json_tools import EvidencePathError, result_id
 from .knowledge import trajectory_records, trajectory_snapshot
 
 

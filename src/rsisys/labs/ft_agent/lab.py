@@ -18,7 +18,7 @@ import time
 from rsisys.labs.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
-from rsisys.runtime.upstream import checkout
+from rsisys.runtime.execution.upstream import checkout
 from rsisys.labs.training.artifacts import file_hash
 from rsisys.labs.training.engine import WeightEngine, validate_engine
 
@@ -329,7 +329,7 @@ class LLMFinetuneLab:
 
     def _train(self, args):
         import yaml
-        from rsisys.runtime.workers import run_workers
+        from rsisys.runtime.execution.workers import run_workers
         started = time.monotonic()
         iteration, files = args['iteration'], args['files']
         prepared = self.prepared[iteration]

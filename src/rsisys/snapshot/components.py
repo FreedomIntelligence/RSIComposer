@@ -9,8 +9,8 @@ from time import time
 from uuid import uuid4
 
 from rsisys.runtime.capabilities import optional_method
-from rsisys.runtime.files import atomic_write, json_bytes, sync_directory, sync_tree
-from rsisys.runtime.recovery import capture_runner, restore_runner, policy_state, restore_policy
+from rsisys.runtime.storage.files import atomic_write, json_bytes, sync_directory, sync_tree
+from rsisys.runtime.state.recovery import capture_runner, restore_runner, policy_state, restore_policy
 from .codec import encode, decode
 from .manifest import SnapshotManifest
 
@@ -87,8 +87,8 @@ def capture_components(app, store, contract, label):
 def restore_components(directory, target, manifest, *, run_id, modules, contract, run_policy):
     from rsisys.application import Application, ApplicationConfig
     from rsisys.assembly import module_assembly
-    from rsisys.runtime.artifacts import FileArtifactStore
-    from rsisys.runtime.component_state import AssemblyRecovery
+    from rsisys.runtime.storage.artifacts import FileArtifactStore
+    from rsisys.runtime.state.component_state import AssemblyRecovery
     from .local import publish_restore
     modules = module_assembly(modules)
     if contract is None and modules.state_factory is None:

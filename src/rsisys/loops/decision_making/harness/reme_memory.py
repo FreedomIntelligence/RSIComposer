@@ -10,7 +10,7 @@ from importlib import metadata
 from math import isfinite
 from threading import RLock
 
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 
 
 REME_VERSION = '0.4.2.3'

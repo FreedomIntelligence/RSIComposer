@@ -14,8 +14,8 @@ from uuid import uuid4
 from rsisys.loops.contracts.backend import DeploymentRef, DeploymentState, DeploymentStatus
 from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse, TokenUsage
 from rsisys.loops.contracts.training import ModelActivationPending
-from rsisys.runtime.model import RemoteModelBackend, ModelResponseError, ModelTransportError, parse_tool_response
-from rsisys.runtime.process_store import _json, _write, _lock
+from rsisys.runtime.models.model import RemoteModelBackend, ModelResponseError, ModelTransportError, parse_tool_response
+from rsisys.runtime.storage.process_store import _json, _write, _lock
 
 
 class VLLMBackend(RemoteModelBackend):

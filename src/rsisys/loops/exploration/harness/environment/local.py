@@ -2,9 +2,9 @@ from pathlib import Path
 import shutil
 
 from rsisys.loops.contracts.jobs import JobStatus
-from rsisys.runtime.sandbox import ExecRequest, SandboxSpec
-from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.artifacts import FileArtifactStore
+from rsisys.runtime.execution.sandbox import ExecRequest, SandboxSpec
+from rsisys.runtime.execution.local_process import LocalProcessBackend
+from rsisys.runtime.storage.artifacts import FileArtifactStore
 from . import Transition
 
 

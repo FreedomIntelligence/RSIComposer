@@ -14,13 +14,13 @@ from rsisys.runtime.evidence.sqlite import SQLiteExperienceStore
 from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
-from rsisys.runtime.run_policy import RunPolicy
-from rsisys.runtime.artifacts import FileArtifactStore
-from rsisys.runtime.model import MockModelBackend, RemoteModelBackend
-from rsisys.runtime.sandbox import MockSandboxBackend
-from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.files import atomic_write, json_bytes
-from rsisys.runtime.provenance import RunSource
+from rsisys.runtime.orchestration.run_policy import RunPolicy
+from rsisys.runtime.storage.artifacts import FileArtifactStore
+from rsisys.runtime.models.model import MockModelBackend, RemoteModelBackend
+from rsisys.runtime.execution.sandbox import MockSandboxBackend
+from rsisys.runtime.execution.local_process import LocalProcessBackend
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.state.provenance import RunSource
 
 
 @dataclass(frozen=True)
@@ -194,7 +194,7 @@ class Application:
                 atomic_write(root / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))
             if durable:
-                from rsisys.runtime.recovery import DurableRecovery
+                from rsisys.runtime.state.recovery import DurableRecovery
                 self.recovery = DurableRecovery(self, recovery_contract)
                 if _resume:
                     self.recovery.load(run_policy)

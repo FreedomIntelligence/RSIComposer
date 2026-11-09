@@ -5,7 +5,7 @@ Dispositions live in AgentMemory's ordinary revision journal.
 """
 from dataclasses import asdict
 
-from rsisys.runtime.json_tools import result_id
+from rsisys.runtime.storage.json_tools import result_id
 from .observations import task_observation, failed_observation
 
 

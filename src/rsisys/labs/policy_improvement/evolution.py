@@ -15,9 +15,9 @@ from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.model_service import ModelRef
-from .files import atomic_write, json_bytes
-from .systems import SystemActivationRejected, SystemRegistry, SystemRegistryState
-from .workspace_files import read_workspace_file
+from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.state.systems import SystemActivationRejected, SystemRegistry, SystemRegistryState
+from rsisys.runtime.storage.workspace_files import read_workspace_file
 
 
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ class EvolutionState(SystemRegistryState):
 
     def restore(self, state):
         if self.registry.activator.state != state['activator']:
-            from .recovery import RecoveryRequired
+            from rsisys.runtime.state.recovery import RecoveryRequired
             raise RecoveryRequired('Activation journal advanced after checkpoint')
         super().restore(state['registry'])
         self.registry.activator.restore_bindings(self.registry.current)

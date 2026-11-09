@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import json
 
 from rsisys.loops.contracts.receipts import receipt_task, receipt_facts
-from rsisys.runtime.json_tools import encoded, result_id, EvidencePathError
+from rsisys.runtime.storage.json_tools import encoded, result_id, EvidencePathError
 
 
 TARGETS = {'memory': 'context_memory', 'harness_change': 'harness',

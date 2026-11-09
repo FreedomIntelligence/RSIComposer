@@ -22,11 +22,11 @@ from rsisys.loops.contracts.delivery import FeedbackDelivery
 from rsisys.loops.contracts.execution import LabInfrastructureError, LabToolError
 from rsisys.loops.contracts.jobs import JobStatus, TERMINAL_STATUSES
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.runtime.local_process import LocalProcessBackend
-from rsisys.runtime.accounting import HostAdmissionStop
-from rsisys.runtime.run_policy import positive
-from rsisys.runtime.json_tools import encoded
-from rsisys.runtime.sandbox import SandboxSpec, ExecRequest
+from rsisys.runtime.execution.local_process import LocalProcessBackend
+from rsisys.runtime.models.accounting import HostAdmissionStop
+from rsisys.runtime.orchestration.run_policy import positive
+from rsisys.runtime.storage.json_tools import encoded
+from rsisys.runtime.execution.sandbox import SandboxSpec, ExecRequest
 
 
 class LocalProcessLab:
