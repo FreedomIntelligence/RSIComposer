@@ -18,7 +18,7 @@ import time
 from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
-from rsisys.labs.pinned_upstream import checkout
+from rsisys.runtime.upstream import checkout
 from rsisys.labs.weight_artifacts import file_hash
 from rsisys.labs.weight_engine import WeightEngine, validate_engine
 

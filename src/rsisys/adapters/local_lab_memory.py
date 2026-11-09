@@ -10,6 +10,9 @@ class LocalLabMemoryAdmission:
     acknowledgements and busy backpressure do not require an additional LLM call.
     Equivalent queued errors share one organization job; raw events remain exact.
     """
+    def __init__(self, *, submission_operations=('lab_start',)):
+        self.submission_operations = frozenset(submission_operations)
+
     @staticmethod
     def _signature(event):
         request = event.request if isinstance(event.request, dict) else {}
@@ -24,9 +27,9 @@ class LocalLabMemoryAdmission:
         data = result.get('data', {})
         data = data if isinstance(data, dict) else {}
         name = request.get('name')
-        if name in ('lab_start', 'medical_evaluate') and data.get('reason') == 'execution_busy':
+        if name in self.submission_operations and data.get('reason') == 'execution_busy':
             return FeedbackAdmission(False, reason='unchanged_execution_backpressure')
-        if event.status == 'completed' and name in ('lab_start', 'medical_evaluate', 'lab_write_file', 'lab_cancel', 'lab_export'):
+        if event.status == 'completed' and name in self.submission_operations | {'lab_write_file', 'lab_cancel', 'lab_export'}:
             return FeedbackAdmission(False, reason='nonterminal_receipt_available_in_context_and_archive')
         # Every terminal producer result gets its own source-backed organization.
         # Only equivalent errors are coalesced; scientific results are not merged.

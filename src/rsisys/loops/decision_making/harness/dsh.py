@@ -336,7 +336,7 @@ class DeepSeekDecisionHarness(DefaultDecisionHarness):
         policy = _SessionPolicy(backend, model or ModelRef('dsh', config.model, 'provider-managed'),
                                 allowed_actions=allowed_actions,
                                 directives=directives or DirectiveDefinitions(), policy_factory=policy_factory)
-        # DSH alone owns compression, including the medical parser's view.
+        # DSH alone owns compression, including parser views.
         kwargs['context_compactor'] = IdentityContextCompactor()
         try:
             super().__init__(policy, tools, experience, **kwargs)

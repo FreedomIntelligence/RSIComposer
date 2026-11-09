@@ -12,7 +12,7 @@ import tempfile
 from hashlib import sha256
 from pathlib import Path
 
-from rsisys.labs.pinned_upstream import TTRL_REVISION, checkout
+from .upstream import TTRL_REVISION, checkout
 
 SUFFIX = '\nPlease reason step by step, and put your final answer within \\boxed{}.'
 

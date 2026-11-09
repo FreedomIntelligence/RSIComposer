@@ -222,10 +222,11 @@ def previous_feedback_view(context, *, include_memory_route=False, include_plugi
             previous = context.research_agenda.get('previous_feedback')
             return deepcopy(previous) if previous and previous.get('source_sha256') == ident else None
     operation = deepcopy(source.details.get('operation')) if source else None
-    from .observations import native_observation
+    from .observations import native_observation, task_observation
     if source is None or not native_observation(source):
         return None
-    if not include_plugin_observations and not operation.get('name', '').startswith(('lab_', 'medical_')):
+    if (not include_plugin_observations and not operation.get('name', '').startswith('lab_')
+            and not task_observation(source)):
         # Legacy harnesses can have their own smaller wire budgets and need no
         # second copy of query responses. AgentMemory explicitly opts into the
         # generic observation adapter; the original operation result is always kept.

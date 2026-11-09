@@ -24,13 +24,11 @@ def validate_engine(config):
     if not isinstance(ids, list) or not ids or any(type(i) is not int or i < 0 for i in ids) or len(set(ids)) != len(ids):
         raise ValueError('gpu_ids must be distinct nonnegative integers')
     for key, default in [('worker_timeout', 7200), ('max_length', 4096), ('max_tokens', 1024),
-                         ('lora_rank', 32), ('inner_epochs', 10), ('outer_epochs', 2), ('batch_size', 1)]:
+                         ('lora_rank', 32), ('outer_epochs', 2), ('batch_size', 1)]:
         if type(config.get(key, default)) is not int or config.get(key, default) < 1:
             raise ValueError(f'{key} must be a positive integer')
-    if type(config.get('inner_rank', 32)) is not int or config.get('inner_rank', 32) < 1:
-        raise ValueError('inner_rank must be a positive integer')
     import math
-    for key, default in [('inner_lr', 1e-3), ('outer_lr', 3e-4), ('rl_lr', 5e-7)]:
+    for key, default in [('outer_lr', 3e-4), ('rl_lr', 5e-7)]:
         v = config.get(key, default)
         if type(v) not in (int, float) or not math.isfinite(v) or v <= 0:
             raise ValueError(f'{key} must be finite and positive')
@@ -51,6 +49,7 @@ def validate_engine(config):
 class WeightEngine:
     name, simulated = 'raw-vllm-torch-lora-v1', False
     worker_module = 'rsisys.labs.weight_worker'
+    operation_workers = {'generate': 'rsisys.labs.weight_worker'}
 
     def __init__(self, config):
         validate_engine(config)
@@ -83,7 +82,7 @@ class WeightEngine:
             command = [interpreter]
             if distributed:
                 command += ['-m', 'torch.distributed.run', '--standalone', '--nnodes=1', f'--nproc-per-node={len(gpu_ids)}']
-            command += ['-m', self.worker_module if mode != 'generate' else 'rsisys.labs.weight_worker', str(request)]
+            command += ['-m', self.operation_workers.get(mode, self.worker_module), str(request)]
             commands.append(command)
             envs.append(dict(self._env(), CUDA_VISIBLE_DEVICES=','.join(map(str, gpu_ids)) if distributed else str(gpu_ids[rank])))
             outputs.append(output)
@@ -106,9 +105,6 @@ class WeightEngine:
         options = {k: v for k, v in {'temperature': temperature, 'top_p': top_p}.items() if v is not None}
         return self._run('generate', model, items, directory, sample=sample,
                          max_tokens=max_tokens or self.config.get('max_tokens', 1024), seed_offset=seed_offset, **options)
-
-    def adapt(self, model, episodes, directory, *, seed_offset=0):
-        return self._run('adapt', model, episodes, directory, seed_offset=seed_offset)
 
     def train(self, model, rows, directory, checkpoint, *, algorithm='sft', seed_offset=0, reference_model=None):
         return self._run('train', model, rows, directory, distributed=True,

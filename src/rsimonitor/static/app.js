@@ -19,7 +19,7 @@ const labels = {
   accepted: "已采纳", applied: "已采纳", adopted: "已采纳", promoted: "已采纳", bound: "已绑定", rejected: "未采纳", discarded: "已放弃", proposed: "已提出", ready: "待审阅", validated: "已验证", awaiting_evaluation: "待评测", awaiting_review: "待审阅", unavailable: "快照不可用", reviewed: "已复查", cancel_requested: "已请求取消", continue: "继续执行", cancel: "请求取消",
 };
 const actionLabels = {
-  lab_status: "查看实验状态", lab_start: "启动程序", lab_poll: "查看任务进度", lab_result: "读取任务结果", lab_cancel: "取消任务", lab_read_file: "读取文件", lab_read_log: "读取任务日志", lab_write_file: "写入文件", lab_export: "保存产物", lab_program: "实验程序", medical_evaluate: "提交固定评测",
+  lab_status: "查看实验状态", lab_start: "启动程序", lab_poll: "查看任务进度", lab_result: "读取任务结果", lab_cancel: "取消任务", lab_read_file: "读取文件", lab_read_log: "读取任务日志", lab_write_file: "写入文件", lab_export: "保存产物", lab_program: "实验程序",
   system_adopt: "合并采用改动", configure_prompt: "调整提示词", define_recipe: "定义训练方案", prepare_data: "准备训练数据", define_protocol: "定义评测方案", read_artifact: "查阅资料", preview_training_data: "预览训练数据",
   train: "训练模型", training: "训练模型", actor_training: "训练执行模型", decision_maker_training: "训练决策模型", sft: "监督微调", rl: "强化学习",
   evaluate: "验证改动效果", evaluation: "验证改动效果", candidate_evaluation: "验证改动效果", select: "选择版本", apply_candidate: "采用改动", execute: "执行任务",

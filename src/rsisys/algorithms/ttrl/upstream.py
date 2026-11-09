@@ -1,22 +1,11 @@
-"""Explicit, immutable upstream checkouts for optional research backends."""
+"""Pinned official TTRL reward and majority-vote adapter."""
 import ast
 import importlib.util
-import subprocess
 import sys
-from pathlib import Path
 
-SEAL_REVISION = '6d9c9f9ee392c6cc618e771f399d436d190f6ca4'
+from rsisys.runtime.upstream import checkout
+
 TTRL_REVISION = '5806e119789132fcb43552beaf2532d7d0447213'
-
-
-def checkout(path, revision):
-    root = Path(path).resolve(strict=True)
-    actual = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-    if actual != revision:
-        raise ValueError(f'Expected upstream revision {revision}, got {actual}')
-    if subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip():
-        raise ValueError('Pinned upstream checkout has tracked modifications')
-    return root
 
 
 class TTRLReward:

@@ -38,7 +38,7 @@ import string
 from collections import Counter
 
 from rsisys.labs.weight_artifacts import WeightArtifacts
-from rsisys.labs.weight_engine import validate_engine
+from .engine import SEALReferenceEngine, validate_reference_engine
 
 EDIT_PROMPT = ("Let's read the following passage and produce a list of implications "
                "derived directly or indirectly from the content.\n\nPassage:\n{title}\n{context}\n\nImplications:\n")
@@ -92,7 +92,7 @@ def validate_config(config):
                'inner_max_length', 'outer_gpu_ids', 'outer_gradient_accumulation_steps'}
     if set(config) - allowed:
         raise ValueError('Unknown SEAL Lab option')
-    validate_engine(config)
+    validate_reference_engine(config)
     if config.get('profile', 'reference') not in {'reference', 'paper'}:
         raise ValueError('SEAL profile must be reference or paper')
     if type(config.get('split_newlines', False)) is not bool:
@@ -129,6 +129,8 @@ class SEALLab(WeightArtifacts):
             raise TypeError('Custom SEAL scorer must be callable with an explicit name/version')
         self.scorer = scorer or squad_scores
         self.scorer_name = scorer_name or 'squad-em-f1-v1'
+        if kwargs.get('engine') is None:
+            kwargs['engine'] = SEALReferenceEngine(config)
         super().__init__(context, config, **kwargs)
         self.eval_contexts = self.eval_ref = None
 

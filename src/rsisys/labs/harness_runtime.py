@@ -61,7 +61,7 @@ class ChatPool:
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "rrsi_response",
+                    "name": "harness_response",
                     "strict": True,
                     "schema": response_schema,
                 },
