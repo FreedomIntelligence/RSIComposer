@@ -43,8 +43,8 @@ langmem = ["langmem==0.0.30", "trustcall==0.0.39", "langgraph==1.2.19",
 dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
 [tool.setuptools.package-data]
-"rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
-"rsisys.loops.decision_making.feedback" = ["prompts/*.txt"]
-"rsisys.loops.decision_making.harness.policy" = ["prompts/*.txt"]
+"rsisys.harnesses.decision" = ["dsh.patch.yml"]
+"rsisys.harnesses.decision.feedback" = ["prompts/*.txt"]
+"rsisys.harnesses.decision.policy" = ["prompts/*.txt"]
 
 "rsisys.algorithms" = ["*/configs/*.json", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]

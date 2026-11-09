@@ -5,10 +5,12 @@ https://github.com/PRIME-RL/TTRL/tree/5806e119789132fcb43552beaf2532d7d0447213
 """
 import json
 
-from .upstream import TTRLReward, TTRL_REVISION, checkout
-from rsisys.algorithms.ttrl.lab import TTRLLab, validate_config as validate_reference
-from rsisys.backends.training.artifacts import file_hash
+from rsisys.algorithms.ttrl.lab import TTRLLab
+from rsisys.algorithms.ttrl.lab import validate_config as validate_reference
 from rsisys.backends.training.engine import WeightEngine
+from rsisys.runtime.storage.files import file_hash
+
+from .upstream import TTRL_REVISION, TTRLReward, checkout
 
 DEFAULTS = dict(total_epochs=10, train_batch_size=32, samples_per_prompt=32,
     eval_samples=16, evaluation_temperature=0.6, evaluation_top_p=0.95,
@@ -45,6 +47,7 @@ class VerlTTRLEngine(WeightEngine):
     def fit(self, model, rows, directory, checkpoint, *, votes):
         import os
         import sys
+
         from rsisys.runtime.execution.workers import run_workers
         root = checkout(self.config['upstream_root'], TTRL_REVISION)
         directory.mkdir(parents=True, exist_ok=False)

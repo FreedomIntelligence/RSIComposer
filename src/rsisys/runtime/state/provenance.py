@@ -1,6 +1,8 @@
 """Run identity and declared ancestry, independent of state restoration."""
 
 from dataclasses import asdict, dataclass
+from hashlib import sha256
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -28,3 +30,12 @@ class RunSource:
 
     def to_dict(self):
         return asdict(self)
+
+
+def code_revision() -> str:
+    root = Path(__file__).resolve().parents[2]
+    digest = sha256()
+    for path in sorted(root.rglob('*.py')):
+        digest.update(str(path.relative_to(root)).encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()

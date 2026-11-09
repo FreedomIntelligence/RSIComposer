@@ -5,21 +5,26 @@ signal a recovered PID, or replay a submission with an unknown outcome. An
 unclean shutdown without an owner's terminal receipt requires reconciliation.
 This adapter deliberately does not advertise portable snapshot support.
 """
-from copy import deepcopy
-from dataclasses import asdict
 import hashlib
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import threading
+from copy import deepcopy
+from dataclasses import asdict
+from pathlib import Path
 
 from rsisys.loops.contracts.jobs import JobStatus
-from rsisys.runtime.storage.files import atomic_write, json_bytes
 from rsisys.runtime.execution.local_process import LocalProcessBackend
+from rsisys.runtime.execution.sandbox import (
+    ExecRequest,
+    ProcessRef,
+    ProcessState,
+    SandboxRef,
+)
 from rsisys.runtime.state.recovery import RecoveryRequired
-from rsisys.runtime.execution.sandbox import SandboxRef, ExecRequest, ProcessRef, ProcessState
+from rsisys.runtime.storage.files import atomic_write, file_hash, json_bytes
 
 
 def _write(path, payload):
@@ -126,7 +131,7 @@ class RetainedLocalProcessBackend(LocalProcessBackend):
                     file = Path(log[key])
                     if (file.is_symlink() or not file.is_file()
                             or not file.resolve().is_relative_to(self.log_root)
-                            or hashlib.sha256(file.read_bytes()).hexdigest() != log[digest]):
+                            or file_hash(file) != log[digest]):
                         raise ValueError('Retained process log identity/digest mismatch')
             ref = ProcessRef(ident, SandboxRef(row['sandbox_id']))
             if ref.sandbox not in sessions:

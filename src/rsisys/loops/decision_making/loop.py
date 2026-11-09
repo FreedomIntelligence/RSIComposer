@@ -1,10 +1,10 @@
 """Decision loop lifecycle, composed from an independent harness and action space."""
-from .action_space import DecisionActionSpace
-from .action_space.access import authorized_space
-from .harness import DecisionHarness
-from .harness.decision import DecisionRunResult
-from rsisys.loops.contracts.coordination import ReviewDecision, LoopStepResult
+from rsisys.loops.contracts.coordination import LoopStepResult, ReviewDecision
+from rsisys.loops.contracts.harness import DecisionHarness, DecisionRunResult
 from rsisys.loops.contracts.jobs import JobRef
+from rsisys.loops.decision_making.action_space import DecisionActionSpace
+
+from .action_space.access import authorized_space
 
 
 class DecisionMakingLoop:

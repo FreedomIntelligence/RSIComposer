@@ -4,22 +4,30 @@ Application/Demo remain low-level loop builders. Research launches supply a
 ResearchAssembly and pass their finished decision loop through assemble_research.
 No model calls or execution capabilities are introduced by assembly itself.
 """
+import json
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-import json
 from pathlib import Path
 
-from rsisys.loops.decision_making.feedback.components import (
-    ContextMemoryOrganizer, FeedbackProcessor, TrajectoryArchive,
-    JournalContextMemory, JournalTrajectoryArchive,
+from rsisys.harnesses.decision.agent_memory import AgentMemory, install_agent_memory
+from rsisys.harnesses.decision.feedback.archive import validate_archive
+from rsisys.harnesses.decision.feedback.components import (
+    ContextMemoryOrganizer,
+    JournalContextMemory,
+    JournalTrajectoryArchive,
 )
-from rsisys.loops.decision_making.feedback.pipeline import FeedbackPipeline
-from rsisys.loops.decision_making.feedback.context_memory import validate_context_memory
-from rsisys.loops.decision_making.feedback.archive import validate_archive
-from rsisys.loops.decision_making.feedback.scheduling import validate_scheduler
-from rsisys.loops.contracts.feedback_modules import FeedbackScheduler, FeedbackFailurePolicy, FeedbackProposer, FeedbackAdmissionPolicy
+from rsisys.harnesses.decision.feedback.context_memory import validate_context_memory
+from rsisys.harnesses.decision.feedback.pipeline import FeedbackPipeline
+from rsisys.harnesses.decision.feedback.scheduling import validate_scheduler
+from rsisys.loops.contracts.feedback_modules import (
+    FeedbackAdmissionPolicy,
+    FeedbackFailurePolicy,
+    FeedbackProcessor,
+    FeedbackProposer,
+    FeedbackScheduler,
+    TrajectoryArchive,
+)
 from rsisys.runtime.storage.files import atomic_write, json_bytes
-from rsisys.loops.decision_making.harness.agent_memory import AgentMemory, install_agent_memory
 
 
 def _component(component):
@@ -139,7 +147,7 @@ class ResearchAssembly:
         if {'context_memory', 'memory_processor'}.intersection(components):
             raise ValueError('langmem() owns context_memory and memory_processor')
         try:
-            from rsisys.loops.decision_making.feedback.langmem import LangMemContextMemory
+            from rsisys.harnesses.decision.feedback.langmem import LangMemContextMemory
         except ImportError as exc:
             raise RuntimeError('LangMem research memory requires the installed rsisys[langmem] dependencies') from exc
         memory = LangMemContextMemory(memory_path, namespace=namespace, **(memory_options or {}))
@@ -165,7 +173,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
     if getattr(loop, 'feedback_service', None) is not None:
         raise ValueError('Research feedback is already assembled')
     if isinstance(assembly.context_memory, AgentMemory):
-        from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
+        from rsisys.harnesses.decision.engine import DefaultDecisionHarness
         if not isinstance(loop.harness, DefaultDecisionHarness):
             raise TypeError('Custom harness must supply its own explicit agent-memory tool/context integration')
     if owner is not None and (not callable(getattr(owner, 'add_cleanup', None))
@@ -175,7 +183,7 @@ def assemble_research(loop, *, assembly: ResearchAssembly, path=None, backend=No
         selected = backend if backend is not None else getattr(getattr(loop.harness, 'policy', None), 'backend', None)
         if getattr(selected, 'supports_tool_calling', False) is not True:
             raise ValueError('LangMem research memory requires a backend with native tool calling')
-    from rsisys.loops.decision_making.harness.learning_harness import enable_feedback_learning
+    from rsisys.harnesses.decision.learning_harness import enable_feedback_learning
     configuration = assembly.configuration()
     if path is not None:
         manifest = Path(path).parent / 'research_assembly.json'

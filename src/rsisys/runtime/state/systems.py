@@ -1,16 +1,17 @@
 """Versioned component application, independent of either loop or training engine."""
+import hashlib
+import json
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import asdict
-from typing import Protocol
 from pathlib import Path
-import hashlib
-import json
+from typing import Protocol
 
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import TrainingOrigin, TrainingResult
-from rsisys.loops.decision_making.action_space import OperationCall, OperationResult, OperationSpec
 from rsisys.loops.decision_making.action_space.capabilities import Capability
 
 
@@ -111,8 +112,8 @@ class SystemRegistry:
 
     def _save(self):
         if self.path is not None:
-            from rsisys.snapshot.codec import encode
             from rsisys.runtime.storage.files import atomic_write, json_bytes
+            from rsisys.snapshot.codec import encode
             state = encode(self.capture_state())
             atomic_write(self.path, json_bytes({'state': state,
                 'sha256': hashlib.sha256(json_bytes(state)).hexdigest()}))

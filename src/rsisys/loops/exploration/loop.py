@@ -1,8 +1,8 @@
 """Receives system directives; Actor actions are a separate environment vocabulary."""
-from .action_space import ActionSpace
-from .harness import ExplorationHarness
 from rsisys.loops.contracts.coordination import ExecutionView
+from rsisys.loops.contracts.harness import ExplorationHarness
 from rsisys.loops.contracts.queries import QueryProvider
+from rsisys.loops.exploration.action_space import ActionSpace
 
 
 class ExplorationLoop:

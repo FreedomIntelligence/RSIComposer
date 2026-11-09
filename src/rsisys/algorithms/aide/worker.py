@@ -1,17 +1,17 @@
 """Optional native AIDE runtime. No generated program executes in this process."""
-from contextlib import redirect_stdout
-from copy import deepcopy
 import json
-from pathlib import Path
 import random
 import shutil
 import sys
 import traceback
+from contextlib import redirect_stdout
+from copy import deepcopy
+from pathlib import Path
 
 from rsisys.algorithms.aide.controller import AIDE_REVISION
 from rsisys.runtime.execution.research_bridge import emit_event
-from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.execution.upstream import checkout
+from rsisys.runtime.storage.files import file_hash as digest
 
 
 def run(config):

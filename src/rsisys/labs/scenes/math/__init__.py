@@ -1,4 +1,1 @@
-"""Pluggable mathematical evaluation and training scene."""
-from .lab import MathLab, validate_config
-
-__all__ = ["MathLab", "validate_config"]
+"""Mathematical answer parsing and verification, independent of RSI methods."""

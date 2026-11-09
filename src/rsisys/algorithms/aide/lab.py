@@ -5,12 +5,10 @@ Unix broker grants fixed-model inference, not host TCP/network or GPU access.
 Validation metrics are host-scored; heldout feedback is delivered only after
 upstream AIDE has made its final selection.
 """
-from contextlib import contextmanager
 import csv
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import signal
 import socketserver
@@ -19,12 +17,19 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
-from rsisys.labs.harness.runtime import ChatPool, digest
+from rsisys.backends.serving.chat import ChatPool
 from rsisys.labs.scenes.math.verifiers import StrictNumericVerifier
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
-from rsisys.runtime.execution.isolation import ExecutionPolicy, ProcessIsolation, system_runtime_paths
+from rsisys.runtime.execution.isolation import (
+    ExecutionPolicy,
+    ProcessIsolation,
+    system_runtime_paths,
+)
+from rsisys.runtime.storage.files import file_hash as digest
 
 
 def validate_config(config):

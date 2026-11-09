@@ -1,7 +1,7 @@
 """Pure model contracts; backends may be remote, locally served, or in-process."""
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 Role = Literal["decision_maker", "actor"]
@@ -166,3 +166,19 @@ class ModelUpdatable(Protocol):
     model: ModelRef
 
     def update_model(self, model: ModelRef) -> None: ...
+
+
+class ModelTransportError(RuntimeError):
+    pass
+
+
+class ModelResponseError(ValueError):
+    """A rejected response; recovery is opt-in for explicit format failures only."""
+
+    def __init__(self, message, *, reason='unspecified', retryable=False,
+                 finish_reason=None, provider_model=None):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = retryable
+        self.finish_reason = finish_reason
+        self.provider_model = provider_model

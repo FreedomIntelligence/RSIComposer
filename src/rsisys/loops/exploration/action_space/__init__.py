@@ -1,3 +1,4 @@
+"""Actor action contracts and catalog validation; no environment implementation."""
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -31,21 +32,6 @@ class ActionSpace(Protocol):
     def describe(self) -> tuple[ActionSpec, ...]: ...
 
     def validate(self, proposal: ActionProposal, allowed_actions: tuple[str, ...]) -> Action: ...
-
-
-class EchoActionSpace:
-    def describe(self) -> tuple[ActionSpec, ...]:
-        return (ActionSpec("echo", "Echo a string in the task environment", {
-            "type": "object", "properties": {"text": {"type": "string"}},
-            "required": ["text"], "additionalProperties": False,
-        }),)
-
-    def validate(self, proposal: ActionProposal, allowed_actions: tuple[str, ...]) -> Action:
-        if proposal.name != "echo" or proposal.name not in allowed_actions:
-            raise ValueError(f"Unsupported or disallowed action: {proposal.name}")
-        if set(proposal.arguments) != {"text"} or not isinstance(proposal.arguments["text"], str):
-            raise ValueError("echo requires exactly one string argument: text")
-        return Action(name=proposal.name, text=proposal.arguments["text"])
 
 
 class ActionDefinition(Protocol):

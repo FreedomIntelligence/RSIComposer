@@ -4,15 +4,16 @@ Only host-owned transports carry credentials. Untrusted workers use the broker
 and an executor without direct network access; in-process plugins are trusted
 host code and are not a security boundary.
 """
-from collections.abc import Mapping
-from dataclasses import asdict, replace
+import fcntl
 import json
-from pathlib import Path
 import threading
 import time
-import fcntl
+from collections.abc import Mapping
+from dataclasses import asdict, replace
+from pathlib import Path
+
+from rsisys.loops.contracts.model_service import ModelResponseError
 from rsisys.runtime.storage.files import atomic_write, json_bytes
-from rsisys.runtime.models.model import ModelResponseError
 
 
 class HostAdmissionStop(RuntimeError):

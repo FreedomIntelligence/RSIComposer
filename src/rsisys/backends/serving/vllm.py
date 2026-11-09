@@ -1,21 +1,32 @@
 """vLLM OpenAI transport and opt-in, isolated LoRA deployments."""
 
-from dataclasses import asdict, replace
-from copy import deepcopy
 import hashlib
 import json
 import os
-from pathlib import Path
 import threading
+from copy import deepcopy
+from dataclasses import asdict, replace
+from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
-from rsisys.loops.contracts.backend import DeploymentRef, DeploymentState, DeploymentStatus
-from rsisys.loops.contracts.model_service import ModelRef, GenerationResponse, TokenUsage
+from rsisys.backends.serving.chat_completions import RemoteModelBackend
+from rsisys.backends.serving.responses import parse_tool_response
+from rsisys.loops.contracts.backend import (
+    DeploymentRef,
+    DeploymentState,
+    DeploymentStatus,
+)
+from rsisys.loops.contracts.model_service import (
+    GenerationResponse,
+    ModelRef,
+    ModelResponseError,
+    ModelTransportError,
+    TokenUsage,
+)
 from rsisys.loops.contracts.training import ModelActivationPending
-from rsisys.runtime.models.model import RemoteModelBackend, ModelResponseError, ModelTransportError, parse_tool_response
-from rsisys.runtime.storage.process_store import _json, _write, _lock
+from rsisys.runtime.storage.process_store import _lock, _write
 
 
 class VLLMBackend(RemoteModelBackend):

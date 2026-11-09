@@ -1,26 +1,30 @@
 """Persistent composition root. Loop business logic remains in its own module."""
 
-from contextlib import ExitStack
-from dataclasses import asdict, dataclass, field
 import fcntl
 import json
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
 from rsisys.assembly import (
-    AssemblyContext, DecisionFactory, ExplorationFactory, LabExecutionFactory, assemble_runner, module_assembly,
+    AssemblyContext,
+    DecisionFactory,
+    ExplorationFactory,
+    LabExecutionFactory,
+    assemble_runner,
+    module_assembly,
 )
-from rsisys.runtime.evidence.sqlite import SQLiteExperienceStore
-from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
-from rsisys.runtime.orchestration.run_policy import RunPolicy
-from rsisys.runtime.storage.artifacts import FileArtifactStore
-from rsisys.runtime.models.model import MockModelBackend, RemoteModelBackend
-from rsisys.runtime.execution.sandbox import MockSandboxBackend
+from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
+from rsisys.runtime.evidence.sqlite import SQLiteExperienceStore
 from rsisys.runtime.execution.local_process import LocalProcessBackend
-from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.execution.sandbox import MockSandboxBackend
+from rsisys.runtime.orchestration.run_policy import RunPolicy
 from rsisys.runtime.state.provenance import RunSource
+from rsisys.runtime.storage.artifacts import FileArtifactStore
+from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,10 @@ class Application:
         root = config.data_dir
         try:
             # Validate transports before touching storage. Keys are read only at call time.
+            from rsisys.backends.serving.chat_completions import (
+                MockModelBackend,
+                RemoteModelBackend,
+            )
             self.backends = {}
             for key, binding in config.backends.items():
                 backend = MockModelBackend() if binding.kind == 'mock' else RemoteModelBackend(binding)

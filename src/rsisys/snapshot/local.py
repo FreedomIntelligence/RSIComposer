@@ -1,43 +1,33 @@
 """Durable, quiescent checkpoints for the built-in local Application."""
 
-from dataclasses import asdict, replace
-from hashlib import sha256
 import fcntl
 import json
 import os
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from dataclasses import asdict, replace
+from pathlib import Path
 from uuid import uuid4
 
-from rsisys.runtime.storage.files import atomic_write, json_bytes, sync_directory, sync_tree
+from rsisys.harnesses.actor.engine import DefaultExplorationHarness
+from rsisys.harnesses.actor.memory import ExplorationMemory
+from rsisys.harnesses.actor.state import ExplorationState
+from rsisys.harnesses.decision.engine import DefaultDecisionHarness
+from rsisys.harnesses.decision.memory import DecisionMemory
+from rsisys.harnesses.decision.state import DecisionState
 from rsisys.loops.contracts.model_service import ModelRef
-from rsisys.loops.decision_making.harness.state import DecisionState
-from rsisys.loops.exploration.harness.state import ExplorationState
-from rsisys.loops.decision_making.harness.memory import DecisionMemory
-from rsisys.loops.exploration.harness.memory import ExplorationMemory
-from rsisys.loops.decision_making.harness.engine import DefaultDecisionHarness
-from rsisys.loops.exploration.harness.engine import DefaultExplorationHarness
-from .codec import encode, decode
+from rsisys.runtime.state.provenance import code_revision
+from rsisys.runtime.storage.files import (
+    atomic_write,
+    file_hash,
+    json_bytes,
+    sync_directory,
+    sync_tree,
+)
+
+from .codec import decode, encode
 from .manifest import SnapshotManifest
-
-
-def digest_file(path: Path) -> str:
-    digest = sha256()
-    with path.open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def code_revision() -> str:
-    root = Path(__file__).resolve().parents[1]
-    digest = sha256()
-    for path in sorted(root.rglob('*.py')):
-        digest.update(str(path.relative_to(root)).encode())
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
 
 
 def check_states(decision, actor):
@@ -98,7 +88,7 @@ def load_manifest(directory: Path) -> SnapshotManifest:
         relative = Path(name)
         if relative.is_absolute() or '..' in relative.parts:
             raise ValueError('Snapshot file escapes its directory')
-        if digest_file(directory / relative) != digest:
+        if file_hash(directory / relative) != digest:
             raise ValueError(f'Snapshot digest mismatch: {name}')
     required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3'}
     if manifest.kind == 'local_quiescent':
@@ -109,8 +99,11 @@ def load_manifest(directory: Path) -> SnapshotManifest:
 
 
 def research_configuration(dm):
-    from rsisys.loops.decision_making.harness.research import ResearchAgenda
-    from rsisys.loops.decision_making.harness.context import BasicContextCompactor, IdentityContextCompactor
+    from rsisys.harnesses.decision.context import (
+        BasicContextCompactor,
+        IdentityContextCompactor,
+    )
+    from rsisys.harnesses.decision.research import ResearchAgenda
     if type(dm.research_agenda) is not ResearchAgenda:
         raise TypeError('Custom research agendas need explicit snapshot integration')
     compactor = dm.context_compactor
@@ -127,7 +120,10 @@ def research_configuration(dm):
 
 
 def restore_research(dm, agenda, compactor):
-    from rsisys.loops.decision_making.harness.context import BasicContextCompactor, IdentityContextCompactor
+    from rsisys.harnesses.decision.context import (
+        BasicContextCompactor,
+        IdentityContextCompactor,
+    )
     config = dict(compactor)
     kind = config.pop('kind')
     state = config.pop('state', None)
@@ -156,7 +152,7 @@ def validate_local_application(app, *, ongoing=False):
     dm, actor = decision_loop.harness, exploration_loop.harness
     if getattr(decision_loop, 'feedback_service', None) is not None:
         raise TypeError('Feedback service requires explicit snapshot/recovery integration')
-    from rsisys.runtime.state.recovery import decision_extension
+    from rsisys.snapshot.builtin_recovery import decision_extension
     extension = ongoing and decision_extension(dm)
     research_configuration(dm)
     if app.custom_assembly and not (extension and not app.custom_exploration):
@@ -166,10 +162,10 @@ def validate_local_application(app, *, ongoing=False):
     if not extension and (dm._feedback_listeners or dm._receipt_listeners or dm._context_processors
                           or dm._cleanup_callbacks or dm.feedback_proposal_resolver is not None):
         raise TypeError('Custom decision hooks need explicit snapshot/recovery integration')
-    from rsisys.loops.exploration.harness.environment import EpisodeExecution
-    from rsisys.loops.exploration.harness.learner import LearningExecution
-    from rsisys.loops.exploration.harness.evaluation import EvaluationExecution
-    from rsisys.loops.exploration.harness.rl import LocalRLExecution
+    from rsisys.harnesses.actor.environment import EpisodeExecution
+    from rsisys.harnesses.actor.evaluation import EvaluationExecution
+    from rsisys.harnesses.actor.learner import LearningExecution
+    from rsisys.harnesses.actor.rl import LocalRLExecution
     for component, expected in ((actor.episodes, EpisodeExecution), (actor.learning, LearningExecution),
                                 (actor.evaluations, EvaluationExecution), (actor.local_rl, LocalRLExecution)):
         if type(component) is not expected:
@@ -188,7 +184,7 @@ def validate_local_application(app, *, ongoing=False):
         raise TypeError('Custom run policies/budgets need explicit snapshot integration')
     if app.runner.parallel or dm.max_outstanding != 1:
         raise TypeError('Concurrent decisions need explicit snapshot integration')
-    from rsisys.loops.decision_making.harness.memory.feedback import RecentFeedbackSelector
+    from rsisys.harnesses.decision.memory.feedback import RecentFeedbackSelector
     if type(dm.feedback_selector) is not RecentFeedbackSelector:
         raise TypeError('Custom feedback selectors need explicit snapshot integration')
     if dm.model_activator is not None or actor.model_activator is not None:
@@ -199,15 +195,14 @@ def validate_local_application(app, *, ongoing=False):
         check_states(dm.state, actor.state)
     if not ongoing and (dm.training.busy or actor.training.busy or actor.evaluation.busy or app.sandbox.active_count):
         raise RuntimeError('Snapshot requires all local jobs and sessions to be idle')
-    from rsisys.loops.decision_making.harness.policy import ModelDecisionPolicy
-    from rsisys.loops.exploration.harness.policy import ModelActorPolicy
-    from rsisys.loops.decision_making.action_space import LocalDecisionActionSpace
-    from rsisys.loops.decision_making.harness.tools.local import LocalDecisionTools
-    from rsisys.loops.decision_making.harness.tools.queries import QueryTools, ArtifactReader
-    from rsisys.loops.exploration.harness.environment import SandboxEchoEnvironment
-    from rsisys.loops.exploration.harness.environment.local import LocalProcessEnvironment
-    from rsisys.loops.exploration.action_space.local import CommandActionSpace
-    from rsisys.loops.exploration.action_space import EchoActionSpace
+    from rsisys.harnesses.actor.action_space import CommandActionSpace, EchoActionSpace
+    from rsisys.harnesses.actor.environment import SandboxEchoEnvironment
+    from rsisys.harnesses.actor.environment.local import LocalProcessEnvironment
+    from rsisys.harnesses.actor.policy import ModelActorPolicy
+    from rsisys.harnesses.decision.action_space import LocalDecisionActionSpace
+    from rsisys.harnesses.decision.policy import ModelDecisionPolicy
+    from rsisys.harnesses.decision.tools.local import LocalDecisionTools
+    from rsisys.harnesses.decision.tools.queries import ArtifactReader, QueryTools
     expected_env = LocalProcessEnvironment if app.config.execution == 'local_process' else SandboxEchoEnvironment
     expected_space = CommandActionSpace if app.config.execution == 'local_process' else EchoActionSpace
     for component, expected in ((dm.policy, ModelDecisionPolicy), (actor.policy, ModelActorPolicy),
@@ -229,7 +224,7 @@ def validate_local_application(app, *, ongoing=False):
         raise ValueError('Custom policy retry budgets require an explicit recovery contract')
     if not extension and dm.policy.structured_output:
         raise ValueError('Structured policy backends require an explicit recovery contract')
-    from rsisys.loops.decision_making.harness.policy import DecisionPrompts
+    from rsisys.harnesses.decision.policy import DecisionPrompts
     if not extension and (type(dm.policy.prompts) is not DecisionPrompts or not dm.policy.prompts.is_default):
         raise ValueError('Custom decision prompts require an explicit recovery contract')
     if dm.attempt_contract.required or getattr(getattr(dm.policy, 'attempt_contract', None), 'required', False):
@@ -254,7 +249,7 @@ def validate_local_application(app, *, ongoing=False):
             or query_tools.reader.artifacts is not app.artifacts
             or query_tools.specs != expected_queries.specs):
         raise TypeError('Custom query bindings need explicit snapshot integration')
-    from rsisys.loops.decision_making.harness.tools.research import ResearchTools
+    from rsisys.harnesses.decision.tools.research import ResearchTools
     research_tools = getattr(dm.tools, 'research_tools', None)
     if (type(research_tools) is not ResearchTools or research_tools.agenda is not dm.research_agenda
             or research_tools.memory is not dm.memory or research_tools.experience is not app.experience):
@@ -269,10 +264,13 @@ def validate_local_application(app, *, ongoing=False):
             or decision_loop.action_space.describe() != LocalDecisionActionSpace(
                 extra_definitions=(*expected_queries.definitions, *research_tools.definitions)).describe()):
         raise TypeError('Custom decision actions need explicit snapshot integration')
-    from rsisys.runtime.models.model import MockModelBackend, RemoteModelBackend
-    from rsisys.loops.decision_making.harness.learner.backends.mock import MockDecisionLearner
-    from rsisys.loops.exploration.harness.learner.backends.mock import MockActorLearner
-    from rsisys.loops.exploration.harness.evaluation.mock import MockEvaluator
+    from rsisys.backends.serving.chat_completions import (
+        MockModelBackend,
+        RemoteModelBackend,
+    )
+    from rsisys.harnesses.actor.evaluation.mock import MockEvaluator
+    from rsisys.harnesses.actor.learner.backends.mock import MockActorLearner
+    from rsisys.harnesses.decision.learner.backends.mock import MockDecisionLearner
     for policy in ((actor.policy,) if extension else (dm.policy, actor.policy)):
         binding = app.config.backends[policy.model.backend_id]
         expected_backend = MockModelBackend if binding.kind == 'mock' else RemoteModelBackend
@@ -299,8 +297,9 @@ class LocalSnapshotCapture:
     def capture(self, label: str) -> SnapshotManifest:
         app = self.application
         contract = self.contract
-        from inspect import getattr_static
         from collections.abc import Mapping
+        from inspect import getattr_static
+
         from rsisys.runtime.state.recovery import DurableRecovery
         recovery = getattr_static(app, 'recovery', None)
         if contract is None and isinstance(recovery, DurableRecovery):
@@ -338,7 +337,7 @@ class LocalSnapshotCapture:
             (staging / 'artifacts').mkdir()
             for ref in app.artifacts.refs():
                 shutil.copytree(app.artifacts.root / ref.artifact_id, staging / 'artifacts' / ref.artifact_id)
-            digests = {path.relative_to(staging).as_posix(): digest_file(path)
+            digests = {path.relative_to(staging).as_posix(): file_hash(path)
                        for path in staging.rglob('*') if path.is_file()}
             manifest = SnapshotManifest(
                 snapshot_id=ident, parent_snapshot_id=getattr(app, 'parent_snapshot_id', None),
@@ -409,7 +408,8 @@ def restore_snapshot(directory, target, *, run_id: str | None = None, modules=No
     # A checksum establishes byte integrity, not a valid compactor or notebook.
     # Check both before publishing a workspace or acquiring its live resources.
     from types import SimpleNamespace
-    from rsisys.loops.decision_making.harness.research import ResearchAgenda
+
+    from rsisys.harnesses.decision.research import ResearchAgenda
     agenda = json.loads((directory / 'decision_research.json').read_text())
     restore_research(SimpleNamespace(research_agenda=ResearchAgenda()), agenda, runtime['context_compactor'])
     # Validate both owners and payloads before creating the restore target.

@@ -2,8 +2,9 @@
 
 import json
 import os
-from pathlib import Path
 import tempfile
+from hashlib import sha256
+from pathlib import Path
 
 
 def atomic_write(path: Path, content: bytes) -> None:
@@ -45,3 +46,11 @@ def sync_tree(root: Path) -> None:
                 os.fsync(stream.fileno())
     for directory in sorted(directories, key=lambda p: len(p.parts), reverse=True):
         sync_directory(directory)
+
+
+def file_hash(path):
+    digest = sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()

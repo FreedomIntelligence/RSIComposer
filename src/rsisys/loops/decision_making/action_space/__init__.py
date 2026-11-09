@@ -4,11 +4,11 @@ from collections.abc import Iterable
 from copy import deepcopy
 from typing import Protocol
 
-from rsisys.loops.contracts.directive import Directive
-from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationCall, OperationSpec
-from .directives import DirectiveDefinitions, DEFAULT_DIRECTIVE_MODES
+from rsisys.loops.contracts.directive import Directive
+
 from .access import ActionPermissions
+from .directives import DirectiveDefinitions
 
 
 class DecisionActionSpace(Protocol):
@@ -87,46 +87,3 @@ class ModularDecisionActionSpace:
             raise ValueError(f"Unsupported directive mode: {directive.mode}")
         if directive.input_refs and not self.directives.describe((directive.mode,))[0].accepts_input_refs:
             raise ValueError(f"{directive.mode} does not accept input references")
-
-
-class _StringArgumentDefinition:
-    def __init__(self, name: str, description: str, argument: str, *, nonempty: bool = False):
-        self.argument, self.nonempty = argument, nonempty
-        self.spec = OperationSpec(name, description, {
-            "type": "object", "properties": {argument: {
-                "type": "string", **({"minLength": 1, "pattern": r'\S'} if nonempty else {})}},
-            "required": [argument], "additionalProperties": False,
-        })
-
-    def validate(self, arguments: dict[str, object]) -> OperationCall:
-        if (not isinstance(arguments, dict) or set(arguments) != {self.argument}
-                or not isinstance(arguments[self.argument], str)):
-            raise ValueError(f"{self.spec.name} requires exactly one string argument: {self.argument}")
-        if self.nonempty and not arguments[self.argument].strip():
-            raise ValueError(f"{self.spec.name} requires a nonempty {self.argument}")
-        return OperationCall(self.spec.name, dict(arguments))
-
-
-class DemoDecisionActionSpace(ModularDecisionActionSpace):
-    def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
-                 directives: DirectiveDefinitions | None = None,
-                 extra_definitions: Iterable[DecisionActionDefinition] = (),
-                 permissions: ActionPermissions | None = None):
-        super().__init__((_StringArgumentDefinition(
-            "prepare_data", "Prepare a demonstration input artifact", "text",
-        ), *extra_definitions), directive_modes=directive_modes, directives=directives, permissions=permissions)
-
-
-class LocalDecisionActionSpace(ModularDecisionActionSpace):
-    def __init__(self, *, directive_modes: tuple[str, ...] | None = None,
-                 directives: DirectiveDefinitions | None = None,
-                 extra_definitions: Iterable[DecisionActionDefinition] = (),
-                 permissions: ActionPermissions | None = None):
-        super().__init__((
-            _StringArgumentDefinition("prepare_data", "Store text as a reusable input artifact", "text"),
-            _StringArgumentDefinition("search_literature", "Search explicitly imported text literature",
-                                      "query", nonempty=True),
-            _StringArgumentDefinition("store_strategy", "Save an explicit strategy as an artifact",
-                                      "strategy", nonempty=True),
-            *extra_definitions,
-        ), directive_modes=directive_modes, directives=directives, permissions=permissions)

@@ -1,27 +1,32 @@
 """Trusted POSIX process bridge and optional Transformers/PEFT worker; no shell."""
 
-from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
 import fcntl
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
-from uuid import uuid4
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from rsisys.loops.contracts.artifacts import ArtifactRef
-from rsisys.loops.contracts.backend import BackendCapabilities, validate_training_capabilities
+from rsisys.loops.contracts.backend import (
+    BackendCapabilities,
+    validate_training_capabilities,
+)
 from rsisys.loops.contracts.candidate import Candidate
-from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, JobProgress
-from rsisys.loops.contracts.model_service import ModelRef
+from rsisys.loops.contracts.jobs import JobOutcome, JobProgress, JobRef, JobStatus
 from rsisys.loops.contracts.metrics import validated_metrics
+from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
-from rsisys.runtime.execution.local_process import _kill_process_group, _wait_for_process_exit
-from rsisys.runtime.storage.process_store import _json, _write, _lock
+from rsisys.runtime.execution.local_process import (
+    _kill_process_group,
+    _wait_for_process_exit,
+)
+from rsisys.runtime.storage.process_store import _json, _lock, _write
 
 _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
     'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
@@ -132,7 +137,7 @@ def _native_inputs(request, config_ref):
     data_path = data_path.resolve()
     raw_data = data_path.read_bytes()
     digest = hashlib.sha256(raw_data).hexdigest()
-    from urllib.parse import urlsplit, unquote
+    from urllib.parse import unquote, urlsplit
     for ref in request.get('data_refs', []):
         parsed = urlsplit(ref['uri'])
         if parsed.scheme not in ('', 'file') or parsed.netloc not in ('', 'localhost'):
@@ -467,13 +472,19 @@ def _train_transformers_peft(directory, payload, config, rows, evidence, argumen
                              output, rank, local_rank, world_size, distributed):
     request = payload['request']
     # Importing this adapter never imports torch or optional training packages.
-    from transformers import AutoConfig, Trainer, TrainingArguments, TrainerCallback, default_data_collator
+    from transformers import (
+        AutoConfig,
+        Trainer,
+        TrainerCallback,
+        TrainingArguments,
+        default_data_collator,
+    )
     if config.get('model_auto_class', 'causal_lm') == 'image_text_to_text':
         from transformers import AutoModelForImageTextToText as ModelAutoClass
     else:
         from transformers import AutoModelForCausalLM as ModelAutoClass
-    from peft import LoraConfig, get_peft_model, PeftModel
     import torch
+    from peft import LoraConfig, PeftModel, get_peft_model
 
     origin = request.get('origin') or {}
     mode = origin.get('resume_mode', 'restart')

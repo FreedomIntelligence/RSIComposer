@@ -66,7 +66,7 @@ cli.py          # command-line entry point
 
 These modules intentionally remain at the package root so existing integrations can
 import stable paths such as `rsisys.api`, `rsisys.config` and `rsisys.application`.
-The concrete implementation layers live below `loops/composition/`, `labs/`, `backends/`,
+The concrete implementation layers live below `algorithms/`, `harnesses/`, `labs/`, `backends/`,
 `runtime/` and `snapshot/`.
 
 The implementation layer has two roles: **controllers** process feedback and
@@ -82,12 +82,16 @@ algorithms/
     configs/                    # method configurations and task assets
   _template/                    # self-contained development example
   shared/                       # components reused by multiple methods
-loops/                          # contracts, execution and feedback mechanics
+loops/                          # contracts, lifecycle, authorization and delivery
+harnesses/
+  decision/                     # optional decision execution, memory and feedback learning
+  actor/                        # optional policy/environment execution
+  python_step/                  # isolated executable program harness
+  defaults.py                   # explicit bundled-harness composition
 labs/
   scenes/
-    math/                       # reusable math scene
+    math/                       # reusable answer parsing and verification
     self_reflection/            # long-horizon improvement scaffold
-  harness/                      # shared harness execution and sandbox utilities
   local_process/                # generic process Lab
 backends/                       # reusable training and serving engines
 runtime/                        # host orchestration, state and evidence
@@ -96,7 +100,7 @@ snapshot/                       # snapshot capture and restore mechanisms
 
 Built-in method packages declare and register their complete method assembly.
 Method-private implementations live beside the registration entry; reusable scenes
-and components are imported from `labs/`, `backends/` and `loops/` when shared.
+and components are imported from `harnesses/`, `labs/` and `backends/` when shared.
 Configurations shipped here select `framework.method`; separate controller/Lab
 registrations remain compatible with older configurations. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
@@ -110,11 +114,15 @@ layer when they are intended for reuse. Harnesses support context/model/tool
 interaction; a method's controller owns strategy, candidate selection and stopping.
 
 `rsisys.labs` exports generic Lab contracts without importing any scene.
-Scenes are pluggable Lab implementations. A future coding scene can live in
+Scenes supply reusable domain capabilities or Lab implementations. A future coding scene can live in
 `labs/scenes/coding/` or an external method package. A method imports a shared
 scene or wraps it with its own execution logic; training and serving engines
 come from `backends/`. The `local_process` registration provides generic process
 execution. Method-specific Labs stay under `algorithms/<method>/`.
+ReST EM and RRSI own their respective Lab pipelines there. Their shared math
+verifiers remain in the scene; prepared-prompt LoRA execution lives in
+`backends/training/lora/`. Methods own prompt formatting, training-data selection
+and model lineage; the backend does not know the dataset, verifier or RSI algorithm.
 
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
@@ -122,8 +130,8 @@ maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 The remaining internal boundaries are:
 
 - The default harness owns its public-policy bridge in
-  `loops/decision_making/harness/public_policy.py` and Lab tool bindings in
-  `loops/decision_making/harness/tools/lab.py`. The inactive exploration endpoint
+  `harnesses/decision/public_policy.py` and Lab tool bindings in
+  `harnesses/decision/tools/lab.py`. The inactive exploration endpoint
   lives in `loops/exploration/operation_only.py`.
 - `adapters/exploration/` bridges the older exploration endpoint to the Lab task
   contract; `adapters/langchain_model.py` bridges the optional LangChain API.
@@ -134,13 +142,17 @@ The remaining internal boundaries are:
 - `runtime/orchestration/lab_group.py` owns namespaced routing and Lab lifecycle aggregation.
   Backend record writes and locks live in `runtime/storage/process_store.py`, so serving
   does not depend on a training implementation for persistence.
+- `assembly.py` manages ports and resource ownership. Bundled default construction
+  is loaded on demand from `harnesses/defaults.py`; supplying independent factories
+  does not construct the default agents. Loop endpoint protocols live in
+  `loops/contracts/harness.py` and import no concrete harness.
 
 `runtime/` contains host mechanisms, grouped by responsibility:
 
 ```text
 runtime/
   orchestration/  # run policies, loop scheduling, Lab routing and jobs
-  state/          # recovery, continuation, identities and version activation
+  state/          # recovery, identities and version activation
   execution/      # isolation, processes, workers and resource reservations
   storage/        # artifacts, file access, canonical JSON and process records
   models/         # model transport, credential broker and usage accounting
@@ -149,13 +161,16 @@ runtime/
   capabilities.py # optional component method discovery
 ```
 
-Candidate-improvement Lab operations live in `labs/scenes/self_reflection/evolution.py`;
-the generic version activation machinery stays in `runtime/state/`. Evaluation
+Workspace candidate operations live in `labs/local_process/evolution.py`;
+binding activation and its state adapter live in `runtime/state/bindings.py`.
+The default decision harness owns knowledge continuation in
+`harnesses/decision/continuation.py`. Built-in harness recovery lives in
+`snapshot/builtin_recovery.py`; the runtime handles the generic recovery journal. Evaluation
 admission tracks campaigns and budgets; task scorers remain in Labs.
 
 Shared records, provenance, in-memory/SQLite persistence and basic queries live
 in `runtime/evidence/`. Controller-side feedback selection lives in
-`loops/decision_making/harness/memory/`; it determines which evidence enters decision context.
+`harnesses/decision/memory/`; it determines which evidence enters decision context.
 The Self-Reflection Lab owns future long-term experience curation, candidate
 construction and validation. Ordinary RSI runs use shared evidence without
 enabling that Lab. Existing record formats and `experience.sqlite3` files are

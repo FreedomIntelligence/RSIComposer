@@ -60,7 +60,7 @@ cli.py          # 命令行入口
 ```
 
 这些模块保留在包根层，是为了兼容 `rsisys.api`、`rsisys.config`、
-`rsisys.application` 等稳定导入路径。具体实现位于 `loops/composition/`、`labs/`、
+`rsisys.application` 等稳定导入路径。具体实现位于 `algorithms/`、`harnesses/`、`labs/`、
 `backends/`、`runtime/` 和 `snapshot/`。
 
 实现层分为两种角色：**Controller** 处理反馈并决定行动，**Lab** 执行实验并返回证据。
@@ -75,12 +75,16 @@ algorithms/
     configs/                    # 方法配置与任务资源
   _template/                    # 完整的用户开发示例
   shared/                       # 多个方法确实复用的能力
-loops/                          # 契约、执行与反馈机制
+loops/                          # 契约、生命周期、授权与反馈交付
+harnesses/
+  decision/                     # 可选的决策执行、记忆与反馈学习
+  actor/                        # 可选的策略与环境执行
+  python_step/                  # 隔离执行的程序 harness
+  defaults.py                   # 显式装配内置 harness
 labs/
   scenes/
-    math/                       # 可复用数学场景
+    math/                       # 可复用答案解析与验证
     self_reflection/            # 长程自身改进骨架
-  harness/                      # 共享 harness 执行与沙箱工具
   local_process/                # 通用进程 Lab
 backends/                       # 可复用训推引擎
 runtime/                        # 宿主调度、状态与证据
@@ -88,7 +92,7 @@ snapshot/                       # 快照捕获与恢复机制
 ```
 
 内置算法以完整方法注册；私有 controller、Lab 与 worker 都放在方法目录。
-方法需要共享能力时再引用 `labs/`、`backends/` 与 `loops/`，无需把每个私有组件单独注册。
+方法需要共享能力时再引用 `harnesses/`、`labs/` 与 `backends/`，无需把每个私有组件单独注册。
 旧的 controller/Lab 注册名保留用于兼容已有配置，新配置统一选择 `framework.method`。
 每个方法通过唯一的 `register(registry)` 入口完成闭环装配，核心注册表不增加算法专属分支。
 独立研究 worker 的通信归 `runtime/execution/research_bridge.py`。
@@ -98,17 +102,20 @@ snapshot/                       # 快照捕获与恢复机制
 交互，具体策略、候选选择及停止由方法的 Controller 决定。
 
 `rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景。
-场景是可插拔的 Lab 实现。后续 coding 场景可以放在 `labs/scenes/coding/`，
+场景提供可复用的领域能力或 Lab 实现。后续 coding 场景可以放在 `labs/scenes/coding/`，
 也可以位于库外的方法包内。方法可以引用共享场景或包装它，训推引擎从 `backends/` 接入。
 方法专属 Lab 留在 `algorithms/<方法>/`；`local_process` 提供通用进程执行。
+ReST EM、RRSI 各自维护方法内的 Lab 流程，共享数学验证器留在 scene；
+接受已格式化输入的 LoRA 训推执行放在 `backends/training/lora/`。
+方法负责提示格式、训练数据选择和模型谱系，backend 不依赖数据集、验证器或 RSI 算法。
 
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。
 
 其他内部目录的职责如下：
 
-- 默认 harness 自己维护 `loops/decision_making/harness/public_policy.py` 中的决策器接入，
-  以及 `harness/tools/lab.py` 中的 Lab 工具绑定；无探索任务时的空端点放在
+- 默认 harness 自己维护 `harnesses/decision/public_policy.py` 中的决策器接入，
+  以及 `harnesses/decision/tools/lab.py` 中的 Lab 工具绑定；无探索任务时的空端点放在
   `loops/exploration/operation_only.py`。
 - `adapters/exploration/` 兼容旧 exploration 端点与 Lab 任务契约，
   `adapters/langchain_model.py` 适配可选 LangChain 接口。
@@ -117,13 +124,16 @@ snapshot/                       # 快照捕获与恢复机制
   Lab 只负责选择这些后端，并把执行结果转换为方法反馈。
 - `runtime/orchestration/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
   后端的记录写入、文件锁放在 `runtime/storage/process_store.py`，推理后端不再借用训练实现做持久化。
+- `assembly.py` 负责端口和资源所有权；内置默认组件按需从 `harnesses/defaults.py` 装配。
+  提供独立工厂时不会构造默认 agent。循环端口协议位于 `loops/contracts/harness.py`，
+  不导入任何具体 harness。
 
 `runtime/` 按宿主机制的职责分组：
 
 ```text
 runtime/
   orchestration/  # 运行策略、循环调度、Lab 路由和作业
-  state/          # 恢复、续跑、身份和版本激活
+  state/          # 恢复、身份和版本激活
   execution/      # 隔离、进程、worker 和资源预留
   storage/        # 产物、文件访问、规范 JSON 和进程记录
   models/         # 模型通信、凭证代理和用量记账
@@ -132,11 +142,13 @@ runtime/
   capabilities.py # 可选组件方法发现
 ```
 
-候选改进的 Lab 操作放在 `labs/scenes/self_reflection/evolution.py`，通用版本激活
-机制留在 `runtime/state/`。评测准入负责批次和预算，场景评分仍由 Lab 负责。
+workspace 候选操作放在 `labs/local_process/evolution.py`，绑定激活及其状态适配归
+`runtime/state/bindings.py`。默认决策 harness 的知识续接放在
+`harnesses/decision/continuation.py`；内置 harness 的恢复适配放在
+`snapshot/builtin_recovery.py`，runtime 维护通用恢复日志。评测准入负责批次和预算，场景评分仍由 Lab 负责。
 
 通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
-决策侧的反馈选择放在 `loops/decision_making/harness/memory/`，决定哪些证据进入决策上下文。
+决策侧的反馈选择放在 `harnesses/decision/memory/`，决定哪些证据进入决策上下文。
 Self-Reflection Lab 负责未来的长期经验整理、候选构造与验证；普通 RSI 运行
 无需启用该 Lab 就能记录和查询证据。现有记录格式与 `experience.sqlite3` 文件保持兼容。
 

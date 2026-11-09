@@ -7,19 +7,19 @@ inside upstream AIDE; the host never substitutes its own search policy.
 Upstream (MIT): https://github.com/WecoAI/aideml/tree/ad73d227af481bea3de06f884f41b2993dd6453a
 Loaded from a separate clean checkout; no upstream implementation is bundled.
 """
-from copy import deepcopy
 import json
 import math
-from pathlib import Path
 import re
 import sys
+from copy import deepcopy
+from pathlib import Path
 
-from rsisys.runtime.execution.research_bridge import ResearchBridge
-from rsisys.runtime.execution.workers import worker_environment
-from rsisys.labs.harness.runtime import digest
-from rsisys.runtime.execution.upstream import checkout
 from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
+from rsisys.runtime.execution.research_bridge import ResearchBridge
+from rsisys.runtime.execution.upstream import checkout
+from rsisys.runtime.execution.workers import worker_environment
+from rsisys.runtime.storage.files import file_hash as digest
 
 AIDE_REVISION = 'ad73d227af481bea3de06f884f41b2993dd6453a'
 

@@ -1,21 +1,25 @@
-"""Composition root. Business flows stay inside loops; backends are injected."""
+"""Configuration builders for composed methods; strategies stay with methods."""
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from rsisys.assembly import (
-    AssemblyContext, AssemblyRunner, DecisionFactory, ExplorationFactory, LabExecutionFactory,
-    assemble_runner, module_assembly,
+    AssemblyContext,
+    AssemblyRunner,
+    DecisionFactory,
+    ExplorationFactory,
+    LabExecutionFactory,
+    assemble_runner,
+    module_assembly,
 )
-from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
-from rsisys.runtime.evidence.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
+from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
+from rsisys.runtime.evidence.storage import InMemoryExperienceStore
+from rsisys.runtime.execution.sandbox import MockSandboxBackend
 from rsisys.runtime.orchestration.run_policy import RunPolicy
 from rsisys.runtime.storage.artifacts import InMemoryArtifactStore
-from rsisys.runtime.models.model import MockModelBackend
-from rsisys.runtime.execution.sandbox import MockSandboxBackend
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,7 @@ def build_demo(config: DemoConfig, *, with_learning: bool = False,
         raise TypeError('Expected ActionPermissions')
     if any(binding.kind != "mock" for binding in config.backends.values()):
         raise NotImplementedError("Only mock backends are assembled by the demo.")
+    from rsisys.backends.serving.chat_completions import MockModelBackend
     backends = {key: MockModelBackend() for key in config.backends}
     store = InMemoryExperienceStore()
     experience = BasicExperienceSystem(store)

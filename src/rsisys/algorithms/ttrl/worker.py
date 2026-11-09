@@ -5,9 +5,9 @@ see a placeholder; real labels stay in the parent Lab's evaluation operation.
 """
 import json
 import os
+import signal
 import subprocess
 import sys
-import signal
 import tempfile
 from hashlib import sha256
 from pathlib import Path
@@ -103,7 +103,8 @@ def fit(request):
     from datasets import Dataset
     from hydra import compose, initialize_config_dir
     from omegaconf import OmegaConf
-    from rsisys.backends.training.artifacts import file_hash
+
+    from rsisys.runtime.storage.files import file_hash
 
     root = checkout(request['config']['upstream_root'], TTRL_REVISION)
     upstream = root / 'verl'

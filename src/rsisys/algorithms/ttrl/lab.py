@@ -10,9 +10,9 @@ import math
 from collections import Counter
 from statistics import mean, stdev
 
-from rsisys.labs.scenes.math.verifiers import MathVerifyVerifier, final_boxed
-from rsisys.backends.training.artifacts import WeightArtifacts
+from rsisys.algorithms.shared.weight_lab import WeightTrainingLab
 from rsisys.backends.training.engine import validate_engine
+from rsisys.labs.scenes.math.verifiers import MathVerifyVerifier, final_boxed
 
 
 def math_prompt(question):
@@ -82,7 +82,7 @@ def validate_config(config):
         raise ValueError('apply_chat_template must be boolean')
 
 
-class TTRLLab(WeightArtifacts):
+class TTRLLab(WeightTrainingLab):
     method = 'ttrl'
     fields = {'evaluate': {'dataset': 'string'},
               'rollout': {'dataset': 'string', 'samples_per_prompt': 'integer'},

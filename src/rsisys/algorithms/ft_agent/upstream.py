@@ -6,15 +6,16 @@ Hypothesis generation, feedback decisions and trace traversal remain upstream
 code. Workspace, scenario, API transport and execution are adapter boundaries.
 """
 import __future__
+
 import ast
-from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from copy import deepcopy
 import inspect
 import json
 import logging
-from pathlib import Path
 import re
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Generic, TypeVar
 
@@ -127,7 +128,7 @@ def load_policy(root, *, settings, backend, parameter_info, dataset_descriptor):
 class ChatBackend:
     """OpenAI-compatible transport for upstream APIBackend call sites."""
     def __init__(self, config, directory):
-        from rsisys.labs.harness.runtime import ChatPool
+        from rsisys.backends.serving.chat import ChatPool
         self.pool = ChatPool(config['endpoints'], config['model'],
             timeout=config.get('timeout', 600), max_tokens=config.get('max_tokens', 8192),
             temperature=config.get('temperature', 0.6))

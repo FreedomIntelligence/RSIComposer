@@ -1,18 +1,10 @@
 """Identity for installed candidate runtimes without copying installed libraries."""
 import hashlib
-from pathlib import Path
 import platform
+from pathlib import Path
 
-from rsisys.runtime.storage.files import json_bytes
 from rsisys.runtime.execution.isolation import ExecutionPolicy, system_runtime_paths
-
-
-def file_identity(path):
-    digest = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(4 * 1024 * 1024), b''):
-            digest.update(block)
-    return digest.hexdigest()
+from rsisys.runtime.storage.files import file_hash, json_bytes
 
 
 def inference_policy(python, *, read_only=(), devices=(), environment=()):
@@ -39,9 +31,9 @@ def runtime_identity(python, policy):
         root = Path(name)
         for path in sorted(root.rglob('*')) if root.is_dir() else [root]:
             if path.is_file():
-                files[str(path)] = file_identity(path)
+                files[str(path)] = file_hash(path)
     value = {'protocol': 'installed-inference-runtime/v1', 'python': str(Path(python).resolve()),
-             'python_sha256': file_identity(Path(python).resolve()), 'files': files,
+             'python_sha256': file_hash(Path(python).resolve()), 'files': files,
              'os_build': {k: getattr(platform.uname(), k) for k in ('system', 'release', 'version', 'machine')},
              'policy': policy.configuration()}
     return {**value, 'sha256': hashlib.sha256(json_bytes(value)).hexdigest()}

@@ -6,7 +6,7 @@ must include it in their explicit recovery integration.
 """
 from copy import deepcopy
 
-from rsisys.loops.contracts.lab import LabSpec, LabTask
+from rsisys.adapters.exploration.contracts import LabSpec, LabTask
 from rsisys.loops.contracts.coordination import ExplorationProgress
 from rsisys.loops.contracts.receipts import ExecutionReceipt
 

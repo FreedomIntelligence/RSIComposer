@@ -1,17 +1,14 @@
 """Content identities for explicitly selected local artifacts; no discovery."""
-import hashlib
 from pathlib import Path
+
+from .files import file_hash
 
 
 def file_manifest(path):
     path = Path(path)
     if path.is_symlink() or not path.is_file():
         raise ValueError('Artifacts must be regular files without symlinks')
-    sha = hashlib.sha256()
-    with path.open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
-            sha.update(block)
-    return {'sha256': sha.hexdigest(), 'bytes': path.stat().st_size}
+    return {'sha256': file_hash(path), 'bytes': path.stat().st_size}
 
 
 def tree_manifest(root):

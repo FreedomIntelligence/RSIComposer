@@ -2,8 +2,13 @@
 
 from copy import deepcopy
 
-from rsisys.loops.contracts.queries import QuerySpec, QueryRequest, MAX_QUERY_OFFSET, QUERY_CURSOR_PATTERN
-from . import OperationSpec, OperationCall
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
+from rsisys.loops.contracts.queries import (
+    MAX_QUERY_OFFSET,
+    QUERY_CURSOR_PATTERN,
+    QueryRequest,
+    QuerySpec,
+)
 
 
 class QueryActionDefinition:

@@ -4,8 +4,10 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
 from rsisys.loops.contracts.jobs import JobRef
-from . import DecisionActionDefinition, OperationCall, OperationResult, OperationSpec
+from rsisys.loops.decision_making.action_space import DecisionActionDefinition
 
 Validator = Callable[[dict[str, object]], OperationCall]
 Handler = Callable[[dict[str, object]], OperationResult | JobRef]

@@ -6,10 +6,16 @@ No controls are auto-installed and no permission checks are bypassed.
 from copy import deepcopy
 from dataclasses import asdict
 
-from rsisys.loops.contracts.backend import BackendCapabilities, validate_update_capabilities
+from rsisys.loops.contracts.backend import (
+    BackendCapabilities,
+    validate_update_capabilities,
+)
 from rsisys.loops.contracts.coordination import DirectiveUpdate, OperationResult
-from rsisys.loops.decision_making.action_space import OperationCall, OperationSpec
-from rsisys.loops.decision_making.action_space.capabilities import Capability, Capabilities
+from rsisys.loops.contracts.decision import OperationCall, OperationSpec
+from rsisys.loops.decision_making.action_space.capabilities import (
+    Capabilities,
+    Capability,
+)
 
 
 class ExperimentControls:

@@ -12,9 +12,16 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field
 
-from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from rsisys.runtime.models.model import ModelResponseError, parse_tool_response
-from rsisys.loops.decision_making.feedback.model_gateway import FeedbackCapacityError, NativeAdmissionAbort
+from rsisys.backends.serving.responses import parse_tool_response
+from rsisys.harnesses.decision.feedback.model_gateway import (
+    FeedbackCapacityError,
+    NativeAdmissionAbort,
+)
+from rsisys.loops.contracts.model_service import (
+    GenerationRequest,
+    ModelRef,
+    ModelResponseError,
+)
 
 
 class BackendChatModel(BaseChatModel):

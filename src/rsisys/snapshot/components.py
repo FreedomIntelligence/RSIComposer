@@ -1,17 +1,28 @@
 """Portable snapshots through explicit component state ports, without introspection."""
-from dataclasses import asdict, replace
 import json
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from dataclasses import asdict, replace
+from pathlib import Path
 from time import time
 from uuid import uuid4
 
 from rsisys.runtime.capabilities import optional_method
-from rsisys.runtime.storage.files import atomic_write, json_bytes, sync_directory, sync_tree
-from rsisys.runtime.state.recovery import capture_runner, restore_runner, policy_state, restore_policy
-from .codec import encode, decode
+from rsisys.runtime.state.recovery import (
+    capture_runner,
+    policy_state,
+    restore_policy,
+    restore_runner,
+)
+from rsisys.runtime.storage.files import (
+    atomic_write,
+    json_bytes,
+    sync_directory,
+    sync_tree,
+)
+
+from .codec import decode, encode
 from .manifest import SnapshotManifest
 
 
@@ -33,7 +44,8 @@ def _validate(contract, app):
 
 
 def capture_components(app, store, contract, label):
-    from .local import code_revision, digest_file
+    from rsisys.runtime.state.provenance import code_revision
+    from rsisys.runtime.storage.files import file_hash
     _contract(contract)
     _validate(contract, app)
     # Encode before staging. The integration must reject unknown effects and
@@ -60,7 +72,7 @@ def capture_components(app, store, contract, label):
         (staging / 'artifacts').mkdir()
         for ref in app.artifacts.refs():
             shutil.copytree(app.artifacts.root / ref.artifact_id, staging / 'artifacts' / ref.artifact_id)
-        digests = {p.relative_to(staging).as_posix(): digest_file(p)
+        digests = {p.relative_to(staging).as_posix(): file_hash(p)
                    for p in staging.rglob('*') if p.is_file()}
         manifest = SnapshotManifest(snapshot_id=ident,
             parent_snapshot_id=getattr(app, 'parent_snapshot_id', None),
@@ -87,9 +99,9 @@ def capture_components(app, store, contract, label):
 def restore_components(directory, target, manifest, *, run_id, modules, contract, run_policy):
     from rsisys.application import Application, ApplicationConfig
     from rsisys.assembly import module_assembly
-    from rsisys.runtime.storage.artifacts import FileArtifactStore
     from rsisys.runtime.state.component_state import AssemblyRecovery
-    from .local import publish_restore
+    from rsisys.runtime.storage.artifacts import FileArtifactStore
+    from rsisys.snapshot.local import publish_restore
     modules = module_assembly(modules)
     if contract is None and modules.state_factory is None:
         raise TypeError('Supply the original modules/state_factory or an explicit snapshot contract')

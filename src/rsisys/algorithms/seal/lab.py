@@ -37,7 +37,8 @@ import re
 import string
 from collections import Counter
 
-from rsisys.backends.training.artifacts import WeightArtifacts
+from rsisys.algorithms.shared.weight_lab import WeightTrainingLab
+
 from .engine import SEALReferenceEngine, validate_reference_engine
 
 EDIT_PROMPT = ("Let's read the following passage and produce a list of implications "
@@ -105,7 +106,7 @@ def validate_config(config):
         validate_paper_engine(config)
 
 
-class SEALLab(WeightArtifacts):
+class SEALLab(WeightTrainingLab):
     method = 'seal'
     engine_methods = ('generate', 'adapt', 'train')
     fields = {'evaluate': {'dataset': 'string'},
