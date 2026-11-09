@@ -128,7 +128,7 @@ def register(registry):
 | `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](recipes/rrsi/math.json)、[结果](recipes/rrsi/results-20261108.json) |
 | `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](recipes/seal/8gpu.json)、[论文配置](recipes/seal/paper.json)、[结果](recipes/seal/results-20261109.json) |
 | `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](recipes/ttrl/8gpu.json)、[结果](recipes/ttrl/results-20261109.json) |
-| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](recipes/ttrl/paper.json)、[归因记录](recipes/weight-reproduction-diagnosis.json) |
+| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](recipes/ttrl/paper.json) |
 | `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](recipes/ft_agent/gsm8k.json)、[验证](recipes/ft_agent/validation-20261109.json) |
 | `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](recipes/aide/gsm8k.json)、[验证](recipes/aide/validation-20261109.json) |
 
@@ -162,7 +162,7 @@ rsisys run --config recipes/rest_em/configs/math-8gpu.json
 八卡配置通过多副本并行推理、DDP 训练；同目录也提供较小配置。
 
 SEAL/TTRL paper profile 使用独立 Python 3.12 环境与
-[paper-requirements.txt](recipes/paper-requirements.txt)。已验证组合为 torch 2.7.0+cu128、
+[seal-ttrl.txt](requirements/seal-ttrl.txt)。已验证组合为 torch 2.7.0+cu128、
 Transformers 4.52.4、TRL 0.18.1、PEFT 0.15.2、vLLM 0.9.1；原生 TTRL 另需 ABI 兼容的
 flash-attn。不要与参考后端的训练环境混装。
 

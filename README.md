@@ -144,7 +144,7 @@ adds JSON method state to `result.json.controller_report`.
 | `rrsi` / `harness_math` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](recipes/rrsi/math.json), [results](recipes/rrsi/results-20261108.json) |
 | `seal` / `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](recipes/seal/8gpu.json), [paper](recipes/seal/paper.json), [results](recipes/seal/results-20261109.json) |
 | `ttrl` / `ttrl` | Majority rewards with independent LoRA GRPO | [Config](recipes/ttrl/8gpu.json), [results](recipes/ttrl/results-20261109.json) |
-| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](recipes/ttrl/paper.json), [diagnosis](recipes/weight-reproduction-diagnosis.json) |
+| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](recipes/ttrl/paper.json) |
 | `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](recipes/ft_agent/gsm8k.json), [validation](recipes/ft_agent/validation-20261109.json) |
 | `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](recipes/aide/gsm8k.json), [validation](recipes/aide/validation-20261109.json) |
 
@@ -184,7 +184,7 @@ Preparation downloads pinned model/data revisions and records hashes. Configs
 need to match those output paths. Eight-GPU recipes parallelize inference over
 replicas and train with DDP; smaller configs are also under `configs/`.
 
-SEAL/TTRL paper profiles use [paper-requirements.txt](recipes/paper-requirements.txt)
+SEAL/TTRL paper profiles use [seal-ttrl.txt](requirements/seal-ttrl.txt)
 in a separate Python 3.12 environment. Tested stack: torch 2.7.0+cu128,
 Transformers 4.52.4, TRL 0.18.1, PEFT 0.15.2, vLLM 0.9.1; native TTRL also
 needs compatible flash-attn. Do not mix this with the reference training stack.
