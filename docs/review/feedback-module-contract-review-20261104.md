@@ -1,5 +1,7 @@
 # Feedback 模块边界审查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。范围：当前工作区，包括尚未提交的反馈重组与原生 Lab 输出适配。
 本次是接口与实现方案审查，没有修改生产逻辑，也不代表 CP3–CP7 已经通过用户验收。
 
@@ -196,11 +198,11 @@ Host 仍控制停止、准入和计费；不因调度扩展可选而取消基本
 - memory 失败后 proposer 的执行次数为 0，状态 not_started。
 - 发布异常传播到默认 harness._context；再次组装成功，fixture 模型请求仍只有 1 次。
 
-脚本：[feedback-contract-probe.py](repros/feedback-contract-probe.py)。
-结果：[feedback-contract-probe.json](repros/feedback-contract-probe.json)。
+脚本：[feedback-contract-probe.py](README.md#archived-evidence)。
+结果：[feedback-contract-probe.json](README.md#archived-evidence)。
 该结果保留审查时快照；脚本在后续版本允许 context-only 组件通过，重跑写入 feedback-contract-probe-current.json，避免覆盖原证据。
 从仓库根目录运行：`PYTHONPATH=src:. python3.12 docs/review/repros/feedback-contract-probe.py`。
 探针用于复现当前行为，输出不表示这些限制已经符合目标架构。
 
 本次未修改生产代码，未重跑整仓测试；前序验证为 1,482 项、1,470 通过、12 跳过、0 失败/错误，
-详见 [前序验证摘要](repros/feedback-thin-validation.json)。该回归不能替代本次接口职责审查。
+详见 [前序验证摘要](README.md#archived-evidence)。该回归不能替代本次接口职责审查。

@@ -1,5 +1,7 @@
 # Lab 执行生命周期修复
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 [执行请求与生命周期审查](execution-contract-review-20261104.md) 的 F01–F04 已修复。
 保持 `LabExecution.describe/execute` 的开放入口，调整 owned 清理与错误交付，不增加领域训练算法约束。
 原审查、失败 probe 和验证文件保持原样，作为修复前证据。
@@ -66,8 +68,8 @@ workspace 根打开错误、权限拒绝、空间不足及其他存储异常没�
 补上 watcher / reader 故障来源断言。模型响应为确定性 fixture，没有真实模型推理或训练。
 
 - 定向 9 模块 122 项通过，涵盖新反例、默认装配、权限、重复交付、操作记录和 run policy。
-- 全量最终结果与用时见 [validation](repros/execution-contract-fixes-validation.json)。
-- 使用原封不动的 [历史 probe](repros/execution-lifecycle-contract-probe.py) 在最终代码重新执行；
+- 全量最终结果与用时见 [validation](README.md#archived-evidence)。
+- 使用原封不动的 [历史 probe](README.md#archived-evidence) 在最终代码重新执行；
   原始输出保持不变，新输出为 `.local/execution-contract-fixes-20261104/boundary-probe-verified.json`。
 - Application/demo 公开 owner.close 重试后 owned 程序退出、session=0；后续任务收到取消请求；
   Runner 到期存在明确终态报告；路径错误不抛 host，监督设施错误抛 LabInfrastructureError。

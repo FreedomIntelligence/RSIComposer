@@ -41,7 +41,7 @@ def main():
     errors, checked, cache = [], 0, {}
     for path in sorted(set(paths)):
         relative = path.relative_to(ROOT)
-        if (relative.parts[:2] == ('docs', 'review') or
+        if ((relative.parts[:2] == ('docs', 'review') and relative.name != 'README.md') or
                 relative == Path('docs/development-history.md') or
                 any(part in {'__pycache__', 'build', 'dist', '.venv'} or part.endswith('.egg-info')
                     for part in relative.parts)):

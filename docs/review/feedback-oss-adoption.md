@@ -1,5 +1,7 @@
 # Feedback Memory：LangMem 原生接入与验收
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-03。**已实现可选接入并验证真实 tool calling；尚未通过默认替换的语义验收。**
 
 采用 LangMem 原生 MemoryStoreManager、Trustcall 抽取/JSONPatch/校验重试和 LangGraph SQLite
@@ -34,7 +36,7 @@ ExecutionReceipt -> FeedbackLearningService.observe
 
 依赖为可选 extra，验证使用 `.local/langmem-validation` 隔离环境；没有在共享研究服务器安装包。
 直接固定 LangMem 0.0.30、Trustcall 0.0.39、LangGraph 1.2.19、langchain-core 1.7.4、
-langgraph-checkpoint-sqlite 3.1.3。[完整验证依赖](repros/langmem/requirements-validation.lock.txt)。
+langgraph-checkpoint-sqlite 3.1.3。[完整验证依赖](README.md#archived-evidence)。
 
 ```python
 from rsisys.loops.decision_making.feedback import enable_langmem_feedback
@@ -64,7 +66,7 @@ SQLite 此配置**按最近更新检索，不是语义向量检索**，没有暗
 
 ## 已执行验证
 
-[完整证据与 SHA](repros/langmem/manifest.json)、[人工语义审查](repros/langmem/semantic-review.json)。
+[完整证据与 SHA](README.md#archived-evidence)、[人工语义审查](README.md#archived-evidence)。
 各系列采用不同配置，不是冻结版本的连续训练实验。共记录 **33 次真实模型生成调用**；
 没有训练、研究 campaign 或服务配置修改。
 
@@ -83,7 +85,7 @@ SQLite 此配置**按最近更新检索，不是语义向量检索**，没有暗
 未知调用不重放、事务回滚、原文保留及视图上限。
 
 原生接入验收时的隔离环境全量：**1326 项，12 项跳过，其余通过，83.270 秒**。
-[完整日志](repros/langmem/rsisys-langmem-full-final.log)。依赖检查通过，基础环境导入不加载 LangMem。
+[完整日志](README.md#archived-evidence)。依赖检查通过，基础环境导入不加载 LangMem。
 这些测试不等于真实自主研究，也不证明自由文字语义正确。
 
 ## 适配器的持久化边界
@@ -93,7 +95,7 @@ SQLite 此配置**按最近更新检索，不是语义向量检索**，没有暗
 - LangMem 0.0.30 不向调用方传播 store 写入 futures 的异常。适配器暂存上游 PutOp，检查
   错误后，把记忆变更和 job 完成凭据一起提交，失败不泄漏部分更新。
 - SQLite store 3.1.3 的 cursor 在异常时仍 COMMIT。同批先删除、后写入失败，会保留先前
-  删除；小型事务适配器改为异常回滚。[实际复现](repros/langmem/sqlite-atomicity.json)。
+  删除；小型事务适配器改为异常回滚。[实际复现](README.md#archived-evidence)。
 - Trustcall 0.0.39 校验耗尽后可能丢弃无效调用，只返回通过部分。观察其 extraction 输出，
   整份 staged 更新记为失败，避免误报“成功但无变化”。
 - schema 保留上游 Memory kind，避免原生 phase 中未改动的 dictionary 临时记录发生类型漂移。
@@ -122,11 +124,11 @@ SQLite 此配置**按最近更新检索，不是语义向量检索**，没有暗
 上游 prompt 仍由 LangMem 生成；业务增量为独立 txt，可通过 additional_instructions 替换。
 实际请求保存 messages、tools、tool_choice，无需靠模板猜最终 prompt。
 
-- [第一份反馈：抽取请求](prompt-snapshots/langmem/first-feedback-call-1-request.json)
-- [第一份反馈：consolidation 请求](prompt-snapshots/langmem/first-feedback-call-2-request.json)
-- [纠错：实际请求](prompt-snapshots/langmem/correction-call-1-request.json)
-- [历史 call48：实际请求](prompt-snapshots/langmem/historical-call48-call-1-request.json)
-- [历史 call48：实际结果](prompt-snapshots/langmem/historical-call48-call-2-response.json)
+- [第一份反馈：抽取请求](README.md#archived-evidence)
+- [第一份反馈：consolidation 请求](README.md#archived-evidence)
+- [纠错：实际请求](README.md#archived-evidence)
+- [历史 call48：实际请求](README.md#archived-evidence)
+- [历史 call48：实际结果](README.md#archived-evidence)
 
 运行时可用 feedback_learning_read 的 `/context_memory/model_exchanges` 分页审查。
 原生路径 `/feedback_request` 是 workflow 输入/配置和实际交换入口描述，不冒充唯一的

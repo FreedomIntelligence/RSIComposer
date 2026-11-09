@@ -5,6 +5,8 @@ recursive-include configs *.json
 recursive-include examples *.py *.json *.jsonl *.md
 recursive-include experiments *.py *.sh *.json *.md *.txt NOTICE
 recursive-include docs *.md *.svg
+include docs/diagrams/build_diagrams.py
+include docs/review/weight-reproduction-diagnosis-20261109.json
 recursive-include src *.md
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js LICENSE NOTICE
 recursive-include tests *.py *.js *.md
@@ -12,6 +14,8 @@ recursive-include tools *.py
 recursive-include requirements *.txt
 prune docs/review/repros
 prune docs/review/audit-20261104
+prune docs/review/prompt-snapshots
+exclude docs/development-history.md
 prune .local
 prune .github
 global-exclude __pycache__ *.py[cod] .DS_Store

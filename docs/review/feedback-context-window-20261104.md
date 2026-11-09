@@ -1,5 +1,7 @@
 # Context / Memory 接入窗口
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。本文落实用户确认的文本 context 窗口；替代此前“三方法是所有插件要求”的描述。
 接口位于 [feedback_context.py](../../src/rsisys/loops/contracts/feedback_context.py)，
 实现适配位于 [context_memory.py](../../src/rsisys/loops/decision_making/feedback/context_memory.py)。
@@ -127,6 +129,6 @@ host 的实时状态与证据保护元数据继续在 research_state 等字段�
 
 最终整仓回归 1,498 项：1,486 通过、12 跳过、0 失败/错误；296 个 source/example/test 文件
 运行前后指纹一致。跳过的是 6 项外部 DSH SDK 与 6 项真实推理检查。
-验证摘要见 [feedback-context-window-validation.json](repros/feedback-context-window-validation.json)，
+验证摘要见 [feedback-context-window-validation.json](README.md#archived-evidence)，
 完整本地日志在 `.local/context-window-20261104/full-python.log`。
 未调用真实模型、训练或重启旧实验；改动当前保存在本地工作区。

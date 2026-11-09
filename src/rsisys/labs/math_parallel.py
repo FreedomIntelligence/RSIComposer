@@ -81,8 +81,14 @@ def run_workers(commands, environments, directory, timeout):
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
+                pass
+            # Reaping the launcher does not prove that its descendants exited.
+            # Always escalate for the owned group, including successful workers.
+            try:
                 os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+            except ProcessLookupError:
+                pass
+            process.wait()
         for stream in streams:
             stream.close()
         for sig, handler in handlers.items():

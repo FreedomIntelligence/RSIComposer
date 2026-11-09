@@ -33,6 +33,12 @@
   FT-Agent uses a local GSM8K/native LLaMA-Factory reference adaptation; AIDE
   uses a GSM8K LLM-program task. Their recipes document scope and differences;
   neither integration establishes the original papers' performance gains.
+- Separate the public controller/Lab architecture from default meta-agent
+  implementation details, and document each method's fidelity and validation.
+  Archive historical raw requests, logs and temporary probes outside the release
+  tree while retaining dated review conclusions and third-party attribution.
+- Terminate owned GPU-worker process groups even when the launcher has already
+  exited, so TERM-ignoring descendants cannot outlive a completed operation.
 
 Current limits: weight-evolution recipes are synchronous and do not support
 automatic restart; multi-Lab GPU leasing remains future core work. The optional

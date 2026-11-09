@@ -67,17 +67,21 @@ trusted host code; see [security boundaries](SECURITY.md).
 
 ## Registered methods and recipes
 
-| Controller | Purpose | Entry |
-| --- | --- | --- |
-| `single_loop` | Fixed iteration template | [CPU registration example](examples/registered/README.md) |
-| `meta_agent` | Model-driven decisions, default or DSH harness | [Registration](docs/registration.md) |
-| `rest_em` | Generate, filter, SFT, evaluate | [CPU quickstart](examples/quickstart/README.md), [GSM8K/MATH](experiments/rest_em/README.md) |
-| `rrsi` | Fixed-model Python harness evolution | [Recipe and evidence](experiments/rrsi/README.md) |
-| `seal` | Generated self-edits, inner adaptation, outer SFT | [Recipe](experiments/seal/README.md), [results](experiments/seal/RESULTS.md) |
-| `ttrl` | Unlabeled majority rewards and GRPO adaptation | [Recipe](experiments/ttrl/README.md), [results](experiments/ttrl/RESULTS.md) |
-| `ttrl_verl` | Continuous official full-parameter TTRL schedule | [Paper configuration](experiments/ttrl/paper.json), [environment](experiments/paper-environment.md) |
-| `ft_agent` | Pinned FT-Agent hypothesis, code generation and acceptance with a local LLM fine-tuning Lab | [Reference adaptation](experiments/ft_agent/README.md), [results](experiments/ft_agent/RESULTS.md) |
-| `aide` | Native AIDE code-search agent with execution through a registered Lab | [Task adaptation](experiments/aide/README.md), [results](experiments/aide/RESULTS.md) |
+See [method support and evidence](docs/methods.md) for tested configurations,
+upstream fidelity and known deviations. These entries include both reference
+implementations and native adapters; no full-scale paper result is claimed.
+
+| Controller | Purpose | Implementation scope | Entry |
+| --- | --- | --- | --- |
+| `single_loop` | Fixed iterations | Template | [CPU example](examples/registered/README.md) |
+| `meta_agent` | Model-driven decisions | Default / DSH harness template | [Registration](docs/registration.md) |
+| `rest_em` | Generate, filter, SFT, evaluate | Lightweight LoRA implementation | [CPU quickstart](examples/quickstart/README.md), [GSM8K/MATH](experiments/rest_em/README.md) |
+| `rrsi` | Fixed-model harness evolution | Algorithm port to MATH | [Recipe and evidence](experiments/rrsi/README.md) |
+| `seal` | Self-edits, inner adaptation, outer SFT | Reference and paper-profile training adapters | [Recipe](experiments/seal/README.md), [results](experiments/seal/RESULTS.md) |
+| `ttrl` | Majority rewards and GRPO | Independent LoRA reference backend | [Recipe](experiments/ttrl/README.md), [results](experiments/ttrl/RESULTS.md) |
+| `ttrl_verl` | Continuous full-parameter adaptation | Pinned official training backend | [Configuration](experiments/ttrl/paper.json), [environment](experiments/paper-environment.md) |
+| `ft_agent` | Fine-tuning research | Partial native policy / local Lab adaptation | [Scope](experiments/ft_agent/README.md), [results](experiments/ft_agent/RESULTS.md) |
+| `aide` | Inference-program research | Native Agent / adapted LLM task | [Scope](experiments/aide/README.md), [results](experiments/aide/RESULTS.md) |
 
 SEAL and TTRL completed two-round, eight-GPU runs using Qwen2.5-7B Base.
 **Neither small run reproduced the paper's performance gains.** Their data,

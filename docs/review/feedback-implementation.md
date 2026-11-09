@@ -1,5 +1,7 @@
 # Feedback / Context-Memory：当前实现与 Prompt 逐项审查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 以下保留默认兼容路径的审查快照。后续新增的可选 LangMem 路径直接运行上游原生整理，
 不使用本页 `_request` prompt；其真实调用和未通过的语义验收见
 [LangMem 采用记录](feedback-oss-adoption.md)。
@@ -7,7 +9,7 @@
 本页描述 2026-11-03 当前本地工作树，供人工检查，未修改运行逻辑或 prompt。
 Prompt 从当前 `FeedbackLearning._request` 直接导出。示例是合成回执和手工示例输出，
 没有调用模型、执行代码或训练，不是夜间或三小时实验的真实请求/响应。
-[快照与源码指纹](prompt-snapshots/feedback/manifest.json) 记录生成时条件。
+[快照与源码指纹](README.md#archived-evidence) 记录生成时条件。
 
 ## 1. 实际调用链与边界
 
@@ -61,7 +63,7 @@ flowchart TD
 ## 3. 当前完整 system prompt
 
 基础正文共 2,665 字符。以下只增加换行，未改词；逐字文件是
-[base-system.txt](prompt-snapshots/feedback/base-system.txt)。它不是重新设计的建议稿。
+[base-system.txt](README.md#archived-evidence)。它不是重新设计的建议稿。
 
 ```text
 You are the meta-agent feedback instance in an independent context. Use the captured active meta-agent
@@ -93,7 +95,7 @@ Write public conclusions, not hidden chain-of-thought.
 ```
 
 只有本次输入含 `candidate_evidence` 时，追加下面这段。原文见
-[candidate-addon.txt](prompt-snapshots/feedback/candidate-addon.txt)。
+[candidate-addon.txt](README.md#archived-evidence)。
 
 ```text
 candidate_evidence binds evaluations to full candidate IDs, separately from the current receipt. Every
@@ -109,7 +111,7 @@ verify prose or claim completeness.
 ## 4. User prompt / 证据输入
 
 当前 `GenerationRequest.prompt` 是 `encoded(row['input'])`，没有另一段自由文本 user 指令。
-完整合成示例：[example-input.json](prompt-snapshots/feedback/example-input.json)。
+完整合成示例：[example-input.json](README.md#archived-evidence)。
 
 | 字段 | 当前来源与用途 |
 | --- | --- |
@@ -132,8 +134,8 @@ verify prose or claim completeness.
 
 ## 5. 输出 schema 与发布
 
-完整动态示例：[example-schema.json](prompt-snapshots/feedback/example-schema.json)。
-[完整合成请求](prompt-snapshots/feedback/example-request.json) 同时包含 system、prompt、model、输出上限和 schema。
+完整动态示例：[example-schema.json](README.md#archived-evidence)。
+[完整合成请求](README.md#archived-evidence) 同时包含 system、prompt、model、输出上限和 schema。
 这些示例有 grouping_context，无 candidate_evidence，且假设 backend 支持原生 schema。
 
 - `proposals`：0–6 条，`kind` 仍为 `memory / training_data / harness_change / system_change`。

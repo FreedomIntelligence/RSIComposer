@@ -1,5 +1,7 @@
 # Feedback 四分支与 Meta-agent 改进 Lab 调整
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。基础 revision：`cb67628151cdb855b30f657e37cbf0af801644a8`。
 本记录对应当前工作树，实现用户确认的职责调整，供后续逐模块和逐 prompt 审查。
 后续 CP2 已确认薄封装与自由格式输出；进一步修正及验证见 [适配自查](feedback-adaptation-review-20261104.md)。
@@ -81,7 +83,7 @@ PYTHONPATH=src .local/langmem-validation/bin/python examples/components/decision
 ```
 
 实际整仓运行使用本地 validate.py 包装 unittest discover，并保存开始/结束时间、逐项 skip、
-source manifest 和输出日志。可提交的 [验证摘要](repros/feedback-lab-validation.json)
+source manifest 和输出日志。可提交的 [验证摘要](README.md#archived-evidence)
 记录这些文件的 SHA256 和 fixture 结果；详细日志在 `.local/feedback-lab-20261104/`。
 
 新增 22 项测试：

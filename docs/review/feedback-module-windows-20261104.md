@@ -1,5 +1,7 @@
 # Feedback 模块接口与实现边界
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。本文是当前接口规范与接线说明，不规定整理算法、prompt、SDK、目录或检索方式。
 公开定义：[context 窗口](../../src/rsisys/loops/contracts/feedback_context.py)、
 [可选模块窗口](../../src/rsisys/loops/contracts/feedback_modules.py)。
@@ -162,7 +164,7 @@ FeedbackFailurePolicy 是 host 配置：
 覆盖最小组件、原生产物、实际 decision 读取导航、模型计费/身份/完整请求容量、归档读回/恢复、
 独立与显式依赖、调度选择/host 并发及发布故障隔离。
 整仓回归 1,527 项：1,515 通过、12 跳过、0 失败/错误；303 个 source/example/test 文件验证期间无变化。
-记录：[feedback-module-windows-validation.json](repros/feedback-module-windows-validation.json)。
+记录：[feedback-module-windows-validation.json](README.md#archived-evidence)。
 
 当前归档只覆盖已捕获的公开 decision/执行片段，没有原始 meta-agent 的完整 prompt/response。
 替换存储不等于补齐历史覆盖，coverage 与 complete_conversation=false 继续保留。

@@ -1,5 +1,7 @@
 # 开源前的架构与发布审查
 
+> 这是首次准备时的验收记录。后续方法适配与本轮代码整理见[再次审视](open-source-refresh-20261109.md)，当前能力见[支持范围](../compatibility.md)。
+
 日期：2026-11-09。基线：`aca55bca545f6090d393720cd011de9b0b7bec4f`，
 加本轮 `codex/open-source-readiness` 改动。范围覆盖核心、默认实现、独立 monitor、
 库外注册、实验组织、持久化/资源边界、发行包与公开文档；没有重新启动 GPU 实验。

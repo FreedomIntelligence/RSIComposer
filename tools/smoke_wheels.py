@@ -50,11 +50,18 @@ def main():
             extracted.mkdir()
             with tarfile.open(args.core_sdist.resolve(strict=True)) as archive:
                 names = archive.getnames()
-                assert not any('/.local/' in p or '/docs/review/repros/' in p or
-                               p.endswith(('.log', '.safetensors', '.pt')) for p in names)
+                assert not any(any(part in p for part in (
+                                   '/.local/', '/docs/review/repros/',
+                                   '/docs/review/prompt-snapshots/', '/docs/review/audit-20261104/')) or
+                               p.endswith(('docs/development-history.md', '.log', '.safetensors', '.pt'))
+                               for p in names)
                 archive.extractall(extracted, filter='data')
             source, = extracted.iterdir()
             assert (source / 'src/rsimonitor/server.py').is_file()
+            for document in ('docs/methods.md', 'docs/diagrams/framework-loop.svg',
+                             'docs/diagrams/build_diagrams.py',
+                             'docs/review/weight-reproduction-diagnosis-20261109.json'):
+                assert (source / document).is_file(), document
             subprocess.run([sys.executable, 'tools/check_docs.py'], cwd=source,
                            env=env, check=True, timeout=30)
             print('rsisys sdist: source layout and documentation links passed')

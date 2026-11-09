@@ -1,5 +1,7 @@
 # RSISys 模块审查地图
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 当前默认（2026-11-06）：一个 meta-agent + Lab + memory 模块；旧整理侧的语义职责合入普通 decision。独立抽取 prompt 仅在显式兼容工作流生效。以下历史审查编号与材料保留当时范围。
 
 更新日期：2026-11-05。术语与职责以[统一术语与架构](../architecture.md)为准；下方历史审查材料保留其版本范围。
@@ -7,7 +9,7 @@
 
 配套：[逐项 prompt 审查地图](prompts.md)、[反馈架构与当前实现边界](../../src/rsisys/loops/decision_making/feedback/README.md)。
 
-2026-11-04 全模块实现审查、缺陷修复和验证材料见 [本轮审查报告](audit-20261104/README.md)。
+2026-11-04 全模块实现审查、缺陷修复和验证材料见 [本轮审查报告](README.md#archived-evidence)。
 下方复选框仍留给用户逐项验收；实现回归通过不替代 prompt/架构语义验收。
 早期反馈分工与 Lab 数据/训练接口见 [调整记录](m01-feedback-lab-20261104.md)；当前两条正文路径及独立可选能力见[统一架构](../architecture.md)。
 CP1 / CP2 确认后的 [接口减负自查](feedback-adaptation-review-20261104.md) 记录原生输出入口及剩余耦合。
