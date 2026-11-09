@@ -220,7 +220,7 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 决策器可选提供 `required_operations()` 检查操作是否存在，或 `report()` 输出 JSON 方法状态，
 保存到 `result.json.controller_report`。
 
-所有运行输出都属于可丢弃的本地状态。Git 会忽略 `runs/`，其中保存结果、日志、产物、工作区、数据库和快照。仓库只保留快照/证据协议及小型确定性 fixture；可通过 `--data-dir` 指定其他运行目录。
+所有运行输出都属于可丢弃的本地状态。Git 会忽略 `runs/` 和 `runtime-output/`，其中保存结果、日志、产物、工作区、数据库和快照。仓库只保留快照/证据协议及小型确定性 fixture；可通过 `--data-dir` 指定仓库外目录或 `runtime-output/` 下的目录。
 
 ## 组件组合
 

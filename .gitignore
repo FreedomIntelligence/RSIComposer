@@ -40,3 +40,9 @@ logs/
 *.sqlite3
 *.sqlite
 *.db
+
+# Explicit disposable runtime workspace (use --data-dir runtime-output/<run>)
+runtime-output/
+*.events.jsonl
+*.snapshot
+*.checkpoint
