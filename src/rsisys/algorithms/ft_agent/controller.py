@@ -11,7 +11,7 @@ import sys
 
 from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.controllers.ft_agent.upstream import FT_AGENT_REVISION
+from rsisys.algorithms.ft_agent.upstream import FT_AGENT_REVISION
 from rsisys.runtime.execution.research_bridge import ResearchBridge
 
 
@@ -77,7 +77,7 @@ class FTAgentController:
             env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3]),
                        CUDA_VISIBLE_DEVICES='', PYTHONUNBUFFERED='1')
             self.bridge = self.bridge_factory([self.config.get('python', sys.executable), '-m',
-                'rsisys.controllers.ft_agent.worker', str(request)], log=self.root / 'worker.log', env=env)
+                'rsisys.algorithms.ft_agent.worker', str(request)], log=self.root / 'worker.log', env=env)
             self.stage = 'research'
         elif self.stage == 'research' and self.pending is not None:
             data = self._consume(window)

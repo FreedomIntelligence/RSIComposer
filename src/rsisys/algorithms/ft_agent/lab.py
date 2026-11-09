@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from rsisys.labs.ft_agent.upstream import LLAMA_FACTORY_REVISION
+from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.runtime.execution.upstream import checkout
@@ -366,7 +366,7 @@ class LLMFinetuneLab:
                             '--nproc-per-node=' + str(len(self.config.get('gpu_ids', [0])))]
             else:
                 mode_env['CUDA_VISIBLE_DEVICES'] = str(self.engine._gpu_ids()[0])
-            command += ['-m', 'rsisys.labs.ft_agent.train_worker', str(request)]
+            command += ['-m', 'rsisys.algorithms.ft_agent.train_worker', str(request)]
             run_workers([command], [mode_env], logs, self.config.get('worker_timeout', 3600))
         training = json.loads((directory / 'training-result.json').read_text())
         if not training.get('weights_changed') or training.get('steps', 0) < 1:

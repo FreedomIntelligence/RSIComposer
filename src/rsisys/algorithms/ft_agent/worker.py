@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from rsisys.controllers.ft_agent.upstream import ChatBackend, Scenario, load_policy
+from rsisys.algorithms.ft_agent.upstream import ChatBackend, Scenario, load_policy
 from rsisys.runtime.execution.research_bridge import emit_event
 
 

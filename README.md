@@ -90,8 +90,10 @@ algorithms/
   _template/                    # self-contained development example
 ```
 
-Built-in method packages declare and register implementations imported from
-`controllers/` and `labs/`; they do not duplicate execution code. Their registered
+Built-in method packages declare and register their complete method assembly.
+Method-private implementations live beside the registration entry; reusable scenes
+and components are imported from `labs/`, `backends/` and `controllers/` only when
+shared. Their registered
 names and configurations remain stable. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
 core registry has no algorithm-specific branches. Independent research-worker
@@ -411,5 +413,5 @@ of Git. Contributions use Apache-2.0; keep discussion respectful and specific.
 Copyright 2026 RSISys contributors. Licensed under [Apache-2.0](LICENSE).
 Third-party origins are linked in the
 corresponding adapters; adapted SEAL code retains its MIT text in
-[seal/lab.py](src/rsisys/labs/seal/lab.py). External dependencies, weights and datasets
+[seal/lab.py](src/rsisys/algorithms/seal/lab.py). External dependencies, weights and datasets
 are obtained separately under their own terms.

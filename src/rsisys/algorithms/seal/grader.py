@@ -1,6 +1,6 @@
 """SEAL's semantic grade prompt; failures never become negative rewards.
 
-Prompt derived from pinned SEAL utils.py; see rsisys.labs.seal.lab for attribution and MIT license. Credentials
+Prompt derived from pinned SEAL utils.py; see rsisys.algorithms.seal.lab for attribution and MIT license. Credentials
 are read by the optional OpenAI SDK from the environment, never from run JSON.
 """
 import os

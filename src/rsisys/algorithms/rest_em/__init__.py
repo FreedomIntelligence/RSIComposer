@@ -1,5 +1,5 @@
 """rest_em method package and single registration entry point."""
-from rsisys.controllers.rest_em.controller import RestEMController
+from rsisys.algorithms.rest_em.controller import RestEMController
 
 def register(registry):
     registry.register_controller('rest_em', lambda context, config: RestEMController(**config),

@@ -8,7 +8,7 @@ import shutil
 import sys
 import traceback
 
-from rsisys.controllers.aide.controller import AIDE_REVISION
+from rsisys.algorithms.aide.controller import AIDE_REVISION
 from rsisys.runtime.execution.research_bridge import emit_event
 from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.execution.upstream import checkout

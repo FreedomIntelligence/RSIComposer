@@ -1,1 +1,2 @@
-"""controllers rest_em components; registered by a method declaration."""
+"""Compatibility imports; method implementation lives in algorithms/rest_em."""
+from rsisys.algorithms.rest_em.controller import *  # compatibility

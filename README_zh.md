@@ -341,5 +341,5 @@ PR 说明行为变化、验证与算法偏差；使用合成 fixture，不提交
 
 Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
 第三方来源在对应适配代码中标注，
-改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/labs/seal/lab.py)。
+改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/algorithms/seal/lab.py)。
 外部依赖、模型权重和数据集另行获取，遵循各自条款。
