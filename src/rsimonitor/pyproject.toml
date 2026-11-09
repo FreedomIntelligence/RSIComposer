@@ -10,7 +10,7 @@ readme = {text = "RSIMonitor is the optional read-only viewer for RSISys run dir
 requires-python = ">=3.12"
 dependencies = []
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE"]
 authors = [{name = "RSISys contributors"}]
 classifiers = [
   "Development Status :: 3 - Alpha",

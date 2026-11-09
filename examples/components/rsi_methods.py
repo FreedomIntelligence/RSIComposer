@@ -39,7 +39,7 @@ def whole_method(config):
 
 
 def composed_method(config):
-    selections = json.loads((ROOT / 'configs/modular-demo.json').read_text())
+    selections = json.loads((ROOT / 'examples/components/configs/modular-demo.json').read_text())
     selections['training']['component'] = 'analytic'
     selections['rsi']['component'] = 'repeat' if config.get('attempts', 1) == 2 else 'single_pass'
     return composed_modules(selections)
@@ -52,7 +52,7 @@ def catalog():
 
 def run(selection):
     modules = catalog().select(selection)
-    runner, _ = build_demo(DemoConfig.load(ROOT / 'configs/demo.json'), modules=modules)
+    runner, _ = build_demo(DemoConfig.load(ROOT / 'examples/components/configs/demo.json'), modules=modules)
     with runner:
         result = runner.run('Check method integration', 1, max_decision_steps=8)
         return {'status': result.status, 'method': runner.assembly.method_identity.configuration(),
@@ -60,5 +60,5 @@ def run(selection):
 
 
 if __name__ == '__main__':
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'configs/rsi-method-demo.json'
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'examples/components/configs/rsi-method-demo.json'
     print(json.dumps(run(json.loads(path.read_text())), indent=2))

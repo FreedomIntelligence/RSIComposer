@@ -54,7 +54,7 @@ class FixtureBackend:
 
 
 def main():
-    runner, _ = build_demo(DemoConfig.load(Path(__file__).resolve().parents[2] / 'configs/demo.json'))
+    runner, _ = build_demo(DemoConfig.load(Path(__file__).resolve().parents[2] / 'examples/components/configs/demo.json'))
     with TemporaryDirectory(prefix='rsisys-pipeline-fixture-') as directory, runner:
         root = Path(directory)
         loop = runner.decision_making

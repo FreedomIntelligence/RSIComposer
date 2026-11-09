@@ -1,7 +1,0 @@
-RSISys
-Copyright 2026 RSISys contributors.
-
-RSISys is distributed under the Apache License, Version 2.0.
-Adapted SEAL material retains its upstream copyright and MIT permission
-notice in src/rsisys/labs/seal.py, included in source and wheel distributions.
-Other optional upstream implementations are installed separately.

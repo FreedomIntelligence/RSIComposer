@@ -69,7 +69,7 @@ class FixturePolicy:
 
 
 def main():
-    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'configs/demo.json')
+    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'examples/components/configs/demo.json')
     artifacts = InMemoryArtifactStore()
     builder = FixtureDatasetBuilder(artifacts)
     learner = MockDecisionLearner(artifacts, pending_polls=0)

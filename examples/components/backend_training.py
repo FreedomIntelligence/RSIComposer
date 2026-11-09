@@ -259,7 +259,7 @@ def exploration_factory(context) -> ExplorationLoop:
 
 
 def main() -> dict:
-    config = DemoConfig.load(ROOT / 'configs/demo.json')
+    config = DemoConfig.load(ROOT / 'examples/components/configs/demo.json')
     runner, _ = build_demo(config, exploration_factory=exploration_factory)
     with runner:
         artifacts = runner.assembly.artifacts

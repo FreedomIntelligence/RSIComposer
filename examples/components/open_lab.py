@@ -51,7 +51,7 @@ class FixturePolicy:
 
 
 def main():
-    template = ApplicationConfig.load(Path(__file__).resolve().parents[2] / 'configs/local.json')
+    template = ApplicationConfig.load(Path(__file__).resolve().parents[2] / 'examples/components/configs/local.json')
     with TemporaryDirectory(prefix='rsisys-open-lab-') as directory:
         config = replace(template, data_dir=Path(directory) / 'run', execution='local_process',
             roles={'decision_maker': template.roles['decision_maker']}, objective='Exercise open Lab wiring')

@@ -33,14 +33,19 @@ rsisys run --config examples/quickstart/rest_em.json
 
 ## 框架职责
 
-![决策器、Lab 与公共运行时](docs/diagrams/framework-loop.svg)
+```mermaid
+flowchart LR
+    C["RSI 决策器"] -->|Decision| L["Lab"]
+    L -->|Feedback| C
+```
 
 决策器负责算法策略、候选选择与停止；Lab 负责领域执行，返回指标、产物和日志引用。
 公共运行时负责注册装配、配置、操作授权、路由、回执、证据引用、生命周期和自有资源清理。
 宿主不会根据分数替算法选择赢家。
 
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
-`examples/` 放教程，`experiments/` 放模型/数据配方与结果 JSON，`tests/` 放长期回归测试。
+`examples/` 是统一入口：`quickstart/` 用于入门，`registered/` 用于插件开发，
+`components/` 用于组件组合，`rest_em/`、`aide/` 等方法目录放运行配方与结果。
 正式协议在[源码](src/rsisys/loops/contracts/rsi.py)，统一公开导入入口为
 [rsisys.api](src/rsisys/api.py)。
 
@@ -126,13 +131,13 @@ def register(registry):
 
 | 决策器 / Lab | 接入范围 | 配置 / 证据 |
 | --- | --- | --- |
-| `rest_em` / `math` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](experiments/rest_em/configs/gsm8k-8gpu.json)、[MATH](experiments/rest_em/configs/math-8gpu.json) |
-| `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](experiments/rrsi/math.json)、[结果](experiments/rrsi/results-20261108.json) |
-| `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](experiments/seal/8gpu.json)、[论文配置](experiments/seal/paper.json)、[结果](experiments/seal/results-20261109.json) |
-| `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](experiments/ttrl/8gpu.json)、[结果](experiments/ttrl/results-20261109.json) |
-| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](experiments/ttrl/paper.json)、[归因记录](experiments/weight-reproduction-diagnosis.json) |
-| `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](experiments/ft_agent/gsm8k.json)、[验证](experiments/ft_agent/validation-20261109.json) |
-| `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](experiments/aide/gsm8k.json)、[验证](experiments/aide/validation-20261109.json) |
+| `rest_em` / `math` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](examples/rest_em/configs/gsm8k-8gpu.json)、[MATH](examples/rest_em/configs/math-8gpu.json) |
+| `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](examples/rrsi/math.json)、[结果](examples/rrsi/results-20261108.json) |
+| `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](examples/seal/8gpu.json)、[论文配置](examples/seal/paper.json)、[结果](examples/seal/results-20261109.json) |
+| `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](examples/ttrl/8gpu.json)、[结果](examples/ttrl/results-20261109.json) |
+| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](examples/ttrl/paper.json)、[归因记录](examples/weight-reproduction-diagnosis.json) |
+| `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](examples/ft_agent/gsm8k.json)、[验证](examples/ft_agent/validation-20261109.json) |
+| `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](examples/aide/gsm8k.json)、[验证](examples/aide/validation-20261109.json) |
 
 SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
 SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练验证，未验收 GPT-4.1
@@ -154,26 +159,26 @@ pyarrow、huggingface-hub；八卡推理配方另需 vLLM，MATH 判分需 math 
 
 ```sh
 python -m pip install -e '.[math]'
-python experiments/rest_em/prepare_gsm8k.py \
+python examples/rest_em/prepare_gsm8k.py \
   --model-dir models/Qwen2.5-7B-d1497293 --data-dir runs/gsm8k-data
-python experiments/rest_em/prepare_math.py --data-dir runs/math-data
-rsisys run --config experiments/rest_em/configs/math-8gpu.json
+python examples/rest_em/prepare_math.py --data-dir runs/math-data
+rsisys run --config examples/rest_em/configs/math-8gpu.json
 ```
 
 准备脚本下载固定 revision 的模型/数据并记录哈希；配置中的路径须与输出对应。
 八卡配置通过多副本并行推理、DDP 训练；同目录也提供较小配置。
 
 SEAL/TTRL paper profile 使用独立 Python 3.12 环境与
-[paper-requirements.txt](experiments/paper-requirements.txt)。已验证组合为 torch 2.7.0+cu128、
+[paper-requirements.txt](examples/paper-requirements.txt)。已验证组合为 torch 2.7.0+cu128、
 Transformers 4.52.4、TRL 0.18.1、PEFT 0.15.2、vLLM 0.9.1；原生 TTRL 另需 ABI 兼容的
 flash-attn。不要与参考后端的训练环境混装。
 
 ```sh
-python experiments/seal/prepare.py --paper --output runs/seal-paper-data
-python experiments/ttrl/prepare.py --paper --output runs/ttrl-paper-data
+python examples/seal/prepare.py --paper --output runs/seal-paper-data
+python examples/ttrl/prepare.py --paper --output runs/ttrl-paper-data
 # 安装对应依赖并设置真实路径后再运行：
-rsisys run --config experiments/seal/paper.json
-rsisys run --config experiments/ttrl/paper.json
+rsisys run --config examples/seal/paper.json
+rsisys run --config examples/ttrl/paper.json
 ```
 
 原生 TTRL 另需干净的 `PRIME-RL/TTRL@5806e119789132fcb43552beaf2532d7d0447213` checkout。
@@ -183,10 +188,10 @@ RRSI、FT-Agent、AIDE 需要 Linux bubblewrap/user namespaces 和 OpenAI-compat
 其 `prepare.py`、`serve.py` 入口提供 `--help`。FT-Agent 需分别安装干净的
 `microsoft/RD-Agent@484776c211e4fbbeef03e0ec00d6bbee7362a4f4`、LLaMA-Factory v0.9.3
 （`ca75f1edf3cb50343ed1c98605141c3e22075b5f`），并安装
-[worker 依赖](experiments/ft_agent/requirements.txt)、PyYAML 与 Math-Verify。
+[worker 依赖](examples/ft_agent/requirements.txt)、PyYAML 与 Math-Verify。
 LLaMA-Factory 训练环境须与 SEAL 的 TRL 环境分开。AIDE 需安装
 `WecoAI/aideml@ad73d227af481bea3de06f884f41b2993dd6453a` 及其
-[worker 依赖](experiments/aide/requirements.txt)。搜索与审查由原生方法决定，宿主负责执行和反馈。
+[worker 依赖](examples/aide/requirements.txt)。搜索与审查由原生方法决定，宿主负责执行和反馈。
 两种方法均需先固定互不重叠的公开输入与私有开发/留出标签。
 
 ## 监控
@@ -217,22 +222,19 @@ FT-Agent/AIDE 原生搜索与同步训练配方重跑需新目录；快照元数
 
 ```sh
 python -m pip install -e '.[dev]'
-PYTHONPATH=src python -m unittest discover -s tests -t . -q
-node --test tests/monitor/frontend/*.test.js
-ruff check --select E9,F63,F7,F82 src tests examples experiments tools
-python tools/check_docs.py
+ruff check --select E9,F63,F7,F82 src examples
 python -m build --outdir dist/core .
 python -m build --outdir dist/monitor src/rsimonitor
 python -m twine check --strict dist/core/* dist/monitor/*
 ```
 
-默认测试不需 GPU、下载权重或模型服务；可选依赖缺失会显式 skip。CI 使用 Node 22。
-当前私有仓库免费额度已耗尽，Actions 仅保留手动触发 `workflow_dispatch`。
+回归测试与验证脚本单独私有维护，仓库不包含 GitHub Actions 工作流。
 PR 说明行为变化、验证与算法偏差；使用合成 fixture，不提交权重、下载数据、凭据或原始运行日志。
 贡献按 Apache-2.0 接收，讨论保持尊重与具体。
 
 ## 许可
 
-[Apache-2.0](LICENSE)，见 [NOTICE](NOTICE)。第三方来源在对应适配代码中标注，
+Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
+第三方来源在对应适配代码中标注，
 改编 SEAL 代码的 MIT 文本保留在 [seal.py](src/rsisys/labs/seal.py)。
 外部依赖、模型权重和数据集另行获取，遵循各自条款。

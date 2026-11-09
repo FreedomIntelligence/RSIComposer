@@ -33,7 +33,7 @@ class ExampleDecisionPolicy:
 
 
 def main():
-    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'configs/demo.json')
+    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'examples/components/configs/demo.json')
     runner, store = build_demo(config, with_learning=True)
     with runner:
         data = runner.decision_making.harness.tools.artifacts.put(b'demonstration data', kind='training_data')

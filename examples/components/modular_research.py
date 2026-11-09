@@ -153,7 +153,7 @@ def modules(selections):
 
 
 def run(selections):
-    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'configs/demo.json')
+    config = DemoConfig.load(Path(__file__).resolve().parents[2] / 'examples/components/configs/demo.json')
     runner, _ = build_demo(config, modules=modules(selections))
     with runner:
         result = runner.run('Check synthetic component composition', 1, max_decision_steps=8)
@@ -162,5 +162,5 @@ def run(selections):
 
 
 if __name__ == '__main__':
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2] / 'configs/modular-demo.json'
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2] / 'examples/components/configs/modular-demo.json'
     print(json.dumps(run(json.loads(path.read_text())), indent=2))

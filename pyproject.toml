@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE"]
 authors = [{name = "RSISys contributors"}]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -40,8 +40,7 @@ math = ["math-verify[antlr4_13_2]==0.9.0"]
 dsh = ["deepseek-harness-sdk==0.2.1rc2"]
 langmem = ["langmem==0.0.30", "trustcall==0.0.39", "langgraph==1.2.19",
            "langchain-core==1.7.4", "langgraph-checkpoint-sqlite==3.1.3"]
-test = ["jsonschema>=4,<5"]
-dev = ["jsonschema>=4,<5", "build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
+dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
 [tool.setuptools.package-data]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]

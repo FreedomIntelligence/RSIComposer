@@ -1,5 +1,4 @@
 # Local environments
-.pixi/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -21,3 +20,7 @@ runs/
 
 # Legacy monitor deployment releases/logs; canonical source is src/rsimonitor.
 monitor-ui/
+
+# Private validation stays local, outside the public source and distributions.
+/tests/
+/tools/

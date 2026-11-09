@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from experiments.qwen_toy.monitor import Monitor
+from examples.qwen_toy.monitor import Monitor
 from rsisys.experience.retrieval import BasicExperienceSystem
 from rsisys.experience.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.candidate import Candidate, SystemVersion
