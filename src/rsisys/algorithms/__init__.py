@@ -5,7 +5,7 @@ from pkgutil import iter_modules
 
 def register_builtins(registry):
     for info in sorted(iter_modules(__path__), key=lambda item: item.name):
-        if not info.ispkg or info.name.startswith('_'):
+        if not info.ispkg or info.name.startswith('_') or info.name == 'shared':
             continue
         module = import_module(f'{__name__}.{info.name}')
         register = getattr(module, 'register', None)
