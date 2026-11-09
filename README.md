@@ -66,8 +66,9 @@ accumulated decision–Lab feedback experience.** A Self-Reflection Lab is an
 optional Lab specialization, registered through the same method entry point;
 it does not introduce a third top-level module. Its improvement targets may
 include the controller's harness, memory strategy, training data and model weights.
-This is an architectural definition, not a shipped `self_reflection` registration.
-Existing reflection tools do not implement this complete lifecycle.
+The [code scaffold](src/rsisys/labs/self_reflection/__init__.py) provides an opt-in
+`self_reflection` Lab registration at version `0-placeholder`. It is not a working
+backend; existing reflection tools do not implement this complete lifecycle.
 
 The Lab is designed to maintain experience across runs and support three stages:
 
@@ -99,6 +100,16 @@ terminal receipts, persistence, cancellation and resource ownership. Long
 validation may use explicit start/poll/result/cancel operations. Complete
 cross-run self-improvement, candidate validation and controller switching still
 require implementation; registration alone provides none of these semantics.
+
+The package contains draft version/episode/candidate/validation records, a backend
+protocol, and the Lab operation surface (`record_episode`, `build_candidate`,
+`start`, `poll`, `result`, `cancel`). Methods can import its `register` function
+inside their own registration entry, or register a concrete replacement Lab.
+Inspect the scaffold with
+`rsisys catalog --plugin src/rsisys/labs/self_reflection`.
+Every valid invocation currently returns a failed receipt with
+`error_code=self_reflection_not_implemented`; no experience is persisted, jobs
+started, candidates created or controller versions switched.
 
 ## Register your own method
 

@@ -57,7 +57,8 @@ flowchart LR
 **Self-reflection 指 meta-agent 利用长期积累的 decision–Lab feedback 经验，
 改进自身决策能力的过程。** Self-Reflection Lab 是可选的 Lab 类型，通过方法的同一个
 注册入口接入，不新增第三类顶层模块。改进对象可以包括决策器的 harness、memory 策略、
-训练数据和模型权重。这是架构定义，当前尚未提供 `self_reflection` 注册实现；
+训练数据和模型权重。[代码骨架](src/rsisys/labs/self_reflection/__init__.py) 提供显式加载的
+`self_reflection` Lab 注册入口，版本为 `0-placeholder`，尚无可执行后端；
 现有 reflect 工具不等于已经实现这一完整生命周期。
 
 它应跨多次 run 持续维护经验，并支持三个阶段：
@@ -80,6 +81,13 @@ Lab 产生候选时不得直接覆盖正在运行的决策器。验证可以以�
 框架负责版本与证据关联、任务标识、进度和终态回执、持久化、取消及资源归属。
 长程验证可使用显式 start/poll/result/cancel 操作。完整的跨 run 自改进、候选验证及决策器
 版本切换仍需实现，注册本身不会自动提供这些语义。
+
+包内提供版本/研究过程/候选/验证记录的草案、后端协议，以及 `record_episode`、
+`build_candidate`、`start`、`poll`、`result`、`cancel` 操作面。方法可在自己的注册入口内
+调用该包的 `register`，或注册具体的替代 Lab。可以运行
+`rsisys catalog --plugin src/rsisys/labs/self_reflection` 查看骨架。
+当前所有合法调用均返回失败回执，错误码为 `self_reflection_not_implemented`；
+不会写入经验、启动任务、产生候选或切换决策器版本。
 
 ## 注册自己的算法
 
