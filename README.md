@@ -61,6 +61,8 @@ in `rsisys.labs`. Method packages reuse this infrastructure instead of copying i
 ```text
 labs/
   __init__.py       # Lab, LabRequest, LabFeedback and lifecycle interfaces
+  local_process/    # generic process Lab and optional state/feedback components
+  policy_improvement/ # existing dataset/training bridges, not full self-reflection
   math/             # math scene: Labs, verifiers and mathematical backends
   harness/          # reusable harness execution and sandbox components
   training/         # reusable training engines, workers and artifact handling
@@ -75,6 +77,17 @@ package; shared components do not depend on a particular scene. The existing
 
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
+
+The remaining internal boundaries are:
+
+- `adapters/default_harness/` and `adapters/exploration/` convert existing
+  protocols; `adapters/langchain_model.py` bridges the optional LangChain API.
+- `backends/training/` and `backends/serving/` own training processes, inference
+  transports and deployments. These are execution providers; `labs/training/`
+  contains reusable Lab-side orchestration and artifact components.
+- `runtime/lab_group.py` owns namespaced routing and Lab lifecycle aggregation.
+  Backend record writes and locks live in `runtime/process_store.py`, so serving
+  does not depend on a training implementation for persistence.
 
 ### Self-Reflection Lab — architecture direction
 

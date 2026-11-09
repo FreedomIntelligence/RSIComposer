@@ -317,7 +317,7 @@ def assemble_loops(context: AssemblyContext, *, decision_factory=None,
     if exploration_factory is not None:
         exploration = exploration_factory(context)
     elif context.lab_execution is not None:
-        from rsisys.adapters.execution import OperationOnlyExploration
+        from rsisys.adapters.default_harness.execution import OperationOnlyExploration
         exploration = OperationOnlyExploration()
     else:
         exploration = build_default_exploration(context)
@@ -418,7 +418,7 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
     definitions = (*(query_tools.definitions if query_tools is not None else ()), *research_tools.definitions)
     bindings = {**(query_tools.bindings if query_tools is not None else {}), **research_tools.bindings}
     if open_lab:
-        from rsisys.adapters.execution import LabExecutionTools
+        from rsisys.adapters.default_harness.execution import LabExecutionTools
         tools = LabExecutionTools(context.lab_execution, extra_definitions=definitions, extra_bindings=bindings)
         space = ModularDecisionActionSpace(tools.definitions, directive_modes=(), directives=directives,
                                            permissions=context.action_permissions)
@@ -437,7 +437,7 @@ def build_default_decision(context: AssemblyContext, exploration: ExplorationLoo
             allowed_actions=() if open_lab else tuple(spec.name for spec in exploration.action_space.describe()),
             directives=directives, project_context=context.project_context)
     else:
-        from rsisys.adapters.decision import ContextDecisionPolicy, DecisionInputAdapter
+        from rsisys.adapters.default_harness.decision import ContextDecisionPolicy, DecisionInputAdapter
         policy = ContextDecisionPolicy(policy, input_adapter=DecisionInputAdapter(directives=directives))
     return DecisionMakingLoop(
         DefaultDecisionHarness(

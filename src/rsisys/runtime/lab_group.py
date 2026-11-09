@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 import json
 from ..loops.contracts.decision import OperationCall, OperationSpec
-from ..runtime.capabilities import optional_method
+from .capabilities import optional_method
 
 
 class LabGroup:

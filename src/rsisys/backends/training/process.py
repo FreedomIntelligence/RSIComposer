@@ -21,6 +21,7 @@ from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.metrics import validated_metrics
 from rsisys.loops.contracts.training import ResumeMode, TrainingResult
 from rsisys.runtime.local_process import _kill_process_group, _wait_for_process_exit
+from rsisys.runtime.process_store import _json, _write, _lock
 
 _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HOME',
     'CUDA_VISIBLE_DEVICES', 'CUDA_DEVICE_ORDER',
@@ -40,31 +41,6 @@ _WORKER_ENV = ('PATH', 'HOME', 'LANG', 'PYTHONPATH', 'LD_LIBRARY_PATH', 'CUDA_HO
     'TORCH_NCCL_ASYNC_ERROR_HANDLING', 'TORCH_NCCL_BLOCKING_WAIT',
     'HF_HOME', 'HF_HUB_CACHE', 'TRANSFORMERS_CACHE', 'TOKENIZERS_PARALLELISM',
     'HF_HUB_OFFLINE', 'TRANSFORMERS_OFFLINE', 'XDG_CACHE_HOME')
-
-
-def _json(value):
-    return json.dumps(value, sort_keys=True, allow_nan=False)
-
-
-def _write(path: Path, value):
-    temporary = path.with_name(path.name + '.' + uuid4().hex)
-    with temporary.open('w') as stream:
-        stream.write(_json(value))
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(path)
-    descriptor = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-@contextmanager
-def _lock(path):
-    with Path(path).open('a') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
 
 
 def _identity(pid):
@@ -116,7 +92,7 @@ def transformers_peft_command(config_ref, *, cwd, python=sys.executable, num_pro
     count = _num_processes(num_processes)
     launcher = (python,) if count == 1 else (python, '-m', 'torch.distributed.run',
         '--standalone', '--nnodes=1', f'--nproc-per-node={count}')
-    return TrainingCommand((*launcher, '-m', 'rsisys.adapters.training', 'transformers-peft',
+    return TrainingCommand((*launcher, '-m', 'rsisys.backends.training.process', 'transformers-peft',
                             str(config_ref)), str(cwd))
 
 
@@ -249,7 +225,7 @@ class ProcessTrainingBackend:
             environment = dict(os.environ)
             environment['PYTHONPATH'] = os.pathsep.join(str(p) for p in sys.path if p)
             with (directory / 'supervisor.log').open('ab') as log:
-                process = subprocess.Popen([sys.executable, '-m', 'rsisys.adapters.training',
+                process = subprocess.Popen([sys.executable, '-m', 'rsisys.backends.training.process',
                     'supervise', str(directory)], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                     env=environment, start_new_session=True)
             # Reap in the live controller; the detached child survives controller loss.
@@ -580,7 +556,7 @@ def _train_transformers_peft(directory, payload, config, rows, evidence, argumen
 
 if __name__ == '__main__':
     if len(sys.argv) != 3 or sys.argv[1] not in ('supervise', 'transformers-peft'):
-        raise SystemExit('Usage: python -m rsisys.adapters.training {supervise JOB_DIR|transformers-peft RECIPE.json}')
+        raise SystemExit('Usage: python -m rsisys.backends.training.process {supervise JOB_DIR|transformers-peft RECIPE.json}')
     if sys.argv[1] == 'supervise':
         _supervise(Path(sys.argv[2]).resolve())
     else:

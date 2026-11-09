@@ -16,7 +16,7 @@ from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
 from .controllers.single_loop import SingleLoopController
 from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
-from .adapters.lab_group import LabGroup
+from rsisys.runtime.lab_group import LabGroup
 from .methods import MethodCatalog, MethodDefinition, MethodIdentity
 from .runtime.capabilities import optional_method
 
@@ -78,7 +78,7 @@ class Registry:
 
     @staticmethod
     def _local_lab(context, config):
-        from .adapters.local_lab import LocalProcessLab
+        from rsisys.labs.local_process.lab import LocalProcessLab
         if context.execution != 'local_process':
             raise ValueError('local_process Lab requires host execution=local_process')
         return LocalProcessLab(context.sandbox, context.artifacts, **config)

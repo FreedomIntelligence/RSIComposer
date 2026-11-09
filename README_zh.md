@@ -54,6 +54,8 @@ flowchart LR
 ```text
 labs/
   __init__.py       # Lab、请求、反馈和生命周期接口
+  local_process/    # 通用进程 Lab 及可选状态、反馈组件
+  policy_improvement/ # 已有数据/训练桥接，不等于完整 self-reflection
   math/             # 数学场景：Lab、验证器与数学后端
   harness/          # 可复用 harness 执行与沙箱组件
   training/         # 可复用训练引擎、worker 和产物管理
@@ -66,6 +68,15 @@ labs/
 
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。
+
+其他内部目录的职责如下：
+
+- `adapters/default_harness/`、`adapters/exploration/` 只做协议转换；
+  `adapters/langchain_model.py` 适配可选的 LangChain 接口。
+- `backends/training/`、`backends/serving/` 负责训练进程、推理传输与部署；
+  `labs/training/` 则提供 Lab 侧可复用的调用与产物管理组件。
+- `runtime/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
+  后端的记录写入、文件锁放在 `runtime/process_store.py`，推理后端不再借用训练实现做持久化。
 
 ### Self-Reflection Lab：架构方向
 

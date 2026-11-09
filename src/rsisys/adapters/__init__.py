@@ -1,1 +1,1 @@
-"""Optional framework adapters. Heavy dependencies are imported only by workers."""
+"""Protocol conversion only; Lab implementations and execution backends live separately."""
