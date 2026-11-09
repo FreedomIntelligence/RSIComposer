@@ -261,8 +261,9 @@ def _process_is_dead_or_zombie(pid):
     if sys.platform == 'linux':
         try:
             return Path(f'/proc/{pid}/stat').read_text().split()[2] == 'Z'
-        except FileNotFoundError:
-            # init may reap the orphan between kill(0) and reading /proc.
+        except (FileNotFoundError, ProcessLookupError):
+            # init may reap the orphan between kill(0), open(), and read().
+            # procfs can report either ENOENT or ESRCH at those boundaries.
             return True
     return False
 

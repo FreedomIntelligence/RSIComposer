@@ -39,6 +39,8 @@
   tree while retaining dated review conclusions and third-party attribution.
 - Terminate owned GPU-worker process groups even when the launcher has already
   exited, so TERM-ignoring descendants cannot outlive a completed operation.
+- Stabilize Linux regression fixtures for procfs disappearance during cleanup
+  and runtime-file hashing within the medical evaluation test budget.
 
 Current limits: weight-evolution recipes are synchronous and do not support
 automatic restart; multi-Lab GPU leasing remains future core work. The optional
