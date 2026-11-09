@@ -4,8 +4,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from .ft_agent_upstream import ChatBackend, Scenario, load_policy
-from .research_bridge import emit_event
+from rsisys.algorithms.ft_agent.upstream import ChatBackend, Scenario, load_policy
+from rsisys.controllers.research_bridge import emit_event
 
 
 def run(config):

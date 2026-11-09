@@ -329,7 +329,7 @@ class RRSIController:
 
 
 def build_rrsi(context, config):
-    from rsisys.controllers.harness_research import HarnessResearcher
+    from rsisys.algorithms.rrsi.researcher import HarnessResearcher
 
     options = dict(config)
     researcher = HarnessResearcher(context, options.pop("researcher"))

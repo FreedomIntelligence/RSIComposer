@@ -18,7 +18,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Dict, Generic, TypeVar
 
-from ..labs.pinned_upstream import checkout
+from rsisys.labs.pinned_upstream import checkout
 
 FT_AGENT_REVISION = '484776c211e4fbbeef03e0ec00d6bbee7362a4f4'
 LLAMA_FACTORY_REVISION = 'ca75f1edf3cb50343ed1c98605141c3e22075b5f'
@@ -125,7 +125,7 @@ def load_policy(root, *, settings, backend, parameter_info, dataset_descriptor):
 class ChatBackend:
     """OpenAI-compatible transport for upstream APIBackend call sites."""
     def __init__(self, config, directory):
-        from ..labs.harness_runtime import ChatPool
+        from rsisys.labs.harness_runtime import ChatPool
         self.pool = ChatPool(config['endpoints'], config['model'],
             timeout=config.get('timeout', 600), max_tokens=config.get('max_tokens', 8192),
             temperature=config.get('temperature', 0.6))

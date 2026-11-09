@@ -101,7 +101,7 @@ def validate_config(config):
         if key in config and (type(config[key]) is not int or config[key] < 1):
             raise ValueError(f'{key} must be a positive integer')
     if config.get('profile') == 'paper':
-        from rsisys.labs.seal_engine import validate_paper_engine
+        from rsisys.algorithms.seal.engine import validate_paper_engine
         validate_paper_engine(config)
 
 
@@ -115,8 +115,8 @@ class SEALLab(WeightArtifacts):
 
     def __init__(self, context, config, *, scorer=None, scorer_name=None, **kwargs):
         if config.get('profile') == 'paper':
-            from rsisys.labs.seal_engine import PAPER_DEFAULTS, SEALTrainerEngine
-            from rsisys.labs.seal_grader import SEALSemanticGrader
+            from rsisys.algorithms.seal.engine import PAPER_DEFAULTS, SEALTrainerEngine
+            from rsisys.algorithms.seal.grader import SEALSemanticGrader
             config = {**PAPER_DEFAULTS, **config}
             validate_config(config)
             if scorer is None:

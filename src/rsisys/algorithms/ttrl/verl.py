@@ -57,7 +57,7 @@ class VerlTTRLEngine(WeightEngine):
         if cuda_home:
             env.update(CUDA_HOME=cuda_home, PATH=cuda_home + '/bin' + os.pathsep + env.get('PATH', ''),
                 LD_LIBRARY_PATH=cuda_home + '/lib64' + os.pathsep + env.get('LD_LIBRARY_PATH', ''))
-        run_workers([[self.config.get('training_python', sys.executable), '-m', 'rsisys.labs.verl_worker', str(request)]],
+        run_workers([[self.config.get('training_python', sys.executable), '-m', 'rsisys.algorithms.ttrl.worker', str(request)]],
             [env], directory, self.config['worker_timeout'])
         return json.loads(output.read_text())
 

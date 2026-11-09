@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from rsisys.controllers.ft_agent_upstream import LLAMA_FACTORY_REVISION
+from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.labs.pinned_upstream import checkout
@@ -292,7 +292,7 @@ class LLMFinetuneLab:
         sandbox = directory / 'sandbox'
         sandbox.mkdir()
         (sandbox / 'process_data.py').write_text(source)
-        runner = Path(__import__('rsisys.labs.ft_data_sandbox', fromlist=['__file__']).__file__)
+        runner = Path(__file__).with_name('data_sandbox.py')
         command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-all', '--cap-drop', 'ALL',
             '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
             '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
@@ -366,7 +366,7 @@ class LLMFinetuneLab:
                             '--nproc-per-node=' + str(len(self.config.get('gpu_ids', [0])))]
             else:
                 mode_env['CUDA_VISIBLE_DEVICES'] = str(self.engine._gpu_ids()[0])
-            command += ['-m', 'rsisys.labs.ft_train_worker', str(request)]
+            command += ['-m', 'rsisys.algorithms.ft_agent.train_worker', str(request)]
             run_workers([command], [mode_env], logs, self.config.get('worker_timeout', 3600))
         training = json.loads((directory / 'training-result.json').read_text())
         if not training.get('weights_changed') or training.get('steps', 0) < 1:

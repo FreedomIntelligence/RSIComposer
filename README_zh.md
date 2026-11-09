@@ -47,11 +47,30 @@ flowchart LR
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
 内置方法位于 `src/rsisys/algorithms/<方法>/`：`controller.py` 实现决策，
 `lab.py` 实现专属执行，`configs/` 选择已注册组合。SEAL/TTRL 的共用调度放在
-`algorithms/_weight.py`；可复用数学 Lab、训练 worker 留在 `rsisys.labs`，不复制到每个算法。
+`algorithms/_weight.py`；专属 worker、评分器与上游桥接留在方法目录，
+可复用数学 Lab 与共享引擎仍在 `rsisys.labs`。
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。
 
 ## 注册自己的算法
+
+一个方法在一个目录内闭环管理：
+
+```text
+my_method/
+  __init__.py       # register(registry)：一次注册决策器与所有 Lab
+  controller.py    # 决策与方法状态
+  lab.py           # 执行与反馈
+  config.json      # 完整组合配置
+```
+
+框架只约定 `register(registry)` 入口，不强制内部文件结构；简单方法可以全部写在 `__init__.py`。
+也可通过 `.controller`、`.lab` 相对导入，并在同一个 `register(registry)`
+中注册所需对象。专属 memory、harness、后端适配可继续放在该目录，通用能力直接引用框架。
+运行 `rsisys run --plugin ./my_method --config ./my_method/config.json`，无需修改核心注册表。
+库内 `rsisys.algorithms` 下的方法包也提供同一个注册入口，由框架自动发现。
+目录插件记录本地包文件的哈希；插件是显式受信任的宿主代码。
+
 
 已有方法无需插件即可运行。新增算法时，可把以下公开接口实现保存为 `plugin.py`：
 

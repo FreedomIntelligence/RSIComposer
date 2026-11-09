@@ -22,7 +22,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest='command', required=True)
     catalog = commands.add_parser('catalog', help='List registered controllers and Labs without running them')
     catalog.add_argument('--plugin', type=Path, action='append', default=[],
-                         help='Explicitly trust a Python registration file; repeatable')
+                         help='Explicitly trust a registration file or method package directory; repeatable')
     demo = commands.add_parser('demo', help='Run the original in-memory mock example')
     demo.add_argument('--config', type=Path, required=True)
     run = commands.add_parser('run', help='Start a new persistent local run')
@@ -31,7 +31,7 @@ def main() -> None:
     run.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     run.add_argument('--literature', type=Path, action='append', default=[])
     run.add_argument('--plugin', type=Path, action='append', default=[],
-                     help='Explicitly trust a Python file defining register(registry); repeatable')
+                     help='Explicitly trust a registration file or method package directory; repeatable')
     run.add_argument('--permissions', type=Path, help='Host ActionPermissions JSON')
     resume = commands.add_parser('resume', help='Restore a quiescent snapshot into a NEW workspace')
     resume.add_argument('--snapshot', type=Path, required=True)

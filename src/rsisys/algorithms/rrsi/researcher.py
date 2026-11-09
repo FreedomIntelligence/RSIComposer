@@ -9,7 +9,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from ..labs.harness_runtime import ChatPool, digest, sandbox_step, validate_source
+from rsisys.labs.harness_runtime import ChatPool, digest, sandbox_step, validate_source
 from rsisys.algorithms.rrsi.controller import COMPONENTS, STRUCTURAL
 
 INTERFACE = """The harness is Python defining step(problem: str, history: list[dict]) -> dict.

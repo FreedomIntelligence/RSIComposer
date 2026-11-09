@@ -12,7 +12,7 @@ import tempfile
 from hashlib import sha256
 from pathlib import Path
 
-from .pinned_upstream import TTRL_REVISION, checkout
+from rsisys.labs.pinned_upstream import TTRL_REVISION, checkout
 
 SUFFIX = '\nPlease reason step by step, and put your final answer within \\boxed{}.'
 
@@ -103,7 +103,7 @@ def fit(request):
     from datasets import Dataset
     from hydra import compose, initialize_config_dir
     from omegaconf import OmegaConf
-    from .weight_artifacts import file_hash
+    from rsisys.labs.weight_artifacts import file_hash
 
     root = checkout(request['config']['upstream_root'], TTRL_REVISION)
     upstream = root / 'verl'

@@ -53,12 +53,34 @@ scheduling, delivery, cancellation or recovery semantics belong in the core.
 Built-in methods live in `src/rsisys/algorithms/<method>/`: `controller.py`
 implements decisions, `lab.py` implements method-specific execution, and `configs/`
 selects the registered combination. SEAL/TTRL share schedule machinery in
-`algorithms/_weight.py`; reusable mathematical Labs and training workers remain
+`algorithms/_weight.py`; method-specific workers, graders and upstream bridges
+stay in their method package. Reusable mathematical Labs and shared engines remain
 in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 
 ## Register your own method
+
+Keep a complete method in one package directory:
+
+```text
+my_method/
+  __init__.py       # register(registry): register controller and Labs
+  controller.py    # decisions and method state
+  lab.py           # execution and feedback
+  config.json      # complete controller/Lab selection
+```
+
+Only the package entry `register(registry)` is prescribed; the internal file
+layout is yours. Small methods can put the entire implementation in `__init__.py`.
+`__init__.py` can also import `.controller` and `.lab` and register both in one
+`register(registry)` function. Keep custom memory, harnesses and backend adapters
+in this directory as needed; reuse framework components through imports.
+Run `rsisys run --plugin ./my_method --config ./my_method/config.json`.
+No core registry edit is needed. Built-in directories under `rsisys.algorithms`
+use the same entry function and are discovered automatically. Directory plugins
+record a hash of their local package files. Plugins execute trusted host code.
+
 
 Existing methods run without custom plugins. To develop a new method, save the
 following public-interface implementation as `plugin.py`:

@@ -261,7 +261,7 @@ class AIDEProgramLab:
         shutil.copyfile(self.input_dir / 'train.csv', workspace / 'input/train.csv')
         write_questions(workspace / 'input/validation.csv', rows)
         shutil.copyfile(source, workspace / 'candidate.py')
-        shutil.copyfile(Path(__import__('rsisys.labs.aide_client', fromlist=['__file__']).__file__), workspace / 'llm_client.py')
+        shutil.copyfile(Path(__file__).with_name('client.py'), workspace / 'llm_client.py')
         candidate_hash = digest(workspace / 'candidate.py')
         if candidate_hash != args['sha256']:
             raise ValueError('AIDE candidate changed while being copied')

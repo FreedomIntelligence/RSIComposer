@@ -1,5 +1,5 @@
 """SEAL Trainer/SFTTrainer backend, with explicit paper-profile defaults."""
-from .weight_engine import WeightEngine, validate_engine
+from rsisys.labs.weight_engine import WeightEngine, validate_engine
 
 PAPER_DEFAULTS = dict(split_newlines=True, adaptation_seeds=3, evaluation_seeds=1,
     inner_max_length=2048, inner_rank=32, inner_epochs=10, inner_lr=1e-3,
@@ -18,7 +18,7 @@ def validate_paper_engine(config):
 
 class SEALTrainerEngine(WeightEngine):
     name = 'seal-transformers-trainer-trl-sft-v1'
-    worker_module = 'rsisys.labs.seal_worker'
+    worker_module = 'rsisys.algorithms.seal.worker'
 
     def _env(self):
         return dict(super()._env(), VLLM_WORKER_MULTIPROC_METHOD='spawn', VLLM_USE_V1='1')
