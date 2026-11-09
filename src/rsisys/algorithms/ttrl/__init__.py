@@ -1,5 +1,5 @@
 """ttrl method package and single registration entry point."""
-from .._weight import TTRLController, TTRLVerlController
+from .controller import TTRLController, TTRLVerlController
 
 def register(registry):
     from .lab import TTRLLab, validate_config

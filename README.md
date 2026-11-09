@@ -52,9 +52,9 @@ New algorithms normally need only external registration. Changes to shared
 scheduling, delivery, cancellation or recovery semantics belong in the core.
 Built-in methods live in `src/rsisys/algorithms/<method>/`: `controller.py`
 implements decisions, `lab.py` implements method-specific execution, and `configs/`
-selects the registered combination. SEAL/TTRL share schedule machinery in
-`algorithms/_weight.py`; method-specific workers, graders and upstream bridges
-stay in their method package. Reusable mathematical Labs and shared engines remain
+selects the registered combination. Each method owns its controller and
+registration; method-specific workers, graders and upstream bridges stay in their
+method package. Reusable mathematical Labs and shared engines remain
 in `rsisys.labs`. Method packages reuse this infrastructure instead of copying it.
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).

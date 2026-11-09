@@ -11,7 +11,8 @@ from .methods import MethodDefinition
 from .registry import Registry, SingleLoopController
 from rsisys.algorithms.rest_em.controller import RestEMController
 from rsisys.algorithms.rrsi.controller import RRSIController
-from rsisys.algorithms._weight import SEALController, TTRLController, TTRLVerlController
+from rsisys.algorithms.seal.controller import SEALController
+from rsisys.algorithms.ttrl.controller import TTRLController, TTRLVerlController
 from rsisys.algorithms.ft_agent.controller import FTAgentController
 from rsisys.algorithms.aide.controller import AIDEController
 

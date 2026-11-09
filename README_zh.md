@@ -46,8 +46,8 @@ flowchart LR
 
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
 内置方法位于 `src/rsisys/algorithms/<方法>/`：`controller.py` 实现决策，
-`lab.py` 实现专属执行，`configs/` 选择已注册组合。SEAL/TTRL 的共用调度放在
-`algorithms/_weight.py`；专属 worker、评分器与上游桥接留在方法目录，
+`lab.py` 实现专属执行，`configs/` 选择已注册组合。各方法自己的控制器、注册、
+专属 worker、评分器与上游桥接都留在方法目录，
 可复用数学 Lab 与共享引擎仍在 `rsisys.labs`。
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。

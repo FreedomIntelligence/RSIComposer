@@ -1,8 +1,6 @@
-"""Receipt-driven SEAL and TTRL schedules, independent of training libraries.
+"""Receipt-driven staged controller machinery, independent of any RSI algorithm.
 
-SEAL: self-edits -> inner SFT evaluation -> top-k -> outer SFT.
-TTRL: unlabeled rollout -> majority reward -> policy-gradient update.
-Evaluation never selects a checkpoint; only the configured schedule does.
+Subclasses define operation phases and method-specific option constraints.
 """
 import math
 import re
@@ -10,13 +8,20 @@ from copy import deepcopy
 
 from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
-from rsisys.algorithms.rest_em.controller import _ref
 
 
-class _WeightController:
+def _ref(value, label):
+    if not isinstance(value, str) or not value.strip() or len(value) > 1024:
+        raise ValueError(f'{label} must be a nonempty reference of at most 1024 characters')
+    return value
+
+
+class ReceiptScheduleController:
     method = None
     phases = ()
     option = None
+    default_width = 1
+    minimum_width = 1
 
     def __init__(self, *, initial_model, train_data, eval_data, lab=None,
                  iterations=2, **options):
@@ -27,7 +32,7 @@ class _WeightController:
         self.initial_model = self.current_model = initial_model
         self.train_data, self.eval_data = train_data, eval_data
         self.lab, self.iterations = config['lab'], iterations
-        self.width = config.get(self.option, 2 if self.method == 'seal' else 16)
+        self.width = config.get(self.option, self.default_width)
         self.round, self.phase = 0, 'evaluate'
         self.pending = self.artifact = self.stopped = None
         self.models, self.history = {initial_model}, []
@@ -51,11 +56,11 @@ class _WeightController:
         if not isinstance(config.get('lab', cls.method), str) or not re.fullmatch(
                 r'[A-Za-z][A-Za-z0-9_-]*', config.get('lab', cls.method)):
             raise ValueError('Invalid Lab alias')
-        for key, default in (('iterations', 2), (cls.option, 2 if cls.method == 'seal' else 16)):
+        for key, default in (('iterations', 2), (cls.option, cls.default_width)):
             if type(config.get(key, default)) is not int or config.get(key, default) < 1:
                 raise ValueError(f'{key} must be a positive integer')
-        if cls.method == 'ttrl' and config.get(cls.option, 16) < 2:
-            raise ValueError('TTRL requires at least two samples per prompt')
+        if config.get(cls.option, cls.default_width) < cls.minimum_width:
+            raise ValueError(f'{cls.method} requires {cls.option} >= {cls.minimum_width}')
 
     def _call(self):
         args = {'round': self.round, 'model': self.current_model}
@@ -146,31 +151,3 @@ class _WeightController:
         return Decision('invoke', operation=deepcopy(self.pending),
                         reason=f'{self.method} round {self.round}: {self.phase}')
 
-
-class SEALController(_WeightController):
-    """Top-1 self-edit ReST-EM; outer SFT starts from the CURRENT policy."""
-    method, option = 'seal', 'candidates'
-    phases = ('generate', 'adapt', 'select', 'train')
-
-
-class TTRLController(_WeightController):
-    """One on-policy majority-reward GRPO update per round, no gold rewards."""
-    method, option = 'ttrl', 'samples_per_prompt'
-    phases = ('rollout', 'reward', 'train')
-
-
-class TTRLVerlController(TTRLController):
-    """Run one native schedule without resetting its optimizer/reference state."""
-    phases = ('fit',)
-
-    def __init__(self, *, iterations=1, **config):
-        super().__init__(iterations=iterations, **config)
-
-    def report(self):
-        return {**super().report(), 'backend': 'official-verl'}
-
-    @classmethod
-    def validate_config(cls, config):
-        super().validate_config({'iterations': 1, **config})
-        if config.get('iterations', 1) != 1:
-            raise ValueError('ttrl_verl runs one continuous native schedule; configure total_epochs in the Lab')

@@ -1,5 +1,5 @@
 """seal method package and single registration entry point."""
-from .._weight import SEALController
+from .controller import SEALController
 
 def register(registry):
     from .lab import SEALLab, validate_config
