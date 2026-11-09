@@ -1,5 +1,7 @@
 # Lab 执行请求与生命周期接口审查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 审查结论：`describe / execute` 的开放入口可以保留。默认执行器与 host 的生命周期接线有
 4 项已复现缺陷，其中 2 项涉及 owned 程序的清理。本轮完成审查和复现，以下缺陷尚未修复。
 
@@ -126,14 +128,14 @@ workspace 根目录异常、权限/符号链接拒绝、空间或存储错误继
 
 ## 验证与后续实现顺序
 
-[可重复 probe](repros/execution-lifecycle-contract-probe.py) 使用临时 CPU 程序、确定性模型响应和故障注入。
+[可重复 probe](README.md#archived-evidence) 使用临时 CPU 程序、确定性模型响应和故障注入。
 所有试验程序最终由 probe 的显式清理退出，session=0；没有启动远端任务、模型服务或训练。
 模型响应仅为接口 fixture，不能当成自主研究质量验证。
 
 现有 8 个相关测试模块共 108 项通过，耗时 1.672 秒。
 这些测试通过与上述反例同时成立：当前回归未覆盖这些分支。
 本轮未改生产代码和测试文件，没有重复运行上一轮的全量 1607 项。
-原始观察、测试日志与来源 SHA 见 [validation](repros/execution-contract-review-validation.json)。
+原始观察、测试日志与来源 SHA 见 [validation](README.md#archived-evidence)。
 
 建议先兑现 F01/F02 的清理与停止，再补 F03/F04 的错误来源分类；维持开放执行入口。
 实现方案按上述职责拆分，后续修复应逐项通过新的反例回归，再运行全量测试。

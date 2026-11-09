@@ -17,6 +17,7 @@ from rsisys.loops.contracts.coordination import (
 )
 from rsisys.loops.contracts.decision import Decision, DecisionInput, OperationCall, OperationSpec
 from rsisys.loops.contracts.directive import Directive
+from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import GenerationResponse, ModelRef, TokenUsage
 from rsisys.loops.decision_making.action_space import DemoDecisionActionSpace, ModularDecisionActionSpace
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
@@ -296,6 +297,30 @@ class DecisionPolicyCapabilityTests(unittest.TestCase):
 
 
 class PublicDecisionInputTests(unittest.TestCase):
+    def test_terminal_receipt_survives_text_projection_and_is_not_mutable_host_state(self):
+        windows = []
+        failure = OperationResult('native failed', (), False, ExecutionStatus.FAILED,
+            'native traceback\n' * 10000, data={'request': {'round': 1}})
+        def decide(window):
+            windows.append(window)
+            if len(windows) == 1:
+                return Decision('invoke', operation=OperationCall('inspect', {}))
+            self.assertEqual(window.last_operation, OperationCall('inspect', {}))
+            self.assertEqual(window.feedback, failure)
+            window.feedback.data['request']['round'] = 999
+            return Decision('finish')
+        loop = simple_loop(ContextDecisionPolicy(decide))
+        loop.harness.tools = BoundDecisionTools({'inspect': lambda arguments: failure})
+        class Archive(Definition):
+            spec = OperationSpec('research_archive', 'Read exact evidence', {'type': 'object',
+                'properties': {'collection': {'enum': ['history', 'operation_results']}}}, read_only=True)
+        loop.action_space = ModularDecisionActionSpace((Definition(), Archive()))
+        loop.step('fixture')
+        self.assertEqual(loop.step('fixture').kind, 'finished')
+        self.assertIn('evidence_card', windows[-1].context)
+        self.assertEqual(loop.harness.state.operation_results[-1].data['request']['round'], 1)
+        self.assertIsNone(loop.harness.policy._terminal_feedback)
+
     def test_text_window_executes_tools_and_receives_memory_and_actual_results(self):
         windows = []
         def decide(window):

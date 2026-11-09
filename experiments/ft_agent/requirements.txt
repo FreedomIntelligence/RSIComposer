@@ -1,0 +1,5 @@
+# Controller worker only. Core remains zero-dependency.
+PyYAML==6.0.3
+Jinja2==3.1.6
+# GPU training uses a separate native LLaMA-Factory v0.9.3 environment;
+# inference uses a separate vLLM environment. See README.md.

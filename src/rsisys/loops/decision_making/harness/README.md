@@ -98,7 +98,7 @@ DSH 等自行管理原生会话的 Harness 使用，避免先经默认压缩再�
 内置适配器只读取执行账本并发布工作视图，保留原策略、会话及压缩器。完整反馈先按原协议接纳；
 独立 worker 使用接收时捕获的 Decision
 模型身份整理反馈、相关历史和评测。worker 只返回建议，Runner 所在线程写日志与 memory。
-接线与 CPU fixture 见[使用指南](../../../../../README.md#由-decision-整理实验反馈可选)。
+接线与 CPU fixture 见[使用指南](../../../../../docs/usage.md#底层反馈接口与兼容路径)。
 
 纯 context/memory 组合可以不提供推理 backend，但仍保留宿主的真实模型身份。
 只有选定的 processor 需要推理时才要求 backend；缺能力在安装前明确失败。
@@ -334,7 +334,7 @@ history 中。`DecisionContext.decision_graph` 提供同一 ID/title 对，polic
 [dsh.py](dsh.py) 的 `DeepSeekDecisionHarness` 使用 DSH 持久会话和原生上下文压缩，
 复用默认操作回执、反馈和候选协调，不为科研步骤增加固定顺序。
 `dsh_decision_factory(DSHConfig(...))` 可直接传给 Application / build_demo 的 decision_factory。
-可选依赖与实际使用示例见[使用指南](../../../../../README.md#使用-dsh-harness)。
+可选依赖与实际使用示例见[使用指南](../../../../../docs/usage.md#使用-dsh-harness)。
 
 模型推理在单独 worker 中进行；step 在等待期间返回 waiting，收到提案后在 Runner 线程
 执行并重新校验当前权限。运行中 review 与决策共用一个会话，不并发写同一原生历史。

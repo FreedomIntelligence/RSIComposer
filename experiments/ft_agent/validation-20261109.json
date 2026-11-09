@@ -1,0 +1,370 @@
+{
+  "method": "ft_agent",
+  "profile": "local-reference",
+  "date": "2026-11-09",
+  "run": "run-v6",
+  "run_id": "8b33633fc1a644c785f708f4b21892df",
+  "status": "finished",
+  "decision_steps": 9,
+  "receipt_count": 8,
+  "all_receipts_completed": true,
+  "all_lab_operations_ok": true,
+  "selected_iteration": 2,
+  "training_performed": true,
+  "paper_gain_reproduced": false,
+  "source_archive_sha256": "184f9cc8dd856de89d98e6623b17ca081d135d81108bbf330351e3044d292132",
+  "config_sha256": "a1694c7871a96aa8d8ce76ec2df68b6673f26609313d065d8c6d2227c710a34d",
+  "result_sha256": "58d1b98b9a23f4d83bc818180968ae840728ff0b0a1936ad61fc4a40ed2d716e",
+  "upstream": {
+    "RD-Agent": "484776c211e4fbbeef03e0ec00d6bbee7362a4f4",
+    "LLaMA-Factory": "ca75f1edf3cb50343ed1c98605141c3e22075b5f"
+  },
+  "data_manifest": {
+    "selection": "first-N-in-existing-frozen-order-before-evaluation",
+    "splits": {
+      "train": {
+        "count": 64,
+        "source_sha256": "fee4afe4bf40ee3a08316ec84620f9fb45011c85faa90f6723e005b5f7830eaf",
+        "sha256": "fee4afe4bf40ee3a08316ec84620f9fb45011c85faa90f6723e005b5f7830eaf"
+      },
+      "dev": {
+        "count": 32,
+        "source_sha256": "ed83bbbbd3293764e083834e95210b3704bfee96fbb38ff3cc6738fc307936de",
+        "sha256": "6c6efe1e4549d53cf56b8355afac3c8fb9cf08754657df149a1db7adc55aba3b"
+      },
+      "test": {
+        "count": 64,
+        "source_sha256": "dfa9e2b46f0989c114ca2d9ad02b7e74b5cb9d5f4d92bd5b6538f6d53da14257",
+        "sha256": "dfdd2b920d816bb86a265dfae0192d8bf932f8c9676551247eab2feac8eeb346"
+      }
+    }
+  },
+  "environment": {
+    "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+    "packages": {
+      "torch": "2.7.0+cu128",
+      "transformers": "4.52.4",
+      "peft": "0.15.2",
+      "trl": "0.9.6",
+      "datasets": "3.6.0",
+      "accelerate": "1.7.0",
+      "numpy": "1.26.4",
+      "pydantic": "2.10.6",
+      "pyarrow": "19.0.1",
+      "PyYAML": "6.0.3",
+      "Jinja2": "3.1.6",
+      "nvidia-nccl-cu12": "2.26.2"
+    },
+    "gpus": [
+      "0, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "1, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "2, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "3, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "4, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "5, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "6, NVIDIA B20Z, 183359 MiB, 595.91.07",
+      "7, NVIDIA B20Z, 183359 MiB, 595.91.07"
+    ],
+    "target": {
+      "architectures": [
+        "Qwen2ForCausalLM"
+      ],
+      "model_type": "qwen2",
+      "_name_or_path": null
+    },
+    "research": {
+      "architectures": [
+        "Qwen3_5ForConditionalGeneration"
+      ],
+      "model_type": "qwen3_5",
+      "_name_or_path": null
+    }
+  },
+  "scores": {
+    "baseline-dev": {
+      "questions": 32,
+      "correct": 24,
+      "accuracy": 0.75,
+      "sha256": "c4c68cc19fc19e349a4afccee8e54916d4738d59f13536d769b8bff879bd0a99"
+    },
+    "baseline-test": {
+      "questions": 64,
+      "correct": 48,
+      "accuracy": 0.75,
+      "sha256": "b9020548b4b3082de8b91e2468acb5d1785fb9ecdaa8c965f7c45759d9ba36da"
+    },
+    "round-1/dev-evaluation": {
+      "questions": 32,
+      "correct": 27,
+      "accuracy": 0.84375,
+      "sha256": "5c521de91060ed93be5f923355b6709a9945d92ff40b08e9b0bc93381537c343"
+    },
+    "round-2/dev-evaluation": {
+      "questions": 32,
+      "correct": 29,
+      "accuracy": 0.90625,
+      "sha256": "2e499223e0e02dd0b0515968ad7b18b2bcdc66cee1effd0017333d1c2a97bcf2"
+    },
+    "round-3/dev-evaluation": {
+      "questions": 32,
+      "correct": 22,
+      "accuracy": 0.6875,
+      "sha256": "17d602a6578b2fb50238c1e06d85bab1be2cdb0e4dc04d0d645f2e21923fd13b"
+    },
+    "selected-test": {
+      "questions": 64,
+      "correct": 45,
+      "accuracy": 0.703125,
+      "sha256": "0d30a7618f50859e55d757f2af83fc62bb3dae468979d01a00992127a71ceea7"
+    }
+  },
+  "policy": [
+    {
+      "iteration": 1,
+      "decision": true,
+      "acceptable": true,
+      "reason": "The experiment is accepted because the fine-tuned model achieves an accuracy of 84.375% on the GSM8K dev set, significantly exceeding the baseline of 75.0%. The training loss shows a healthy convergence pattern, decreasing from ~0.5 to ~0.13 with stable evaluation loss, indicating effective learning without severe overfitting. Analysis of error samples reveals that while the model handles standard arithmetic well, it struggles with complex percentage reversals and multi-step logic involving 'ruined' or 'leftover' items, suggesting that future iterations could benefit from a slightly higher learning rate or more diverse training data covering these specific reasoning patterns to further improve generalization.",
+      "error": null,
+      "parent": []
+    },
+    {
+      "iteration": 2,
+      "decision": true,
+      "acceptable": true,
+      "reason": "The experiment achieves 90.625% accuracy on the GSM8K dev set, significantly exceeding the previous SOTA of 84.375%, which is the primary criterion for acceptance. The training loss shows a generally downward trend, although a significant spike in gradient norm (2698.4) at step 21 indicates some instability, likely due to the increased LoRA alpha; however, the model recovered and continued to converge. Error analysis reveals that the model struggles with multi-step reasoning involving implicit additions (e.g., forgetting to include replaced items in the total count) and misinterpreting fractional relationships ('1/4 more than' vs '1/4 of'), suggesting that while the format is correct, the reasoning depth for complex word problems remains a bottleneck. Future improvements could focus on stabilizing training (e.g., reducing alpha or using a lower learning rate) and enhancing the model's ability to handle multi-step logical dependencies in the data.",
+      "error": null,
+      "parent": [
+        0
+      ]
+    },
+    {
+      "iteration": 3,
+      "decision": false,
+      "acceptable": true,
+      "reason": "The experiment is rejected because the benchmark accuracy of 68.75% is significantly lower than the SOTA of 90.625%. The primary failure cause is the combination of a high LoRA rank (128) with a relatively high learning rate (1e-4) over a very short training window (32 steps), which likely caused the model to overfit to the small 64-sample dataset or destabilize the base model's general reasoning capabilities. The error samples reveal severe logical reasoning failures (e.g., misinterpreting 'twice as many' vs 'twice more than', incorrect unit conversion logic) and formatting issues (duplicated \\boxed{} tags), indicating that the higher rank did not help capture better patterns but rather amplified noise or overfitting. Future iterations should revert to a lower LoRA rank (e.g., 64 or 32) and potentially reduce the learning rate (e.g., 5e-5) to ensure stable convergence and better generalization.",
+      "error": null,
+      "parent": [
+        1
+      ]
+    }
+  ],
+  "training": [
+    {
+      "iteration": 1,
+      "algorithm": "native-llamafactory-lora-sft",
+      "steps": 32,
+      "world_size": 3,
+      "weights_changed": true,
+      "merged_changed_elements": 1691633994,
+      "train_loss_first": 0.5162,
+      "train_loss_last": 0.134,
+      "effective_recipe": {
+        "model_name_or_path": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+        "stage": "sft",
+        "do_train": true,
+        "finetuning_type": "lora",
+        "dataset": "processed_data",
+        "dataset_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-1",
+        "template": "qwen",
+        "cutoff_len": 1024,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "num_train_epochs": 2,
+        "max_steps": 32,
+        "lora_rank": 64,
+        "lora_alpha": 32,
+        "lora_dropout": 0.05,
+        "lora_target": "all",
+        "learning_rate": 0.0001,
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.1,
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        "bf16": true,
+        "report_to": "none",
+        "output_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-1/output",
+        "tokenized_path": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-1/tokenized_cache",
+        "seed": 42,
+        "val_size": 0.1,
+        "eval_strategy": "steps",
+        "save_strategy": "steps",
+        "save_steps": 10,
+        "eval_steps": 10,
+        "per_device_eval_batch_size": 4,
+        "load_best_model_at_end": true,
+        "save_total_limit": 1,
+        "logging_strategy": "steps",
+        "logging_steps": 1,
+        "flash_attn": "fa2",
+        "trust_remote_code": false,
+        "overwrite_output_dir": false,
+        "save_safetensors": true,
+        "ddp_find_unused_parameters": false,
+        "dataloader_num_workers": 0
+      },
+      "artifact_sha256": {
+        "data-processing.log": "1ba49d0b5f3f1012261904d91b3c341a7e085c5d3f27d06928249c743ba61800",
+        "merge-request.json": "69916e982181550fb85da923ac4813f8be543bb3c35deb81f710011c4e55b313",
+        "data.json": "206971b4bd840692717a3160def7a0dc33ee698084b7e84c0afc159922f51621",
+        "data_stats.json": "50a0ded61b59e35b42a11b1fce5d11688ea0c55c64b6149c8d6df92f432b8d7a",
+        "effective-train.json": "7a0be72a5654afeeac2f419b293f435f595cd239197ddd15ee67bb9b1f9e175a",
+        "process_data.py": "235f5ee1d9b06a7bb262d5aeb1e9bcf1296442205b04a05a5446ba957c19c0ca",
+        "proposed-train.yaml": "0892785f665b263c70d8df9d2295543c87a3c0ecc1c21c5d462cd54295a62efc",
+        "training-result.json": "fe9a4683aa642ffe63f70d2f967f7d622d4d8dc0876ac15ae691de3e0cc9aebf",
+        "micro-request.json": "652d896ff36141d949dc178b16b801f1a666b86f60a0febf3c89ca89a642aca7",
+        "test_params.yaml": "82ae3d0ae14488ee53660b43bd7d080efa2bc09eac4f8e246ef640178ba3d189",
+        "train-request.json": "3f977da96404775a8177b521e39f3ea21cd4f042a3fa7bb0418d9b1467132595",
+        "dataset_info.json": "fc3a169cc5970227701c9dcda210626402a52ac45bcff5fd0e0d0c5efa83d67e"
+      }
+    },
+    {
+      "iteration": 2,
+      "algorithm": "native-llamafactory-lora-sft",
+      "steps": 32,
+      "world_size": 3,
+      "weights_changed": true,
+      "merged_changed_elements": 2484656284,
+      "train_loss_first": 0.5162,
+      "train_loss_last": 0.1158,
+      "effective_recipe": {
+        "model_name_or_path": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+        "stage": "sft",
+        "finetuning_type": "lora",
+        "dataset": "processed_data",
+        "dataset_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-2",
+        "template": "qwen",
+        "cutoff_len": 1024,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "num_train_epochs": 2,
+        "max_steps": 32,
+        "lora_rank": 64,
+        "lora_alpha": 64,
+        "lora_dropout": 0.05,
+        "lora_target": "all",
+        "learning_rate": 0.0001,
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.1,
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        "bf16": true,
+        "flash_attn": "fa2",
+        "report_to": "none",
+        "output_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-2/output",
+        "tokenized_path": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-2/tokenized_cache",
+        "seed": 42,
+        "val_size": 0.1,
+        "eval_strategy": "steps",
+        "save_strategy": "steps",
+        "save_steps": 10,
+        "eval_steps": 10,
+        "per_device_eval_batch_size": 4,
+        "load_best_model_at_end": true,
+        "save_total_limit": 1,
+        "logging_strategy": "steps",
+        "logging_steps": 1,
+        "trust_remote_code": false,
+        "overwrite_output_dir": false,
+        "save_safetensors": true,
+        "do_train": true,
+        "ddp_find_unused_parameters": false,
+        "dataloader_num_workers": 0
+      },
+      "artifact_sha256": {
+        "data-processing.log": "1ba49d0b5f3f1012261904d91b3c341a7e085c5d3f27d06928249c743ba61800",
+        "merge-request.json": "8b3716c9482e144e449152f8bff82b992546233878be496d73aaa8fca5fa5b93",
+        "data.json": "206971b4bd840692717a3160def7a0dc33ee698084b7e84c0afc159922f51621",
+        "data_stats.json": "50a0ded61b59e35b42a11b1fce5d11688ea0c55c64b6149c8d6df92f432b8d7a",
+        "effective-train.json": "af30867e22d6006f42ad39e7543e65c5b8a833c3ec19c3499f684f650c929e81",
+        "process_data.py": "235f5ee1d9b06a7bb262d5aeb1e9bcf1296442205b04a05a5446ba957c19c0ca",
+        "proposed-train.yaml": "adf99171d071729cd4fa85d4e8d27d785cef36f893d40a13a856c752f4400ef9",
+        "training-result.json": "c4fd98e320e9461b0713459db1b9af62b6ccd2573a950932ba285aabd8e67bc8",
+        "micro-request.json": "a8a66d1739c8f3444ca000716f200af17ab788f5f94b7134290718163e5ee2cc",
+        "test_params.yaml": "930349bf948b99ab48511295d642a7d8868f5fa4ca0c577a052c34314ab0641c",
+        "train-request.json": "88788c8dcaf63f49d7faf5f099cf7da8b014ca57be7e2a886e42fc08ebe6cfdc",
+        "dataset_info.json": "fc3a169cc5970227701c9dcda210626402a52ac45bcff5fd0e0d0c5efa83d67e"
+      }
+    },
+    {
+      "iteration": 3,
+      "algorithm": "native-llamafactory-lora-sft",
+      "steps": 32,
+      "world_size": 3,
+      "weights_changed": true,
+      "merged_changed_elements": 3077340443,
+      "train_loss_first": 0.5162,
+      "train_loss_last": 0.103,
+      "effective_recipe": {
+        "model_name_or_path": "/home/snchen/xinyuan/models/Qwen2.5-7B-d1497293",
+        "stage": "sft",
+        "finetuning_type": "lora",
+        "dataset": "processed_data",
+        "dataset_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-3",
+        "template": "qwen",
+        "cutoff_len": 1024,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "num_train_epochs": 2,
+        "max_steps": 32,
+        "lora_rank": 128,
+        "lora_alpha": 128,
+        "lora_dropout": 0.05,
+        "lora_target": "all",
+        "learning_rate": 0.0001,
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.1,
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        "bf16": true,
+        "flash_attn": "fa2",
+        "report_to": "none",
+        "output_dir": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-3/output",
+        "tokenized_path": "/home/snchen/xinyuan/RSISys/.local/meta-agents-20261109/ft-agent/run-v6/llm-finetune/round-3/tokenized_cache",
+        "seed": 42,
+        "val_size": 0.1,
+        "eval_strategy": "steps",
+        "save_strategy": "steps",
+        "save_steps": 10,
+        "eval_steps": 10,
+        "per_device_eval_batch_size": 4,
+        "load_best_model_at_end": true,
+        "save_total_limit": 1,
+        "logging_strategy": "steps",
+        "logging_steps": 1,
+        "trust_remote_code": false,
+        "overwrite_output_dir": false,
+        "save_safetensors": true,
+        "do_train": true,
+        "ddp_find_unused_parameters": false,
+        "dataloader_num_workers": 0
+      },
+      "artifact_sha256": {
+        "data-processing.log": "1ba49d0b5f3f1012261904d91b3c341a7e085c5d3f27d06928249c743ba61800",
+        "merge-request.json": "af2cb3f941ce847adcebe746333f804cbe7564b277103f60f595d3ccf37c1af8",
+        "data.json": "206971b4bd840692717a3160def7a0dc33ee698084b7e84c0afc159922f51621",
+        "data_stats.json": "50a0ded61b59e35b42a11b1fce5d11688ea0c55c64b6149c8d6df92f432b8d7a",
+        "effective-train.json": "fb391ea426813dc240b366b505b54ea4240657ec80f48fe4f4a5b81111c462ee",
+        "process_data.py": "235f5ee1d9b06a7bb262d5aeb1e9bcf1296442205b04a05a5446ba957c19c0ca",
+        "proposed-train.yaml": "a0fbe081ebb9fa8818af3bc50c8d9fdea78a36bbe776caac53cf616158885680",
+        "training-result.json": "22502c94b2a5370b539a184686dd5efcb46ae0a2dc0dc21b673ac111740e6bf8",
+        "micro-request.json": "99843756c134c539212d959d8685e5230269fc2c8b9a93c34cce9a0a31e29e14",
+        "test_params.yaml": "78330b9a3b432d94f057f026be0eb3013727d11f301db9c24c50622dee2e980f",
+        "train-request.json": "c64a9ec6f300a4d69fb4a810d0ebe00c9155592f62d311401a7c9c6b70110b50",
+        "dataset_info.json": "fc3a169cc5970227701c9dcda210626402a52ac45bcff5fd0e0d0c5efa83d67e"
+      }
+    }
+  ],
+  "elapsed_seconds": 547.3767652511597,
+  "gpu": {
+    "indices": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "samples": 0,
+    "duration_seconds": null,
+    "utilization": null,
+    "telemetry_failure": "monitor launcher quoting produced invalid Python; no continuous GPU utilization evidence"
+  }
+}

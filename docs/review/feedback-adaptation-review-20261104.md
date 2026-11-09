@@ -1,5 +1,7 @@
 # Feedback 接入减负自查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。审查原则来自用户确认的 CP1 / CP2：
 Lab 原样输出，执行设施补最小身份/状态；反馈端负责理解和整理。
 本记录区分已修正内容、保留的运行保证和仍需用户 checkpoint 的实现取舍。
@@ -63,4 +65,4 @@ Lab 原生字段即使与宿主同名也不被解释成生命周期、metrics �
 52 项定向测试通过。整仓 1,482 项：1,470 通过、12 跳过、0 失败/错误；
 293 个 source/example/test 文件运行前后指纹一致。
 跳过的是 6 项外部 DSH SDK 和 6 项真实推理检查；未调用真实模型、训练或启动历史实验。
-详细验证见 [本次摘要](repros/feedback-thin-validation.json)，本地日志在 `.local/feedback-thin-20261104/`。
+详细验证见 [本次摘要](README.md#archived-evidence)，本地日志在 `.local/feedback-thin-20261104/`。

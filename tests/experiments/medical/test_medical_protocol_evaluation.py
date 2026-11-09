@@ -55,7 +55,9 @@ class MedicalProtocolTests(unittest.TestCase):
             'evaluation_groups': [{'benchmark_id': 'public-fixture', 'path': str(self.data),
                 'sha256': hashlib.sha256(self.data.read_bytes()).hexdigest()}],
             'base_model_paths': [self.base], 'campaign_id': 'campaign',
-            'ledger_path': self.root / 'campaign-ledger.json', 'timeout_seconds': 10}
+            # This checks freezing/scoring, not latency. Real Python runtime
+            # hashing before/after inference also consumes the outer budget.
+            'ledger_path': self.root / 'campaign-ledger.json', 'timeout_seconds': 60}
         self.lab = host.ProtocolMedicalLab(self.backend, InMemoryArtifactStore(), **self.options)
         self.addCleanup(self.lab.close)
         self.bundle = self.lab.workspace / 'candidate'

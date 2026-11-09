@@ -1,0 +1,40 @@
+{
+  "objective": "Run native AIDE search over fixed-model GSM8K inference programs.",
+  "data_dir": "runs/aide-gsm8k",
+  "max_decision_steps": 16,
+  "framework": {
+    "controller": {
+      "name": "aide",
+      "config": {
+        "upstream_root": "/absolute/path/to/aideml",
+        "worker_python": "/absolute/path/to/aide-env/bin/python",
+        "task_file": "experiments/aide/task.md",
+        "input_dir": "runs/aide-data/public",
+        "iterations": 3,
+        "lab": "research",
+        "endpoint": "http://127.0.0.1:18540/v1",
+        "model": "aide-fixed",
+        "seed": 73,
+        "timeout": 600,
+        "max_tokens": 8192,
+        "disable_thinking": true,
+        "native_config": {"num_drafts": 1, "debug_prob": 0.5, "max_debug_depth": 3, "metric_maximize": true}
+      }
+    },
+    "labs": {
+      "research": {
+        "name": "aide_program",
+        "config": {
+          "input_dir": "runs/aide-data/public",
+          "validation_data": "runs/aide-data/validation.jsonl",
+          "heldout_data": "runs/aide-data/heldout.jsonl",
+          "endpoints": ["http://127.0.0.1:18540/v1", "http://127.0.0.1:18541/v1", "http://127.0.0.1:18542/v1", "http://127.0.0.1:18543/v1"],
+          "model": "aide-fixed",
+          "timeout": 300,
+          "max_tokens": 1536,
+          "calls_per_question": 4
+        }
+      }
+    }
+  }
+}

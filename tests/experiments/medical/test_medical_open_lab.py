@@ -241,28 +241,43 @@ class MedicalOpenLabTests(unittest.TestCase):
             data.write_text(json.dumps({'id':'one', 'question':'fixture', 'options':{'A':'a','B':'b'}, 'gold':'A'})+'\n')
             backend = open_lab_experiment.RetainedAllocatedProcessBackend(root/'executor', {'CUDA_VISIBLE_DEVICES':'0',
                 'PYTHONPATH': str(REPO_ROOT/'src')})
-            lab = FixedMedicalLab(backend, InMemoryArtifactStore(), max_parallel=2, timeout_seconds=10,
+            lab = FixedMedicalLab(backend, InMemoryArtifactStore(), max_parallel=2, timeout_seconds=30,
                 python=sys.executable, evaluation_root=root/'evaluations', evaluation_groups=[{
                     'benchmark_id':'fixture','path':str(data),'sha256':hashlib.sha256(data.read_bytes()).hexdigest()}])
             try:
                 lab.execute(OperationCall('lab_write_file', {'path':'server.py', 'content': '''import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import TCPServer
+class LoopbackHTTPServer(HTTPServer):
+    def server_bind(self):
+        # No reverse DNS: this fixture only communicates over numeric loopback.
+        TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         p=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         b=json.dumps({'predictions':[{'benchmark_id':i['benchmark_id'],'id':i['id'],'text':'A'} for i in p['items']]}).encode()
         self.send_response(200);self.end_headers();self.wfile.write(b)
     def log_message(self,*args): pass
-server=HTTPServer(('127.0.0.1',0),Handler)
+print('binding loopback fixture', flush=True)
+server=LoopbackHTTPServer(('127.0.0.1',0),Handler)
 Path('port.txt').write_text(str(server.server_port))
 server.serve_forever()
 '''}))
                 service = lab.execute(OperationCall('lab_start', {'key':'owned-service','argv':[sys.executable,'server.py']})).data['job_id']
-                until = time.monotonic()+5
-                while not (lab.workspace/'port.txt').exists() and time.monotonic()<until:
-                    time.sleep(.01)
-                self.assertTrue((lab.workspace/'port.txt').is_file())
+                until = time.monotonic()+20
+                port_file = lab.workspace/'port.txt'
+                while time.monotonic()<until:
+                    state = backend.poll(lab._jobs[service][0])
+                    self.assertIsNone(state.exit_code, f'Service exited before readiness: {state}')
+                    # The file may exist before write_text has written its port.
+                    if port_file.is_file() and port_file.read_text().strip().isdigit():
+                        break
+                    time.sleep(.02)
+                else:
+                    self.fail(f'Service did not publish a port: {backend.poll(lab._jobs[service][0])}')
                 lab.execute(OperationCall('lab_write_file', {'path':'client.py', 'content': '''import sys
 from pathlib import Path
 from urllib.request import Request,urlopen

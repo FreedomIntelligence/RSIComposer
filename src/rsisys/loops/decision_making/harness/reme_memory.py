@@ -61,7 +61,8 @@ class ReMeBM25Retrieval:
                 from reme.components.keyword_index import BM25Index
                 from reme.components.tokenizer import RegexTokenizer
             except ImportError as exc:
-                raise RuntimeError('ReMe memory requires the optional rsisys[reme] dependencies') from exc
+                raise RuntimeError('ReMe memory requires the pinned optional runtime; '
+                                   'install requirements/reme.txt (see docs/memory-backends.md)') from exc
             self._components = BM25Index, RegexTokenizer
 
     def rank(self, query, notes):

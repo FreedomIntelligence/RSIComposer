@@ -1,5 +1,7 @@
 # 统一模块装配与状态接入
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。范围：本地工作树；继承已有的 decision、feedback、Lab 接口调整。
 
 ## 本次实现
@@ -113,4 +115,4 @@ restored = restore_snapshot(snapshot, new_workspace, modules=modules)
 原 LangMem/DSH/进程训练适配器不会仅因接口统一就自动变成可迁移组件，仍需它们各自的完整状态适配器。
 当前支持装配时替换；任意运行中热替换、并行 durable 恢复、外部权重/优化器迁移不在本次承诺内。
 
-本轮测试结果与 SHA 见 [验证记录](repros/unified-module-assembly-validation.json)。
+本轮测试结果与 SHA 见 [验证记录](README.md#archived-evidence)。

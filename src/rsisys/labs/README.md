@@ -80,3 +80,42 @@ answer_format 默认为 numeric，latex 时提示模型输出 boxed LaTeX 最终
 Lab 不决定采用哪个版本，也不更新模型权重。可替换的模型访问和隔离执行组件位于
 [harness_runtime.py](harness_runtime.py)，实验依赖及运行方式见
 [RRSI 配方](../../../experiments/rrsi/README.md)。
+
+## 更新权重的嵌套 SFT 与 RL
+
+内置 `seal` 和 `ttrl` Labs 复用 [WeightEngine](weight_engine.py) 及不可变阶段产物设施。
+正式方法分别见 [SEAL 配方](../../../experiments/seal/README.md) 与
+[TTRL 配方](../../../experiments/ttrl/README.md)。它们的迭代阶段由注册决策器发起；
+SEAL 的 `profile: paper` 使用原生 Trainer/SFTTrainer、按行序列和语义奖励。
+`ttrl_verl` 使用 `generate/fit` 引擎边界，由官方 verl 在一次 `fit` 中保留优化器和日程状态；
+原生内部 RL minibatch 是 Lab 的实现细节，框架只对完整阶段回执作调度。
+Lab 根据显式请求完成生成、内层训练、测量及参数更新，不自行增加 RSI 轮次。
+
+engine 提供 `name` / `simulated`、`generate(model, prompts, directory, *, sample, ...)` 和
+`train(model, rows, directory, checkpoint, *, algorithm, ...)`；SEAL 另需要
+`adapt(model, episodes, directory, ...)`。其返回结构及示例见 WeightEngine 的方法定义。
+自定义工厂可把 SEALLab 的 engine / scorer，或 TTRLLab 的 engine / verifier 替换掉，
+不改变顶层注册对象种类。`scorer_name` 必须带版本；回执中保留判分组件身份。
+
+推理和训练通过独立解释器运行，调用结束清理所拥有的进程组；`gpu_ids` 为物理编号，
+不得超出继承的 CUDA_VISIBLE_DEVICES。多 Lab 并发的统一 GPU lease 尚未实现。
+当前是同步终态执行；持久化恢复、异步作业及统一成本控制的具体缺口见
+[架构检查](../../../docs/review/weight-evolution-architecture-20261109.md)。
+
+同一 run 内装配多个 SEAL/TTRL Lab 时，分别设置不同的 `output_subdir`（简单目录名），
+默认仍为 `seal` / `ttrl`。产物隔离不提供 GPU 调度，设备应由调用方分配。
+
+## 研究型 meta-agent
+
+`ft_agent` 决策器将原生 FT-Agent 的数据准备和微调请求分别交给 `llm_finetune` Lab。
+Lab 复用 `WeightEngine` 的多卡推理，训练则在独立环境运行原生 LLaMA-Factory；
+提出假设、生成代码、接受结果和选择历史最优仍在决策器。见
+[FT-Agent 接入范围与实测](../../../experiments/ft_agent/README.md)。
+
+`aide` 决策器将原生 AIDE 的每次代码执行回调交给 `aide_program` Lab。
+Lab 隔离运行生成的程序，通过有预算的 Unix socket 代理提供固定模型推理；
+私有金标与独立评分不进入生成程序。搜索树、审查与终局选择仍由原生 Agent/Journal
+负责。见 [AIDE 配方](../../../experiments/aide/README.md)。
+
+两者都通过已有 controller/Lab 注册入口装配，没有新增顶层注册对象。
+可选研究运行时与 GPU 环境分别隔离；当前均为同步调用，不支持自动恢复原生搜索进程。

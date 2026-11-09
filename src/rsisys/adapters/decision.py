@@ -1,6 +1,7 @@
 """Adapt the default harness view to the public decision input window."""
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from contextlib import contextmanager
 import json
 
 from rsisys.loops.contracts.coordination import ReviewDecision
@@ -63,6 +64,7 @@ class ContextDecisionPolicy:
             raise TypeError('Decision policy requires decide(input) or a callable')
         self.policy = policy
         self.input_adapter = DecisionInputAdapter() if input_adapter is None else input_adapter
+        self._terminal_feedback = None
         if not callable(self.input_adapter):
             raise TypeError('Decision input adapter must be callable')
 
@@ -74,7 +76,20 @@ class ContextDecisionPolicy:
         value = (adapter or self.input_adapter)(deepcopy(context))
         if not isinstance(value, DecisionInput):
             raise TypeError('Decision input adapter must return DecisionInput')
+        if self._terminal_feedback is not None:
+            operation, feedback = self._terminal_feedback
+            value = replace(value, last_operation=operation, feedback=feedback)
         return value
+
+    @contextmanager
+    def operation_feedback_scope(self, operation, feedback):
+        """Keep the typed execution boundary independent of text compaction."""
+        previous = self._terminal_feedback
+        self._terminal_feedback = deepcopy((operation, feedback))
+        try:
+            yield
+        finally:
+            self._terminal_feedback = previous
 
     def decide(self, context):
         operation = getattr(self.policy, 'decide', None)

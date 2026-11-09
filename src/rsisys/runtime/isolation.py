@@ -95,6 +95,14 @@ class ProcessIsolation:
 
     def command(self, workspace, argv, environment, *, writable=True, scratch=None):
         workspace = Path(workspace).resolve(strict=True)
+        argv = tuple(argv)
+        if argv and Path(argv[0]).is_absolute():
+            # Runtime mounts use canonical parents. An absolute path containing
+            # ../ or a directory symlink can traverse an unmounted ancestor even
+            # when its target runtime is mounted. Preserve the executable leaf:
+            # resolving bin/python itself would erase a virtualenv's identity.
+            executable = Path(argv[0])
+            argv = (str(executable.parent.resolve() / executable.name), *argv[1:])
         if any(workspace == Path(p) or Path(p).is_relative_to(workspace)
                for p in (*self.policy.read_only, *self.policy.devices, *self.policy.sockets)):
             raise ValueError('Host runtime/device/broker paths must be outside the writable workspace')

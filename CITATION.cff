@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use RSISys in research, cite this software and the original methods you evaluate."
+type: software
+title: RSISys
+authors:
+  - name: RSISys contributors
+repository-code: "https://github.com/satsuki2486441738/RSISys"
+license: Apache-2.0

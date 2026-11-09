@@ -1,5 +1,7 @@
 # Decision Harness / Policy 接口修复
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。对应[修复前审查](decision-module-contract-review-20261104.md)。
 范围是本地 Decision 两层替换边界及必要的 Feedback/装配接线，保留工作树已有的反馈模块调整。
 本次未 push、部署或启动研究任务，未改研究预算和研究策略 prompt。
@@ -61,9 +63,9 @@ review、异步、模型升级、持久恢复仍是独立能力，不强加到�
 新增 28 项回归全部通过。最终全量 1,555 项：1,543 通过、12 跳过，零失败/错误；
 跳过的是未安装可选 SDK 或未授权真实服务的检查。源码及配置指纹在测试前后无变化。
 
-修复前 [probe.json](repros/decision-module-boundary-probe.json) 与其验证指纹保留不变；
-修复后写入 [probe-current.json](repros/decision-module-boundary-probe-current.json)。
-最终测试及源码指纹见 [validation](repros/decision-module-windows-validation.json)。
+修复前 [probe.json](README.md#archived-evidence) 与其验证指纹保留不变；
+修复后写入 [probe-current.json](README.md#archived-evidence)。
+最终测试及源码指纹见 [validation](README.md#archived-evidence)。
 
 ```sh
 PYTHONPATH=src:tests .local/langmem-validation/bin/python -m unittest -q test_decision_module_windows

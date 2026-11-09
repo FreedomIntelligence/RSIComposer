@@ -236,6 +236,20 @@ class Application:
                                max_decision_steps=(self.config.max_decision_steps
                                                    if max_decision_steps is None else max_decision_steps))
 
+    def controller_report(self):
+        """Read optional method-owned progress, distinct from transport lifecycle.
+
+        The host validates JSON transport only; it does not infer success from a
+        finish decision or select models from the method's reported metrics.
+        """
+        report = self.assembly.controller_report if self.assembly is not None else None
+        if report is None:
+            return None
+        value = report()
+        if not isinstance(value, dict):
+            raise TypeError('Controller report must return a JSON object')
+        return json.loads(json.dumps(value, allow_nan=False))
+
     def close(self):
         self._closed = True
         try:

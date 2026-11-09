@@ -62,7 +62,7 @@ class ReMeConfigurationTests(unittest.TestCase):
             from importlib.metadata import PackageNotFoundError
             with patch('rsisys.loops.decision_making.harness.reme_memory.metadata.version',
                        side_effect=PackageNotFoundError('reme-ai')):
-                with self.assertRaisesRegex(RuntimeError, r'rsisys\[reme\]'):
+                with self.assertRaisesRegex(RuntimeError, r'requirements/reme\.txt'):
                     ResearchAssembly.reme().prepare()
 
     def test_open_lab_preflight_precedes_claim_and_rejects_legacy_mixture(self):
@@ -78,7 +78,7 @@ class ReMeConfigurationTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
 
-@unittest.skipUnless(HAS_REME, 'Optional rsisys[reme] runtime not installed')
+@unittest.skipUnless(HAS_REME, 'Optional pinned ReMe runtime not installed')
 class ReMeMemoryTests(unittest.TestCase):
     def setUp(self):
         directory = TemporaryDirectory()
@@ -300,7 +300,7 @@ class ReMeMemoryTests(unittest.TestCase):
         self.assertEqual(loop.harness.state.operation_results[-1].data['memory']['memory_id'], 'adapter')
 
 
-@unittest.skipUnless(HAS_REME, 'Optional rsisys[reme] runtime not installed')
+@unittest.skipUnless(HAS_REME, 'Optional pinned ReMe runtime not installed')
 class ReMeContinuationTests(continuation_tests.ContinuationTests):
     """Run the existing evidence/artifact handoff contract with ReMe on both ends."""
     def make_harness(self, name):

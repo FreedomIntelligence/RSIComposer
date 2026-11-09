@@ -1,0 +1,8 @@
+RSISys
+Copyright 2026 RSISys contributors.
+
+RSISys is distributed under the Apache License, Version 2.0.
+Third-party notices and separately licensed material are listed in
+THIRD_PARTY_NOTICES.md. In particular, adapted SEAL prompts and sequence
+construction retain their upstream MIT notice in
+src/rsisys/labs/SEAL_NOTICE.txt (also included in the installed package).

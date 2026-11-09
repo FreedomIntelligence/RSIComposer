@@ -2,6 +2,8 @@
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -75,3 +77,36 @@ class MathParallelTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 run_workers([[sys.executable, '-c', 'import time; time.sleep(30)']], [dict(os.environ)], directory, .1)
             run_workers([[sys.executable, '-c', 'pass']], [dict(os.environ)], directory, 3)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX process groups')
+    def test_parent_exit_does_not_leave_a_term_ignoring_descendant(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            child = ('import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                     'print("ready", flush=True); time.sleep(30)')
+            parent = ('import subprocess,sys,pathlib; '
+                f'p=subprocess.Popen([sys.executable,"-c",{child!r}],stdout=subprocess.PIPE,text=True); '
+                'p.stdout.readline(); '
+                f'pathlib.Path({str(directory / "child-pid")!r}).write_text(str(p.pid))')
+            def cleanup():
+                path = directory / 'child-pid'
+                if path.exists():
+                    try:
+                        os.kill(int(path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            self.addCleanup(cleanup)
+            try:
+                run_workers([[sys.executable, '-c', parent]], [dict(os.environ)], directory, 5)
+                pid = int((directory / 'child-pid').read_text())
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    status = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='],
+                        capture_output=True, text=True, check=False).stdout.strip()
+                    if not status or status.startswith('Z'):
+                        break
+                    time.sleep(.05)
+                else:
+                    self.fail('Worker descendant survived after its launcher exited')
+            finally:
+                cleanup()

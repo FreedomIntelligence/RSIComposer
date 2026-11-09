@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,24 @@ description = "Modular RSI framework with pluggable controllers and Lab executio
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party/LANGMEM-LICENSE"]
+authors = [{name = "RSISys contributors"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/satsuki2486441738/RSISys"
+Documentation = "https://github.com/satsuki2486441738/RSISys/blob/main/docs/README.md"
+Issues = "https://github.com/satsuki2486441738/RSISys/issues"
 
 [project.scripts]
 rsisys = "rsisys.cli:main"
@@ -20,12 +38,14 @@ include = ["rsisys", "rsisys.*"]
 [project.optional-dependencies]
 math = ["math-verify[antlr4_13_2]==0.9.0"]
 dsh = ["deepseek-harness-sdk==0.2.1rc2"]
-reme = ["reme-ai[as] @ git+https://github.com/agentscope-ai/ReMe.git@e3fade0a781d080a4be7fb83648a3b2e6d477522"]
 langmem = ["langmem==0.0.30", "trustcall==0.0.39", "langgraph==1.2.19",
            "langchain-core==1.7.4", "langgraph-checkpoint-sqlite==3.1.3"]
 test = ["jsonschema>=4,<5"]
+dev = ["jsonschema>=4,<5", "build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
 [tool.setuptools.package-data]
+"rsisys.labs" = ["SEAL_NOTICE.txt"]
+"rsisys.controllers" = ["FT_AGENT_NOTICE.txt", "AIDE_NOTICE.txt"]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
 "rsisys.loops.decision_making.feedback" = ["prompts/*.txt"]
 "rsisys.loops.decision_making.harness.policy" = ["prompts/*.txt"]

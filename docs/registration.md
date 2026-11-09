@@ -107,6 +107,10 @@ def register(registry):
 运行身份保留选择项、版本、参数及注册文件 SHA；插件引用的其他代码和资源版本由接入方管理。
 重复注册、未知名称或无效参数在执行前失败。
 
+通过 `rsisys catalog` 或 `Registry.describe()` 查看注册名称和版本；
+可用 `--plugin plugin.py` 显式加载自己的受信任注册文件。查询本身不构造 Lab 或模型，
+不证明可选依赖或任意组件组合已经就绪。
+
 `labs` 可配置多个独立实例，工具统一命名为 `别名.原生操作名`，例如 `math.train`、
 `math.evaluate`、`data.prepare`；Lab 收到的操作恢复为自己的原生名称。
 `--permissions permissions.json` 使用既有 ActionPermissions 配置，操作授权名称使用完整别名。
@@ -119,12 +123,22 @@ Lab 若拥有后台资源，应实现 `shutdown(mode) -> bool` 与可重试、�
 
 ## 内置方案
 
+来源、参考实现与原生适配的区别、实跑范围和结果限制见[方法支持与验证范围](methods.md)。
+下表用于查找注册名称，不代表论文收益已复现。
+
 | 名称 | 类型 | 行为 |
 | --- | --- | --- |
 | `rrsi` | 决策器 | 固定模型的 harness 进化、质量/成本/稳定性筛选，见 [实验配方](../experiments/rrsi/README.md)。 |
+| `seal` | 决策器 / Lab | self-edit → 内层 SFT 评测 → top-1 → 外层 SFT；见 [SEAL 配方](../experiments/seal/README.md)。 |
+| `ttrl` | 决策器 / Lab | 无标签 rollout → 多数奖励 → GRPO；见 [TTRL 配方](../experiments/ttrl/README.md)。 |
+| `ttrl_verl` | 决策器 / Lab | `evaluate → fit → evaluate`，一次 fit 保持官方全参数训练的优化器与 reference 状态；见 [原生配置](../experiments/ttrl/paper.json)。 |
 | `rest_em` | 决策器 | 生成 → 二值筛选 → 从初始模型训练 → 评测；详见 [ReST^EM 示例](../experiments/rest_em/README.md)。 |
 | `single_loop` | 决策器 | 重复调用指定 Lab 操作，读取回执后再进入下一次迭代；不需要模型。 |
 | `meta_agent` | 决策器 | 使用宿主 `decision_maker` 模型选择动作；默认安装显式 memory，可用 `config.memory=false` 关闭。 |
+| `ft_agent` | 决策器 | 固定版本的上游假设生成、代码生成、反馈与 SOTA 历史选择；[本地微调配方](../experiments/ft_agent/README.md)。 |
+| `llm_finetune` | Lab | 隔离数据处理、原生 LLaMA-Factory 微调、独立开发/留出评分。 |
+| `aide` | 决策器 | 原生 AIDE Agent/Journal，执行回调转为 Lab 操作；[配方](../experiments/aide/README.md)。 |
+| `aide_program` | Lab | 隔离执行生成的 Python 程序，模型推理由宿主代理，评分与参考答案留在 Lab。 |
 | `math` | Lab | 由数学校验器与 fixture / Transformers 引擎组成；见 [Lab 组件](../src/rsisys/labs/README.md)。 |
 | `local_process` | Lab | 复用已有本地程序 Lab，提供代码文件与 start/poll/result/cancel 操作；需宿主 `execution=local_process`。 |
 
@@ -185,6 +199,19 @@ def register(registry):
 `Application(..., modules=...)` 仍是可用的高级接口。
 
 ## 结果、状态与验收边界
+
+决策器可选实现两个能力，正式协议从 `rsisys.api` 导入：
+
+- `ControllerOperationRequirements.required_operations() -> tuple[str, ...]`：返回带 Lab
+  alias 的必需操作名，如 `('ttrl.rollout', 'ttrl.reward', 'ttrl.train', 'ttrl.evaluate')`。
+  注册装配时检查这些操作存在，避免训练开始后才发现 Lab 不匹配。schema 及语义仍需运行验证。
+- `ControllerReportProvider.report() -> dict`：返回方法自己的 JSON 状态。
+  `Application.controller_report()` 读取它，CLI 将其放入 `result.json.controller_report`。
+  内置 SEAL / TTRL 报告算法状态、训练轮数、当前 checkpoint 和真实训练信息。
+
+无需继承 Protocol；未提供这些方法的旧决策器继续按原接口运行。
+`finished` 是 host 生命周期状态，不能代替 `controller_report.status` 或论文收益验收。
+host 仅校验报告为 JSON，不根据分数替方法做成功判定或模型选择。
 
 运行保存 `result.json`、操作账本及装配身份。通用入口不推断领域任务是否真实训练或模拟，
 这两个汇总字段为 `null`，须查看原始回执与训练证据。

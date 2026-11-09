@@ -1,6 +1,7 @@
 import argparse
 from dataclasses import asdict, replace
 import json
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from rsisys.config import DemoConfig, build_demo
@@ -13,7 +14,15 @@ from rsisys.runtime.files import atomic_write, json_bytes
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='RSISys: RSI controllers, Labs and feedback')
+    try:
+        installed_version = version('rsisys')
+    except PackageNotFoundError:
+        installed_version = 'source checkout (not installed)'
+    parser.add_argument('--version', action='version', version=f'rsisys {installed_version}')
     commands = parser.add_subparsers(dest='command', required=True)
+    catalog = commands.add_parser('catalog', help='List registered controllers and Labs without running them')
+    catalog.add_argument('--plugin', type=Path, action='append', default=[],
+                         help='Explicitly trust a Python registration file; repeatable')
     demo = commands.add_parser('demo', help='Run the original in-memory mock example')
     demo.add_argument('--config', type=Path, required=True)
     run = commands.add_parser('run', help='Start a new persistent local run')
@@ -35,7 +44,12 @@ def main() -> None:
     inspect.add_argument('--snapshot', type=Path, required=True)
     args = parser.parse_args()
     try:
-        if args.command == 'demo':
+        if args.command == 'catalog':
+            registry = Registry()
+            for path in args.plugin:
+                registry.load_plugin(path)
+            output = registry.describe()
+        elif args.command == 'demo':
             config = DemoConfig.load(args.config)
             runner, store = build_demo(config)
             with runner:
@@ -89,6 +103,9 @@ def main() -> None:
                           'snapshot': snapshot, 'experience_records': len(app.store.records()), **asdict(result)}
                 if app.custom_assembly:
                     output['framework'] = app.modules.configuration()
+                report = app.controller_report()
+                if report is not None:
+                    output['controller_report'] = report
             atomic_write(app.config.data_dir / 'result.json', json_bytes(output))
         print(json.dumps(output, ensure_ascii=False, indent=2))
     except (TypeError, ValueError, OSError, RuntimeError) as exc:

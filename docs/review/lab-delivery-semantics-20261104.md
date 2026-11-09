@@ -1,5 +1,7 @@
 # Lab 失败结果与反馈事件交付
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 用户已确认：可由模型修正的工具错误作为失败结果回传并继续 decision；
 同一终态结果的每次收集都归档，默认只整理一次 memory，显式请求可再整理。
 权限拒绝、身份冲突和基础设施故障仍交给 host。
@@ -90,7 +92,7 @@ OperationResult.payload 作为归档指纹来源；带元数据和不带元数�
 相关测试构造的 operation history 同样使用此公开入口，保留完整归档找回、live 依赖保护和
 重复读取 compact 的原有断言。
 相关 108 项检查全部通过；全量 1607 项通过，其中 12 项跳过。
-测试/来源 SHA 与修复后复现见 [validation](repros/lab-delivery-semantics-validation.json)。
+测试/来源 SHA 与修复后复现见 [validation](README.md#archived-evidence)。
 
 没有真实模型推理或训练效果结论。事件 ID 不自动证明原始程序的完整代码、权重、部署、
 评测协议或采纳；收集回执 issuing_model 仍是收集 decision 的模型。

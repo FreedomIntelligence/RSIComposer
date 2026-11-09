@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-09",
+  "scope": "registered native backend integration, not paper performance reproduction",
+  "paper_gain_reproduced": false,
+  "model": {
+    "id": "Qwen/Qwen2.5-7B",
+    "revision": "d149729398750b98c0af14eb82c78cfe92750796"
+  },
+  "evidence_root": ".local/paper-adapters-20261109",
+  "runs": {
+    "ttrl": {
+      "artifact_directory": "ttrl-smoke-v3-run",
+      "source_archive": "source-v3.tar.gz",
+      "source_sha256": "861d2ad407491b011942f35daf0cf60bd0d8151f9af036ddf03eab542f7e0a55",
+      "host_status": "finished",
+      "controller_status": "completed",
+      "training_performed": true,
+      "rounds_completed": 1,
+      "result_sha256": "cefd4fba9cab784028c02a56953e3c90603b18b09246c2f18b86f22bf1a6dc6e",
+      "training": {
+        "steps": 1,
+        "samples": 8,
+        "world_size": 8,
+        "algorithm": "ttrl-native-grpo",
+        "weights_changed": true,
+        "published_changed_tensors": 293,
+        "upstream_revision": "5806e119789132fcb43552beaf2532d7d0447213",
+        "effective_config_sha256": "34d25515f36af26a163fc6976f5bbcf101f102ad3c20e6d1e28e756f8a4a2a7b",
+        "unlabeled_parquet_sha256": "38a3f58ff96a7b56c31ac68b3af88e143057dc40f9104c7ebcd579ccb29ee688",
+        "checkpoint_selection": "configured-final-step"
+      },
+      "training_file_sha256": "41737f355c4bf517f24040ff052384a292959603bd86dea50427212262f17b33",
+      "recipe": {
+        "target_questions": 8,
+        "epochs": 1,
+        "votes_per_prompt": 8,
+        "train_responses_per_prompt": 4,
+        "eval_samples_per_question": 2,
+        "response_max_tokens": 256,
+        "native_mini_batch_size": 8,
+        "eager": true,
+        "rollout_gpu_memory_utilization": 0.5
+      },
+      "numerical_audit": {
+        "tensors": 339,
+        "numerically_changed_tensors": 293,
+        "canonical_dtype": "float64"
+      }
+    },
+    "seal": {
+      "artifact_directory": "seal-smoke-v4-run",
+      "source_archive": "source-v4.tar.gz",
+      "source_sha256": "d9af3be007f5b3641fa4bc429646a8481a80e1cb04a964efeb03ef95530b6de4",
+      "host_status": "finished",
+      "controller_status": "completed",
+      "training_performed": true,
+      "rounds_completed": 1,
+      "result_sha256": "9849417c203bf616d7404383f0fe030fc4f1f247c4f27da81e530f932d274c3f",
+      "training": {
+        "steps": 2,
+        "samples": 4,
+        "world_size": 2,
+        "algorithm": "sft",
+        "before_sha256": "d7aa07574a3c04188968777857c8e90259b9c74367befde30475204b1347c147",
+        "after_sha256": "d58c8296ee9c3f87ac85afb78336bccc3385467a74b93e94c0e77de6275a6c01",
+        "weights_changed": true,
+        "rank_weights_identical": true,
+        "merged_changed_elements": 3382454812,
+        "versions": {
+          "transformers": "4.52.4",
+          "trl": "0.18.1",
+          "peft": "0.15.2"
+        },
+        "effective_batch_size": 2,
+        "lr_scheduler": "linear",
+        "weight_decay": 0.0
+      },
+      "training_file_sha256": "d10cbf501f5ade61199d98c9a61f67ae5f0d9d36c1d454c3b8adcdd7106ed031",
+      "recipe": {
+        "training_documents": 4,
+        "heldout_documents": 2,
+        "questions_per_document": 1,
+        "candidates": 1,
+        "inner_seeds": 3,
+        "evaluation_seeds": 1,
+        "inner_epochs": 1,
+        "inner_max_length": 256,
+        "outer_epochs": 1,
+        "outer_gradient_accumulation_steps": 1,
+        "self_edit_max_tokens": 128,
+        "inner_gpus": 8,
+        "outer_gpus": 2,
+        "scorer": "squad-smoke-only",
+        "semantic_service_used": false
+      }
+    },
+    "ttrl_protocol_budget": {
+      "artifact_directory": "ttrl-protocol-v5-run",
+      "source_archive": "source-v5.tar.gz",
+      "source_sha256": "cc0794fabfed6662e9c8349c18cb813219fecdf8cf071232a4c4c2023e8eb96c",
+      "host_status": "finished",
+      "controller_status": "completed",
+      "training_performed": true,
+      "rounds_completed": 1,
+      "result_sha256": "4100d0c789d7705ba19f77bbed28d5f8b49c9a86b20e96c8e995be43fb644761",
+      "training": {
+        "steps": 1,
+        "samples": 32,
+        "world_size": 8,
+        "algorithm": "ttrl-native-grpo",
+        "weights_changed": true,
+        "published_changed_tensors": 318,
+        "upstream_revision": "5806e119789132fcb43552beaf2532d7d0447213",
+        "effective_config_sha256": "f2b31deb48670aa135e775f8330ec9319c872db02323f0308bf761a6ddec29f2",
+        "unlabeled_parquet_sha256": "63079b6d5ea9de36a0f0f6b1db1cb3d6b4e4dd40a8a33399eac4ae4fa05b5f40",
+        "checkpoint_selection": "configured-final-step"
+      },
+      "training_file_sha256": "b0c902b862e925214ef88fb34338fc8b2a6779f05b5eaadb70182b60c0a460c2",
+      "evaluations": [
+        {
+          "round": 0,
+          "metrics": {
+            "samples_per_question": 16,
+            "target_accuracy": 0.6328125,
+            "target_questions": 32,
+            "transfer_questions": 0
+          }
+        },
+        {
+          "round": 1,
+          "metrics": {
+            "samples_per_question": 16,
+            "target_accuracy": 0.67578125,
+            "target_questions": 32,
+            "transfer_questions": 0
+          }
+        }
+      ],
+      "recipe": {
+        "target_questions": 32,
+        "selection": "first32-upstream-order-before-evaluation",
+        "epochs": 1,
+        "votes_per_prompt": 64,
+        "train_responses_per_prompt": 32,
+        "eval_samples_per_question": 16,
+        "response_max_tokens": 3072,
+        "native_mini_batch_size": 1,
+        "eager": true,
+        "rollout_gpu_memory_utilization": 0.65
+      },
+      "receipt_statuses": [
+        "completed",
+        "completed",
+        "completed"
+      ]
+    }
+  },
+  "checks": {
+    "offline_suite": {
+      "tests": 2070,
+      "skipped": 75,
+      "passed": true
+    },
+    "additional_adapter_suite_on_b200": {
+      "tests": 8,
+      "skipped": 0,
+      "passed": true
+    },
+    "node_suite": {
+      "tests": 147,
+      "passed": true
+    },
+    "seal_conformance": {
+      "revision": "6d9c9f9ee392c6cc618e771f399d436d190f6ca4",
+      "sequence_cases": 480,
+      "selection_cases": 800,
+      "prompt_exact": true,
+      "semantic_prompt_exact": true,
+      "answer_prompt_exact": true,
+      "passed": true,
+      "scope": "both sequence branches, prompts and stable selection; GPU Trainer validation is separate"
+    },
+    "wheel_and_sdist_installation_smoke": true,
+    "owned_ray_cleanup": {
+      "sessions": 2,
+      "remaining_owned_processes": 0
+    },
+    "final_source_sha256": "bccf4bbbf2944fd0b5c2dd5bd5862b23f4d15ed3b8e88e8569c1ab37293ff075"
+  },
+  "tested_packages": {
+    "torch": "2.7.0+cu128",
+    "vllm": "0.9.1",
+    "transformers": "4.52.4",
+    "trl": "0.18.1",
+    "peft": "0.15.2",
+    "accelerate": "1.7.0",
+    "datasets": "3.6.0",
+    "ray": "2.47.1",
+    "openai": "1.86.0",
+    "flash-attn": "2.8.3",
+    "nvidia-nccl-cu12": "2.28.9",
+    "tensordict": "0.6.2",
+    "torchdata": "0.11.0",
+    "hydra-core": "1.3.8",
+    "pyarrow": "26.0.1",
+    "latex2sympy2_extended": "1.11.0",
+    "math-verify": "0.9.0"
+  },
+  "prepared_paper_datasets": {
+    "seal": {
+      "upstream_revision": "6d9c9f9ee392c6cc618e771f399d436d190f6ca4",
+      "profile": "paper",
+      "source": {
+        "general-knowledge/data/synthetic_data/train/iter0_train.json": "8d292d69bcef111e15ca8d39c5c8cfe01dd28ee4240f17c57548e1793e889690",
+        "general-knowledge/data/synthetic_data/train/iter1_train.json": "756cb6355bc2f9abdedaf76572ea6ccfa9ec8b5e91953d2130a8a121159c9ca0",
+        "general-knowledge/data/synthetic_data/eval/base_val.json": "fe60ef47753bcef4bab672bf031fb2b3af383e54d454d6f9f9168849fe0055b4"
+      },
+      "outputs": {
+        "train-round-1.json": {
+          "sha256": "e3d9f87c8edcccc9e15c357388be5da8b5a3165b60019c52be485d7d02e8e631",
+          "documents": 50,
+          "questions": 225
+        },
+        "train-round-2.json": {
+          "sha256": "78eee40c769ade0d95af866293685e347f0376f07b4feae97b5ed8b3ea3248c0",
+          "documents": 50,
+          "questions": 243
+        },
+        "heldout.json": {
+          "sha256": "cefec8fffde473add48f147e57083840d1e41ef4a5412858cb9953a8a7a1a94d",
+          "documents": 200,
+          "questions": 974
+        }
+      }
+    },
+    "ttrl": {
+      "upstream_revision": "5806e119789132fcb43552beaf2532d7d0447213",
+      "source_sha256": "c1680e2e2e034486ad1b7f5aa6dec7ce47ec801769d011cc5d6934ac139fcd46",
+      "seed": null,
+      "profile": "paper",
+      "target": 500,
+      "transfer": 0,
+      "files": {
+        "unlabeled.json": "e54cecec603413e70688083cff24d5c59a84505ee6bd3ef87658a3550238afb5",
+        "evaluation.json": "f8c8c426cf926a0a595fd7dfe62fb95f0c9d6a9fe0b1cdcb508475db6a6f62d8"
+      }
+    }
+  },
+  "hardware_compatibility": {
+    "gpu_count": 8,
+    "gpu_family": "NVIDIA B200/B20Z",
+    "nccl_version": "2.28.9",
+    "NCCL_CUMEM_HOST_ENABLE": "0",
+    "NCCL_CUMEM_ENABLE": "0",
+    "NCCL_NVLS_ENABLE": "0",
+    "probe": "8-rank NCCL all_reduce of ones returned 8 on every rank"
+  }
+}

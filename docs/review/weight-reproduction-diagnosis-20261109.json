@@ -1,0 +1,404 @@
+{
+  "date": "2026-11-09",
+  "scope": "Forensic analysis and registered frozen-edit inner adaptation controls, not a complete paper reproduction",
+  "framework_commit": "b5a0e899364b05f03d07e3ff6c52699f5228d84d",
+  "paper_versions": {
+    "seal": "2506.10943v2",
+    "ttrl": "2504.16084v3"
+  },
+  "upstream_revisions": {
+    "seal": "6d9c9f9ee392c6cc618e771f399d436d190f6ca4",
+    "ttrl": "5806e119789132fcb43552beaf2532d7d0447213"
+  },
+  "conclusion": {
+    "implementation_and_protocol_deviations_confirmed": true,
+    "paper_invalidity_established": false,
+    "stable_paper_gain_reproduced": false
+  },
+  "seal": {
+    "original_paired_em": {
+      "n": 45,
+      "before_correct": 7.0,
+      "after_correct": 7.0,
+      "wrong_to_right": 2,
+      "right_to_wrong": 2,
+      "mcnemar_exact_two_sided": 1
+    },
+    "original_paired_f1_document_bootstrap_95_interval": [
+      -0.11669753766450687,
+      0.08312463523847552
+    ],
+    "controls": [
+      {
+        "split": "joined",
+        "schedule": "constant",
+        "initial_f1": 0.3123207613965091,
+        "final_f1": 0.2863926169603575,
+        "delta": -0.0259281444361516,
+        "document_bootstrap_95": [
+          -0.11669753766450687,
+          0.08312463523847552
+        ],
+        "paired_em": {
+          "n": 45,
+          "before_correct": 7.0,
+          "after_correct": 7.0,
+          "wrong_to_right": 2,
+          "right_to_wrong": 2,
+          "mcnemar_exact_two_sided": 1
+        },
+        "initial_steps": 160,
+        "final_steps": 160
+      },
+      {
+        "split": "newlines",
+        "schedule": "constant",
+        "initial_f1": 0.1304413976891862,
+        "final_f1": 0.12801784806944766,
+        "delta": -0.0024235496197385353,
+        "document_bootstrap_95": [
+          -0.12245922602380269,
+          0.09920992245112434
+        ],
+        "paired_em": {
+          "n": 45,
+          "before_correct": 1.0,
+          "after_correct": 1.0,
+          "wrong_to_right": 1,
+          "right_to_wrong": 1,
+          "mcnemar_exact_two_sided": 1
+        },
+        "initial_steps": 750,
+        "final_steps": 720
+      },
+      {
+        "split": "joined",
+        "schedule": "linear",
+        "initial_f1": 0.426854358236267,
+        "final_f1": 0.40259818212569637,
+        "delta": -0.024256176110570626,
+        "document_bootstrap_95": [
+          -0.10634457627622841,
+          0.06669165054803353
+        ],
+        "paired_em": {
+          "n": 45,
+          "before_correct": 12.0,
+          "after_correct": 10.0,
+          "wrong_to_right": 0,
+          "right_to_wrong": 2,
+          "mcnemar_exact_two_sided": 0.5
+        },
+        "initial_steps": 160,
+        "final_steps": 160
+      },
+      {
+        "split": "newlines",
+        "schedule": "linear",
+        "initial_f1": 0.17697880421736076,
+        "final_f1": 0.3308691388728678,
+        "delta": 0.15389033465550703,
+        "document_bootstrap_95": [
+          -0.015110953120011948,
+          0.32515895561734387
+        ],
+        "paired_em": {
+          "n": 45,
+          "before_correct": 2.0,
+          "after_correct": 7.0,
+          "wrong_to_right": 7,
+          "right_to_wrong": 2,
+          "mcnemar_exact_two_sided": 0.1796875
+        },
+        "initial_steps": 750,
+        "final_steps": 720
+      }
+    ],
+    "selection": [
+      {
+        "candidates": 16,
+        "selected": 8,
+        "top1_ties": 0,
+        "selected_below_no_adapt": 2,
+        "selected_mean_f1": 0.3093064081327697,
+        "candidate_average_f1": 0.253551032463679,
+        "selection_uplift_over_random_candidate": 0.05575537566909073
+      },
+      {
+        "candidates": 16,
+        "selected": 8,
+        "top1_ties": 0,
+        "selected_below_no_adapt": 1,
+        "selected_mean_f1": 0.33854088749139194,
+        "candidate_average_f1": 0.28439130492880804,
+        "selection_uplift_over_random_candidate": 0.054149582562583884
+      }
+    ],
+    "sequence_counts": [
+      [
+        {
+          "actual": 2,
+          "paper_newlines": 8,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 7,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 5,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 5,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 8,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        }
+      ],
+      [
+        {
+          "actual": 2,
+          "paper_newlines": 8,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 7,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 8,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 4,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 11,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 9,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 7,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 7,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 6,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 7,
+          "recorded_steps": 20
+        },
+        {
+          "actual": 2,
+          "paper_newlines": 8,
+          "recorded_steps": 20
+        }
+      ]
+    ],
+    "control_episodes": 64,
+    "control_optimizer_steps": 3580,
+    "scope_notes": [
+      "Frozen edits and model snapshots; only inner sequence splitting and learning-rate schedule varied.",
+      "No new outer training or self-edit selection.",
+      "Linear schedule means linear decay to zero with no warmup, retaining the existing AdamW weight decay.",
+      "Document bootstrap intervals condition on these eight documents, edits and one training seed; no across-training-seed uncertainty.",
+      "Four control conditions reported; post-hoc diagnosis is not independent confirmation."
+    ]
+  },
+  "ttrl": {
+    "target": {
+      "n": 32,
+      "before_correct": 23,
+      "after_correct": 23,
+      "wrong_to_right": 0,
+      "right_to_wrong": 0,
+      "mcnemar_exact_two_sided": 1,
+      "official_scorer_before": 23,
+      "official_scorer_after": 23
+    },
+    "transfer": {
+      "n": 128,
+      "before_correct": 92,
+      "after_correct": 88,
+      "wrong_to_right": 2,
+      "right_to_wrong": 6,
+      "mcnemar_exact_two_sided": 0.2890625,
+      "official_scorer_before": 92,
+      "official_scorer_after": 88
+    },
+    "reward_audit": [
+      {
+        "groups": 32,
+        "samples": 512,
+        "correct_samples": 337,
+        "correct_majority": 23,
+        "zero_advantage_groups": 8,
+        "active_wrong_majority_groups": 9,
+        "wrong_majority_with_correct_available": 7,
+        "truncated": 17,
+        "missing_box": 23,
+        "reward_gold_disagreement": 75,
+        "wrong_positive": 51,
+        "correct_negative": 24,
+        "official_correct_disagreement": 1,
+        "official_reward_disagreement": 36,
+        "official_pseudo_correct": 20
+      },
+      {
+        "groups": 32,
+        "samples": 512,
+        "correct_samples": 348,
+        "correct_majority": 26,
+        "zero_advantage_groups": 9,
+        "active_wrong_majority_groups": 6,
+        "wrong_majority_with_correct_available": 3,
+        "truncated": 12,
+        "missing_box": 16,
+        "reward_gold_disagreement": 47,
+        "wrong_positive": 37,
+        "correct_negative": 10,
+        "official_correct_disagreement": 2,
+        "official_reward_disagreement": 37,
+        "official_pseudo_correct": 24
+      }
+    ],
+    "scope_notes": [
+      "Labels used only for this read-only audit; no rewards, optimizer input or checkpoint selection were changed.",
+      "Official reward package replayed on exactly the same archived responses.",
+      "reward_audit.correct_negative counts gold-correct responses with zero reward, not necessarily negative advantage.",
+      "Scoring agreement on the final 160 questions does not establish reward/backend equivalence.",
+      "No new RL training was performed in this diagnostic task."
+    ]
+  },
+  "evidence": {
+    "raw_archive_sha256": "5dcdb05c67d3cb7f71c4afe36c5e5834f6fb91c14ddf46ef95fff59ac183d61f",
+    "raw_archive_bytes": 154221,
+    "initial_plugin_sha256": "fff695ad95febee962dab1557c096600482763cf6e3e47eee290076a2638e9a9",
+    "initial_plugin_note": "Recovered original plugin hash matches the first registered run metadata; supplemental file retained beside raw archive.",
+    "scheduler_patch": {
+      "original_worker_sha256": "f1fc88ae5dc5d5565b79ff6c27e9a378a4f1233e1dc9be14b7d11b8ea59cd8fb",
+      "diagnostic_worker_sha256": "bc65c58dcd444a2794fde660d7fa5f0c9a9a1f436dabc222070a1776add3b57d",
+      "scope": "Only adapt() reads an explicit constant/linear diagnostic scheduler; default constant is unchanged."
+    },
+    "paper_html_sha256": {
+      "seal": "a874be9524a15211dca63e6df4c826485eb5be4784116e1e784b14552f920ace",
+      "ttrl": "4608d07b56d17a063c5ffe7fdad9557385c897cb569367f9de1ecb57b847cfb2"
+    },
+    "raw_directory": ".local/reproduction-diagnosis-20261109",
+    "final_gpu_memory_mib": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}

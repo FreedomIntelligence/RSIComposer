@@ -1,5 +1,7 @@
 # M04 / M10：Lab 执行与结果交付审查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 本次沿开放动作出口审查实际进程、异步结果、任务所有权和反馈交付。
 已修复三个进程层缺陷；两个交付语义问题已复现，方案待用户 checkpoint。
 这不是整个 Lab 或真实训练部署的验收。
@@ -32,7 +34,7 @@ watcher / reader 线程启动失败也进入失败与清理路径，避免 Popen
 | watcher 异常后 close | 程序活着但 session 为 0 | 程序已回收，保留 failed 终态证据，session 为 0 |
 
 原始修复前记录：`.local/lab-execution-review-20261104/runtime-before.json`。
-修复后与交付问题的可重复脚本：[lab-execution-boundary-probe.py](repros/lab-execution-boundary-probe.py)。
+修复后与交付问题的可重复脚本：[lab-execution-boundary-probe.py](README.md#archived-evidence)。
 该脚本只运行临时 CPU 程序和确定性 decision / memory fixture，不调用模型服务。
 
 ## 待 checkpoint：工具错误如何继续研究
@@ -78,7 +80,7 @@ lab_result 是非只读交付，每次调用都成为新的 decision 回执。
 watcher 启动失败和部分 reader 启动失败。
 与 foundation / execution audit / open Lab 的 74 项定向测试通过。
 全量 1585 项：1573 通过、12 跳过，零失败；运行耗时 87.864 秒。
-结果和来源 SHA 见 [validation](repros/lab-execution-review-validation.json)。
+结果和来源 SHA 见 [validation](README.md#archived-evidence)。
 
 仍未覆盖真实 SFT / RL、设备隔离、训练用量观测、权重与部署身份、指标有效性和医学泛化。
 LocalProcessBackend 继续是受信本机执行，未提供 OS 隔离；通用程序的长期持久恢复仍明确不支持。

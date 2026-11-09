@@ -16,7 +16,7 @@
 全组合自定义契约也可显式传入 `LocalSnapshotCapture(app, contract=...)` 与
 `restore_snapshot(..., recovery_contract=...)`，但需实现相同的空闲验证。
 
-协议中的 restore(manifest) 是抽象边界；当前本地入口使用 restore_snapshot(directory, target)，返回恢复后的 Application。操作命令见[使用指南](../../../README.md#使用指南)。
+协议中的 restore(manifest) 是抽象边界；当前本地入口使用 restore_snapshot(directory, target)，返回恢复后的 Application。操作命令见[使用指南](../../../docs/usage.md#使用指南)。
 
 ## 保存与恢复范围
 

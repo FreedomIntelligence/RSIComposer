@@ -64,6 +64,7 @@ class AssemblyContext:
     project_context: dict = field(default_factory=dict)
     lab_execution: LabExecution | None = None
     model_session: object | None = None
+    controller_report: Callable[[], dict] | None = field(default=None, repr=False)
     components: ComponentInstances | None = field(default=None, init=False)
     method_identity: MethodIdentity | None = field(default=None, init=False)
     state_adapters: dict = field(default_factory=dict, init=False, repr=False)

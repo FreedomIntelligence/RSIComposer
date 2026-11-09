@@ -1,0 +1,4 @@
+RSIMonitor, part of RSISys
+Copyright 2026 RSISys contributors.
+Distributed under the Apache License, Version 2.0.
+The monitor is independently installable and has no RSI-core dependency.

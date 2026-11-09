@@ -16,6 +16,7 @@ from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
 from .controllers.single_loop import SingleLoopController
 from .controllers.rest_em import RestEMController
+from .controllers.weight_evolution import SEALController, TTRLController, TTRLVerlController
 from .controllers.rrsi import RRSIController, build_rrsi
 from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
 from .adapters.lab_group import LabGroup
@@ -57,6 +58,18 @@ class Registry:
         self._controllers, self._labs, self._methods = {}, {}, {}
         self._plugins = []
         if builtins:
+            for implementation in (SEALController, TTRLController):
+                self.register_controller(implementation.method,
+                    lambda context, config, cls=implementation: cls(**config), version='1',
+                    validate_config=implementation.validate_config)
+            from .labs.seal import SEALLab, validate_config as validate_seal
+            self.register_lab('seal', SEALLab, version='1', validate_config=validate_seal)
+            from .labs.ttrl import TTRLLab, validate_config as validate_ttrl
+            self.register_lab('ttrl', TTRLLab, version='1', validate_config=validate_ttrl)
+            self.register_controller('ttrl_verl', lambda context, config: TTRLVerlController(**config),
+                version='1', validate_config=TTRLVerlController.validate_config)
+            from .labs.ttrl_verl import TTRLVerlLab, validate_config as validate_ttrl_verl
+            self.register_lab('ttrl_verl', TTRLVerlLab, version='1', validate_config=validate_ttrl_verl)
             self.register_controller('rrsi', build_rrsi,
                                      version='1', validate_config=RRSIController.validate_config)
             self.register_controller('rest_em', lambda context, config: RestEMController(**config),
@@ -70,6 +83,14 @@ class Registry:
             self.register_lab('math', MathLab, version='1', validate_config=validate_math)
             from .labs.harness_math import HarnessMathLab, validate_config as validate_harness_math
             self.register_lab('harness_math', HarnessMathLab, version='1', validate_config=validate_harness_math)
+            from .controllers.ft_agent import FTAgentController, validate_config as validate_ft_agent
+            from .labs.ft_agent import LLMFinetuneLab, validate_config as validate_llm_finetune
+            self.register_controller('ft_agent', FTAgentController, version='1', validate_config=validate_ft_agent)
+            self.register_lab('llm_finetune', LLMFinetuneLab, version='1', validate_config=validate_llm_finetune)
+            from .controllers.aide import build_aide, validate_config as validate_aide
+            from .labs.aide_program import AIDEProgramLab, validate_config as validate_aide_program
+            self.register_controller('aide', build_aide, version='1', validate_config=validate_aide)
+            self.register_lab('aide_program', AIDEProgramLab, version='1', validate_config=validate_aide_program)
 
     @staticmethod
     def _local_config(config):
@@ -116,6 +137,22 @@ class Registry:
         if not isinstance(definition, MethodDefinition):
             raise TypeError('Expected MethodDefinition')
         self._methods[name] = definition
+
+    def describe(self):
+        """Return detached registration metadata without constructing resources.
+
+        A name/version catalog describes availability, not runtime compatibility
+        or optional dependency readiness. Plugin loading remains explicit.
+        """
+        return {
+            'controllers': {name: {'version': item.version}
+                            for name, item in sorted(self._controllers.items())},
+            'labs': {name: {'version': item.version}
+                     for name, item in sorted(self._labs.items())},
+            'methods': {name: {'version': item.version}
+                        for name, item in sorted(self._methods.items())},
+            'plugins': deepcopy(self._plugins),
+        }
 
     def load_plugin(self, path):
         """Execute an explicitly trusted Python file with register(registry)."""
@@ -194,6 +231,20 @@ class Registry:
                 context.add_owned_cleanup(close)
             if not callable(policy) and not callable(getattr(policy, 'decide', None)):
                 raise TypeError('Controller factory must return decide(input) or a callable')
+            report = optional_method(policy, 'report')
+            if report is not None:
+                context.controller_report = report
+            required = optional_method(policy, 'required_operations')
+            if required is not None:
+                names = required()
+                if (not isinstance(names, tuple) or any(not isinstance(n, str) or not n for n in names)
+                        or len(set(names)) != len(names)):
+                    raise TypeError('required_operations() must return distinct operation names as a tuple')
+                provider = context.lab_execution
+                available = {spec.name for spec in provider.describe()} if provider is not None else set()
+                missing = sorted(set(names) - available)
+                if missing:
+                    raise ValueError('Controller requires missing Lab operations: ' + ', '.join(missing))
             return build_default_decision(context, execution, policy=policy)
 
         research = None

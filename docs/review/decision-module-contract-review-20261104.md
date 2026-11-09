@@ -1,5 +1,7 @@
 # Decision Harness / Policy 接口边界审查
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 日期：2026-11-04。范围：当前本地工作树，包括尚未提交的 Feedback 接口化调整。
 本次只增加审查记录与离线复现材料，没有修复生产代码、修改 prompt、启动实验或 push。
 
@@ -161,9 +163,9 @@ context_summary 和 memory_context。默认请求 builder 再将 dataclass 整�
 - 补查：test_action_permissions、test_learning_policy、test_m03_decision_policy、
   test_decision_interaction，46 项通过。
 - 合计 109 项通过，零跳过、零失败；未重复运行全量回归。
-- 新增[独立探针](repros/decision-module-boundary-probe.py)与[观察结果](repros/decision-module-boundary-probe.json)，
+- 新增[独立探针](README.md#archived-evidence)与[观察结果](README.md#archived-evidence)，
   包含正向最小实现与上述四类反例。反例记录当前问题，并非修复通过的验收报告。
-- [验证及源码指纹](repros/decision-module-boundary-validation.json)标记此次工作树范围。
+- [验证及源码指纹](README.md#archived-evidence)标记此次工作树范围。
 
 复现命令：
 

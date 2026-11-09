@@ -1,5 +1,7 @@
 # M04：开放式 Lab 动作出口
 
+> 历史记录：原始探针、日志和请求已转入[归档说明](README.md#archived-evidence)；本文命令描述当时的工作，不作为当前可执行教程。
+
 用户确认：meta-agent 在环境权限内自由编写、修改、执行程序；SFT、RL、evaluate 的实现也可修改。
 本次实现不再要求开放式 Lab 注册这些研究类别。目标、资源准入和验收权限由 host / Lab 管理。
 
@@ -109,6 +111,6 @@ schema/prompt、任意命名、权限与参数准入、真实 CPU 程序修改/�
 终态反馈到 memory/轨迹、到期取消和 owned 清理，以及不支持的恢复被明确拒绝。
 运行 [open_lab.py](../../examples/components/open_lab.py) 可复现开放代码路径；使用确定性 policy fixture，
 不做真实模型推理、SFT、RL 或医学评测，不把 CPU 验证称为自主研究效果。
-完整运行结果与 SHA 清单写入 [validation](repros/open-lab-execution-validation.json)。
+完整运行结果与 SHA 清单写入 [validation](README.md#archived-evidence)。
 最终全量回归 1578 项：1566 通过、12 跳过，零失败；其中新增 23 项。
 本地 CPU fixture 通过，确认真实进程执行和 owned 退出；没有真实模型推理或训练效果结论。

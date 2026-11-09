@@ -72,7 +72,7 @@ accept 复制并校验请求；advance 推进阶段，execute 会同步运行一
 
 prepare 失败会形成失败回执并重新抛出异常；调用方交付并 acknowledge 后才能接收下一条指令。handler 负责自身详细证据的稳定写入；Runner 交付后，默认 Decision Harness 仍统一记录策略结果。终态交付失败只补交 Feedback，不再调用 handler。框架统一保留原指令的 simulated 标记，handler 不能将模拟来源降为真实结果。全部回执仅在进程内，不提供崩溃恢复或自定义快照。
 
-决策侧需同时注入对应的 [DirectiveDefinition](../../decision_making/action_space/README.md#扩展系统指令)，并将模式加入 directive_modes。自定义 handler 可以调用自身后端；ActorTrainingRequest 允许自定义 method，具体算法与数据处理能力由 learner 实现。整项训练可直接使用 [TrainingCommandHandler](learner/command.py)，装配见[使用指南](../../../../../README.md#接入整项训练任务)。
+决策侧需同时注入对应的 [DirectiveDefinition](../../decision_making/action_space/README.md#扩展系统指令)，并将模式加入 directive_modes。自定义 handler 可以调用自身后端；ActorTrainingRequest 允许自定义 method，具体算法与数据处理能力由 learner 实现。整项训练可直接使用 [TrainingCommandHandler](learner/command.py)，装配见[使用指南](../../../../../docs/usage.md#接入整项训练任务)。
 
 ### 默认 Harness 的公共 handler 支持方法
 

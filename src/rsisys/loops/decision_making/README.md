@@ -1,6 +1,6 @@
 # meta-agent（decision侧）端点
 
-选择优化目标与改进策略，对外发布 Directive 并接收 Feedback。构造方式为 `DecisionMakingLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../README.md#系统架构)。
+选择优化目标与改进策略，对外发布 Directive 并接收 Feedback。构造方式为 `DecisionMakingLoop(harness, action_space)`；跨 loop 规则见[系统架构](../../../../docs/usage.md#系统架构)。
 
 统一口径为 **一个 meta-agent → Lab → 原始 feedback → 同一个 meta-agent**，
 见[系统术语与架构](../../../../docs/architecture.md)。meta-agent 同时负责研究决策、调试、语义整理与显式记忆管理。

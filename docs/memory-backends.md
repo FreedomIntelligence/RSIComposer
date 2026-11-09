@@ -8,12 +8,14 @@ meta-agent 决定；不启用独立整理模型、embedding、Auto Memory 或 Au
 在新的 controller 环境显式安装可选依赖：
 
 ```sh
-python -m pip install '.[reme]'
+python -m pip install -e .
+python -m pip install -r requirements/reme.txt
 ```
 
-`pyproject.toml` 固定 ReMe 源码 commit
+`requirements/reme.txt` 固定 ReMe 源码 commit
 `e3fade0a781d080a4be7fb83648a3b2e6d477522`，对应 `reme-ai==0.4.2.3`。
-依赖声明包含 upstream 的 `as` extra，因为该版本的包导入依赖 AgentScope；接入层只构建
+该依赖独立安装，避免在发行包元数据中包含 VCS URL；不提供 `rsisys[reme]` extra。
+固定依赖包含 upstream 的 `as` extra，因为该版本的包导入依赖 AgentScope；接入层只构建
 `BM25Index` 和 `RegexTokenizer`，不会构建 AgentScope agent 或模型客户端。
 
 通用装配与默认 Harness、DSH Harness 共用同一组 Memory 工具：

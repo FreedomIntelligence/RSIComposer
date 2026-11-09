@@ -1,6 +1,8 @@
 # Runtime
 
-统一口径见[系统术语与架构](../../../docs/architecture.md)。默认只有一个 meta-agent、Lab 和 memory 模块；语义整理合入 meta-agent，旧类型名和持久化键保留兼容。
+顶层业务边界是 RSI 决策器与 Labs，见[公共架构](../../../docs/architecture.md)。
+默认 meta-agent 的语义整理合入同一个 agent，memory 是其可选内部组件；
+旧类型名和持久化键保留兼容，详细接线见[高级架构](../../../docs/advanced-architecture.md)。
 
 提供跨 loop 推进、外部运行策略与公共基础能力；研究步骤和领域执行流程由各自 Harness 负责。配置通过构造函数注入，不使用全局服务注册表。
 
@@ -35,7 +37,7 @@ monitor 在写入前校验此约束；受监控的父目录也必须与 parent_r
 不确定效果仍走 journal / reconcile，原运行预算不会在恢复时清零。
 详见[统一接入](../../../docs/review/unified-module-assembly-20261104.md)。
 
-[runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../README.md#系统架构)。
+[runner.py](runner.py) 提供 step / run / cancel，依赖共享端口，通过 DecisionEndpoint.receive_feedback 交付反馈。step 每次至多推进一个决策和一个探索阶段/轮询，但同步模型或环境调用仍可能阻塞；run 遇到 waiting 返回。cancel 只请求取消待处理的探索指令，须继续 step / run 确认并交付反馈；交付规则见[系统架构](../../../docs/usage.md#系统架构)。
 
 支持可选的探索侧 `pending()` 发现未确认指令，Runner 重建时先核对两侧所有权、补交反馈和确认，再允许新决策。默认 Harness 实现此接口；只实现基础端口的外部 Harness 仍能运行，但不具备该恢复能力。单独重建 Runner 的此机制依赖仍存活的端点状态。跨进程恢复使用下述显式启用的 durable Application。
 
@@ -63,7 +65,7 @@ GoalRunPolicy 的 goal 是可替换 `goal(context) -> bool` callable。内置 `M
 
 默认 Decision loop 的 `step_guarded` / `review_guarded` 在 Action Space 校验边界再次检查运行条件，避免模型返回时预算已耗尽却仍启动工具或实验。整体替换端点时，需实现等效执行前检查；纯传输端点的同步调用仍只能在调用前后检查。`pending_records` / `flush_pending_records` 支持停止时补写既有回执，不能重跑工具或发起新研究。
 
-研究者 finish 后，如果策略要求继续，Runner 通过 Decision 端点的显式 `restart_research` 开启新轮次；默认实现保留 memory、共享经验和候选，不重新装配 Harness。自定义端点需实现此能力。`restart_delay_seconds` 默认 1 秒，到期前返回 waiting，由调用方后续驱动；Runner 不阻塞 sleep、不后台轮询。接入示例见[使用指南](../../../README.md#选择运行策略)。
+研究者 finish 后，如果策略要求继续，Runner 通过 Decision 端点的显式 `restart_research` 开启新轮次；默认实现保留 memory、共享经验和候选，不重新装配 Harness。自定义端点需实现此能力。`restart_delay_seconds` 默认 1 秒，到期前返回 waiting，由调用方后续驱动；Runner 不阻塞 sleep、不后台轮询。接入示例见[使用指南](../../../docs/usage.md#选择运行策略)。
 
 RunDecision 指定停止时的 `shutdown='drain'` 或 `'cancel'`：drain 继续推进已有任务到终态；cancel 请求取消并继续确认。两者都禁止新实验，保留已有反馈的交付与 acknowledge；已请求取消不等于后端已确认取消。运行超时默认 cancel，清理另由 Runner 的 `cleanup_timeout_seconds=30` 限制，不把运行时限当成无限清理预算。清理到限仍未确认的任务必须明确记录，不报告清理成功或已完成取消；待交付反馈也不能被伪装成交付成功。收尾中的异常保留原异常并交给调用方，状态保留供后续 `step()` 重试。
 
@@ -142,7 +144,7 @@ Runner 每轮重新观察 `pending_research_job()`，仍有引用就继续等待
 
 ## 模型调用
 
-[model.py](model.py) 提供 MockModelBackend 和 Chat Completions HTTP RemoteModelBackend。policy 决定调用内容与时机；配置方法见[使用指南](../../../README.md#使用指南)。
+[model.py](model.py) 提供 MockModelBackend 和 Chat Completions HTTP RemoteModelBackend。policy 决定调用内容与时机；配置方法见[使用指南](../../../docs/usage.md#使用指南)。
 
 HTTP 支持非流式 JSON 文本和原生 function tool calling、超时、响应大小和模型身份检查。
 `GenerationRequest.tools` 配置标准工具声明，`messages` 支持 assistant/tool 多轮历史；
@@ -239,7 +241,7 @@ tools = BoundDecisionTools(capabilities.bindings)
 同一协议文件还定义独立的 DeploymentBackend（prepare / query / release）及可选 reattach。
 稳定 DeploymentRef 与 JobRef 用于核对已有外部工作，只有 READY 表示精确目标模型可推理；
 ModelActivator 将它与现有 Harness 的角色更新入口连接，SystemActivator 则处理完整组合。
-实际适配器配置和数据边界见[使用指南](../../../README.md#接入整项训练任务)。
+实际适配器配置和数据边界见[使用指南](../../../docs/usage.md#接入整项训练任务)。
 
 [adapters/serving.py](../adapters/serving.py) 的 VLLMBackend 接入独立运行的 vLLM，
 显式映射模型 revision 与服务别名；VLLMDeploymentBackend 维护稳定部署引用及本地回执，

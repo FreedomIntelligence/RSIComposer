@@ -1,0 +1,43 @@
+{
+  "objective": "TTRL native official verl: full-parameter MATH-500, 64 votes / 32 train, 10 epochs, 16-sample pass@1",
+  "data_dir": "../../runs/ttrl-paper",
+  "max_decision_steps": 4,
+  "framework": {
+    "controller": {
+      "name": "ttrl_verl",
+      "config": {
+        "initial_model": "models/Qwen2.5-7B-d1497293",
+        "train_data": "runs/ttrl-paper-data/unlabeled.json",
+        "eval_data": "runs/ttrl-paper-data/evaluation.json",
+        "iterations": 1,
+        "samples_per_prompt": 64
+      }
+    },
+    "labs": {
+      "ttrl": {
+        "name": "ttrl_verl",
+        "config": {
+          "upstream_root": ".local/upstream/ttrl",
+          "gpu_ids": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "seed": 73,
+          "enforce_eager": true,
+          "native_overrides": {
+            "actor_rollout_ref.rollout.gpu_memory_utilization": 0.65,
+            "data.dataloader_num_workers": 0
+          },
+          "training_python": ".local/envs/paper2025/bin/python",
+          "inference_python": ".local/envs/paper2025/bin/python"
+        }
+      }
+    }
+  }
+}

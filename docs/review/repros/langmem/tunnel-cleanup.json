@@ -1,8 +1,0 @@
-{
-  "pid": 94516,
-  "uid_verified": true,
-  "create_time_verified": "2026-11-03 22:18:29 Asia/Shanghai",
-  "command_verified": "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -N -L 127.0.0.1:18880:127.0.0.1:8000 modelmate",
-  "termination_sent": true,
-  "scope": "Only the temporary local validation SSH tunnel; no remote model processes modified."
-}
