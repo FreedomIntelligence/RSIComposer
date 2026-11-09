@@ -104,3 +104,18 @@ engine 提供 `name` / `simulated`、`generate(model, prompts, directory, *, sam
 
 同一 run 内装配多个 SEAL/TTRL Lab 时，分别设置不同的 `output_subdir`（简单目录名），
 默认仍为 `seal` / `ttrl`。产物隔离不提供 GPU 调度，设备应由调用方分配。
+
+## 研究型 meta-agent
+
+`ft_agent` 决策器将原生 FT-Agent 的数据准备和微调请求分别交给 `llm_finetune` Lab。
+Lab 复用 `WeightEngine` 的多卡推理，训练则在独立环境运行原生 LLaMA-Factory；
+提出假设、生成代码、接受结果和选择历史最优仍在决策器。见
+[FT-Agent 接入范围与实测](../../../experiments/ft_agent/README.md)。
+
+`aide` 决策器将原生 AIDE 的每次代码执行回调交给 `aide_program` Lab。
+Lab 隔离运行生成的程序，通过有预算的 Unix socket 代理提供固定模型推理；
+私有金标与独立评分不进入生成程序。搜索树、审查与终局选择仍由原生 Agent/Journal
+负责。见 [AIDE 配方](../../../experiments/aide/README.md)。
+
+两者都通过已有 controller/Lab 注册入口装配，没有新增顶层注册对象。
+可选研究运行时与 GPU 环境分别隔离；当前均为同步调用，不支持自动恢复原生搜索进程。

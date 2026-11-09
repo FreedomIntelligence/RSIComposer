@@ -12,8 +12,10 @@ from .registry import Registry, SingleLoopController
 from .controllers.rest_em import RestEMController
 from .controllers.rrsi import RRSIController
 from .controllers.weight_evolution import SEALController, TTRLController, TTRLVerlController
+from .controllers.ft_agent import FTAgentController
+from .controllers.aide import AIDEController
 
-__all__ = ['Registry', 'SingleLoopController', 'RestEMController', 'RRSIController', 'SEALController', 'TTRLController', 'TTRLVerlController', 'DecisionPolicy', 'Decision', 'DecisionInput',
+__all__ = ['Registry', 'SingleLoopController', 'RestEMController', 'RRSIController', 'SEALController', 'TTRLController', 'TTRLVerlController', 'FTAgentController', 'AIDEController', 'DecisionPolicy', 'Decision', 'DecisionInput',
            'RSIController', 'Lab', 'LabRequest', 'LabFeedback',
            'ControllerOperationRequirements', 'ControllerReportProvider',
            'OperationCall', 'OperationSpec', 'OperationResult', 'ExecutionStatus',

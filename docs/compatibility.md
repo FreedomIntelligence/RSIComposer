@@ -14,6 +14,7 @@
 | 恢复 | 内置持久化/快照及显式 state adapter / recovery contract；普通注册不自动恢复 controller 内存或远端作业。 |
 | ReST^EM / SEAL / TTRL GPU recipes | Linux/CUDA、本地模型与数据；实验文档记录实际版本。SEAL/TTRL 为同步作业，不支持原目录自动续跑。 |
 | RL | TTRL 的独立 LoRA GRPO 参考实现，以及可选 `ttrl_verl` 官方全参数后端；后者需要固定上游源码和独立 GPU 依赖环境，见 [TTRL 配方](../experiments/ttrl/README.md)。 |
+| FT-Agent / AIDE | 可选上游源码与独立依赖环境。FT-Agent 为本地 GSM8K / LoRA 执行适配；AIDE 为原生 Agent 的数学程序任务适配。两者都有真实模型验证要求，不承诺原 benchmark 收益、搜索恢复或 meta-agent 权重训练。 |
 | GPU 调度 | 显式设备配置和继承 mask 检查；没有跨 Lab / 跨 run 的全局 lease。并行实验由操作者分配互不重叠的资源。 |
 | Monitor | 独立零依赖 distribution；只读公开投影；无鉴权、多租户与远程作业控制。 |
 

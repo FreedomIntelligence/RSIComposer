@@ -1,0 +1,20 @@
+# Optional native AIDE Agent runtime; install in a separate Python 3.12 venv.
+# Original broad scientific benchmark dependencies are intentionally omitted:
+# this task's generated programs use the standard library plus the broker.
+humanize==4.16.0
+dataclasses-json==0.6.7
+omegaconf==2.4.0
+coolname==5.0.0
+rich==15.0.0
+shutup==0.3.0
+igraph==1.0.0
+genson==1.4.0
+funcy==2.1
+backoff==2.2.1
+openai==3.46.0
+anthropic==2.6.0
+numpy==2.5.4
+pandas==3.1.1
+black==26.10.1
+jsonschema==4.26.0
+python-dotenv==1.2.4

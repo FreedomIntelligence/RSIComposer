@@ -76,6 +76,8 @@ trusted host code; see [security boundaries](SECURITY.md).
 | `seal` | Generated self-edits, inner adaptation, outer SFT | [Recipe](experiments/seal/README.md), [results](experiments/seal/RESULTS.md) |
 | `ttrl` | Unlabeled majority rewards and GRPO adaptation | [Recipe](experiments/ttrl/README.md), [results](experiments/ttrl/RESULTS.md) |
 | `ttrl_verl` | Continuous official full-parameter TTRL schedule | [Paper configuration](experiments/ttrl/paper.json), [environment](experiments/paper-environment.md) |
+| `ft_agent` | Pinned FT-Agent hypothesis, code generation and acceptance with a local LLM fine-tuning Lab | [Reference adaptation](experiments/ft_agent/README.md), [results](experiments/ft_agent/RESULTS.md) |
+| `aide` | Native AIDE code-search agent with execution through a registered Lab | [Task adaptation](experiments/aide/README.md), [results](experiments/aide/RESULTS.md) |
 
 SEAL and TTRL completed two-round, eight-GPU runs using Qwen2.5-7B Base.
 **Neither small run reproduced the paper's performance gains.** Their data,

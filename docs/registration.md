@@ -132,6 +132,10 @@ Lab 若拥有后台资源，应实现 `shutdown(mode) -> bool` 与可重试、�
 | `rest_em` | 决策器 | 生成 → 二值筛选 → 从初始模型训练 → 评测；详见 [ReST^EM 示例](../experiments/rest_em/README.md)。 |
 | `single_loop` | 决策器 | 重复调用指定 Lab 操作，读取回执后再进入下一次迭代；不需要模型。 |
 | `meta_agent` | 决策器 | 使用宿主 `decision_maker` 模型选择动作；默认安装显式 memory，可用 `config.memory=false` 关闭。 |
+| `ft_agent` | 决策器 | 固定版本的上游假设生成、代码生成、反馈与 SOTA 历史选择；[本地微调配方](../experiments/ft_agent/README.md)。 |
+| `llm_finetune` | Lab | 隔离数据处理、原生 LLaMA-Factory 微调、独立开发/留出评分。 |
+| `aide` | 决策器 | 原生 AIDE Agent/Journal，执行回调转为 Lab 操作；[配方](../experiments/aide/README.md)。 |
+| `aide_program` | Lab | 隔离执行生成的 Python 程序，模型推理由宿主代理，评分与参考答案留在 Lab。 |
 | `math` | Lab | 由数学校验器与 fixture / Transformers 引擎组成；见 [Lab 组件](../src/rsisys/labs/README.md)。 |
 | `local_process` | Lab | 复用已有本地程序 Lab，提供代码文件与 start/poll/result/cancel 操作；需宿主 `execution=local_process`。 |
 

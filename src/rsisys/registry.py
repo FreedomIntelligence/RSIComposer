@@ -83,6 +83,14 @@ class Registry:
             self.register_lab('math', MathLab, version='1', validate_config=validate_math)
             from .labs.harness_math import HarnessMathLab, validate_config as validate_harness_math
             self.register_lab('harness_math', HarnessMathLab, version='1', validate_config=validate_harness_math)
+            from .controllers.ft_agent import FTAgentController, validate_config as validate_ft_agent
+            from .labs.ft_agent import LLMFinetuneLab, validate_config as validate_llm_finetune
+            self.register_controller('ft_agent', FTAgentController, version='1', validate_config=validate_ft_agent)
+            self.register_lab('llm_finetune', LLMFinetuneLab, version='1', validate_config=validate_llm_finetune)
+            from .controllers.aide import build_aide, validate_config as validate_aide
+            from .labs.aide_program import AIDEProgramLab, validate_config as validate_aide_program
+            self.register_controller('aide', build_aide, version='1', validate_config=validate_aide)
+            self.register_lab('aide_program', AIDEProgramLab, version='1', validate_config=validate_aide_program)
 
     @staticmethod
     def _local_config(config):

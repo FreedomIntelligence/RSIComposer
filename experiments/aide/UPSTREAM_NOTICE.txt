@@ -1,0 +1,15 @@
+AIDE native agent integration
+
+Upstream: https://github.com/WecoAI/aideml
+Pinned commit: ad73d227af481bea3de06f884f41b2993dd6453a
+Copyright (c) 2024 Weco AI Ltd
+License: MIT (see the upstream LICENSE).
+
+RSISys loads the independently installed, pinned source checkout at runtime.
+No AIDE implementation is vendored into this package. Its Agent.step,
+search_policy, plan/code generation, review parsing, Journal and final selection
+execute directly from that checkout. The execution callback is replaced with a
+registered RSISys Lab operation. The optional local-provider transport supplies
+enable_thinking=false and converts system-only prompts to user turns with the
+exact same prompt text for Qwen chat-template compatibility. The GSM8K task and
+inference broker are RSISys adapters.

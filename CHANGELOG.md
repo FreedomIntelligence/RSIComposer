@@ -28,6 +28,11 @@
   These adapters do not establish paper-level gains.
 - Deliver exact typed terminal operation feedback independently of text evidence
   projection, so large native failures retain their matching operation and data.
+- Add optional registered FT-Agent and AIDE research controllers, with native
+  policy code pinned upstream and execution/feedback through registered Labs.
+  FT-Agent uses a local GSM8K/native LLaMA-Factory reference adaptation; AIDE
+  uses a GSM8K LLM-program task. Their recipes document scope and differences;
+  neither integration establishes the original papers' performance gains.
 
 Current limits: weight-evolution recipes are synchronous and do not support
 automatic restart; multi-Lab GPU leasing remains future core work. The optional

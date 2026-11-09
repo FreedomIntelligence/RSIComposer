@@ -21,6 +21,12 @@ def check_archive(path, name):
         assert not any(p.startswith(('tests/', 'experiments/', 'examples/', '.local/')) for p in names)
         if name == 'rsisys':
             assert 'rsisys/labs/SEAL_NOTICE.txt' in names
+            assert 'rsisys/controllers/FT_AGENT_NOTICE.txt' in names
+            assert 'rsisys/controllers/AIDE_NOTICE.txt' in names
+            for module in ('ft_agent', 'ft_agent_worker', 'ft_agent_upstream', 'aide', 'aide_worker', 'research_bridge'):
+                assert f'rsisys/controllers/{module}.py' in names
+            for module in ('ft_agent', 'ft_train_worker', 'ft_data_sandbox', 'aide_program', 'aide_client'):
+                assert f'rsisys/labs/{module}.py' in names
         else:
             for asset in ('index.html', 'app.js', 'style.css', 'i18n.js', 'decisions.js'):
                 assert f'rsimonitor/static/{asset}' in names
@@ -80,8 +86,8 @@ assert importlib.util.find_spec({'rsimonitor' if name == 'rsisys' else 'rsisys'!
                 run([str(python), '-I', '-c', '''
 import sys
 from rsisys.api import Registry
-assert {'rest_em', 'rrsi', 'seal', 'ttrl'} <= set(Registry().describe()['controllers'])
-assert not any(x.split('.')[0] in {'torch', 'transformers', 'peft', 'vllm', 'math_verify'} for x in sys.modules)
+assert {'rest_em', 'rrsi', 'seal', 'ttrl', 'ft_agent', 'aide'} <= set(Registry().describe()['controllers'])
+assert not any(x.split('.')[0] in {'torch', 'transformers', 'peft', 'vllm', 'math_verify', 'aide', 'rdagent', 'yaml', 'jinja2'} for x in sys.modules)
 '''])
                 shutil.copytree(ROOT / 'examples/registered', workspace / 'registered')
                 shutil.copytree(ROOT / 'examples/quickstart', workspace / 'examples/quickstart')

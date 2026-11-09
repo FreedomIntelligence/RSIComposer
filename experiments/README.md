@@ -8,6 +8,8 @@
 | [RRSI](rrsi/README.md) | 固定模型、纯 Python harness 进化；MATH；无 RL |
 | [SEAL](seal/README.md) | self-edit、内层 SFT、top-1、外层 SFT；SQuAD；8 卡配方 |
 | [TTRL](ttrl/README.md) | 无标签多数奖励、真实 GRPO 更新；MATH；目标适配及独立迁移指标 |
+| [FT-Agent](ft_agent/README.md) | 上游研究假设、代码生成、反馈与历史选择；本地 GSM8K / 原生 LLaMA-Factory 参考适配 |
+| [AIDE](aide/README.md) | 原生代码搜索决策器；通过隔离 Lab 搜索 LLM 数学推理程序 |
 | [ReST^EM](rest_em/README.md) | Qwen2.5-7B Base；GSM8K / MATH；单卡与 8 卡配置 |
 | [Qwen toy](qwen_toy/README.md) | 模型驱动的研究循环、LoRA、评测及监控 |
 | [医疗实验](medical/README.md) | 领域数据、固定评测及自主研究装配 |
