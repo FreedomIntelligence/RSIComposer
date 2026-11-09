@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 from rsisys.components import ComponentGraph, ComponentInstances
 from rsisys.methods import MethodIdentity
-from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.loops.contracts.execution import LabExecution
 from rsisys.loops.contracts.model_service import ModelBackend, ModelRef, ModelUpdatable
 from rsisys.loops.contracts.queries import QueryProvider

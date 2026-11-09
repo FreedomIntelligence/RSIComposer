@@ -10,8 +10,8 @@ from uuid import uuid4
 from rsisys.assembly import (
     AssemblyContext, DecisionFactory, ExplorationFactory, LabExecutionFactory, assemble_runner, module_assembly,
 )
-from rsisys.experience.sqlite import SQLiteExperienceStore
-from rsisys.experience.retrieval import BasicExperienceSystem
+from rsisys.runtime.evidence.sqlite import SQLiteExperienceStore
+from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.run_policy import RunPolicy

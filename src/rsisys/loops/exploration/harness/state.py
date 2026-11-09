@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from rsisys.loops.contracts.feedback import Feedback
 from .rl import RLState
-from rsisys.experience.records import ExperienceRecord
+from rsisys.runtime.evidence.records import ExperienceRecord
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.training import TrainingResult
 

@@ -122,6 +122,14 @@ The remaining internal boundaries are:
   Backend record writes and locks live in `runtime/process_store.py`, so serving
   does not depend on a training implementation for persistence.
 
+Shared records, provenance, in-memory/SQLite persistence and basic queries live
+in `runtime/evidence/`. Controller-side feedback selection lives in
+`controllers/memory/`; it determines which evidence enters decision context.
+The Self-Reflection Lab owns future long-term experience curation, candidate
+construction and validation. Ordinary RSI runs use shared evidence without
+enabling that Lab. Existing record formats and `experience.sqlite3` files are
+unchanged.
+
 ### Self-Reflection Lab — architecture direction
 
 **Self-reflection means improving the meta-agent's own decision-making from its

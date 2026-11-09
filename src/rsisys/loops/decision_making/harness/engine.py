@@ -11,8 +11,9 @@ from .memory import DecisionMemory
 from .context import BasicContextCompactor
 from .research import ResearchAgenda
 
-from rsisys.experience.records import ExperienceRecord
-from rsisys.experience.retrieval import ExperienceSystem, RecentFeedbackSelector
+from rsisys.runtime.evidence.records import ExperienceRecord
+from rsisys.runtime.evidence.retrieval import ExperienceSystem
+from rsisys.controllers.memory.feedback import RecentFeedbackSelector
 from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus

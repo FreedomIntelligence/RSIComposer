@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from rsisys.experience.records import ExperienceRecord
+from rsisys.runtime.evidence.records import ExperienceRecord
 from rsisys.loops._memory import Memory, HistoryEntry
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.feedback import Feedback

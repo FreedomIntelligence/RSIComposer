@@ -8,8 +8,8 @@ from rsisys.assembly import (
     AssemblyContext, AssemblyRunner, DecisionFactory, ExplorationFactory, LabExecutionFactory,
     assemble_runner, module_assembly,
 )
-from rsisys.experience.retrieval import BasicExperienceSystem
-from rsisys.experience.storage import InMemoryExperienceStore
+from rsisys.runtime.evidence.retrieval import BasicExperienceSystem
+from rsisys.runtime.evidence.storage import InMemoryExperienceStore
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.run_policy import RunPolicy

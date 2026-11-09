@@ -107,6 +107,11 @@ labs/
 - `runtime/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
   后端的记录写入、文件锁放在 `runtime/process_store.py`，推理后端不再借用训练实现做持久化。
 
+通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
+决策侧的反馈选择放在 `controllers/memory/`，决定哪些证据进入决策上下文。
+Self-Reflection Lab 负责未来的长期经验整理、候选构造与验证；普通 RSI 运行
+无需启用该 Lab 就能记录和查询证据。现有记录格式与 `experience.sqlite3` 文件保持兼容。
+
 ### Self-Reflection Lab：架构方向
 
 **Self-reflection 指 meta-agent 利用长期积累的 decision–Lab feedback 经验，

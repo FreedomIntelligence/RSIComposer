@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from uuid import uuid4
 
-from rsisys.experience.records import ExperienceRecord
+from rsisys.runtime.evidence.records import ExperienceRecord
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef

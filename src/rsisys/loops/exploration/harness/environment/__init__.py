@@ -6,8 +6,8 @@ from time import perf_counter
 from typing import Protocol
 from uuid import uuid4
 
-from rsisys.experience.records import ExperienceRecord
-from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.runtime.evidence.records import ExperienceRecord
+from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.loops._memory import MemoryStore, HistoryEntry
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.directive import Directive

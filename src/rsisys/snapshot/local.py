@@ -188,7 +188,7 @@ def validate_local_application(app, *, ongoing=False):
         raise TypeError('Custom run policies/budgets need explicit snapshot integration')
     if app.runner.parallel or dm.max_outstanding != 1:
         raise TypeError('Concurrent decisions need explicit snapshot integration')
-    from rsisys.experience.retrieval import RecentFeedbackSelector
+    from rsisys.controllers.memory.feedback import RecentFeedbackSelector
     if type(dm.feedback_selector) is not RecentFeedbackSelector:
         raise TypeError('Custom feedback selectors need explicit snapshot integration')
     if dm.model_activator is not None or actor.model_activator is not None:

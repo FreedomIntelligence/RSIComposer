@@ -1,7 +1,7 @@
 """Default assembly and compatibility API for exploration execution components."""
 
 from collections.abc import Mapping
-from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.loops._memory import MemoryStore
 from rsisys.loops.contracts.coordination import ExecutionView, ExplorationProgress
 from rsisys.loops.contracts.directive import Directive

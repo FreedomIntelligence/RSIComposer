@@ -5,8 +5,8 @@ import math
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
-from rsisys.experience.records import ExperienceRecord
-from rsisys.experience.retrieval import ExperienceSystem
+from rsisys.runtime.evidence.records import ExperienceRecord
+from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.candidate import Candidate
 from rsisys.loops.contracts.jobs import JobRef, JobOutcome, JobStatus
