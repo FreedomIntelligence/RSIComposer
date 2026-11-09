@@ -75,29 +75,30 @@ may be a state machine, search policy, LLM meta-agent or a hybrid. Neither side
 is required to use a harness, memory or an LLM.
 
 ```text
-loops/
-  contracts/                     # loop, decision and Lab protocols
-  composition/                  # reusable loop composition
-  decision_making/              # decision loop, harness and feedback
-  exploration/                  # execution loop and harness
 algorithms/
-  <method>/                     # method-private policy and Lab assembly
-labs/
-  math/                         # reusable math scene
-  self_reflection/              # optional long-horizon improvement scene
-  harness/                    # reusable harness components
-  local_process/                # reusable process Lab
-algorithms/
-  <method>/__init__.py           # method declaration, component wiring, registration
-  <method>/configs/             # configuration and declarative task assets
+  <method>/
+    __init__.py                 # register the complete method
+    controller.py  lab.py       # private strategy and experiment implementation
+    configs/                    # method configurations and task assets
   _template/                    # self-contained development example
+  shared/                       # components reused by multiple methods
+loops/                          # contracts, execution and feedback mechanics
+labs/
+  scenes/
+    math/                       # reusable math scene
+    self_reflection/            # long-horizon improvement scaffold
+  harness/                      # shared harness execution and sandbox utilities
+  local_process/                # generic process Lab
+backends/                       # reusable training and serving engines
+runtime/                        # host orchestration, state and evidence
+snapshot/                       # snapshot capture and restore mechanisms
 ```
 
 Built-in method packages declare and register their complete method assembly.
 Method-private implementations live beside the registration entry; reusable scenes
-and components are imported from `labs/`, `backends/` and `loops/composition/` only when
-shared. Their registered
-names and configurations remain stable. Each method chooses its controller,
+and components are imported from `labs/`, `backends/` and `loops/` when shared.
+Configurations shipped here select `framework.method`; separate controller/Lab
+registrations remain compatible with older configurations. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
 core registry has no algorithm-specific branches. Independent research-worker
 transport lives in `runtime/execution/research_bridge.py`.
@@ -108,22 +109,12 @@ components into the library. Promote components into the shared implementation
 layer when they are intended for reuse. Harnesses support context/model/tool
 interaction; a method's controller owns strategy, candidate selection and stopping.
 
-`rsisys.labs` exports the generic Lab contracts, without importing a scene:
-
-```text
-labs/
-  __init__.py       # Lab, LabRequest, LabFeedback and lifecycle interfaces
-  local_process/    # generic process Lab and optional state/feedback components
-  math/             # math scene: Labs, verifiers and mathematical backends
-  harness/          # reusable harness execution and sandbox components
-  self_reflection/  # optional self-improvement Lab scaffold
-```
-
-Scenes are pluggable Lab implementations, not required base classes. A future
-coding scene can live in `labs/coding/` or an external method package and register
-through the same interface. Built-in execution components live in their Lab package; shared components do
-not depend on a particular scene. The existing
-`local_process` registration provides generic process execution.
+`rsisys.labs` exports generic Lab contracts without importing any scene.
+Scenes are pluggable Lab implementations. A future coding scene can live in
+`labs/scenes/coding/` or an external method package. A method imports a shared
+scene or wraps it with its own execution logic; training and serving engines
+come from `backends/`. The `local_process` registration provides generic process
+execution. Method-specific Labs stay under `algorithms/<method>/`.
 
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
@@ -228,10 +219,10 @@ Use the runnable [_template](src/rsisys/algorithms/_template/__init__.py) as a s
 
 ```text
 algorithms/_template/
-  __init__.py       # one register(registry) entry for controller and Lab
+  __init__.py       # register the whole method and bind its private factories
   controller.py     # choose the next prompt from Lab feedback; decide when to stop
   lab.py            # execute checks and return a structured receipt
-  configs/run.json  # select registered names, parameters and Lab aliases
+  configs/run.json  # select one method and configure its controller and Labs
 ```
 
 Run it from a checkout, without GPUs, models or external services:
@@ -250,8 +241,8 @@ report and inspect operation receipts for feedback. Use a fresh `--data-dir` on 
 
 To create your own method:
 
-1. Copy `_template` to `src/rsisys/algorithms/my_method/`. Rename its registrations
-   (`custom_prompt`, `custom_prompt_check`) and matching config selections. A package
+1. Copy `_template` to `src/rsisys/algorithms/my_method/`. Rename the method
+   `custom_prompt` and its matching config selection. A package
    without a leading underscore is discovered automatically; run its config without
    `--plugin`. No changes to the core registry or `api.py` are needed.
 2. Implement your policy in `controller.py` and execution in `lab.py`. Keep method
@@ -273,15 +264,32 @@ Multiple Labs use `alias.operation` names; each Lab receives its native name.
 `capabilities`, `context` and `references`. Decisions are `invoke`, `wait` or
 `finish`. Domain arguments must be validated before side effects.
 
-Reusable method components can be registered independently by role: `harness`,
-`memory`, `backend`, `scene` and `verifier`. A method assembly resolves these
-names and can replace any one with a local override. Controller and Lab remain
-first-class registrations; the method is the layer that binds the complete pair.
+Register a complete method with private factories, as the template does:
 
-A method-level assembly can implement `RSIMethod.build(config)` and enter the catalog
-with `MethodDefinition.from_method(...)`. It binds the controller and Lab together;
-harness, memory, scene, verifier and backend components remain injectable. The lower-level
-controller/Lab registration APIs remain available for reusable components and compatibility.
+```python
+from rsisys.api import MethodDefinition
+
+registry.register_method("my_method", MethodDefinition.from_factories(
+    controller=MyController,
+    labs={"experiment": MyLab},
+    version="1",
+))
+```
+
+Select it with `framework.method.name`. Controller parameters go in
+`framework.method.config.controller`; Lab parameters go in
+`framework.method.config.labs.experiment`. Lab aliases are defined by the method.
+`validate_controller` and `validate_labs` provide validation before construction.
+For custom composition, implement `RSIMethod.build(config)` and register with
+`MethodDefinition.from_method(...)`, or provide a `MethodDefinition` factory
+returning `ModuleAssembly` directly.
+
+Shared `harness`, `memory`, `backend`, `scene` and `verifier` factories may use
+`register_component` and `resolve_component`. The method's Python assembly owns
+resolution and overrides; there is no automatic declarative override layer.
+Private components need no separate registration. Existing shared implementations
+can also be imported directly. Separate controller/Lab APIs support reuse and
+older configurations.
 
 Advanced integrations that already assemble their decision endpoint can register
 with `endpoint=True`; their factory receives `(context, execution, config)`.

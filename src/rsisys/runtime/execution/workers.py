@@ -7,6 +7,20 @@ import sys
 import threading
 import time
 
+import rsisys
+
+
+def worker_environment(**overrides):
+    """Use the imported framework package in child interpreters after moves.
+
+    Anchor at the package rather than a caller's depth in the source tree.
+    The parent PYTHONPATH is preserved unless explicitly overridden.
+    """
+    env = dict(os.environ, **overrides)
+    root = str(Path(rsisys.__file__).resolve().parent.parent)
+    env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
+    return env
+
 
 def run_workers(commands, environments, directory, timeout):
     """Fail fast, terminate whole process groups, and retain useful worker errors."""

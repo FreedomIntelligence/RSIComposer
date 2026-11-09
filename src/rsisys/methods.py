@@ -6,6 +6,8 @@ optional component graph. Selecting a method never runs its research lifecycle.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 import json
+import re
+from copy import deepcopy
 from typing import Protocol, TYPE_CHECKING
 
 from rsisys.components import _json, _name
@@ -69,6 +71,19 @@ class MethodIdentity:
 
 
 @dataclass(frozen=True)
+class _FactoryDefinition:
+    factory: object
+    version: str
+    validate_config: object = None
+    endpoint: bool = False
+    research_factory: object = None
+
+    def validate(self, config):
+        if self.validate_config is not None and self.validate_config(deepcopy(config)) is not None:
+            raise TypeError('Configuration validators must return None')
+
+
+@dataclass(frozen=True)
 class MethodDefinition:
     """Pure config builder: factory(config) -> ModuleAssembly.
 
@@ -79,6 +94,62 @@ class MethodDefinition:
     version: str
     protocol: str = METHOD_PROTOCOL
     validate_config: Callable | None = None
+
+    @classmethod
+    def from_factories(cls, *, controller, labs, version, validate_controller=None,
+                       validate_labs=None, endpoint=False, research_factory=None):
+        """Bind private factories without registering each implementation.
+
+        Both factories accept (context, config); an endpoint controller accepts
+        (context, execution, config). Method config contains optional controller
+        options and Lab options keyed by the aliases declared in ``labs``.
+        Resources are only constructed at application launch. For custom
+        assembly or component resolution use from_method() or a plain factory.
+        """
+        if not isinstance(labs, Mapping) or not labs:
+            raise ValueError('A method requires at least one named Lab factory')
+        if type(endpoint) is not bool:
+            raise TypeError('endpoint must be boolean')
+        if validate_labs is None:
+            validate_labs = {}
+        if not isinstance(validate_labs, Mapping) or set(validate_labs) - set(labs):
+            raise ValueError('Lab validators must refer to declared Lab aliases')
+        definitions = {}
+        for alias, factory in labs.items():
+            if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', alias):
+                raise ValueError('Lab aliases must be simple names without dots')
+            definitions[alias] = _FactoryDefinition(factory, version, validate_labs.get(alias))
+        policy = _FactoryDefinition(controller, version, validate_controller,
+                                    endpoint=endpoint, research_factory=research_factory)
+        for definition in (policy, *definitions.values()):
+            if not callable(definition.factory):
+                raise TypeError('Method component factories must be callable')
+            if definition.validate_config is not None and not callable(definition.validate_config):
+                raise TypeError('Configuration validators must be callable')
+        if research_factory is not None and not callable(research_factory):
+            raise TypeError('research_factory must be callable')
+
+        def build(config):
+            from rsisys.assembly import _build_policy_assembly
+            if not isinstance(config, dict) or set(config) - {'controller', 'labs'}:
+                raise ValueError('Method config accepts only controller and labs options')
+            options = config.get('controller', {})
+            lab_options = config.get('labs', {})
+            if not isinstance(options, dict) or not isinstance(lab_options, dict):
+                raise TypeError('Method controller and labs options must be objects')
+            if set(lab_options) - set(definitions):
+                raise ValueError('Unknown method Lab alias: ' + ', '.join(sorted(set(lab_options) - set(definitions))))
+            policy.validate(options)
+            selected = []
+            for alias, definition in definitions.items():
+                params = lab_options.get(alias, {})
+                if not isinstance(params, dict):
+                    raise TypeError('Method Lab config must be an object')
+                definition.validate(params)
+                selected.append((alias, definition, deepcopy(params)))
+            return _build_policy_assembly(policy, deepcopy(options), selected)
+
+        return cls(build, version)
 
     @classmethod
     def from_method(cls, method: RSIMethod, *, validate_config=None):

@@ -4,13 +4,12 @@ Each inference worker owns one GPU and only receives prompts. Worker processes
 isolate the serving dependency environment from the framework and trainer.
 """
 import json
-import os
 from pathlib import Path
 import sys
 import tempfile
 import time
 
-from rsisys.runtime.execution.workers import run_workers
+from rsisys.runtime.execution.workers import run_workers, worker_environment
 
 from rsisys.labs.scenes.math.engines import TransformersMathEngine
 
@@ -41,9 +40,7 @@ class ParallelMathEngine(TransformersMathEngine):
 
     def _env(self):
         # Propagate the actual imported framework snapshot, not an installed copy.
-        root = str(Path(__file__).resolve().parents[3])
-        return dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get('PYTHONPATH', ''),
-                    OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false')
+        return worker_environment(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false')
 
     def _config(self):
         config = dict(self.config)

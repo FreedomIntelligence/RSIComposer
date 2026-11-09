@@ -4,7 +4,6 @@ Loaded from a separate clean checkout; no upstream implementation is bundled.
 """
 from copy import deepcopy
 import json
-import os
 from pathlib import Path
 import re
 import sys
@@ -13,6 +12,7 @@ from rsisys.loops.contracts.decision import Decision, OperationCall
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.algorithms.ft_agent.upstream import FT_AGENT_REVISION
 from rsisys.runtime.execution.research_bridge import ResearchBridge
+from rsisys.runtime.execution.workers import worker_environment
 
 
 def validate_config(config):
@@ -74,7 +74,7 @@ class FTAgentController:
                       'directory': str(self.root), 'iterations': self.config.get('iterations', 2)}
             request = self.root / 'worker-request.json'
             request.write_text(json.dumps(config, indent=2))
-            env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3]),
+            env = worker_environment(
                        CUDA_VISIBLE_DEVICES='', PYTHONUNBUFFERED='1')
             self.bridge = self.bridge_factory([self.config.get('python', sys.executable), '-m',
                 'rsisys.algorithms.ft_agent.worker', str(request)], log=self.root / 'worker.log', env=env)

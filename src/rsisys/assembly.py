@@ -1,6 +1,7 @@
 """Python assembly hooks sharing resources owned by an application or demo."""
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -231,6 +232,49 @@ class ModuleAssembly:
             layout['model_session'] = {'models': [asdict(m) for m in self.model_session.models],
                 'protocol': 'host-accounted-model-session/v1'}
         return layout
+
+
+def _build_policy_assembly(controller, options, selected_labs):
+    """Share lifecycle wiring between whole methods and legacy selections."""
+    from rsisys.runtime.orchestration.lab_group import LabGroup
+
+    def lab_factory(context):
+        group = LabGroup()
+        # Retain partial constructions if a later factory/catalog fails.
+        context.add_owned_cleanup(group.close)
+        for alias, definition, config in selected_labs:
+            group.add(alias, definition.factory(context, deepcopy(config)))
+        return group
+
+    def decision_factory(context, execution):
+        if controller.endpoint:
+            return controller.factory(context, execution, deepcopy(options))
+        policy = controller.factory(context, deepcopy(options))
+        close = optional_method(policy, 'close')
+        if close is not None:
+            context.add_owned_cleanup(close)
+        if not callable(policy) and not callable(getattr(policy, 'decide', None)):
+            raise TypeError('Controller factory must return decide(input) or a callable')
+        report = optional_method(policy, 'report')
+        if report is not None:
+            context.controller_report = report
+        required = optional_method(policy, 'required_operations')
+        if required is not None:
+            names = required()
+            if (not isinstance(names, tuple) or any(not isinstance(n, str) or not n for n in names)
+                    or len(set(names)) != len(names)):
+                raise TypeError('required_operations() must return distinct operation names as a tuple')
+            provider = context.lab_execution
+            available = {spec.name for spec in provider.describe()} if provider is not None else set()
+            missing = sorted(set(names) - available)
+            if missing:
+                raise ValueError('Controller requires missing Lab operations: ' + ', '.join(missing))
+        return build_default_decision(context, execution, policy=policy)
+
+    research = (controller.research_factory(deepcopy(options))
+                if controller.research_factory is not None else None)
+    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory,
+                          research=research)
 
 
 def module_assembly(modules=None, **legacy):

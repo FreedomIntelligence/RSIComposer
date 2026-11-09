@@ -21,7 +21,7 @@ class PromptController:
         self.status = 'running'
 
     def required_operations(self):
-        # "checker" is the Lab alias in configs/run.json, not its registry name.
+        # "checker" is the Lab alias bound by this method's registration entry.
         return ('checker.evaluate',)
 
     def decide(self, window):

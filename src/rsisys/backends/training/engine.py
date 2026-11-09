@@ -7,9 +7,8 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
 
-from rsisys.runtime.execution.workers import run_workers
+from rsisys.runtime.execution.workers import run_workers, worker_environment
 
 
 def validate_engine(config):
@@ -56,9 +55,7 @@ class WeightEngine:
         self.config = dict(config)
 
     def _env(self):
-        root = str(Path(__file__).resolve().parents[3])
-        return dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get('PYTHONPATH', ''),
-                    OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false')
+        return worker_environment(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', TOKENIZERS_PARALLELISM='false')
 
     def _gpu_ids(self):
         ids = self.config.get('gpu_ids', [0])

@@ -3,12 +3,16 @@
   "data_dir": "../../../../../runs/custom-prompt",
   "max_decision_steps": 8,
   "framework": {
-    "controller": {
+    "method": {
       "name": "custom_prompt",
-      "config": {"max_evaluations": 3}
-    },
-    "labs": {
-      "checker": {"name": "custom_prompt_check", "config": {}}
+      "config": {
+        "controller": {
+          "max_evaluations": 3
+        },
+        "labs": {
+          "checker": {}
+        }
+      }
     }
   }
 }

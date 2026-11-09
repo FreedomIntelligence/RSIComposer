@@ -3,50 +3,49 @@
   "data_dir": "../../../../../runs/rest-em-math-8gpu",
   "max_decision_steps": 12,
   "framework": {
-    "controller": {
+    "method": {
       "name": "rest_em",
       "config": {
-        "initial_model": "models/Qwen2.5-7B-d1497293",
-        "train_data": "runs/math-data/train.jsonl",
-        "eval_data": "runs/math-data/dev.jsonl",
-        "iterations": 2,
-        "samples_per_prompt": 8,
-        "max_accepted_per_prompt": 4
-      }
-    },
-    "labs": {
-      "math": {
-        "name": "math",
-        "config": {
-          "engine": "vllm",
-          "model_kind": "causal_lm",
-          "prompt_format": "completion",
-          "answer_format": "latex",
-          "verifier": "math_verify",
-          "few_shot_data": "runs/math-data/few-shot.jsonl",
-          "device": "cuda",
-          "epochs": 1,
-          "learning_rate": 2e-05,
-          "max_new_tokens": 2048,
-          "max_length": 8192,
-          "seed": 73,
-          "train_batch_size": 1,
-          "gradient_accumulation_steps": 1,
-          "gpu_ids": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7
-          ],
-          "gpu_memory_utilization": 0.85,
-          "max_num_seqs": 128,
-          "max_num_batched_tokens": 16384,
-          "train_gradient_checkpointing": false,
-          "worker_timeout": 3600
+        "controller": {
+          "initial_model": "models/Qwen2.5-7B-d1497293",
+          "train_data": "runs/math-data/train.jsonl",
+          "eval_data": "runs/math-data/dev.jsonl",
+          "iterations": 2,
+          "samples_per_prompt": 8,
+          "max_accepted_per_prompt": 4
+        },
+        "labs": {
+          "math": {
+            "engine": "vllm",
+            "model_kind": "causal_lm",
+            "prompt_format": "completion",
+            "answer_format": "latex",
+            "verifier": "math_verify",
+            "few_shot_data": "runs/math-data/few-shot.jsonl",
+            "device": "cuda",
+            "epochs": 1,
+            "learning_rate": 2e-05,
+            "max_new_tokens": 2048,
+            "max_length": 8192,
+            "seed": 73,
+            "train_batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "gpu_ids": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "gpu_memory_utilization": 0.85,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "train_gradient_checkpointing": false,
+            "worker_timeout": 3600
+          }
         }
       }
     }

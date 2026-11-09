@@ -3,40 +3,39 @@
   "data_dir": "../../../../../runs/ttrl-pilot",
   "max_decision_steps": 10,
   "framework": {
-    "controller": {
+    "method": {
       "name": "ttrl",
       "config": {
-        "initial_model": "models/Qwen2.5-7B-d1497293",
-        "train_data": "runs/ttrl-data/unlabeled.json",
-        "eval_data": "runs/ttrl-data/evaluation.json",
-        "iterations": 2,
-        "samples_per_prompt": 16
-      }
-    },
-    "labs": {
-      "ttrl": {
-        "name": "ttrl",
-        "config": {
-          "gpu_ids": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7
-          ],
-          "seed": 73,
-          "max_tokens": 2048,
-          "max_length": 4096,
-          "lora_rank": 32,
-          "rl_lr": 5e-07,
-          "kl_beta": 0.001,
-          "batch_size": 1,
-          "temperature": 0.6,
-          "gradient_checkpointing": false,
-          "worker_timeout": 7200
+        "controller": {
+          "initial_model": "models/Qwen2.5-7B-d1497293",
+          "train_data": "runs/ttrl-data/unlabeled.json",
+          "eval_data": "runs/ttrl-data/evaluation.json",
+          "iterations": 2,
+          "samples_per_prompt": 16
+        },
+        "labs": {
+          "ttrl": {
+            "gpu_ids": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "seed": 73,
+            "max_tokens": 2048,
+            "max_length": 4096,
+            "lora_rank": 32,
+            "rl_lr": 5e-07,
+            "kl_beta": 0.001,
+            "batch_size": 1,
+            "temperature": 0.6,
+            "gradient_checkpointing": false,
+            "worker_timeout": 7200
+          }
         }
       }
     }

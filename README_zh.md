@@ -68,45 +68,39 @@ Controller 可以是状态机、搜索策略、LLM meta-agent 或混合实现；
 harness、memory 或 LLM。
 
 ```text
-controllers/
-  single_loop/ meta_agent/       # 可复用的规则/模型驱动控制器
-  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # 方法专属决策策略
-  training_schedule.py          # 共享的分阶段训练控制器
-labs/
-  math/ local_process/          # 任务/执行场景
-  seal/ ttrl/ aide/ ft_agent/    # 方法专属实验执行
-  harness/ training/            # 可复用执行组件
-  self_reflection/              # 可选骨架
 algorithms/
-  <方法>/__init__.py             # 方法声明、组件组合和接口注册
-  <方法>/configs/               # 配置与声明式任务资源
-  _template/                   # 完整的用户开发示例
+  <方法>/
+    __init__.py                 # 完整方法的注册入口
+    controller.py  lab.py       # 方法私有的决策与实验实现
+    configs/                    # 方法配置与任务资源
+  _template/                    # 完整的用户开发示例
+  shared/                       # 多个方法确实复用的能力
+loops/                          # 契约、执行与反馈机制
+labs/
+  scenes/
+    math/                       # 可复用数学场景
+    self_reflection/            # 长程自身改进骨架
+  harness/                      # 共享 harness 执行与沙箱工具
+  local_process/                # 通用进程 Lab
+backends/                       # 可复用训推引擎
+runtime/                        # 宿主调度、状态与证据
+snapshot/                       # 快照捕获与恢复机制
 ```
 
-内置方法包从 `loops/composition/`、`labs/` 引用实现，只保留声明、装配和注册，不重复放执行代码。
-原有注册名和配置保持兼容。每个方法通过唯一的 `register(registry)` 入口选择控制器、Labs、
-harness 与 memory，核心注册表不增加算法专属分支。独立研究 worker 的通信归
-`runtime/execution/research_bridge.py`。
+内置算法以完整方法注册；私有 controller、Lab 与 worker 都放在方法目录。
+方法需要共享能力时再引用 `labs/`、`backends/` 与 `loops/`，无需把每个私有组件单独注册。
+旧的 controller/Lab 注册名保留用于兼容已有配置，新配置统一选择 `framework.method`。
+每个方法通过唯一的 `register(registry)` 入口完成闭环装配，核心注册表不增加算法专属分支。
+独立研究 worker 的通信归 `runtime/execution/research_bridge.py`。
 
 库外开发仍可像 `_template` 一样，在注册入口旁携带私有实现，无需改核心库或把组件分别
 安装进库中。需要供其他方法复用的能力，再纳入公共实现层。harness 支撑上下文、模型和工具
 交互，具体策略、候选选择及停止由方法的 Controller 决定。
 
-`rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景：
-
-```text
-labs/
-  __init__.py       # Lab、请求、反馈和生命周期接口
-  local_process/    # 通用进程 Lab 及可选状态、反馈组件
-  policy_improvement/ # 已有数据/训练桥接，不等于完整 self-reflection
-  math/             # 数学场景：Lab、验证器与数学后端
-  harness/          # 可复用 harness 执行与沙箱组件
-  self_reflection/  # 可选的自身改进 Lab 骨架
-```
-
-场景是可插拔实现，不要求继承特定基类。后续 coding 场景可以放在 `labs/coding/`，
-也可以完全放在库外的方法包内，通过同一接口注册。内置方法的执行实现放在对应 Lab 包中；
-共享组件不依赖具体场景。已有 `local_process` 注册提供通用进程执行。
+`rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景。
+场景是可插拔的 Lab 实现。后续 coding 场景可以放在 `labs/scenes/coding/`，
+也可以位于库外的方法包内。方法可以引用共享场景或包装它，训推引擎从 `backends/` 接入。
+方法专属 Lab 留在 `algorithms/<方法>/`；`local_process` 提供通用进程执行。
 
 服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
 [rsisys.api](src/rsisys/api.py)。
@@ -189,10 +183,10 @@ Lab 产生候选时不得直接覆盖正在运行的决策器。验证可以以�
 
 ```text
 algorithms/_template/
-  __init__.py       # 唯一的 register(registry) 入口，统一注册决策器与 Lab
+  __init__.py       # 注册完整方法，绑定私有决策器与 Lab 工厂
   controller.py     # 根据 Lab 反馈修改 prompt，决定下一步与何时停止
   lab.py            # 执行检查，返回结构化回执
-  configs/run.json  # 选择注册名称、参数与 Lab 别名
+  configs/run.json  # 选择一个方法，配置其决策器与 Labs
 ```
 
 在仓库根目录运行，无需 GPU、模型或外部服务：
@@ -210,8 +204,8 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 
 开发自己的方法时：
 
-1. 复制 `_template` 为 `src/rsisys/algorithms/my_method/`，修改注册名
-   `custom_prompt`、`custom_prompt_check`，以及配置中对应的选择。
+1. 复制 `_template` 为 `src/rsisys/algorithms/my_method/`，修改方法名
+   `custom_prompt`，以及配置中对应的选择。
    不以下划线开头的方法包会自动发现，运行其配置时不需要 `--plugin`，
    也不需要改核心注册表或 `api.py`。
 2. 在 `controller.py` 写决策逻辑，在 `lab.py` 接自己的评测、训推引擎或 harness。
@@ -228,13 +222,29 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
 输出为 `invoke`、`wait` 或 `finish`。领域参数需在产生副作用前校验。
 
-可复用组件可以按 `harness`、`memory`、`backend`、`scene` 和 `verifier` 角色分别注册。
-方法装配按名称解析这些组件，也可以对其中任意一个提供局部覆盖。Controller 和
-Lab 仍然是一级注册对象，方法层负责把完整闭环绑定起来。
+像模板一样，直接绑定私有工厂并注册完整方法：
 
-方法级装配可以实现 `RSIMethod.build(config)`，再通过 `MethodDefinition.from_method(...)`
-进入方法目录。它负责把 controller 和 Lab 绑定起来，harness、memory、scene、verifier
-和 backend 仍然可以注入。较底层的 controller/Lab 注册接口继续用于可复用组件和兼容旧方法。
+```python
+from rsisys.api import MethodDefinition
+
+registry.register_method("my_method", MethodDefinition.from_factories(
+    controller=MyController,
+    labs={"experiment": MyLab},
+    version="1",
+))
+```
+
+配置通过 `framework.method.name` 选择方法，决策器参数放在
+`framework.method.config.controller`，Lab 参数放在
+`framework.method.config.labs.experiment`。Lab 别名由方法定义；
+`validate_controller` 和 `validate_labs` 可在构造前检查参数。
+需要自定义装配时，实现 `RSIMethod.build(config)` 并使用
+`MethodDefinition.from_method(...)`，或直接提供返回 `ModuleAssembly` 的方法工厂。
+
+共享的 `harness`、`memory`、`backend`、`scene`、`verifier` 可以通过
+`register_component` 和 `resolve_component` 注册、解析。组件选择与覆盖由方法的
+Python 装配代码完成，目前没有自动的声明式覆盖层；私有组件无需分别注册。
+已有共享实现也可直接引用。底层 controller/Lab 注册接口用于复用和兼容旧配置。
 
 已有完整决策端点的高级集成可用 `endpoint=True` 注册，工厂接收 `(context, execution, config)`；
 可选的 `research_factory(config)` 提供方法自己的研究/记忆集成。

@@ -4,7 +4,7 @@ Configuration selects registered names, never Python import strings. Plugins
 are trusted host code explicitly loaded by the caller, not agent-written code.
 """
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import hashlib
 import importlib.util
 import json
@@ -12,11 +12,10 @@ from pathlib import Path
 import re
 import sys
 
-from .assembly import ModuleAssembly, build_default_decision
+from .assembly import _build_policy_assembly
 from .components import _json, _name
-from rsisys.runtime.orchestration.lab_group import LabGroup
-from .methods import MethodCatalog, MethodDefinition, MethodIdentity
-from .runtime.capabilities import optional_method
+from .methods import (MethodCatalog, MethodDefinition, MethodIdentity,
+                      _FactoryDefinition as _Registration)
 
 
 def _selection(raw):
@@ -29,27 +28,14 @@ def _selection(raw):
     return raw['name'], json.loads(_json(config))
 
 
-@dataclass(frozen=True)
-class _Registration:
-    factory: object
-    version: str
-    validate_config: object = None
-    endpoint: bool = False
-    research_factory: object = None
-
-    def validate(self, config):
-        if self.validate_config is not None and self.validate_config(deepcopy(config)) is not None:
-            raise TypeError('Configuration validators must return None')
-
-
 class Registry:
     """Per-host catalog. Factories accept (AssemblyContext, config).
 
     A controller factory returns a public decide(DecisionInput) implementation
     or a callable. A Lab factory returns describe()/execute(call). Harness,
     memory, engines and verifiers may be injected from registered reusable
-    components. The legacy MethodDefinition route remains an advanced
-    ModuleAssembly integration.
+    components. Whole methods are the primary registration unit; separate
+    controller/Lab registrations remain available for compatibility and reuse.
     """
     def __init__(self, *, builtins=True):
         self._controllers, self._labs, self._methods = {}, {}, {}
@@ -133,7 +119,10 @@ class Registry:
 
     def resolve_component(self, kind, name, context, config=None):
         """Construct one registered component for a method assembly."""
-        config = {} if config is None else deepcopy(config)
+        config = {} if config is None else config
+        if not isinstance(config, dict):
+            raise TypeError('Component config must be a JSON object')
+        config = json.loads(_json(config))
         try:
             definition = self._components[kind][name]
         except KeyError as exc:
@@ -142,7 +131,7 @@ class Registry:
         return definition.factory(context, config)
 
     def register_method(self, name, definition):
-        """Advanced compatibility route; methods are assemblies, not a third module."""
+        """Register a whole method with its private controller and Labs."""
         _name(name, 'Method')
         if name in self._methods:
             raise ValueError(f'Duplicate method: {name}')
@@ -163,6 +152,9 @@ class Registry:
                      for name, item in sorted(self._labs.items())},
             'methods': {name: {'version': item.version}
                         for name, item in sorted(self._methods.items())},
+            'components': {kind: {name: {'version': item.version}
+                                 for name, item in sorted(catalog.items())}
+                           for kind, catalog in sorted(self._components.items())},
             'plugins': deepcopy(self._plugins),
         }
 
@@ -186,7 +178,10 @@ class Registry:
         spec = importlib.util.spec_from_file_location(name, path,
             submodule_search_locations=[str(package_root)] if package_root is not None else None)
         module = importlib.util.module_from_spec(spec)
-        prior = (dict(self._controllers), dict(self._labs), dict(self._methods), list(self._plugins))
+        prior = (dict(self._controllers), dict(self._labs), dict(self._methods),
+                 {kind: dict(catalog) for kind, catalog in self._components.items()}, list(self._plugins))
+        prior_modules = {key: value for key, value in sys.modules.items()
+                         if key == name or key.startswith(name + '.')}
         sys.modules[name] = module
         try:
             # Execute the exact bytes whose hash becomes part of run identity.
@@ -197,10 +192,11 @@ class Registry:
             self._plugins.append({'name': package_root.name if package_root is not None else path.name,
                                   'sha256': digest})
         except BaseException:
-            self._controllers, self._labs, self._methods, self._plugins = prior
+            self._controllers, self._labs, self._methods, self._components, self._plugins = prior
             for loaded in tuple(sys.modules):
                 if loaded == name or loaded.startswith(name + '.'):
                     sys.modules.pop(loaded, None)
+            sys.modules.update(prior_modules)
             raise
 
     def build(self, selection):
@@ -239,40 +235,5 @@ class Registry:
             'controller': {'name': name, 'version': controller.version, 'config': options},
             'labs': manifest, 'plugins': self._plugins})
 
-        def lab_factory(context):
-            group = LabGroup()
-            # Retain partial constructions if a later factory/catalog fails.
-            context.add_owned_cleanup(group.close)
-            for alias, definition, config in selected_labs:
-                group.add(alias, definition.factory(context, deepcopy(config)))
-            return group
-
-        def decision_factory(context, execution):
-            if controller.endpoint:
-                return controller.factory(context, execution, deepcopy(options))
-            policy = controller.factory(context, deepcopy(options))
-            close = optional_method(policy, 'close')
-            if close is not None:
-                context.add_owned_cleanup(close)
-            if not callable(policy) and not callable(getattr(policy, 'decide', None)):
-                raise TypeError('Controller factory must return decide(input) or a callable')
-            report = optional_method(policy, 'report')
-            if report is not None:
-                context.controller_report = report
-            required = optional_method(policy, 'required_operations')
-            if required is not None:
-                names = required()
-                if (not isinstance(names, tuple) or any(not isinstance(n, str) or not n for n in names)
-                        or len(set(names)) != len(names)):
-                    raise TypeError('required_operations() must return distinct operation names as a tuple')
-                provider = context.lab_execution
-                available = {spec.name for spec in provider.describe()} if provider is not None else set()
-                missing = sorted(set(names) - available)
-                if missing:
-                    raise ValueError('Controller requires missing Lab operations: ' + ', '.join(missing))
-            return build_default_decision(context, execution, policy=policy)
-
-        research = (controller.research_factory(deepcopy(options))
-                    if controller.research_factory is not None else None)
-        return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory,
-                              method_identity=identity, research=research)
+        modules = _build_policy_assembly(controller, options, selected_labs)
+        return replace(modules, method_identity=identity)

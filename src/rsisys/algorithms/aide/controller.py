@@ -10,12 +10,12 @@ Loaded from a separate clean checkout; no upstream implementation is bundled.
 from copy import deepcopy
 import json
 import math
-import os
 from pathlib import Path
 import re
 import sys
 
 from rsisys.runtime.execution.research_bridge import ResearchBridge
+from rsisys.runtime.execution.workers import worker_environment
 from rsisys.labs.harness.runtime import digest
 from rsisys.runtime.execution.upstream import checkout
 from rsisys.loops.contracts.decision import Decision, OperationCall
@@ -96,7 +96,7 @@ class AIDEController:
                'input_dir': str(Path(self.config['input_dir']).resolve())}
         request = self.root / 'request.json'
         request.write_text(json.dumps(cfg, indent=2))
-        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[3]),
+        env = worker_environment(
                    PYTHONUNBUFFERED='1', OPENAI_BASE_URL=cfg['endpoint'], OPENAI_API_KEY='local-unused')
         self.bridge = self.bridge_factory([cfg.get('worker_python', sys.executable), '-m',
             'rsisys.algorithms.aide.worker', str(request)], log=self.root / 'worker.log', env=env)

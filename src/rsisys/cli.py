@@ -20,7 +20,7 @@ def main() -> None:
         installed_version = 'source checkout (not installed)'
     parser.add_argument('--version', action='version', version=f'rsisys {installed_version}')
     commands = parser.add_subparsers(dest='command', required=True)
-    catalog = commands.add_parser('catalog', help='List registered controllers and Labs without running them')
+    catalog = commands.add_parser('catalog', help='List methods and reusable components without running them')
     catalog.add_argument('--plugin', type=Path, action='append', default=[],
                          help='Explicitly trust a registration file or method package directory; repeatable')
     demo = commands.add_parser('demo', help='Run the original in-memory mock example')

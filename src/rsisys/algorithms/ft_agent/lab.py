@@ -345,8 +345,9 @@ class LLMFinetuneLab:
         (directory / 'effective-train.json').write_text(json.dumps(recipe, indent=2))
         upstream = checkout(self.config['llama_factory_root'], LLAMA_FACTORY_REVISION)
         python = self.config.get('training_python', sys.executable)
-        env = dict(self.engine._env(), CUDA_VISIBLE_DEVICES=','.join(map(str, self.engine._gpu_ids())),
-            PYTHONPATH=str(upstream / 'src') + os.pathsep + str(Path(__file__).resolve().parents[3]),
+        env = self.engine._env()
+        env.update(CUDA_VISIBLE_DEVICES=','.join(map(str, self.engine._gpu_ids())),
+            PYTHONPATH=str(upstream / 'src') + os.pathsep + env.get('PYTHONPATH', ''),
             HF_HUB_OFFLINE='1', WANDB_MODE='disabled', TOKENIZERS_PARALLELISM='false')
         if self.config.get('training_cuda_home'):
             cuda = self.config['training_cuda_home']

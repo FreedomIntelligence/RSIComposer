@@ -6,10 +6,14 @@ Keep domain checks and execution here; the controller chooses the next action.
 from rsisys.api import LabFeedback, OperationSpec
 
 
+def validate_config(config):
+    if config:
+        raise ValueError('custom_prompt checker accepts no configuration')
+
+
 class PromptCheckLab:
     def __init__(self, context, config):
-        if config:
-            raise ValueError('custom_prompt_check accepts no configuration')
+        validate_config(config)
         self.instructions = ('Explain your reasoning.', 'Check your answer.')
 
     def describe(self):
