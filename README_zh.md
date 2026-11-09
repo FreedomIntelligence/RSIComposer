@@ -229,6 +229,10 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
 输出为 `invoke`、`wait` 或 `finish`。领域参数需在产生副作用前校验。
 
+方法级装配可以实现 `RSIMethod.build(config)`，再通过 `MethodDefinition.from_method(...)`
+进入方法目录。它负责把 controller 和 Lab 绑定起来，harness、memory、scene、verifier
+和 backend 仍然可以注入。较底层的 controller/Lab 注册接口继续用于可复用组件和兼容旧方法。
+
 已有完整决策端点的高级集成可用 `endpoint=True` 注册，工厂接收 `(context, execution, config)`；
 可选的 `research_factory(config)` 提供方法自己的研究/记忆集成。
 普通决策器工厂仍接收 `(context, config)`，无需使用这两个选项。
