@@ -1,9 +1,0 @@
-{
-  "objective": "Use Lab feedback to reach a target",
-  "data_dir": "runs/custom-controller",
-  "max_decision_steps": 8,
-  "framework": {
-    "controller": {"name": "target", "config": {"target": 3}},
-    "labs": {"counter": {"name": "counter", "config": {"initial": 0}}}
-  }
-}

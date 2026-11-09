@@ -24,3 +24,6 @@ monitor-ui/
 # Private validation stays local, outside the public source and distributions.
 /tests/
 /tools/
+
+# Private domain experiments and development demonstrations
+/examples/

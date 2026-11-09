@@ -1,7 +1,8 @@
 include README.md README_zh.md LICENSE
-recursive-include examples *.py *.sh *.json *.jsonl *.txt
+recursive-include recipes *.py *.sh *.json *.jsonl *.txt
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js LICENSE
 recursive-include requirements *.txt
+prune examples
 prune tests
 prune tools
 prune .local
