@@ -59,6 +59,47 @@ in `rsisys.labs`. Method packages reuse this infrastructure instead of copying i
 Server launchers, historical reports, benchmark scripts and domain demos are
 maintained privately. Public imports use [rsisys.api](src/rsisys/api.py).
 
+### Self-Reflection Lab — architecture direction
+
+**Self-reflection means improving the meta-agent's own decision-making from its
+accumulated decision–Lab feedback experience.** A Self-Reflection Lab is an
+optional Lab specialization, registered through the same method entry point;
+it does not introduce a third top-level module. Its improvement targets may
+include the controller's harness, memory strategy, training data and model weights.
+This is an architectural definition, not a shipped `self_reflection` registration.
+Existing reflection tools do not implement this complete lifecycle.
+
+The Lab is designed to maintain experience across runs and support three stages:
+
+1. **Accumulate experience:** retain multi-step research episodes, task context,
+   controller/model/harness versions, decisions, Lab receipts, cost and eventual
+   outcomes. Keep unfinished outcomes pending; immediate experiment failure is
+   not automatically evidence of a poor research decision.
+2. **Construct candidates:** use accumulated experience to produce candidate
+   harnesses, datasets or trained versions. Candidate construction completing
+   does not mean an improvement has been verified.
+3. **Validate over time:** bind each validation run to a fixed candidate and
+   return progress and measured outcomes. Use inexpensive screening before
+   longer research rollouts, with comparable budgets and baseline conditions.
+   Historical logs support learning but cannot establish how a changed policy's
+   subsequent trajectory would perform. Keep candidate-construction evidence
+   separate from validation evidence, and use fresh tasks or rotating validation
+   windows to limit repeated selection on the same tasks.
+
+Experience collection, candidate construction and validation can run at different
+cadences. A method defines their triggers, validation horizon, budgets, metrics
+and adoption rules. The controller decides whether to adopt, reject or continue
+validation; the runtime applies an explicitly selected version at a defined
+switch boundary. The Lab must not overwrite the active controller when a
+candidate is produced. Evaluation may finish with insufficient evidence; longer
+history does not guarantee that every update improves performance.
+
+The framework boundary is version-linked evidence, task identity, progress and
+terminal receipts, persistence, cancellation and resource ownership. Long
+validation may use explicit start/poll/result/cancel operations. Complete
+cross-run self-improvement, candidate validation and controller switching still
+require implementation; registration alone provides none of these semantics.
+
 ## Register your own method
 
 Use the runnable [_template](src/rsisys/algorithms/_template/__init__.py) as a starting point:
