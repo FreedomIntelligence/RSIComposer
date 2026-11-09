@@ -21,6 +21,21 @@ class MethodFactory(Protocol):
     def __call__(self, config: dict) -> 'ModuleAssembly': ...
 
 
+class RSIMethod(Protocol):
+    """Method-level assembly contract.
+
+    A method binds its controller and Lab together and may inject harness,
+    memory, scene, verifier and backend components through the returned
+    ModuleAssembly. The host does not prescribe how those components are
+    implemented; individual component registries remain lower-level extension
+    points for reusable pieces.
+    """
+    name: str
+    version: str
+
+    def build(self, config: dict) -> 'ModuleAssembly': ...
+
+
 def validate_method_ports(decision, exploration, lab):
     """Check public assembly windows without prescribing internal phases/state."""
     windows = [
@@ -64,6 +79,13 @@ class MethodDefinition:
     version: str
     protocol: str = METHOD_PROTOCOL
     validate_config: Callable | None = None
+
+    @classmethod
+    def from_method(cls, method: RSIMethod, *, validate_config=None):
+        """Create a catalog definition from a method-level assembly object."""
+        if not callable(getattr(method, 'build', None)):
+            raise TypeError('RSIMethod must provide build(config)')
+        return cls(method.build, method.version, validate_config=validate_config)
 
     def __post_init__(self):
         if not callable(self.factory) or (self.validate_config is not None and not callable(self.validate_config)):

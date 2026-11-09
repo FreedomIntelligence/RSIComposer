@@ -7,7 +7,7 @@ from .loops.contracts.execution import LabExecution, LabToolError
 from .loops.contracts.lifecycle import ExecutionStatus
 from .loops.contracts.rsi import (RSIController, Lab, LabRequest, LabFeedback,
                                 ControllerOperationRequirements, ControllerReportProvider)
-from .methods import MethodDefinition
+from .methods import MethodDefinition, RSIMethod
 from .registry import Registry
 from .controllers.single_loop.controller import SingleLoopController
 from rsisys.controllers.rest_em.controller import RestEMController
@@ -22,4 +22,4 @@ __all__ = ['Registry', 'SingleLoopController', 'RestEMController', 'RRSIControll
            'ControllerOperationRequirements', 'ControllerReportProvider',
            'OperationCall', 'OperationSpec', 'OperationResult', 'ExecutionStatus',
            'LabExecution', 'LabToolError', 'AssemblyContext', 'ModuleAssembly',
-           'MethodDefinition', 'Application', 'ApplicationConfig']
+           'MethodDefinition', 'RSIMethod', 'Application', 'ApplicationConfig']

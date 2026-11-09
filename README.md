@@ -270,6 +270,11 @@ Multiple Labs use `alias.operation` names; each Lab receives its native name.
 `capabilities`, `context` and `references`. Decisions are `invoke`, `wait` or
 `finish`. Domain arguments must be validated before side effects.
 
+A method-level assembly can implement `RSIMethod.build(config)` and enter the catalog
+with `MethodDefinition.from_method(...)`. It binds the controller and Lab together;
+harness, memory, scene, verifier and backend components remain injectable. The lower-level
+controller/Lab registration APIs remain available for reusable components and compatibility.
+
 Advanced integrations that already assemble their decision endpoint can register
 with `endpoint=True`; their factory receives `(context, execution, config)`.
 An optional `research_factory(config)` supplies method-owned research/memory
