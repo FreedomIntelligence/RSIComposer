@@ -20,7 +20,7 @@ from rsisys.labs.harness.runtime import (
     sandbox_step,
     validate_source,
 )
-from rsisys.labs.math.verifiers import MathVerifyVerifier, StrictNumericVerifier
+from rsisys.labs.scenes.math.verifiers import MathVerifyVerifier, StrictNumericVerifier
 
 
 @lru_cache(maxsize=1)

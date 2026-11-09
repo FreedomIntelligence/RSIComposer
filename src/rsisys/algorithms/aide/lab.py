@@ -21,7 +21,7 @@ import threading
 import time
 
 from rsisys.labs.harness.runtime import ChatPool, digest
-from rsisys.labs.math.verifiers import StrictNumericVerifier
+from rsisys.labs.scenes.math.verifiers import StrictNumericVerifier
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.runtime.execution.isolation import ExecutionPolicy, ProcessIsolation, system_runtime_paths

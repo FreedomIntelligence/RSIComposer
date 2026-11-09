@@ -10,7 +10,7 @@ import math
 from collections import Counter
 from statistics import mean, stdev
 
-from rsisys.labs.math.verifiers import MathVerifyVerifier, final_boxed
+from rsisys.labs.scenes.math.verifiers import MathVerifyVerifier, final_boxed
 from rsisys.backends.training.artifacts import WeightArtifacts
 from rsisys.backends.training.engine import validate_engine
 

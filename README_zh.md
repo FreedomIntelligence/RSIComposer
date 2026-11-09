@@ -138,7 +138,7 @@ runtime/
   capabilities.py # 可选组件方法发现
 ```
 
-候选改进的 Lab 操作放在 `labs/self_reflection/evolution.py`，通用版本激活
+候选改进的 Lab 操作放在 `labs/scenes/self_reflection/evolution.py`，通用版本激活
 机制留在 `runtime/state/`。评测准入负责批次和预算，场景评分仍由 Lab 负责。
 
 通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
@@ -151,7 +151,7 @@ Self-Reflection Lab 负责未来的长期经验整理、候选构造与验证；
 **Self-reflection 指 meta-agent 利用长期积累的 decision–Lab feedback 经验，
 改进自身决策能力的过程。** Self-Reflection Lab 是可选的 Lab 类型，通过方法的同一个
 注册入口接入，不新增第三类顶层模块。改进对象可以包括决策器的 harness、memory 策略、
-训练数据和模型权重。[代码骨架](src/rsisys/labs/self_reflection/__init__.py) 提供显式加载的
+训练数据和模型权重。[代码骨架](src/rsisys/labs/scenes/self_reflection/__init__.py) 提供显式加载的
 `self_reflection` Lab 注册入口，版本为 `0-placeholder`，尚无可执行后端；
 现有 reflect 工具不等于已经实现这一完整生命周期。
 
@@ -179,7 +179,7 @@ Lab 产生候选时不得直接覆盖正在运行的决策器。验证可以以�
 包内提供版本/研究过程/候选/验证记录的草案、后端协议，以及 `record_episode`、
 `build_candidate`、`start`、`poll`、`result`、`cancel` 操作面。方法可在自己的注册入口内
 调用该包的 `register`，或注册具体的替代 Lab。可以运行
-`rsisys catalog --plugin src/rsisys/labs/self_reflection` 查看骨架。
+`rsisys catalog --plugin src/rsisys/labs/scenes/self_reflection` 查看骨架。
 当前所有合法调用均返回失败回执，错误码为 `self_reflection_not_implemented`；
 不会写入经验、启动任务、产生候选或切换决策器版本。
 

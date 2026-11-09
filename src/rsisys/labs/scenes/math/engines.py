@@ -39,7 +39,7 @@ class TransformersMathEngine:
         self.input_root = Path(input_root or Path.cwd()).resolve()
         self.demonstrations = []
         if self.config.get('few_shot_data'):
-            from rsisys.labs.math.verifiers import numeric_answer, final_boxed
+            from rsisys.labs.scenes.math.verifiers import numeric_answer, final_boxed
             parse_answer = final_boxed if self.config.get('answer_format') == 'latex' else numeric_answer
             data = self._path(self.config['few_shot_data'])
             self.demonstrations = [json.loads(line) for line in data.read_text().splitlines() if line.strip()]

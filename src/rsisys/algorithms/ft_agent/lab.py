@@ -45,7 +45,7 @@ def evaluation_answer(answer):
     Keep the original reasoning and answer untouched for native SFT. Both
     installed verifiers accept this exact final numeric value.
     """
-    from rsisys.labs.math.verifiers import numeric_answer
+    from rsisys.labs.scenes.math.verifiers import numeric_answer
     value = numeric_answer(answer)
     return '\\boxed{' + str(value) + '}' if value is not None else answer
 
@@ -153,7 +153,7 @@ def bounded_train_config(raw, config, directory):
 class LLMFinetuneLab:
     def __init__(self, context, config, *, engine=None):
         validate_config(config)
-        from rsisys.labs.math.verifiers import MathVerifyVerifier, StrictNumericVerifier
+        from rsisys.labs.scenes.math.verifiers import MathVerifyVerifier, StrictNumericVerifier
         self.config = deepcopy(config)
         self.root = Path(context.data_dir).resolve() / config.get('output_subdir', 'llm-finetune')
         self.root.mkdir(parents=True, exist_ok=False)

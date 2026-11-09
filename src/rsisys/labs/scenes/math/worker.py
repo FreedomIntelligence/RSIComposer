@@ -6,7 +6,7 @@ import random
 import sys
 import time
 
-from rsisys.labs.math.engines import TransformersMathEngine
+from rsisys.labs.scenes.math.engines import TransformersMathEngine
 
 
 def generate(request, output):

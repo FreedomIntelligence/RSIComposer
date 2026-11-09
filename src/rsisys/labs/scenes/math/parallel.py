@@ -12,7 +12,7 @@ import time
 
 from rsisys.runtime.execution.workers import run_workers
 
-from rsisys.labs.math.engines import TransformersMathEngine
+from rsisys.labs.scenes.math.engines import TransformersMathEngine
 
 
 def shard_requests(rows, count, workers):
@@ -66,7 +66,7 @@ class ParallelMathEngine(TransformersMathEngine):
                 request.write_text(json.dumps({'config': self._config(), 'model': str(self._path(ref)),
                     'requests': shard, 'round': round_number, 'sample': sample, 'rank': rank}))
                 commands.append([self.config.get('inference_python', sys.executable), '-m',
-                    'rsisys.labs.math.worker', 'generate', str(request), str(output)])
+                    'rsisys.labs.scenes.math.worker', 'generate', str(request), str(output)])
                 environments.append(dict(self._env(), CUDA_VISIBLE_DEVICES=str(gpu)))
                 outputs.append(output)
             run_workers(commands, environments, directory, self.config.get('worker_timeout', 3600))
@@ -85,6 +85,6 @@ class ParallelMathEngine(TransformersMathEngine):
                 'rows': rows, 'output': str(output.resolve()), 'round': round_number}))
             command = [self.config.get('training_python', sys.executable), '-m', 'torch.distributed.run',
                 '--standalone', '--nnodes=1', f'--nproc-per-node={len(gpu_ids)}',
-                '-m', 'rsisys.labs.math.worker', 'train', str(request)]
+                '-m', 'rsisys.labs.scenes.math.worker', 'train', str(request)]
             run_workers([command], [dict(self._env(), CUDA_VISIBLE_DEVICES=','.join(map(str, gpu_ids)))],
                 directory, self.config.get('worker_timeout', 3600))

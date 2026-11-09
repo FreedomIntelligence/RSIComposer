@@ -158,7 +158,7 @@ runtime/
   capabilities.py # optional component method discovery
 ```
 
-Candidate-improvement Lab operations live in `labs/self_reflection/evolution.py`;
+Candidate-improvement Lab operations live in `labs/scenes/self_reflection/evolution.py`;
 the generic version activation machinery stays in `runtime/state/`. Evaluation
 admission tracks campaigns and budgets; task scorers remain in Labs.
 
@@ -177,7 +177,7 @@ accumulated decision–Lab feedback experience.** A Self-Reflection Lab is an
 optional Lab specialization, registered through the same method entry point;
 it does not introduce a third top-level module. Its improvement targets may
 include the controller's harness, memory strategy, training data and model weights.
-The [code scaffold](src/rsisys/labs/self_reflection/__init__.py) provides an opt-in
+The [code scaffold](src/rsisys/labs/scenes/self_reflection/__init__.py) provides an opt-in
 `self_reflection` Lab registration at version `0-placeholder`. It is not a working
 backend; existing reflection tools do not implement this complete lifecycle.
 
@@ -217,7 +217,7 @@ protocol, and the Lab operation surface (`record_episode`, `build_candidate`,
 `start`, `poll`, `result`, `cancel`). Methods can import its `register` function
 inside their own registration entry, or register a concrete replacement Lab.
 Inspect the scaffold with
-`rsisys catalog --plugin src/rsisys/labs/self_reflection`.
+`rsisys catalog --plugin src/rsisys/labs/scenes/self_reflection`.
 Every valid invocation currently returns a failed receipt with
 `error_code=self_reflection_not_implemented`; no experience is persisted, jobs
 started, candidates created or controller versions switched.
