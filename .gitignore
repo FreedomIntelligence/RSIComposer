@@ -29,3 +29,14 @@ monitor-ui/
 /examples/
 
 /recipes/
+
+# Generated run state (source contracts remain under src/rsisys/)
+artifacts/
+snapshots/
+workspaces/
+checkpoints/
+outputs/
+logs/
+*.sqlite3
+*.sqlite
+*.db

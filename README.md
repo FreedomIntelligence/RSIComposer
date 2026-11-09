@@ -263,6 +263,8 @@ receipt; registration does not automatically poll arbitrary external jobs.
 Optional `required_operations()` checks operation availability, and `report()`
 adds JSON method state to `result.json.controller_report`.
 
+All run outputs are disposable local state. `runs/` is ignored by Git and stores results, logs, artifacts, workspaces, databases and snapshots. The repository keeps only the snapshot/evidence contracts and small deterministic fixtures; pass `--data-dir` to place a run elsewhere.
+
 ## Components
 
 - `single_loop` provides fixed iteration; `meta_agent` uses the configured model
