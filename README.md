@@ -270,6 +270,11 @@ Multiple Labs use `alias.operation` names; each Lab receives its native name.
 `capabilities`, `context` and `references`. Decisions are `invoke`, `wait` or
 `finish`. Domain arguments must be validated before side effects.
 
+Reusable method components can be registered independently by role: `harness`,
+`memory`, `backend`, `scene` and `verifier`. A method assembly resolves these
+names and can replace any one with a local override. Controller and Lab remain
+first-class registrations; the method is the layer that binds the complete pair.
+
 A method-level assembly can implement `RSIMethod.build(config)` and enter the catalog
 with `MethodDefinition.from_method(...)`. It binds the controller and Lab together;
 harness, memory, scene, verifier and backend components remain injectable. The lower-level

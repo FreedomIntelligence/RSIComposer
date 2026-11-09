@@ -229,6 +229,10 @@ rsisys run --plugin src/rsisys/algorithms/_template \
 决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
 输出为 `invoke`、`wait` 或 `finish`。领域参数需在产生副作用前校验。
 
+可复用组件可以按 `harness`、`memory`、`backend`、`scene` 和 `verifier` 角色分别注册。
+方法装配按名称解析这些组件，也可以对其中任意一个提供局部覆盖。Controller 和
+Lab 仍然是一级注册对象，方法层负责把完整闭环绑定起来。
+
 方法级装配可以实现 `RSIMethod.build(config)`，再通过 `MethodDefinition.from_method(...)`
 进入方法目录。它负责把 controller 和 Lab 绑定起来，harness、memory、scene、verifier
 和 backend 仍然可以注入。较底层的 controller/Lab 注册接口继续用于可复用组件和兼容旧方法。

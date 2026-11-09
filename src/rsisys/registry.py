@@ -47,11 +47,13 @@ class Registry:
 
     A controller factory returns a public decide(DecisionInput) implementation
     or a callable. A Lab factory returns describe()/execute(call). Harness,
-    memory, engines and verifiers belong inside these two modules. The legacy
-    MethodDefinition route remains an advanced ModuleAssembly integration.
+    memory, engines and verifiers may be injected from registered reusable
+    components. The legacy MethodDefinition route remains an advanced
+    ModuleAssembly integration.
     """
     def __init__(self, *, builtins=True):
         self._controllers, self._labs, self._methods = {}, {}, {}
+        self._components = {}
         self._plugins = []
         if builtins:
             from .algorithms import register_builtins
@@ -108,6 +110,36 @@ class Registry:
 
     def register_lab(self, name, factory, *, version, validate_config=None):
         self._register(self._labs, name, factory, version, validate_config)
+
+    def register_component(self, kind, name, factory, *, version, validate_config=None):
+        """Register a reusable method component by role and stable name.
+
+        Supported roles are harness, memory, backend, scene and verifier. The
+        factory is intentionally opaque: the method assembly supplies its
+        context and configuration when it resolves the component.
+        """
+        allowed = {'harness', 'memory', 'backend', 'scene', 'verifier'}
+        if kind not in allowed:
+            raise ValueError(f'Unknown component role: {kind}')
+        _name(name, 'Component')
+        if not callable(factory) or not isinstance(version, str) or not version.strip():
+            raise TypeError('Component requires a factory and nonempty version')
+        if validate_config is not None and not callable(validate_config):
+            raise TypeError('validate_config must be callable')
+        catalog = self._components.setdefault(kind, {})
+        if name in catalog:
+            raise ValueError(f'Duplicate {kind} component: {name}')
+        catalog[name] = _Registration(factory, version, validate_config)
+
+    def resolve_component(self, kind, name, context, config=None):
+        """Construct one registered component for a method assembly."""
+        config = {} if config is None else deepcopy(config)
+        try:
+            definition = self._components[kind][name]
+        except KeyError as exc:
+            raise ValueError(f'Unknown {kind} component: {name}') from exc
+        definition.validate(config)
+        return definition.factory(context, config)
 
     def register_method(self, name, definition):
         """Advanced compatibility route; methods are assemblies, not a third module."""
