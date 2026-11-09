@@ -34,7 +34,7 @@ def adapt(request):
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer, DataCollatorWithPadding, Trainer, TrainingArguments, set_seed
 
-    from rsisys.labs.training.worker import weights_digest
+    from rsisys.backends.training.worker import weights_digest
     versions = require_versions()
     config = request['config']
     tokenizer = AutoTokenizer.from_pretrained(request['model'], local_files_only=True)
@@ -107,7 +107,7 @@ def train(request):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from trl import SFTConfig, SFTTrainer
 
-    from rsisys.labs.training.worker import merged_change_count, weights_digest
+    from rsisys.backends.training.worker import merged_change_count, weights_digest
     versions = require_versions()
     if request['algorithm'] != 'sft':
         raise ValueError('SEAL backend only supports outer SFT')

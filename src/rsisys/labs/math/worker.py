@@ -65,7 +65,7 @@ def generate(request, output):
         'device_memory_used_mib': memory}), flush=True)
 
 
-from rsisys.labs.training.batching import training_groups
+from rsisys.backends.training.batching import training_groups
 
 
 def train(request):

@@ -22,7 +22,7 @@ class WeightArtifacts:
     engine_methods = ('generate', 'train')
 
     def __init__(self, context, config, *, engine=None):
-        from rsisys.labs.training.engine import WeightEngine
+        from rsisys.backends.training.engine import WeightEngine
         self.config = dict(config)
         self.engine = WeightEngine(config) if engine is None else engine
         if (not isinstance(getattr(self.engine, 'name', None), str) or not self.engine.name.strip()

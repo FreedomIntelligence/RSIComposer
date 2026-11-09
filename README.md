@@ -85,7 +85,7 @@ algorithms/
 labs/
   math/                         # reusable math scene
   self_reflection/              # optional long-horizon improvement scene
-  harness/ training/            # reusable execution components
+  harness/                    # reusable harness components
   local_process/                # reusable process Lab
 algorithms/
   <method>/__init__.py           # method declaration, component wiring, registration
@@ -116,7 +116,6 @@ labs/
   local_process/    # generic process Lab and optional state/feedback components
   math/             # math scene: Labs, verifiers and mathematical backends
   harness/          # reusable harness execution and sandbox components
-  training/         # reusable training engines, workers and artifact handling
   self_reflection/  # optional self-improvement Lab scaffold
 ```
 
@@ -139,8 +138,8 @@ The remaining internal boundaries are:
   contract; `adapters/langchain_model.py` bridges the optional LangChain API.
   Implementation-specific integration belongs with its owning implementation.
 - `backends/training/` and `backends/serving/` own training processes, inference
-  transports and deployments. These are execution providers; `labs/training/`
-  contains reusable Lab-side orchestration and artifact components.
+  transports and deployments. These are execution providers; Labs only select them and translate their
+  results into method feedback.
 - `runtime/orchestration/lab_group.py` owns namespaced routing and Lab lifecycle aggregation.
   Backend record writes and locks live in `runtime/storage/process_store.py`, so serving
   does not depend on a training implementation for persistence.

@@ -101,7 +101,6 @@ labs/
   policy_improvement/ # 已有数据/训练桥接，不等于完整 self-reflection
   math/             # 数学场景：Lab、验证器与数学后端
   harness/          # 可复用 harness 执行与沙箱组件
-  training/         # 可复用训练引擎、worker 和产物管理
   self_reflection/  # 可选的自身改进 Lab 骨架
 ```
 
@@ -121,7 +120,7 @@ labs/
   `adapters/langchain_model.py` 适配可选 LangChain 接口。
   某个实现专属的接入逻辑归该实现维护，不集中堆进 adapters。
 - `backends/training/`、`backends/serving/` 负责训练进程、推理传输与部署；
-  `labs/training/` 则提供 Lab 侧可复用的调用与产物管理组件。
+  Lab 只负责选择这些后端，并把执行结果转换为方法反馈。
 - `runtime/orchestration/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
   后端的记录写入、文件锁放在 `runtime/storage/process_store.py`，推理后端不再借用训练实现做持久化。
 

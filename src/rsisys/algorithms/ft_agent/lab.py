@@ -19,8 +19,8 @@ from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.runtime.execution.upstream import checkout
-from rsisys.labs.training.artifacts import file_hash
-from rsisys.labs.training.engine import WeightEngine, validate_engine
+from rsisys.backends.training.artifacts import file_hash
+from rsisys.backends.training.engine import WeightEngine, validate_engine
 
 
 TRAIN_FIELDS = {

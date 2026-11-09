@@ -1,1 +1,1 @@
-"""Owned training-process execution backends."""
+"""Reusable SFT/RL training engines, workers and artifact backends."""

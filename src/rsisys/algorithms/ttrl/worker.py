@@ -103,7 +103,7 @@ def fit(request):
     from datasets import Dataset
     from hydra import compose, initialize_config_dir
     from omegaconf import OmegaConf
-    from rsisys.labs.training.artifacts import file_hash
+    from rsisys.backends.training.artifacts import file_hash
 
     root = checkout(request['config']['upstream_root'], TTRL_REVISION)
     upstream = root / 'verl'

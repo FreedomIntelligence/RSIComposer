@@ -48,8 +48,8 @@ def validate_engine(config):
 
 class WeightEngine:
     name, simulated = 'raw-vllm-torch-lora-v1', False
-    worker_module = 'rsisys.labs.training.worker'
-    operation_workers = {'generate': 'rsisys.labs.training.worker'}
+    worker_module = 'rsisys.backends.training.worker'
+    operation_workers = {'generate': 'rsisys.backends.training.worker'}
 
     def __init__(self, config):
         validate_engine(config)
