@@ -60,7 +60,7 @@ cli.py          # 命令行入口
 ```
 
 这些模块保留在包根层，是为了兼容 `rsisys.api`、`rsisys.config`、
-`rsisys.application` 等稳定导入路径。具体实现位于 `controllers/`、`labs/`、
+`rsisys.application` 等稳定导入路径。具体实现位于 `loops/composition/`、`labs/`、
 `backends/`、`runtime/` 和 `snapshot/`。
 
 实现层分为两种角色：**Controller** 处理反馈并决定行动，**Lab** 执行实验并返回证据。
@@ -83,7 +83,7 @@ algorithms/
   _template/                   # 完整的用户开发示例
 ```
 
-内置方法包从 `controllers/`、`labs/` 引用实现，只保留声明、装配和注册，不重复放执行代码。
+内置方法包从 `loops/composition/`、`labs/` 引用实现，只保留声明、装配和注册，不重复放执行代码。
 原有注册名和配置保持兼容。每个方法通过唯一的 `register(registry)` 入口选择控制器、Labs、
 harness 与 memory，核心注册表不增加算法专属分支。独立研究 worker 的通信归
 `runtime/execution/research_bridge.py`。
@@ -143,7 +143,7 @@ runtime/
 机制留在 `runtime/state/`。评测准入负责批次和预算，场景评分仍由 Lab 负责。
 
 通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
-决策侧的反馈选择放在 `controllers/memory/`，决定哪些证据进入决策上下文。
+决策侧的反馈选择放在 `loops/decision_making/harness/memory/`，决定哪些证据进入决策上下文。
 Self-Reflection Lab 负责未来的长期经验整理、候选构造与验证；普通 RSI 运行
 无需启用该 Lab 就能记录和查询证据。现有记录格式与 `experience.sqlite3` 文件保持兼容。
 

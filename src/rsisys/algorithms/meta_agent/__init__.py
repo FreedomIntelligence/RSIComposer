@@ -1,5 +1,5 @@
 """Model-driven controller template; harness and memory are method choices."""
-from rsisys.controllers.meta_agent.controller import build_meta_agent, validate_config
+from rsisys.algorithms.meta_agent.controller import build_meta_agent, validate_config
 
 
 def _research(config):

@@ -1,5 +1,5 @@
 """TTRL majority-reward GRPO and native continuous-training decisions."""
-from rsisys.controllers.training_schedule import TrainingScheduleController
+from rsisys.loops.decision_making.training_schedule import TrainingScheduleController
 
 
 class TTRLController(TrainingScheduleController):

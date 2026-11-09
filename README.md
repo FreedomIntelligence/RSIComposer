@@ -66,7 +66,7 @@ cli.py          # command-line entry point
 
 These modules intentionally remain at the package root so existing integrations can
 import stable paths such as `rsisys.api`, `rsisys.config` and `rsisys.application`.
-The concrete implementation layers live below `controllers/`, `labs/`, `backends/`,
+The concrete implementation layers live below `loops/composition/`, `labs/`, `backends/`,
 `runtime/` and `snapshot/`.
 
 The implementation layer has two roles: **controllers** process feedback and
@@ -75,10 +75,13 @@ may be a state machine, search policy, LLM meta-agent or a hybrid. Neither side
 is required to use a harness, memory or an LLM.
 
 ```text
-controllers/
-  single_loop/ meta_agent/       # reusable rule/model-driven controllers
-  rest_em/ rrsi/ seal/ ttrl/ aide/ ft_agent/  # method-specific policies
-  training_schedule.py          # shared staged-training controller
+loops/
+  contracts/                     # loop, decision and Lab protocols
+  composition/                  # reusable loop composition
+  decision_making/              # decision loop, harness and feedback
+  exploration/                  # execution loop and harness
+algorithms/
+  <method>/                     # method-private policy and Lab assembly
 labs/
   math/ local_process/          # task/execution scenes
   seal/ ttrl/ aide/ ft_agent/    # method-specific experiment execution
@@ -92,7 +95,7 @@ algorithms/
 
 Built-in method packages declare and register their complete method assembly.
 Method-private implementations live beside the registration entry; reusable scenes
-and components are imported from `labs/`, `backends/` and `controllers/` only when
+and components are imported from `labs/`, `backends/` and `loops/composition/` only when
 shared. Their registered
 names and configurations remain stable. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
@@ -163,7 +166,7 @@ admission tracks campaigns and budgets; task scorers remain in Labs.
 
 Shared records, provenance, in-memory/SQLite persistence and basic queries live
 in `runtime/evidence/`. Controller-side feedback selection lives in
-`controllers/memory/`; it determines which evidence enters decision context.
+`loops/decision_making/harness/memory/`; it determines which evidence enters decision context.
 The Self-Reflection Lab owns future long-term experience curation, candidate
 construction and validation. Ordinary RSI runs use shared evidence without
 enabling that Lab. Existing record formats and `experience.sqlite3` files are

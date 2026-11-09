@@ -9,7 +9,7 @@ from .loops.contracts.rsi import (RSIController, Lab, LabRequest, LabFeedback,
                                 ControllerOperationRequirements, ControllerReportProvider)
 from .methods import MethodDefinition, RSIMethod
 from .registry import Registry
-from .controllers.single_loop.controller import SingleLoopController
+from .loops.composition.single_loop import SingleLoopController
 from rsisys.algorithms.rest_em.controller import RestEMController
 from rsisys.algorithms.rrsi.controller import RRSIController
 from rsisys.algorithms.seal.controller import SEALController
