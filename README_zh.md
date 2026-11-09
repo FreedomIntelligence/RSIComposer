@@ -139,7 +139,7 @@ runtime/
   capabilities.py # 可选组件方法发现
 ```
 
-候选改进的 Lab 操作放在 `labs/policy_improvement/evolution.py`，通用版本激活
+候选改进的 Lab 操作放在 `labs/self_reflection/evolution.py`，通用版本激活
 机制留在 `runtime/state/`。评测准入负责批次和预算，场景评分仍由 Lab 负责。
 
 通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。

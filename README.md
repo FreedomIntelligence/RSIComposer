@@ -83,10 +83,10 @@ loops/
 algorithms/
   <method>/                     # method-private policy and Lab assembly
 labs/
-  math/ local_process/          # task/execution scenes
-  seal/ ttrl/ aide/ ft_agent/    # method-specific experiment execution
+  math/                         # reusable math scene
+  self_reflection/              # optional long-horizon improvement scene
   harness/ training/            # reusable execution components
-  self_reflection/              # optional scaffold
+  local_process/                # reusable process Lab
 algorithms/
   <method>/__init__.py           # method declaration, component wiring, registration
   <method>/configs/             # configuration and declarative task assets
@@ -114,7 +114,6 @@ interaction; a method's controller owns strategy, candidate selection and stoppi
 labs/
   __init__.py       # Lab, LabRequest, LabFeedback and lifecycle interfaces
   local_process/    # generic process Lab and optional state/feedback components
-  policy_improvement/ # existing dataset/training bridges, not full self-reflection
   math/             # math scene: Labs, verifiers and mathematical backends
   harness/          # reusable harness execution and sandbox components
   training/         # reusable training engines, workers and artifact handling
@@ -160,7 +159,7 @@ runtime/
   capabilities.py # optional component method discovery
 ```
 
-Candidate-improvement Lab operations live in `labs/policy_improvement/evolution.py`;
+Candidate-improvement Lab operations live in `labs/self_reflection/evolution.py`;
 the generic version activation machinery stays in `runtime/state/`. Evaluation
 admission tracks campaigns and budgets; task scorers remain in Labs.
 
