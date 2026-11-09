@@ -45,6 +45,24 @@ flowchart LR
 宿主不会根据分数替算法选择赢家。
 
 新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
+`src/rsisys/` 根目录下的文件是稳定的框架入口，不是运行产物：
+
+```text
+api.py          # 公共 API 汇总
+application.py  # 应用和运行生命周期
+assembly.py     # controller/Lab/harness/backend 装配
+registry.py     # 算法和组件注册
+methods.py      # 方法声明和方法目录
+components.py   # 组件图和状态端口
+config.py       # 配置到应用的构建
+research.py     # 可选研究组件装配
+cli.py          # 命令行入口
+```
+
+这些模块保留在包根层，是为了兼容 `rsisys.api`、`rsisys.config`、
+`rsisys.application` 等稳定导入路径。具体实现位于 `controllers/`、`labs/`、
+`backends/`、`runtime/` 和 `snapshot/`。
+
 实现层分为两种角色：**Controller** 处理反馈并决定行动，**Lab** 执行实验并返回证据。
 Controller 可以是状态机、搜索策略、LLM meta-agent 或混合实现；两侧都不强制使用
 harness、memory 或 LLM。
