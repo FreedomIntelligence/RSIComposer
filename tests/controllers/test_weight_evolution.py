@@ -24,13 +24,15 @@ class WeightControllerTests(unittest.TestCase):
 
     def test_two_rounds_continue_current_weights_and_evaluate_only_before_and_after(self):
         for cls in (SEALController, TTRLController):
-            c = self.make(cls)
+            c = cls(initial_model='base', train_data=['train-1', 'train-2'], eval_data='heldout')
             action = c.decide(DecisionInput('learn'))
             self.assertEqual(action.operation.name, c.method + '.evaluate')
             action = c.decide(self.feedback(c, quality_metrics={'score': 0.1}))
             for round_number in (1, 2):
                 for stage in c.phases:
                     self.assertEqual(action.operation.name, c.method + '.' + stage)
+                    if stage == c.phases[0]:
+                        self.assertEqual(action.operation.arguments['dataset'], f'train-{round_number}')
                     self.assertEqual(action.operation.arguments['model'], 'base' if round_number == 1 else 'model-1')
                     if stage == 'train':
                         action = c.decide(self.feedback(c, model=f'model-{round_number}', training_performed=True))

@@ -1,5 +1,36 @@
 # SEAL：self-edit → 内层 SFT → 选择 → 外层 SFT
 
+新增 [paper.json](paper.json) 提供论文协议适配；旧 [8gpu.json](8gpu.json) 保留历史小规模设置。
+论文配置使用 `seal` 注册项和 `profile: paper`，不是切换到库外脚本。
+
+```bash
+git clone https://github.com/Continual-Intelligence/SEAL.git .local/upstream/seal
+git -C .local/upstream/seal checkout 6d9c9f9ee392c6cc618e771f399d436d190f6ca4
+python experiments/seal/prepare.py --upstream .local/upstream/seal --paper --output runs/seal-paper-data
+rsisys run --config experiments/seal/paper.json
+```
+
+`--paper` 使用上游发布的两组互不重叠的 50 篇训练文档，以及固定的 200 篇/974 题评估集，
+丢弃上游保存的 self-edit，由当前模型重新生成。决策器的 `train_data` 列表按轮选择数据。
+每篇生成 5 个候选，以 3 个独立内层种子的语义正确率均值选择 top-1。
+论文配置的主要 `adapted_accuracy` 按文档等权平均，与上游 query_server 一致；
+另存 `question_micro_accuracy` 作为逐题加权诊断，避免混淆两种平均口径。
+按行构造显式开启，避免上游 shell 开关歧义；不按某个最好种子的分数选择。
+内层使用可重放的独立种子序列；上游服务使用 wall-clock 种子，因此不宣称逐 bit 相同。
+
+内层使用 Transformers Trainer，保留上游固定长度 padding/EOS 标签、默认线性日程和 weight decay；
+临时 adapter 在 vLLM 中评估。外层使用原版 TRL SFTTrainer，rank 64、2 epochs、lr 3e-4。
+默认外层沿用上游 2 GPU × microbatch 1 × accumulation 5 的有效 batch 10；
+8 GPU 全部用于可并行的内层任务。改成其他 GPU 数时需要显式保持有效 batch。
+
+训练解释器需要 [隔离依赖](../paper-requirements.txt)，[环境说明](../paper-environment.md)记录 B200 通信兼容配置；SEAL worker 会检查 Transformers/TRL/PEFT 版本。
+配置中的模型、数据根和解释器路径需按机器调整；B200 的 torch 应使用 CUDA 12.8 构建。
+语义评分读取环境变量 `OPENAI_API_KEY`，可用 `OPENAI_BASE_URL` 指向兼容的 Responses 服务。
+固定模型为 GPT-4.1，提示与上游一致；空回答计错，网络失败或含糊判分会终止阶段，
+不退回词面 F1，也不把服务错误计成答错。自定义 scorer 仍通过 Lab 工厂显式注入并命名。
+
+新增适配不等同于完整论文收益复现；历史结果见下文和 [RESULTS.md](RESULTS.md)。
+
 `seal` 决策器和 `seal` Lab 均为内置注册项，通过 `rsisys run --config` 运行。
 它们不启动上游 shell pipeline；调度、回执、训练和模型交接都经过 RSISys。
 实现依据 *Self-Adapting Language Models*（arXiv:2506.10943）知识自适应分支，
@@ -78,5 +109,5 @@ PYTHONPATH=src python3.12 experiments/seal/check_upstream.py /path/to/SEAL --out
 PYTHONPATH=src python3.12 -m unittest tests.controllers.test_weight_evolution tests.labs.test_seal tests.integration.test_weight_framework
 ```
 
-对照覆盖精确 self-edit 提示、80 种训练序列和 800 种稳定 top-1 选择；不宣称整个训练
+对照覆盖精确 self-edit/语义判分提示、480 种训练序列和 800 种稳定 top-1 选择；不宣称整个训练
 后端或自定义 F1 判分与上游数值等价。原始实跑证据位于忽略的 `.local/seal-sft-20261109-v1/`。

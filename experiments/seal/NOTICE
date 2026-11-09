@@ -1,4 +1,4 @@
-SEAL prompts and sequence construction are adapted from
+SEAL prompts, sequence construction and training recipes are adapted from
 Continual-Intelligence/SEAL, commit 6d9c9f9ee392c6cc618e771f399d436d190f6ca4.
 
 MIT License

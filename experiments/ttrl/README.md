@@ -1,5 +1,40 @@
 # TTRL：无标签多数奖励 → GRPO → 下一轮模型
 
+新增 [paper.json](paper.json) 使用内置 `ttrl_verl` 决策器和 Lab，直接运行固定版本的官方
+verl/Ray/FSDP 全参数训练。旧 [8gpu.json](8gpu.json) 继续使用独立 LoRA 小规模参考实现。
+
+```bash
+git clone https://github.com/PRIME-RL/TTRL.git .local/upstream/ttrl
+git -C .local/upstream/ttrl checkout 5806e119789132fcb43552beaf2532d7d0447213
+python experiments/ttrl/prepare.py --upstream .local/upstream/ttrl --paper --output runs/ttrl-paper-data
+rsisys run --config experiments/ttrl/paper.json
+```
+
+`--paper` 使用全部 MATH-500 题作为无标签适配目标，迁移集为空；这符合论文的 transductive 口径。
+训练入口只接收 `id/prompt`；原生 parquet 的 ground-truth 字段填占位符，真实标签仅供 Lab 的独立评测。
+因此上游 original-GT 诊断不再有真实含义，原生内部验证关闭；框架仍记录训练前后完整评测。
+
+决策器执行 `evaluate → fit → evaluate`。一次 `fit` 内由原生引擎维持全部 on-policy 刷新、
+优化器、cosine 日程和固定 reference，避免每一轮重新初始化这些状态。
+Lab 的 `total_epochs=10`、每批 32 题，每题 64 票生成伪标签、取前 32 条训练，
+token-mean objective，输出上限 3072。决策器的 `samples_per_prompt=64` 表示投票数，
+Lab 的同名字段 `32` 表示实际训练响应数；配置显式保留两个值。
+评估对每题采样 16 次，T=0.6、top-p=0.95，报告平均正确率，不是 best-of-16。
+数学评分直接加载固定上游完整 reward 包，不再用另一个 verifier 近似。
+原生训练保留上游 dataloader seed 1 / rollout seed 0，写入 effective YAML；
+Lab 的 `seed` 用于框架侧评测采样，原生种子可通过 `native_overrides` 显式调整。
+当前 JSON 保留已验证的 B200 执行设置：eager、原生 vLLM 显存比例 0.65、
+dataloader workers 0；这些与上游脚本的图执行/显存配置不同，训练预算和数学目标不变。
+
+需要 [隔离依赖](../paper-requirements.txt)、与 torch/CUDA/Python ABI 匹配的 flash-attn，
+以及干净、固定 revision 的 `upstream_root`。模型和解释器路径需按机器调整。
+安装步骤及 B200 通信兼容配置见 [环境说明](../paper-environment.md)。
+`native_overrides` 可调整原生 FSDP/显存等参数；数据、奖励器、总日程、模型和发布路径由 Lab 管理。
+每次运行保存完整 resolved Hydra 配置、命令、日志和原生 checkpoint，
+只合并配置日程的最后一步，校验发布后的实际 tensor 变化，不按评估分数挑 checkpoint。
+
+新增适配不代表已获得论文收益。下文及 [RESULTS.md](RESULTS.md) 描述的是旧 LoRA 配方。
+
 `ttrl` 决策器与 `ttrl` Lab 均为内置注册项，使用统一的 `rsisys run --config` 入口。
 实现依据 *TTRL: Test-Time Reinforcement Learning*（arXiv:2504.16084），上游
 `PRIME-RL/TTRL` 固定到 `5806e119789132fcb43552beaf2532d7d0447213`。
@@ -66,7 +101,8 @@ boxed Math-Verify 替代上游数学归一化/判分器，优势标准化已单�
 `TTRLLab(context, config, engine=..., verifier=...)` 可由库外注册工厂装配。
 engine 声明 `name`、`simulated`、`generate/train`；verifier 复用数学组件的
 `parse/is_correct`。换为真正的 verl / FSDP 后端应替换 Lab 内的 engine，决策器不变。
-本参考实现没有伪装成已接入 verl。
+旧参考实现保持独立；新增 `ttrl_verl` Lab 使用 `generate/fit` 引擎接口，
+其决策器以单次 fit 表达完整原生日程，不能沿用逐轮重新初始化的训练语义。
 
 同步终态协议目前不支持断点续跑。`controller_report` 提供算法状态及完成轮数；
 原始回执、采样、奖励、模型来源和 worker 日志都在运行目录，临时证据不进 Git。

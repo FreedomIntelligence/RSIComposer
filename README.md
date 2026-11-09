@@ -75,11 +75,14 @@ trusted host code; see [security boundaries](SECURITY.md).
 | `rrsi` | Fixed-model Python harness evolution | [Recipe and evidence](experiments/rrsi/README.md) |
 | `seal` | Generated self-edits, inner adaptation, outer SFT | [Recipe](experiments/seal/README.md), [results](experiments/seal/RESULTS.md) |
 | `ttrl` | Unlabeled majority rewards and GRPO adaptation | [Recipe](experiments/ttrl/README.md), [results](experiments/ttrl/RESULTS.md) |
+| `ttrl_verl` | Continuous official full-parameter TTRL schedule | [Paper configuration](experiments/ttrl/paper.json), [environment](experiments/paper-environment.md) |
 
 SEAL and TTRL completed two-round, eight-GPU runs using Qwen2.5-7B Base.
 **Neither small run reproduced the paper's performance gains.** Their data,
-scoring and backend differences are documented. TTRL currently uses an
-independent LoRA reference trainer; it is not a verl integration.
+scoring and backend differences are documented. Those historical runs used
+independent reference trainers. The SEAL paper profile and registered `ttrl_verl`
+backend provide native training paths; their integration validation is separate
+from reproducing paper-level gains.
 
 ## Extend and contribute
 

@@ -38,6 +38,8 @@ OperationResult，执行回执保留其证据后仍抛给 host。后者不要求
 默认 Harness 的丰富 `DecisionContext` 属于内部便利视图。
 [ContextDecisionPolicy / DecisionInputAdapter](../../adapters/decision.py) 将它接到公开窗口，
 旧 `harness.policy.DecisionPolicy` 保留为该内部视图的兼容协议。
+默认适配通过独立作用域交付准确的 `feedback` / `last_operation`，文本证据卡片与
+context 压缩不改变这两个结构化握手字段。
 `Decision` 及 operation 类型的旧导入路径仍指向同一类型，已有快照的类型标签保持兼容。
 
 三个能力独立可选：`UsageObservedPolicy.track_usage(record)` 观察每份响应的用量，

@@ -86,6 +86,9 @@ Lab 不决定采用哪个版本，也不更新模型权重。可替换的模型�
 内置 `seal` 和 `ttrl` Labs 复用 [WeightEngine](weight_engine.py) 及不可变阶段产物设施。
 正式方法分别见 [SEAL 配方](../../../experiments/seal/README.md) 与
 [TTRL 配方](../../../experiments/ttrl/README.md)。它们的迭代阶段由注册决策器发起；
+SEAL 的 `profile: paper` 使用原生 Trainer/SFTTrainer、按行序列和语义奖励。
+`ttrl_verl` 使用 `generate/fit` 引擎边界，由官方 verl 在一次 `fit` 中保留优化器和日程状态；
+原生内部 RL minibatch 是 Lab 的实现细节，框架只对完整阶段回执作调度。
 Lab 根据显式请求完成生成、内层训练、测量及参数更新，不自行增加 RSI 轮次。
 
 engine 提供 `name` / `simulated`、`generate(model, prompts, directory, *, sample, ...)` 和

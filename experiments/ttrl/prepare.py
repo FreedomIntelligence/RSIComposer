@@ -16,8 +16,11 @@ def main():
     p.add_argument('--target', type=int, default=32)
     p.add_argument('--transfer', type=int, default=128)
     p.add_argument('--seed', type=int, default=7309)
+    p.add_argument('--paper', action='store_true', help='Use all 500 MATH target questions, without a transfer split')
     args = p.parse_args()
-    if args.target < 1 or args.transfer < 1:
+    if args.paper:
+        args.target, args.transfer = 500, 0
+    if args.target < 1 or args.transfer < 0 or (not args.paper and args.transfer == 0):
         p.error('target and transfer counts must be positive')
     relative = 'verl/data/MATH-TTT/train.json'
     if args.upstream:
@@ -26,7 +29,8 @@ def main():
         with urllib.request.urlopen(f'https://raw.githubusercontent.com/PRIME-RL/TTRL/{REVISION}/{relative}', timeout=120) as r:
             content = r.read()
     rows = json.loads(content)
-    random.Random(args.seed).shuffle(rows)
+    if not args.paper:
+        random.Random(args.seed).shuffle(rows)
     if len(rows) < args.target + args.transfer or len({r['prompt'].strip() for r in rows}) != len(rows):
         raise ValueError('Insufficient unique questions')
     args.output.mkdir(parents=True, exist_ok=False)
@@ -35,7 +39,8 @@ def main():
     evaluation = {key: [{'id': r['id'], 'prompt': r['prompt'], 'answer': r'\boxed{' + r['answer'] + '}'} for r in data]
                   for key, data in [('target', target), ('transfer', transfer)]}
     manifest = {'upstream_revision': REVISION, 'source_sha256': sha256(content).hexdigest(),
-                'seed': args.seed, 'target': len(target), 'transfer': len(transfer), 'files': {}}
+                'seed': None if args.paper else args.seed, 'profile': 'paper' if args.paper else 'pilot',
+                'target': len(target), 'transfer': len(transfer), 'files': {}}
     for name, data in [('unlabeled.json', train), ('evaluation.json', evaluation)]:
         path = args.output / name
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2))

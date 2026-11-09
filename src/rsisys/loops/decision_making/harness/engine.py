@@ -622,6 +622,28 @@ class DefaultDecisionHarness:
             received += 1
 
         with ExitStack() as stack:
+            delivery = optional_method(self.policy, 'operation_feedback_scope')
+            if delivery is not None and context.operation_results:
+                from .context import result_id
+                visible = context.operation_results[-1]
+                card = visible.data.get('evidence_card')
+                projected = (isinstance(card, dict) and card.get('schema_version') == 1
+                    and isinstance(card.get('read_path'), dict) and isinstance(card.get('sha256'), str))
+                ident = card['sha256'] if projected else result_id(visible.payload())
+                original = next((row for row in reversed(self.state.operation_results)
+                    if result_id(row.payload()) == ident), visible)
+                source = next((row for row in reversed(self.memory.history(kind='operation'))
+                    if isinstance(row.details.get('result'), dict)
+                    and result_id(row.details['result']) == ident), None)
+                if source is not None and source.details.get('operation') is not None:
+                    # Review queries are recorded in memory but not in the main
+                    # operation-results stream. Projection changes only these
+                    # three payload fields; recover them from the exact source.
+                    if original is visible:
+                        raw = source.details['result']
+                        original = replace(visible, summary=raw['summary'],
+                            error=raw.get('error'), data=deepcopy(raw['data']))
+                    stack.enter_context(delivery(OperationCall(**source.details['operation']), original))
             observer = optional_method(self.policy, 'track_usage')
             if observer is not None:
                 stack.enter_context(observer(record))

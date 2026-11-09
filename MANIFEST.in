@@ -3,7 +3,7 @@ include CODE_OF_CONDUCT.md CITATION.cff
 include pixi.toml pixi.lock
 recursive-include configs *.json
 recursive-include examples *.py *.json *.jsonl *.md
-recursive-include experiments *.py *.sh *.json *.md NOTICE
+recursive-include experiments *.py *.sh *.json *.md *.txt NOTICE
 recursive-include docs *.md *.svg
 recursive-include src *.md
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js LICENSE NOTICE

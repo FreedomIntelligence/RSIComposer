@@ -92,7 +92,11 @@ def generate(request):
     from vllm import LLM, SamplingParams
     config = request['config']
     tokenizer = AutoTokenizer.from_pretrained(request['model'], local_files_only=True)
-    tokenized = [tokenizer.encode(r['prompt'], add_special_tokens=False) for r in request['items']]
+    texts = [r['prompt'] for r in request['items']]
+    if config.get('apply_chat_template', False):
+        texts = [tokenizer.apply_chat_template([{'role': 'user', 'content': text}],
+            add_generation_prompt=True, tokenize=False) for text in texts]
+    tokenized = [tokenizer.encode(text, add_special_tokens=False) for text in texts]
     if any(len(p) + request['max_tokens'] > config.get('max_length', 4096) for p in tokenized):
         raise ValueError('Prompt and generation budget exceed max_length')
     llm = LLM(model=request['model'], dtype='bfloat16', tensor_parallel_size=1,
@@ -100,8 +104,8 @@ def generate(request):
         max_num_batched_tokens=32768, gpu_memory_utilization=0.8,
         enforce_eager=config.get('enforce_eager', False), enable_prefix_caching=True,
         seed=config.get('seed', 73) + request.get('seed_offset', 0) + request['rank'])
-    params = SamplingParams(temperature=config.get('temperature', 0.7) if request['sample'] else 0.0,
-        top_p=0.95 if request['sample'] else 1.0, max_tokens=request['max_tokens'],
+    params = SamplingParams(temperature=request.get('temperature', config.get('temperature', 0.7)) if request['sample'] else 0.0,
+        top_p=request.get('top_p', config.get('top_p', 0.95)) if request['sample'] else 1.0, max_tokens=request['max_tokens'],
         stop=config.get('stop', None), logprobs=None)
     replies = llm.generate([{'prompt_token_ids': p} for p in tokenized], params, use_tqdm=False)
     result = []

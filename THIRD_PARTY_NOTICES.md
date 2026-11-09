@@ -5,8 +5,8 @@ third-party notices remain applicable to the corresponding material.
 
 | Material | Origin / revision | Treatment |
 | --- | --- | --- |
-| SEAL prompts and sequence construction | Continual-Intelligence/SEAL, `6d9c9f9ee392c6cc618e771f399d436d190f6ca4` | Adapted code in `rsisys.labs.seal`; MIT text and attribution are preserved in [SEAL_NOTICE.txt](src/rsisys/labs/SEAL_NOTICE.txt), included in the wheel. |
-| TTRL / GRPO method reference | PRIME-RL/TTRL, `5806e119789132fcb43552beaf2532d7d0447213` | Independent reference backend, with upstream conformance checks; [method notice](experiments/ttrl/NOTICE). No vendored verl distribution. |
+| SEAL prompts, sequence construction and training recipes | Continual-Intelligence/SEAL, `6d9c9f9ee392c6cc618e771f399d436d190f6ca4` | Adapted code in `rsisys.labs.seal`, `seal_grader` and `seal_worker`; MIT text and attribution are preserved in [SEAL_NOTICE.txt](src/rsisys/labs/SEAL_NOTICE.txt), included in the wheel. |
+| TTRL / GRPO reference and native bridge | PRIME-RL/TTRL, `5806e119789132fcb43552beaf2532d7d0447213` | Independent reference backend plus an optional pinned upstream verl/reward adapter; [method notice](experiments/ttrl/NOTICE). No vendored verl distribution. |
 | Historical LangMem validation material | `docs/review/repros/langmem` | Historical evidence, not runtime code; retained upstream [license](third_party/LANGMEM-LICENSE). |
 | Optional dependencies | DSH, ReMe, LangMem, Math-Verify, PyTorch, Transformers, PEFT, vLLM | Installed separately under their own terms; not bundled in the core or monitor wheels. |
 

@@ -17,11 +17,20 @@ EDIT_PROMPT = ("Let's read the following passage and produce a list of implicati
 ANSWER_PROMPT = "Let's answer a question directly and concisely.\nQuestion: Topic: {title}\n{question}\nAnswer:\n"
 
 
-def train_sequences(completion, context, title):
+def train_sequences(completion, context, title, *, split_newlines=False):
     marker = re.search(r'\nImplications:\s*', completion)
     if marker:
         completion = completion[marker.end():].lstrip()
     segments = [part.strip() for part in completion.split('---') if part.strip()] or [completion.strip()]
+    if split_newlines:
+        if re.search(r'Question\s+\d+:', completion) and re.search(r'Answer\s*:', completion):
+            segments = re.split(r'\n(?=Question\s+\d+:)', completion.strip())
+            if not segments[0].lstrip().startswith('Question'):
+                segments[0] = 'Question 1: ' + segments[0].strip()
+        else:
+            segments = [line.strip() for part in segments for line in part.splitlines() if line.strip()]
+            if len(segments) > 1 and segments[1].startswith('1.'):
+                segments = segments[1:]
     return [title + '\n' + part for part in segments[:30] if part.strip()] + [title + '\n' + context.strip()]
 
 
@@ -50,10 +59,22 @@ def validate_config(config):
     allowed = {'data_root', 'output_subdir', 'gpu_ids', 'inference_python', 'training_python', 'worker_timeout',
                'seed', 'max_length', 'max_tokens', 'lora_rank', 'inner_rank', 'inner_epochs',
                'outer_epochs', 'batch_size', 'inner_lr', 'outer_lr', 'gradient_checkpointing',
-               'temperature', 'enforce_eager', 'inference_cuda_home', 'training_cuda_home'}
+               'temperature', 'enforce_eager', 'inference_cuda_home', 'training_cuda_home',
+               'profile', 'split_newlines', 'adaptation_seeds', 'evaluation_seeds',
+               'inner_max_length', 'outer_gpu_ids', 'outer_gradient_accumulation_steps'}
     if set(config) - allowed:
         raise ValueError('Unknown SEAL Lab option')
     validate_engine(config)
+    if config.get('profile', 'reference') not in {'reference', 'paper'}:
+        raise ValueError('SEAL profile must be reference or paper')
+    if type(config.get('split_newlines', False)) is not bool:
+        raise ValueError('split_newlines must be boolean')
+    for key in ('adaptation_seeds', 'evaluation_seeds', 'inner_max_length', 'outer_gradient_accumulation_steps'):
+        if key in config and (type(config[key]) is not int or config[key] < 1):
+            raise ValueError(f'{key} must be a positive integer')
+    if config.get('profile') == 'paper':
+        from .seal_engine import validate_paper_engine
+        validate_paper_engine(config)
 
 
 class SEALLab(WeightArtifacts):
@@ -65,6 +86,16 @@ class SEALLab(WeightArtifacts):
               'train': {'dataset': 'string'}}
 
     def __init__(self, context, config, *, scorer=None, scorer_name=None, **kwargs):
+        if config.get('profile') == 'paper':
+            from .seal_engine import PAPER_DEFAULTS, SEALTrainerEngine
+            from .seal_grader import SEALSemanticGrader
+            config = {**PAPER_DEFAULTS, **config}
+            validate_config(config)
+            if scorer is None:
+                scorer = SEALSemanticGrader()
+                scorer_name = scorer.name
+            if kwargs.get('engine') is None:
+                kwargs['engine'] = SEALTrainerEngine(config)
         validate_config(config)
         if scorer is not None and (not callable(scorer) or not isinstance(scorer_name, str) or not scorer_name.strip()):
             raise TypeError('Custom SEAL scorer must be callable with an explicit name/version')
@@ -97,32 +128,54 @@ class SEALLab(WeightArtifacts):
                 for i, doc in enumerate(docs) for k in range(args['candidates'])]
         return self.write('generate', args['round'], rows)
 
-    def _episodes(self, rows):
-        return [{'index': i, 'sequences': train_sequences(r['completion'], r['context'], r['title']),
+    def _episodes(self, rows, repeats=1):
+        return [{'index': i * repeats + repeat,
+                 'seed': self.config.get('seed', 73) + i * repeats + repeat,
+                 'sequences': train_sequences(r['completion'], r['context'], r['title'],
+                     split_newlines=self.config.get('split_newlines', False)),
                  'questions': [{'prompt': ANSWER_PROMPT.format(title=r['title'], **q)} for q in r['questions']]}
-                for i, r in enumerate(rows)]
+                for i, r in enumerate(rows) for repeat in range(repeats)]
 
-    def _score_adaptations(self, rows, responses):
+    def _score_adaptations(self, rows, responses, repeats=1):
+        if len(responses) != len(rows) * repeats:
+            raise ValueError('Missing or unexpected adaptation seeds')
         output = []
-        for row, response in zip(rows, responses, strict=True):
-            if not response['weights_changed'] or response['steps'] < 1:
-                raise ValueError('Inner SFT did not update parameters')
-            questions = row['questions']
-            scores = [self.scorer(p, q['answer']) for p, q in zip(response['predictions'], questions, strict=True)]
-            baseline = [self.scorer(p, q['answer']) for p, q in zip(response['baseline'], questions, strict=True)]
-            if any(not isinstance(s, dict) or set(s) != {'f1', 'exact_match'} or any(
-                    type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in s.values())
-                    for s in scores + baseline):
-                raise ValueError('SEAL scorer must return finite f1/exact_match values between zero and one')
-            output.append({**row, 'inner': response, 'scores': scores, 'baseline_scores': baseline,
-                           'adapter_mean': sum(s['f1'] for s in scores) / len(scores)})
+        for i, row in enumerate(rows):
+            runs = responses[i * repeats:(i + 1) * repeats]
+            measured = [self._score_one(row, response) for response in runs]
+            first = measured[0]
+            if repeats > 1:
+                for key in ('scores', 'baseline_scores'):
+                    first[key] = [{metric: sum(m[key][j][metric] for m in measured) / repeats
+                                   for metric in ('f1', 'exact_match')}
+                                  for j in range(len(row['questions']))]
+                first['inner_runs'] = runs
+                first['adapter_mean'] = sum(m['adapter_mean'] for m in measured) / repeats
+            output.append(first)
         return output
+
+    def _score_one(self, row, response):
+        if not response['weights_changed'] or response['steps'] < 1:
+            raise ValueError('Inner SFT did not update parameters')
+        questions = row['questions']
+        def score(prediction, question):
+            contextual = getattr(self.scorer, 'score_question', None)
+            return contextual(prediction, question, row['title']) if contextual else self.scorer(prediction, question['answer'])
+        scores = [score(p, q) for p, q in zip(response['predictions'], questions, strict=True)]
+        baseline = [score(p, q) for p, q in zip(response['baseline'], questions, strict=True)]
+        if any(not isinstance(s, dict) or set(s) != {'f1', 'exact_match'} or any(
+                type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in s.values())
+                for s in scores + baseline):
+            raise ValueError('SEAL scorer must return finite f1/exact_match values between zero and one')
+        return {**row, 'inner': response, 'scores': scores, 'baseline_scores': baseline,
+                'adapter_mean': sum(s['f1'] for s in scores) / len(scores)}
 
     def _adapt(self, args):
         rows = self.preceding(args['dataset'], 'generate', args['round'])
-        responses = self.engine.adapt(str(self.path(args['model'])), self._episodes(rows),
+        repeats = self.config.get('adaptation_seeds', 1)
+        responses = self.engine.adapt(str(self.path(args['model'])), self._episodes(rows, repeats),
             self.root / f'round-{args["round"]}' / 'adaptation-workers', seed_offset=args['round'])
-        return {**self.write('adapt', args['round'], self._score_adaptations(rows, responses)), 'scorer': self.scorer_name}
+        return {**self.write('adapt', args['round'], self._score_adaptations(rows, responses, repeats)), 'scorer': self.scorer_name}
 
     def _select(self, args):
         rows = self.preceding(args['dataset'], 'adapt', args['round'])
@@ -148,13 +201,20 @@ class SEALLab(WeightArtifacts):
         outputs = self.engine.generate(str(self.path(args['model'])), prompts,
             self.root / f'round-{args["round"]}' / 'eval-generation-workers', sample=True, seed_offset=10000)
         rows = [{**doc, 'completion': output['completion']} for doc, output in zip(docs, outputs, strict=True)]
-        responses = self.engine.adapt(str(self.path(args['model'])), self._episodes(rows),
+        repeats = self.config.get('evaluation_seeds', 1)
+        responses = self.engine.adapt(str(self.path(args['model'])), self._episodes(rows, repeats),
             self.root / f'round-{args["round"]}' / 'eval-adaptation-workers', seed_offset=10000)
-        measured = self._score_adaptations(rows, responses)
+        measured = self._score_adaptations(rows, responses, repeats)
         scores = [s for r in measured for s in r['scores']]
         baseline = [s for r in measured for s in r['baseline_scores']]
         evidence = self.write('evaluate', args['round'], measured)
-        return {'quality_metrics': {'adapted_f1': sum(s['f1'] for s in scores) / len(scores),
+        metrics = {'adapted_f1': sum(s['f1'] for s in scores) / len(scores),
                 'adapted_em': sum(s['exact_match'] for s in scores) / len(scores),
                 'no_adapt_f1': sum(s['f1'] for s in baseline) / len(baseline),
-                'questions': len(scores), 'documents': len(rows)}, 'evidence': evidence, 'scorer': self.scorer_name}
+                'questions': len(scores), 'documents': len(rows)}
+        if self.config.get('profile') == 'paper':
+            metrics = {'adapted_accuracy': sum(sum(s['exact_match'] for s in r['scores']) / len(r['scores']) for r in measured) / len(measured),
+                'no_adapt_accuracy': sum(sum(s['exact_match'] for s in r['baseline_scores']) / len(r['baseline_scores']) for r in measured) / len(measured),
+                'question_micro_accuracy': metrics['adapted_em'],
+                'questions': len(scores), 'documents': len(rows), 'inner_seeds': repeats}
+        return {'quality_metrics': metrics, 'evidence': evidence, 'scorer': self.scorer_name}

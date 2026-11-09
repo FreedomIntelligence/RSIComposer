@@ -128,6 +128,7 @@ Lab 若拥有后台资源，应实现 `shutdown(mode) -> bool` 与可重试、�
 | `rrsi` | 决策器 | 固定模型的 harness 进化、质量/成本/稳定性筛选，见 [实验配方](../experiments/rrsi/README.md)。 |
 | `seal` | 决策器 / Lab | self-edit → 内层 SFT 评测 → top-1 → 外层 SFT；见 [SEAL 配方](../experiments/seal/README.md)。 |
 | `ttrl` | 决策器 / Lab | 无标签 rollout → 多数奖励 → GRPO；见 [TTRL 配方](../experiments/ttrl/README.md)。 |
+| `ttrl_verl` | 决策器 / Lab | `evaluate → fit → evaluate`，一次 fit 保持官方全参数训练的优化器与 reference 状态；见 [原生配置](../experiments/ttrl/paper.json)。 |
 | `rest_em` | 决策器 | 生成 → 二值筛选 → 从初始模型训练 → 评测；详见 [ReST^EM 示例](../experiments/rest_em/README.md)。 |
 | `single_loop` | 决策器 | 重复调用指定 Lab 操作，读取回执后再进入下一次迭代；不需要模型。 |
 | `meta_agent` | 决策器 | 使用宿主 `decision_maker` 模型选择动作；默认安装显式 memory，可用 `config.memory=false` 关闭。 |

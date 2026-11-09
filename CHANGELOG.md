@@ -22,7 +22,14 @@
 - Canonicalize an isolated executable's parent while preserving its virtualenv
   entrypoint, so relative interpreter paths and directory aliases can execute
   against the explicitly mounted runtime.
+- Add the SEAL paper profile with native Trainer/SFTTrainer, semantic grading,
+  disjoint round datasets and seed-averaged selection. Add registered `ttrl_verl`
+  controller/Lab for the pinned official full-parameter training schedule.
+  These adapters do not establish paper-level gains.
+- Deliver exact typed terminal operation feedback independently of text evidence
+  projection, so large native failures retain their matching operation and data.
 
 Current limits: weight-evolution recipes are synchronous and do not support
-automatic restart; multi-Lab GPU leasing and a production verl backend remain
-future core/backend work. See [compatibility](docs/compatibility.md).
+automatic restart; multi-Lab GPU leasing remains future core work. The optional
+verl backend requires pinned upstream source and an isolated environment.
+See [compatibility](docs/compatibility.md).

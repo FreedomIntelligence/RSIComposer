@@ -50,6 +50,7 @@ def validate_engine(config):
 
 class WeightEngine:
     name, simulated = 'raw-vllm-torch-lora-v1', False
+    worker_module = 'rsisys.labs.weight_worker'
 
     def __init__(self, config):
         validate_engine(config)
@@ -82,7 +83,7 @@ class WeightEngine:
             command = [interpreter]
             if distributed:
                 command += ['-m', 'torch.distributed.run', '--standalone', '--nnodes=1', f'--nproc-per-node={len(gpu_ids)}']
-            command += ['-m', 'rsisys.labs.weight_worker', str(request)]
+            command += ['-m', self.worker_module if mode != 'generate' else 'rsisys.labs.weight_worker', str(request)]
             commands.append(command)
             envs.append(dict(self._env(), CUDA_VISIBLE_DEVICES=','.join(map(str, gpu_ids)) if distributed else str(gpu_ids[rank])))
             outputs.append(output)
@@ -99,10 +100,12 @@ class WeightEngine:
             raise ValueError('Missing, duplicate or unexpected worker items')
         return sorted(result, key=lambda item: item['index'])
 
-    def generate(self, model, prompts, directory, *, sample, max_tokens=None, seed_offset=0):
+    def generate(self, model, prompts, directory, *, sample, max_tokens=None, seed_offset=0,
+                 temperature=None, top_p=None):
         items = [{'index': i, 'prompt': text} for i, text in enumerate(prompts)]
+        options = {k: v for k, v in {'temperature': temperature, 'top_p': top_p}.items() if v is not None}
         return self._run('generate', model, items, directory, sample=sample,
-                         max_tokens=max_tokens or self.config.get('max_tokens', 1024), seed_offset=seed_offset)
+                         max_tokens=max_tokens or self.config.get('max_tokens', 1024), seed_offset=seed_offset, **options)
 
     def adapt(self, model, episodes, directory, *, seed_offset=0):
         return self._run('adapt', model, episodes, directory, seed_offset=seed_offset)

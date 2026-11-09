@@ -20,6 +20,12 @@ def majority_rewards(completions, verifier):
     """Stable plurality, invalid-answer zero reward; no reference-answer input."""
     if len(completions) < 2:
         raise ValueError('A GRPO group requires multiple responses')
+    official = getattr(verifier, 'rewards', None)
+    if callable(official):
+        pseudo, ratio, rewards = official(completions)
+        avg, std = mean(rewards), stdev(rewards)
+        return {'pseudo_answer': pseudo, 'majority_ratio': ratio, 'rewards': rewards,
+                'advantages': [(r - avg) / (std + 1e-6) for r in rewards]}
     canonical, representatives = [], {}
     for completion in completions:
         parsed = verifier.parse(completion)
@@ -47,7 +53,8 @@ def validate_config(config):
     allowed = {'data_root', 'output_subdir', 'gpu_ids', 'inference_python', 'training_python', 'worker_timeout',
                'seed', 'max_length', 'max_tokens', 'lora_rank', 'batch_size', 'rl_lr', 'kl_beta',
                'gradient_checkpointing', 'temperature', 'enforce_eager', 'stop',
-               'inference_cuda_home', 'training_cuda_home'}
+               'inference_cuda_home', 'training_cuda_home', 'eval_samples', 'evaluation_temperature',
+               'evaluation_top_p', 'top_p', 'apply_chat_template'}
     if set(config) - allowed:
         raise ValueError('Unknown TTRL Lab option')
     validate_engine(config)
@@ -59,6 +66,17 @@ def validate_config(config):
     temperature = config.get('temperature', 0.6)
     if type(temperature) not in (int, float) or not math.isfinite(temperature) or temperature <= 0:
         raise ValueError('RL sampling temperature must be positive')
+    if type(config.get('eval_samples', 1)) is not int or config.get('eval_samples', 1) < 1:
+        raise ValueError('eval_samples must be a positive integer')
+    for key in ('top_p', 'evaluation_top_p'):
+        value = config.get(key, 0.95)
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 1:
+            raise ValueError(f'{key} must be in (0, 1]')
+    value = config.get('evaluation_temperature', 0.6)
+    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+        raise ValueError('evaluation_temperature must be positive')
+    if type(config.get('apply_chat_template', False)) is not bool:
+        raise ValueError('apply_chat_template must be boolean')
 
 
 class TTRLLab(WeightArtifacts):
@@ -68,13 +86,15 @@ class TTRLLab(WeightArtifacts):
               'reward': {'dataset': 'string'}, 'train': {'dataset': 'string'}}
 
     def __init__(self, context, config, *, verifier=None, **kwargs):
-        validate_config(config)
+        self.validate_config(config)
         self.verifier = MathVerifyVerifier() if verifier is None else verifier
         if (not isinstance(getattr(self.verifier, 'name', None), str) or not self.verifier.name.strip()
                 or any(not callable(getattr(self.verifier, k, None)) for k in ('parse', 'is_correct'))):
             raise TypeError('TTRL verifier must declare a name/version and parse/is_correct')
         super().__init__(context, config, **kwargs)
         self.target_prompts = self.transfer_prompts = self.eval_ref = None
+
+    validate_config = staticmethod(validate_config)
 
     def _rollout(self, args):
         rows = self.read(args['dataset'])
@@ -123,7 +143,7 @@ class TTRLLab(WeightArtifacts):
         if not isinstance(data, dict) or set(data) != {'target', 'transfer'}:
             raise ValueError('Evaluation file must separately declare target and disjoint transfer questions')
         for rows in data.values():
-            if not isinstance(rows, list) or not rows or any(not isinstance(r, dict) or
+            if not isinstance(rows, list) or (not rows and (rows is data['target'] or not getattr(self, 'allow_empty_transfer', False))) or any(not isinstance(r, dict) or
                     any(not isinstance(r.get(k), str) or not r[k].strip() for k in ('id', 'prompt', 'answer'))
                     for r in rows):
                 raise ValueError('Malformed evaluation data')
@@ -137,16 +157,27 @@ class TTRLLab(WeightArtifacts):
         elif ref != self.eval_ref:
             raise ValueError('Evaluation data changed')
         rows = [r for split in ('target', 'transfer') for r in data[split]]
-        outputs = self.engine.generate(str(self.path(args['model'])), [math_prompt(r['prompt']) for r in rows],
-            self.root / f'round-{args["round"]}' / 'evaluation-workers', sample=False, seed_offset=10000)
+        count = self.config.get('eval_samples', 1)
+        sampled = count > 1
+        outputs = self.engine.generate(str(self.path(args['model'])),
+            [math_prompt(r['prompt']) for r in rows for _ in range(count)],
+            self.root / f'round-{args["round"]}' / 'evaluation-workers', sample=sampled, seed_offset=10000,
+            **({'temperature': self.config.get('evaluation_temperature', 0.6),
+                'top_p': self.config.get('evaluation_top_p', 0.95)} if sampled else {}))
+        if len(outputs) != len(rows) * count:
+            raise ValueError('Missing evaluation samples')
         scored = []
-        for i, (row, output) in enumerate(zip(rows, outputs, strict=True)):
-            scored.append({'id': row['id'], 'split': 'target' if i < len(data['target']) else 'transfer',
-                'completion': output['completion'], 'correct': self.verifier.is_correct(output['completion'], row['answer'])})
+        for i, row in enumerate(rows):
+            for sample, output in enumerate(outputs[i * count:(i + 1) * count]):
+                scored.append({'id': row['id'], 'sample': sample,
+                    'split': 'target' if i < len(data['target']) else 'transfer',
+                    'completion': output['completion'], 'correct': self.verifier.is_correct(output['completion'], row['answer'])})
         metrics = {}
         for split in ('target', 'transfer'):
             subset = [r for r in scored if r['split'] == split]
-            metrics[split + '_accuracy'] = sum(r['correct'] for r in subset) / len(subset)
-            metrics[split + '_questions'] = len(subset)
+            if subset:
+                metrics[split + '_accuracy'] = sum(r['correct'] for r in subset) / len(subset)
+            metrics[split + '_questions'] = len(subset) // count
+        metrics['samples_per_question'] = count
         return {'quality_metrics': metrics, 'evidence': self.write('evaluate', args['round'], scored),
                 'verifier': self.verifier.name}

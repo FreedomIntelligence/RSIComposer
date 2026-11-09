@@ -38,9 +38,15 @@ class _WeightController:
         allowed = {'initial_model', 'train_data', 'eval_data', 'lab', 'iterations', cls.option}
         if set(config) - allowed:
             raise ValueError(f'Unknown {cls.method} option')
-        for key in ('initial_model', 'train_data', 'eval_data'):
+        for key in ('initial_model', 'eval_data'):
             _ref(config.get(key), key)
-        if config['train_data'] == config['eval_data']:
+        learning = config.get('train_data')
+        datasets = learning if isinstance(learning, list) else [learning]
+        if not datasets or (isinstance(learning, list) and len(learning) != config.get('iterations', 2)):
+            raise ValueError('train_data list must provide exactly one dataset per iteration')
+        for dataset in datasets:
+            _ref(dataset, 'train_data')
+        if config['eval_data'] in datasets:
             raise ValueError('Learning and independent evaluation data must differ')
         if not isinstance(config.get('lab', cls.method), str) or not re.fullmatch(
                 r'[A-Za-z][A-Za-z0-9_-]*', config.get('lab', cls.method)):
@@ -56,7 +62,8 @@ class _WeightController:
         if self.phase == 'evaluate':
             args['dataset'] = self.eval_data
         elif self.phase == self.phases[0]:
-            args.update(dataset=self.train_data, **{self.option: self.width})
+            dataset = self.train_data[self.round - 1] if isinstance(self.train_data, list) else self.train_data
+            args.update(dataset=dataset, **{self.option: self.width})
         else:
             args['dataset'] = self.artifact
         return OperationCall(f'{self.lab}.{self.phase}', args)
@@ -91,7 +98,7 @@ class _WeightController:
                 return
             self.round = 1
             self.phase = self.phases[0]
-        elif self.phase == 'train':
+        elif self.phase == self.phases[-1]:
             model = _ref(data.get('model'), 'model')
             if model in self.models:
                 raise ValueError('Training must publish a distinct immutable checkpoint')
@@ -150,3 +157,20 @@ class TTRLController(_WeightController):
     """One on-policy majority-reward GRPO update per round, no gold rewards."""
     method, option = 'ttrl', 'samples_per_prompt'
     phases = ('rollout', 'reward', 'train')
+
+
+class TTRLVerlController(TTRLController):
+    """Run one native schedule without resetting its optimizer/reference state."""
+    phases = ('fit',)
+
+    def __init__(self, *, iterations=1, **config):
+        super().__init__(iterations=iterations, **config)
+
+    def report(self):
+        return {**super().report(), 'backend': 'official-verl'}
+
+    @classmethod
+    def validate_config(cls, config):
+        super().validate_config({'iterations': 1, **config})
+        if config.get('iterations', 1) != 1:
+            raise ValueError('ttrl_verl runs one continuous native schedule; configure total_epochs in the Lab')

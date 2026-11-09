@@ -16,6 +16,10 @@ policy, or a plain callable, to the default harness using `ContextDecisionPolicy
 capability descriptions and optional JSON references. Custom `context(view)` and
 `references(view)` callbacks select their own representation; default rendering
 retains the observed fields. Inputs are detached from host objects before delivery.
+The default harness uses the adapter's `operation_feedback_scope(operation, result)`
+capability to deliver the latest exact typed receipt separately from the compacted
+text view. Large logs and archived history cannot remove its matching operation
+or replace its structured data with an evidence card. The scope ends after each call.
 For custom directive modes, pass the installed `DirectiveDefinitions` catalog as
 `DecisionInputAdapter(directives=catalog)`, matching the action space. The built-in
 ModelDecisionPolicy already consumes the rich view and does not need this adapter.

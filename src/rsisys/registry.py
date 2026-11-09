@@ -16,7 +16,7 @@ from .assembly import ModuleAssembly, build_default_decision
 from .components import _json, _name
 from .controllers.single_loop import SingleLoopController
 from .controllers.rest_em import RestEMController
-from .controllers.weight_evolution import SEALController, TTRLController
+from .controllers.weight_evolution import SEALController, TTRLController, TTRLVerlController
 from .controllers.rrsi import RRSIController, build_rrsi
 from .controllers.meta_agent import build_meta_agent, validate_config as validate_meta_agent
 from .adapters.lab_group import LabGroup
@@ -66,6 +66,10 @@ class Registry:
             self.register_lab('seal', SEALLab, version='1', validate_config=validate_seal)
             from .labs.ttrl import TTRLLab, validate_config as validate_ttrl
             self.register_lab('ttrl', TTRLLab, version='1', validate_config=validate_ttrl)
+            self.register_controller('ttrl_verl', lambda context, config: TTRLVerlController(**config),
+                version='1', validate_config=TTRLVerlController.validate_config)
+            from .labs.ttrl_verl import TTRLVerlLab, validate_config as validate_ttrl_verl
+            self.register_lab('ttrl_verl', TTRLVerlLab, version='1', validate_config=validate_ttrl_verl)
             self.register_controller('rrsi', build_rrsi,
                                      version='1', validate_config=RRSIController.validate_config)
             self.register_controller('rest_em', lambda context, config: RestEMController(**config),

@@ -1,4 +1,6 @@
 TTRL implements the method of Zuo et al., arXiv:2504.16084.
 Reference source: PRIME-RL/TTRL, commit 5806e119789132fcb43552beaf2532d7d0447213.
-The local GRPO worker is independently implemented and is not a verl backend.
+The historical local LoRA GRPO worker is independently implemented.
+The ttrl_verl Lab invokes the pinned official verl backend from an external
+checkout and loads its complete reward package; that checkout is not bundled.
 Upstream license for reference implementations: Apache-2.0.
