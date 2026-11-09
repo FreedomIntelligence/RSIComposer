@@ -35,17 +35,10 @@ def anchors(path):
 
 
 def main():
-    paths = list(ROOT.glob('*.md'))
-    for name in ('docs', 'examples', 'experiments', 'src'):
-        paths.extend((ROOT / name).rglob('*.md'))
+    paths = [ROOT / 'README.md', ROOT / 'README_zh.md']
     errors, checked, cache = [], 0, {}
     for path in sorted(set(paths)):
         relative = path.relative_to(ROOT)
-        if ((relative.parts[:2] == ('docs', 'review') and relative.name != 'README.md') or
-                relative == Path('docs/development-history.md') or
-                any(part in {'__pycache__', 'build', 'dist', '.venv'} or part.endswith('.egg-info')
-                    for part in relative.parts)):
-            continue
         text = prose(path.read_text())
         for raw in re.findall(r'\]\(([^\s)]+)(?:\s+"[^"]*")?\)', text):
             link = urlsplit(raw.strip('<>'))
@@ -63,7 +56,7 @@ def main():
     if errors:
         print('\n'.join(errors), file=sys.stderr)
         return 1
-    print(f'Validated {checked} local documentation links (historical reviews excluded).')
+    print(f'Validated {checked} local documentation links in the English and Chinese READMEs.')
     return 0
 
 

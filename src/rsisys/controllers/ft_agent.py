@@ -1,4 +1,7 @@
-"""Registered FT-Agent reference adapter using pinned upstream policy code."""
+"""Registered FT-Agent reference adapter using pinned upstream policy code.
+Upstream (MIT): https://github.com/microsoft/RD-Agent/tree/484776c211e4fbbeef03e0ec00d6bbee7362a4f4
+Loaded from a separate clean checkout; no upstream implementation is bundled.
+"""
 from copy import deepcopy
 import json
 import os

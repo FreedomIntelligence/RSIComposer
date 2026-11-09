@@ -3,7 +3,7 @@ description: Report a reproducible framework failure
 body:
   - type: markdown
     attributes:
-      value: Use synthetic inputs and redact secrets. For vulnerabilities, follow SECURITY.md.
+      value: Use synthetic inputs and redact secrets. For vulnerabilities, follow the Security section in README.md.
   - type: textarea
     id: version
     attributes:

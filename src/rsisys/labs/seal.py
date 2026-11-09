@@ -2,7 +2,35 @@
 
 Port of the open-source top-k self-edit / TTT / outer-SFT pipeline. The
 local profile uses deterministic SQuAD token F1 instead of a paid GPT grader.
-Prompts and sequence construction derive from upstream; see SEAL_NOTICE.txt.
+Prompts and sequence construction derive from the pinned upstream below.
+
+Source: https://github.com/Continual-Intelligence/SEAL/tree/6d9c9f9ee392c6cc618e771f399d436d190f6ca4
+RSISys changes: registered Lab, isolated workers, local and paper profiles.
+
+SEAL prompts, sequence construction and training recipes are adapted from
+Continual-Intelligence/SEAL, commit 6d9c9f9ee392c6cc618e771f399d436d190f6ca4.
+
+MIT License
+
+Copyright (c) 2025 Adam Zweiger
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 """
 import math
 import re

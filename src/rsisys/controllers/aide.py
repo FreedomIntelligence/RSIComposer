@@ -3,6 +3,9 @@
 Agent.step's execution callback crosses the public Lab boundary. Search,
 draft/debug/improve generation, feedback interpretation and final selection stay
 inside upstream AIDE; the host never substitutes its own search policy.
+
+Upstream (MIT): https://github.com/WecoAI/aideml/tree/ad73d227af481bea3de06f884f41b2993dd6453a
+Loaded from a separate clean checkout; no upstream implementation is bundled.
 """
 from copy import deepcopy
 import json

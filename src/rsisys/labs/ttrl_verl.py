@@ -1,4 +1,8 @@
-"""Registered TTRL Lab delegating training to the pinned official verl fork."""
+"""Registered TTRL Lab delegating training to the pinned official verl fork.
+
+External backend (Apache-2.0), installed separately:
+https://github.com/PRIME-RL/TTRL/tree/5806e119789132fcb43552beaf2532d7d0447213
+"""
 import json
 
 from .pinned_upstream import TTRLReward, TTRL_REVISION, checkout

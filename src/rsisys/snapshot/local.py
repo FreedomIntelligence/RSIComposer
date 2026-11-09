@@ -338,9 +338,6 @@ class LocalSnapshotCapture:
             (staging / 'artifacts').mkdir()
             for ref in app.artifacts.refs():
                 shutil.copytree(app.artifacts.root / ref.artifact_id, staging / 'artifacts' / ref.artifact_id)
-            lock = Path(__file__).resolve().parents[3] / 'pixi.lock'
-            if lock.is_file():
-                shutil.copyfile(lock, staging / 'pixi.lock')
             digests = {path.relative_to(staging).as_posix(): digest_file(path)
                        for path in staging.rglob('*') if path.is_file()}
             manifest = SnapshotManifest(
@@ -348,7 +345,7 @@ class LocalSnapshotCapture:
                 role_bindings=roles, loop_state_refs={'decision_maker': 'state.json#decision', 'actor': 'state.json#actor'},
                 learner_state_refs={}, environment_state_refs={}, experience_revision=digests['experience.sqlite3'],
                 runtime_state_ref='runtime.json', code_revision=code_revision(), config_ref='config.json',
-                dependency_lock_ref='pixi.lock' if lock.is_file() else '',
+                dependency_lock_ref='',
                 component_refs={'artifacts': 'artifacts/', 'experience': 'experience.sqlite3',
                                 'decision_memory': 'decision_memory.json',
                                 'exploration_memory': 'exploration_memory.json',

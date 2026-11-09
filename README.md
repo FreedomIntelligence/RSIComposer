@@ -1,17 +1,16 @@
 # RSISys
 
-A reusable research framework for recursive self-improvement (RSI):
-**controller → Lab execution → feedback → controller**.
+[中文](README_zh.md)
 
-Implement an algorithm as a controller, expose its experiments through one or
-more Labs, and register both in your own Python file. Select them with an
-independent JSON config. Harnesses, memory, verifiers and training engines are
-replaceable components inside these two boundaries.
+A reusable research framework for recursive self-improvement:
+**RSI controller → Lab execution → feedback → RSI controller**.
+Register your controller and Labs in an external Python plugin, select them in
+JSON, and run through the shared host. Harnesses, memory, verifiers and training
+engines are replaceable components inside these two modules.
 
-**Early research release.** CPU quickstarts run without a GPU, API key, model
-service or deployment. Real-model recipes have separate requirements and
-explicit limits. A completed loop does not establish improvement or reproduce
-a paper's results. [中文使用指南](docs/usage.md) · [Documentation](docs/README.md)
+Early research release. CPU examples need no GPU, API key or model service.
+Real-model recipes require their own models, data and optional environments.
+A completed loop does not establish improvement or reproduce a paper's gains.
 
 ## Quickstart
 
@@ -27,13 +26,31 @@ rsisys catalog
 rsisys run --config examples/quickstart/rest_em.json
 ```
 
-This runs the registered ReST^EM controller with a **simulated arithmetic Lab**,
-not a trained language model. Inspect `runs/rest-em-quickstart/result.json` and
-the operation receipts. For another run, pass a fresh `--data-dir`.
-Installation currently uses a checkout or locally built wheel; this guide does
-not assume a published PyPI package.
+This runs ReST^EM against a **simulated arithmetic Lab**, with no LLM training.
+Inspect `runs/rest-em-quickstart/result.json` and its operation receipts.
+Use a fresh directory for another run: `--data-dir runs/another-run`.
+Installation uses a checkout or locally built wheel; no PyPI release is assumed.
 
-To develop your own method, copy `examples/registered` into your project:
+## Architecture
+
+![Controller, Lab and shared runtime](docs/diagrams/framework-loop.svg)
+
+The controller owns strategy, candidate selection and stopping decisions. Labs
+own domain execution and return structured metrics, artifacts and log references.
+The host provides registration, configuration, operation authorization, routing,
+receipts, evidence references, lifecycle management and owned resource cleanup.
+It does not choose an algorithm's winner from scores.
+
+New algorithms normally need only external registration. Changes to shared
+scheduling, delivery, cancellation or recovery semantics belong in the core.
+`examples/` holds tutorials, `experiments/` holds model/data recipes and result
+JSON, and `tests/` holds maintained regression checks. Formal protocols live in
+[source](src/rsisys/loops/contracts/rsi.py); public imports use
+[rsisys.api](src/rsisys/api.py).
+
+## Register your own method
+
+Copy [examples/registered](examples/registered) into your own project:
 
 ```sh
 rsisys run --config examples/registered/custom-controller.json \
@@ -41,70 +58,217 @@ rsisys run --config examples/registered/custom-controller.json \
 rsisys catalog --plugin examples/registered/plugin.py
 ```
 
-That example runs on CPU through the same host loop. See the
-[registration guide](docs/registration.md) for complete interfaces, validation,
-multiple Labs, component injection and advanced runtime integration.
+The runnable [plugin](examples/registered/plugin.py) uses these interfaces:
 
-## What the framework provides
+```python
+from rsisys.api import Decision, LabRequest, LabFeedback, OperationSpec
 
-- Versioned registration, configuration, operation discovery and namespaced Lab
-  routing; public types are exported by `rsisys.api`.
-- Host operation authorization, structured receipts, evidence references,
-  lifecycle management and owned resource cleanup.
-- Reusable controllers and Lab components; optional default/DSH harnesses and
-  explicit memory backends for model-driven research.
-- Snapshot and recovery facilities for explicitly adapted implementations.
-  Arbitrary plugin state and external jobs are not automatically recoverable.
-- A separate, read-only monitor with no core or GPU dependency:
+class Controller:
+    def __init__(self, context, config):
+        pass
+
+    def decide(self, window):
+        if window.feedback is not None:
+            return Decision("finish", reason="Received Lab result")
+        return Decision("invoke", operation=LabRequest("demo.step", {}))
+
+class Lab:
+    def __init__(self, context, config):
+        pass
+
+    def describe(self):
+        return (OperationSpec("step", "Run one experiment", {
+            "type": "object", "properties": {}, "additionalProperties": False
+        }),)
+
+    def execute(self, call):
+        return LabFeedback("Example completed", (), False, data={"score": 1})
+
+def register(registry):
+    registry.register_controller("custom", Controller, version="1")
+    registry.register_lab("custom", Lab, version="1")
+```
+
+Save as `plugin.py`, and select it with `experiment.json`:
+
+```json
+{
+  "objective": "Run my RSI method",
+  "data_dir": "runs/custom",
+  "max_decision_steps": 8,
+  "framework": {
+    "controller": {"name": "custom", "config": {}},
+    "labs": {"demo": {"name": "custom", "config": {}}}
+  }
+}
+```
+
+Run `rsisys run --config experiment.json --plugin plugin.py`.
+`config` is passed to each factory alongside its assembly context. Optional
+`validate_config` callbacks reject bad parameters before construction.
+Multiple Labs use `alias.operation` names; each Lab receives its native name.
+`DecisionInput` includes `objective`, latest `feedback`, `last_operation`,
+`capabilities`, `context` and `references`. Decisions are `invoke`, `wait` or
+`finish`. Domain arguments must be validated before side effects.
+
+A Lab with background resources should implement idempotent `close()` and
+`shutdown(mode) -> bool`, returning true only after its own work has stopped.
+For async jobs, expose start/poll/result/cancel operations and deliver the final
+receipt; registration does not automatically poll arbitrary external jobs.
+Optional `required_operations()` checks operation availability, and `report()`
+adds JSON method state to `result.json.controller_report`.
+
+## Components
+
+- `single_loop` provides fixed iteration; `meta_agent` uses the configured model
+  with `harness=default|dsh`. Start from
+  [meta-agent.json](examples/registered/meta-agent.json); set actual backend,
+  role and model identities. DSH also needs its native home/workspace/session
+  configuration and `python -m pip install -e '.[dsh]'`.
+- Memory, engines and scorers are injected inside module factories.
+  [Component examples](examples/components) show lower-level composition.
+  Default memory is explicit/literal. Optional ReMe BM25 retrieval uses
+  `python -m pip install -r requirements/reme.txt` and
+  `ResearchAssembly.reme()` from `rsisys.research`; it adds no embedding service
+  or autonomous memory agent. LangMem is a separate optional extra.
+- Whole-assembly integrations can register a `MethodDefinition` through
+  `registry.register_method`; select `framework.method` instead of
+  `framework.controller/labs` when custom state adapters are needed.
+
+## Methods and evidence
+
+| Controller / Lab | Scope | Configuration / evidence |
+| --- | --- | --- |
+| `rest_em` / `math` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](experiments/rest_em/configs/gsm8k-8gpu.json), [MATH](experiments/rest_em/configs/math-8gpu.json) |
+| `rrsi` / `harness_math` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](experiments/rrsi/math.json), [results](experiments/rrsi/results-20261108.json) |
+| `seal` / `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](experiments/seal/8gpu.json), [paper](experiments/seal/paper.json), [results](experiments/seal/results-20261109.json) |
+| `ttrl` / `ttrl` | Majority rewards with independent LoRA GRPO | [Config](experiments/ttrl/8gpu.json), [results](experiments/ttrl/results-20261109.json) |
+| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](experiments/ttrl/paper.json), [diagnosis](experiments/weight-reproduction-diagnosis.json) |
+| `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](experiments/ft_agent/gsm8k.json), [validation](experiments/ft_agent/validation-20261109.json) |
+| `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](experiments/aide/gsm8k.json), [validation](experiments/aide/validation-20261109.json) |
+
+SEAL and reference TTRL completed two-round, eight-GPU Qwen2.5-7B Base runs;
+**neither reproduced paper gains**. SEAL's paper profile has small native-training
+validation using a lexical smoke scorer, not an accepted GPT-4.1/full-paper run.
+Native TTRL has a 32-target-question, one-epoch GPU check, not the full 500-question,
+10-epoch experiment; its target metric is transductive.
+
+FT-Agent completed three native SFT experiments; heldout accuracy fell from
+48/64 to 45/64. It omits the full CoSTEER debugging/knowledge pipeline.
+AIDE completed three search nodes; heldout accuracy rose from 28/64 to 34/64
+with more calls (29 → 67) and tokens. This is not an equal-compute comparison or
+AIDE's original benchmark. Neither adapter trains meta-agent weights.
+These pilots validate integration; they do not justify blaming the papers for
+unreproduced gains. JSON records retain run scope and failure evidence.
+
+## Real-model setup
+
+Run commands from the repository root. Use fresh data/run directories and edit
+model paths, interpreters, endpoints and disjoint GPU allocations in configs.
+The core installs no ML stack. Keep optional GPU environments separate.
+
+For Qwen2.5-7B Base ReST^EM, install PyTorch, Transformers, PEFT, pyarrow and
+huggingface-hub in a compatible CUDA environment; add vLLM for the eight-GPU
+inference recipes and the math extra for MATH scoring:
+
+```sh
+python -m pip install -e '.[math]'
+python experiments/rest_em/prepare_gsm8k.py \
+  --model-dir models/Qwen2.5-7B-d1497293 --data-dir runs/gsm8k-data
+python experiments/rest_em/prepare_math.py --data-dir runs/math-data
+rsisys run --config experiments/rest_em/configs/math-8gpu.json
+```
+
+Preparation downloads pinned model/data revisions and records hashes. Configs
+need to match those output paths. Eight-GPU recipes parallelize inference over
+replicas and train with DDP; smaller configs are also under `configs/`.
+
+SEAL/TTRL paper profiles use [paper-requirements.txt](experiments/paper-requirements.txt)
+in a separate Python 3.12 environment. Tested stack: torch 2.7.0+cu128,
+Transformers 4.52.4, TRL 0.18.1, PEFT 0.15.2, vLLM 0.9.1; native TTRL also
+needs compatible flash-attn. Do not mix this with the reference training stack.
+Pinned upstream revisions are in configs and the corresponding source adapters.
+
+```sh
+python experiments/seal/prepare.py --paper --output runs/seal-paper-data
+python experiments/ttrl/prepare.py --paper --output runs/ttrl-paper-data
+# Set paths and install each backend's dependencies before launching:
+rsisys run --config experiments/seal/paper.json
+rsisys run --config experiments/ttrl/paper.json
+```
+
+Native TTRL additionally requires a clean checkout of
+`PRIME-RL/TTRL@5806e119789132fcb43552beaf2532d7d0447213`.
+SEAL semantic scoring needs `OPENAI_API_KEY` and a compatible GPT-4.1 service.
+
+RRSI, FT-Agent and AIDE need Linux bubblewrap/user namespaces plus an
+OpenAI-compatible model service. Their `prepare.py` and `serve.py` entrypoints
+provide `--help`. FT-Agent uses separately installed clean checkouts of
+`microsoft/RD-Agent@484776c211e4fbbeef03e0ec00d6bbee7362a4f4` and
+LLaMA-Factory v0.9.3 (`ca75f1edf3cb50343ed1c98605141c3e22075b5f`), plus
+[worker requirements](experiments/ft_agent/requirements.txt), PyYAML and Math-Verify.
+LLaMA-Factory's training environment is separate from SEAL's TRL environment.
+AIDE uses `WecoAI/aideml@ad73d227af481bea3de06f884f41b2993dd6453a` and its
+[worker requirements](experiments/aide/requirements.txt). Search/review remains
+native; the host handles execution and feedback. Prepare disjoint public inputs
+and private validation/heldout labels before running either method.
+
+## Monitor
+
+Optional, independent of the core package and GPU stack:
 
 ```sh
 python -m pip install ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
-The monitor binds to loopback by default. Plugins and the local process Lab run
-trusted host code; see [security boundaries](SECURITY.md).
+The viewer is read-only and binds to loopback by default. It has no authentication
+or multi-tenant isolation; external exposure needs access control.
 
-## Registered methods and recipes
+## Limits and security
 
-See [method support and evidence](docs/methods.md) for tested configurations,
-upstream fidelity and known deviations. These entries include both reference
-implementations and native adapters; no full-scale paper result is claimed.
+0.x APIs may change; pin commits, model/data revisions and dependencies for long
+experiments. Snapshots require explicit state/recovery adapters. Ordinary
+registration does not restore arbitrary controller memory or external jobs;
+FT-Agent/AIDE native searches and synchronous training recipes need fresh runs.
+There is no global GPU lease across Labs/runs or complete long-job cost/budget
+integration. Assign non-overlapping devices yourself. Snapshot metadata does not
+freeze the installed dependency environment.
 
-| Controller | Purpose | Implementation scope | Entry |
-| --- | --- | --- | --- |
-| `single_loop` | Fixed iterations | Template | [CPU example](examples/registered/README.md) |
-| `meta_agent` | Model-driven decisions | Default / DSH harness template | [Registration](docs/registration.md) |
-| `rest_em` | Generate, filter, SFT, evaluate | Lightweight LoRA implementation | [CPU quickstart](examples/quickstart/README.md), [GSM8K/MATH](experiments/rest_em/README.md) |
-| `rrsi` | Fixed-model harness evolution | Algorithm port to MATH | [Recipe and evidence](experiments/rrsi/README.md) |
-| `seal` | Self-edits, inner adaptation, outer SFT | Reference and paper-profile training adapters | [Recipe](experiments/seal/README.md), [results](experiments/seal/RESULTS.md) |
-| `ttrl` | Majority rewards and GRPO | Independent LoRA reference backend | [Recipe](experiments/ttrl/README.md), [results](experiments/ttrl/RESULTS.md) |
-| `ttrl_verl` | Continuous full-parameter adaptation | Pinned official training backend | [Configuration](experiments/ttrl/paper.json), [environment](experiments/paper-environment.md) |
-| `ft_agent` | Fine-tuning research | Partial native policy / local Lab adaptation | [Scope](experiments/ft_agent/README.md), [results](experiments/ft_agent/RESULTS.md) |
-| `aide` | Inference-program research | Native Agent / adapted LLM task | [Scope](experiments/aide/README.md), [results](experiments/aide/RESULTS.md) |
+Plugins execute trusted host Python. Ordinary local-process Labs are not OS
+sandboxes; use an explicit isolated executor for untrusted generated programs.
+Custom Labs own network access, external billing and resource termination.
+Supply credentials through environment variables. Saved prompts, logs and
+artifacts can contain private data; review them before sharing.
+`finished` describes host lifecycle, not training success or quality improvement.
+Check method reports, receipts, optimizer/weight evidence and fixed heldout metrics.
 
-SEAL and TTRL completed two-round, eight-GPU runs using Qwen2.5-7B Base.
-**Neither small run reproduced the paper's performance gains.** Their data,
-scoring and backend differences are documented. Those historical runs used
-independent reference trainers. The SEAL paper profile and registered `ttrl_verl`
-backend provide native training paths; their integration validation is separate
-from reproducing paper-level gains.
+For vulnerabilities, use GitHub's private reporting facility when available;
+otherwise request a private channel without posting exploit details or secrets.
 
-## Extend and contribute
+## Development
 
-Start with [architecture](docs/architecture.md), [public contracts](docs/api-contracts.md)
-and [registration](docs/registration.md). Shared scheduling, delivery, recovery
-and resource semantics belong in the core; algorithm strategy and domain
-execution belong in controllers and Labs. See [compatibility and support](docs/compatibility.md)
-for the current boundary.
+```sh
+python -m pip install -e '.[dev]'
+PYTHONPATH=src python -m unittest discover -s tests -t . -q
+node --test tests/monitor/frontend/*.test.js
+ruff check --select E9,F63,F7,F82 src tests examples experiments tools
+python tools/check_docs.py
+python -m build --outdir dist/core .
+python -m build --outdir dist/monitor src/rsimonitor
+python -m twine check --strict dist/core/* dist/monitor/*
+```
 
-`examples/` contains tutorials, `experiments/` contains model/data recipes,
-and `tests/` contains maintained regression coverage. Development and test
-commands are in [CONTRIBUTING.md](CONTRIBUTING.md). Release checks and remaining
-roadmap items are in [the release guide](docs/releasing.md).
+Offline tests require no GPU, downloaded weights or model endpoint; optional
+integrations report skips. CI uses Node 22. GitHub Actions is **manual-only**
+(`workflow_dispatch`) while the private repository's included quota is exhausted.
+PRs should describe behavior, relevant validation and method deviations; use
+synthetic fixtures, preserve attribution and keep weights, datasets and logs out
+of Git. Contributions use Apache-2.0; keep discussion respectful and specific.
 
 ## License
 
-Apache-2.0; see [LICENSE](LICENSE), [NOTICE](NOTICE) and
-[third-party notices](THIRD_PARTY_NOTICES.md). Model weights and external datasets
-retain their own terms and are not included in the release.
+[Apache-2.0](LICENSE); see [NOTICE](NOTICE). Third-party origins are linked in the
+corresponding adapters; adapted SEAL code retains its MIT text in
+[seal.py](src/rsisys/labs/seal.py). External dependencies, weights and datasets
+are obtained separately under their own terms.

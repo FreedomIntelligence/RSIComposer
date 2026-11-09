@@ -8,7 +8,7 @@
       "config": {
         "upstream_root": "/absolute/path/to/aideml",
         "worker_python": "/absolute/path/to/aide-env/bin/python",
-        "task_file": "experiments/aide/task.md",
+        "task_file": "experiments/aide/task.txt",
         "input_dir": "runs/aide-data/public",
         "iterations": 3,
         "lab": "research",

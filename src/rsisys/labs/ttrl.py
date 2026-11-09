@@ -2,6 +2,9 @@
 
 Target-set accuracy is transductive, as in upstream TTRL. Disjoint transfer
 accuracy is reported separately. Gold answers never enter rollout/reward/train.
+Independent reference implementation of https://arxiv.org/abs/2504.16084.
+Upstream reference (Apache-2.0):
+https://github.com/PRIME-RL/TTRL/tree/5806e119789132fcb43552beaf2532d7d0447213
 """
 import math
 from collections import Counter

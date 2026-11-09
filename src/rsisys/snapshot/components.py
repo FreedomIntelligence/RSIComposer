@@ -60,9 +60,6 @@ def capture_components(app, store, contract, label):
         (staging / 'artifacts').mkdir()
         for ref in app.artifacts.refs():
             shutil.copytree(app.artifacts.root / ref.artifact_id, staging / 'artifacts' / ref.artifact_id)
-        lock = Path(__file__).resolve().parents[3] / 'pixi.lock'
-        if lock.is_file():
-            shutil.copyfile(lock, staging / 'pixi.lock')
         digests = {p.relative_to(staging).as_posix(): digest_file(p)
                    for p in staging.rglob('*') if p.is_file()}
         manifest = SnapshotManifest(snapshot_id=ident,
@@ -71,7 +68,7 @@ def capture_components(app, store, contract, label):
             learner_state_refs={}, environment_state_refs={},
             experience_revision=digests['experience.sqlite3'], runtime_state_ref='runtime.json',
             code_revision=code_revision(), config_ref='config.json',
-            dependency_lock_ref='pixi.lock' if lock.is_file() else '',
+            dependency_lock_ref='',
             component_refs={'assembly': 'state.json', 'experience': 'experience.sqlite3', 'artifacts': 'artifacts/'},
             random_state_refs=(), resume_policy={'active_jobs': 'forbidden', 'effects': 'never_replay',
                 'models': 'external_references_only', 'state': 'explicit_component_adapters'},

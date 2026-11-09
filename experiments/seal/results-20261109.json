@@ -141,7 +141,7 @@
     "prompt_exact": true,
     "passed": true
   },
-  "limitations_document": "README.md",
+  "limitations_document": "../../README.md#methods-and-evidence",
   "gpus": {
     "world_size": 8,
     "hardware": "NVIDIA B20Z",

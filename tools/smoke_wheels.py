@@ -20,9 +20,13 @@ def check_archive(path, name):
         assert any(p.endswith('.dist-info/licenses/NOTICE') for p in names), name
         assert not any(p.startswith(('tests/', 'experiments/', 'examples/', '.local/')) for p in names)
         if name == 'rsisys':
-            assert 'rsisys/labs/SEAL_NOTICE.txt' in names
-            assert 'rsisys/controllers/FT_AGENT_NOTICE.txt' in names
-            assert 'rsisys/controllers/AIDE_NOTICE.txt' in names
+            seal = archive.read('rsisys/labs/seal.py').decode()
+            assert 'Copyright (c) 2025 Adam Zweiger' in seal
+            assert 'The above copyright notice and this permission notice' in seal
+            assert 'IN NO EVENT SHALL THE' in seal
+            for module, origin in (('aide', 'https://github.com/WecoAI/aideml/'),
+                                   ('ft_agent', 'https://github.com/microsoft/RD-Agent/')):
+                assert origin in archive.read(f'rsisys/controllers/{module}.py').decode()
             for module in ('ft_agent', 'ft_agent_worker', 'ft_agent_upstream', 'aide', 'aide_worker', 'research_bridge'):
                 assert f'rsisys/controllers/{module}.py' in names
             for module in ('ft_agent', 'ft_train_worker', 'ft_data_sandbox', 'aide_program', 'aide_client'):
@@ -50,17 +54,18 @@ def main():
             extracted.mkdir()
             with tarfile.open(args.core_sdist.resolve(strict=True)) as archive:
                 names = archive.getnames()
-                assert not any(any(part in p for part in (
-                                   '/.local/', '/docs/review/repros/',
-                                   '/docs/review/prompt-snapshots/', '/docs/review/audit-20261104/')) or
-                               p.endswith(('docs/development-history.md', '.log', '.safetensors', '.pt'))
+                assert not any('/.local/' in p or '/docs/review/' in p or
+                               p.endswith(('.log', '.safetensors', '.pt', 'pixi.toml', 'pixi.lock'))
                                for p in names)
                 archive.extractall(extracted, filter='data')
             source, = extracted.iterdir()
             assert (source / 'src/rsimonitor/server.py').is_file()
-            for document in ('docs/methods.md', 'docs/diagrams/framework-loop.svg',
+            assert {p.relative_to(source).as_posix() for p in source.rglob('*.md')} == {
+                'README.md', 'README_zh.md'}
+            for document in ('README.md', 'README_zh.md', 'experiments/aide/task.txt',
+                             'docs/diagrams/framework-loop.svg',
                              'docs/diagrams/build_diagrams.py',
-                             'docs/review/weight-reproduction-diagnosis-20261109.json'):
+                             'experiments/weight-reproduction-diagnosis.json'):
                 assert (source / document).is_file(), document
             subprocess.run([sys.executable, 'tools/check_docs.py'], cwd=source,
                            env=env, check=True, timeout=30)

@@ -3,6 +3,8 @@
 Data code runs in a filesystem/network-isolated CPU sandbox. The trusted Lab
 owns native LLaMA-Factory execution and independent development/test scoring.
 Only development metrics are delivered during research.
+External training backend (Apache-2.0), installed separately:
+https://github.com/hiyouga/LLaMA-Factory/tree/ca75f1edf3cb50343ed1c98605141c3e22075b5f
 """
 from copy import deepcopy
 import json

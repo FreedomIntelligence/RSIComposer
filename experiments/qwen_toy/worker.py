@@ -101,7 +101,7 @@ def main(argv=None):
         # Hide GPUs before importing ML libraries, including their Trainer helpers.
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
     else:
-        # Resolve the scheduler's UUID after Pixi activation. This cluster's CUDA
+        # Resolve the scheduler's UUID in the worker environment. This cluster's CUDA
         # driver needs a physical ordinal even though NVML accepts the UUID.
         allocated = os.environ.get('NVIDIA_VISIBLE_DEVICES', '')
         if allocated.startswith('GPU-') and ',' not in allocated:

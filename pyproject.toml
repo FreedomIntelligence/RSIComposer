@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party/LANGMEM-LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "RSISys contributors"}]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -25,7 +25,7 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/satsuki2486441738/RSISys"
-Documentation = "https://github.com/satsuki2486441738/RSISys/blob/main/docs/README.md"
+Documentation = "https://github.com/satsuki2486441738/RSISys/blob/main/README.md"
 Issues = "https://github.com/satsuki2486441738/RSISys/issues"
 
 [project.scripts]
@@ -44,8 +44,6 @@ test = ["jsonschema>=4,<5"]
 dev = ["jsonschema>=4,<5", "build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
 [tool.setuptools.package-data]
-"rsisys.labs" = ["SEAL_NOTICE.txt"]
-"rsisys.controllers" = ["FT_AGENT_NOTICE.txt", "AIDE_NOTICE.txt"]
 "rsisys.loops.decision_making.harness" = ["dsh.patch.yml"]
 "rsisys.loops.decision_making.feedback" = ["prompts/*.txt"]
 "rsisys.loops.decision_making.harness.policy" = ["prompts/*.txt"]

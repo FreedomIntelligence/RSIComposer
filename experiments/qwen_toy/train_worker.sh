@@ -7,7 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 set -eu
-cd /home/jovyan/projects/RSISys
+script_dir=${0:A:h}
+cd "$script_dir/../.."
 export PYTHONDONTWRITEBYTECODE=1
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1
@@ -26,9 +27,8 @@ case ${NVIDIA_VISIBLE_DEVICES:-} in
   *) print -u2 'Missing an exclusive GPU UUID allocation'; exit 1 ;;
 esac
 exec timeout --signal=TERM --kill-after=20s 7180s \
-  pixi run --as-is -m /home/jovyan/projects/vlm/SFT/Baseline/pixi.toml -e train \
-  python -u experiments/qwen_toy/worker.py \
-  --model "${QWEN_MODEL_PATH:-/home/jovyan/models/Qwen3.5-9B}" \
+  "${QWEN_PYTHON:-python}" -u experiments/qwen_toy/worker.py \
+  --model "${QWEN_MODEL_PATH:?Set QWEN_MODEL_PATH to the local model directory}" \
   --served-name "${QWEN_SERVED_NAME:-Qwen3.5-9B}" --run-dir "$run_dir" \
   --port "${QWEN_WORKER_PORT:-8766}" --device cuda --threads "${QWEN_THREADS:-4}" \
   --rounds "${QWEN_ROUNDS:-1}" --steps "${QWEN_STEPS:-24}" "$@"
