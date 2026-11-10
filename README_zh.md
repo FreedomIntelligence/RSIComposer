@@ -1,21 +1,45 @@
 # RSISys
 
-[English](README.md)
+**以完整方法为接入单元的递归自改进（RSI）实验运行框架。**
 
-面向已有 RSI 算法的可复用框架，提供注册实现与可直接配置运行的 LLM benchmark 配方。
-当前接入 ReST^EM、RRSI、SEAL、TTRL、AIDE；FT-Agent 明确标为部分适配。
+[English](README.md) · [快速开始](#快速开始) · [已接入方法](#已接入方法) · [注册自己的方法](#注册自己的方法)
 
-**RSI 决策器 → Lab 执行 → 反馈 → RSI 决策器**。
-`rsisys.algorithms` 收纳决策器、专属 Lab 和配置；共享训练引擎与执行服务留在框架组件层。
-Harness、memory、验证器、训推引擎仍是两大模块内部可替换的组件。
+在一个方法包中定义决策器与 Labs，注册后通过同一个实验闭环运行：
 
-当前是早期研究版本。CPU 入门不需要 GPU、API key 或模型服务。
-真实模型实验需要自行准备模型、数据和可选环境。流程跑通、真实训练完成、
-效果提升和论文收益复现是不同结论。
+**Controller → Lab 执行 → 反馈 → Controller**
+
+方法可以搜索推理 harness、通过 SFT/RL 更新模型权重，也可以由 LLM meta-agent
+决定下一项实验。方法拥有自己的研究策略；RSISys 提供执行生命周期、操作路由与证据记录。
+
+首版研究框架 **0.1.0**，采用 [Apache-2.0](LICENSE)。CPU 入门流程无需 GPU、API key
+或模型服务；真实模型实验需要另外准备模型、数据与执行环境。
+
+## 为什么使用 RSISys
+
+- **完整方法一次注册。** 决策器、Labs、workers 和配置放在同一个方法包，支持库内
+  或库外开发；方法私有组件无需分别全局注册。通过 `register(registry)` 接入新方法，
+  无需在核心 runner 中添加算法专属分支。
+- **研究决策归方法所有。** Controller 可以是状态机、搜索策略、LLM meta-agent
+  或混合实现，由它决定实验、候选选择和停止。框架不要求所有方法遵循固定的
+  propose–train–evaluate–adopt 流程。
+- **不同改进机制共用执行框架。** 已接入的 harness 搜索、SFT、RL 方法都通过
+  controller/Lab 边界执行。Lab 自定义领域操作，调用原生训推栈；共享 harness、memory、
+  backend 和 verifier 按需使用。
+- **用证据区分运行与收益。** 方法身份、操作回执、产物引用和方法报告记录实际发生的
+  执行过程。`finished` 表示宿主循环结束；训练是否发生、候选是否有效、收益是否成立，
+  需要结合方法证据判断。
+
+框架的扩展要求是：**注册完整方法，并运行其决策—实验—反馈闭环**。内部如何拆分与
+注入依赖由方法作者决定，不要求任意组件在所有方法之间自由互换。
+
+[FlashRSI](https://github.com/RUC-NLPIR/FlashRSI) 是相关工作，重点包括算法、目标 harness、
+benchmark 的可配置组合与 agent 资源版本管理。RSISys 强调完整方法包及 controller/Lab
+执行契约，也接入实际调用权重训练的方法。这里表达的是抽象与建设重点的区别，
+不声称这些功能独有，也不据此宣称 benchmark 更优。
 
 ## 快速开始
 
-支持 Linux/macOS、Python **3.12 或 3.13**，从源码安装：
+Python **3.12 或 3.13**，Linux 或 macOS。在仓库根目录执行：
 
 ```sh
 git clone https://github.com/satsuki2486441738/RSISys.git
@@ -27,301 +51,14 @@ rsisys catalog
 rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json
 ```
 
-这里运行 ReST^EM 决策器与**模拟算术 Lab**，不训练 LLM。
-结果在 `runs/rest-em-quickstart/result.json` 及操作回执中。
-再次运行需用新目录，例如追加 `--data-dir runs/another-run`。
-当前安装方式为源码或本地构建的 wheel，不假定 PyPI 已发布。
+这会运行 ReST^EM 的调度流程，使用**模拟算术 Lab**，不进行 LLM 训练。
+查看 `runs/rest-em-quickstart/result.json` 与操作回执；再次运行时使用新的输出路径：
+`--data-dir runs/another-run`。目前从源码或本地构建的 wheel 安装，不假定已经发布到 PyPI。
 
-## 框架职责
+## 已接入方法
 
-```mermaid
-flowchart LR
-    C["RSI 决策器"] -->|Decision| L["Lab"]
-    L -->|Feedback| C
-```
-
-决策器负责算法策略、候选选择与停止；Lab 负责领域执行，返回指标、产物和日志引用。
-公共运行时负责注册装配、配置、操作授权、路由、回执、证据引用、生命周期和自有资源清理。
-宿主不会根据分数替算法选择赢家。
-
-新增算法通常只需库外注册；修改共享调度、反馈交付、取消或恢复语义时，应扩展底层库。
-`src/rsisys/` 根目录下的文件是稳定的框架入口，不是运行产物：
-
-```text
-api.py          # 公共 API 汇总
-application.py  # 应用和运行生命周期
-assembly.py     # controller/Lab/harness/backend 装配
-registry.py     # 算法和组件注册
-methods.py      # 方法声明和方法目录
-components.py   # 组件图和状态端口
-config.py       # 配置到应用的构建
-research.py     # 可选研究组件装配
-cli.py          # 命令行入口
-```
-
-这些模块保留在包根层，是为了兼容 `rsisys.api`、`rsisys.config`、
-`rsisys.application` 等稳定导入路径。具体实现位于 `algorithms/`、`harnesses/`、`labs/`、
-`backends/`、`runtime/` 和 `snapshot/`。
-
-实现层分为两种角色：**Controller** 处理反馈并决定行动，**Lab** 执行实验并返回证据。
-Controller 可以是状态机、搜索策略、LLM meta-agent 或混合实现；两侧都不强制使用
-harness、memory 或 LLM。
-
-```text
-algorithms/
-  <方法>/
-    __init__.py                 # 完整方法的注册入口
-    controller.py  lab.py       # 方法私有的决策与实验实现
-    configs/                    # 方法配置与任务资源
-  _template/                    # 完整的用户开发示例
-  shared/                       # 多个方法确实复用的能力
-loops/                          # 契约、生命周期、授权与反馈交付
-harnesses/
-  decision/                     # 可选的决策执行、记忆与反馈学习
-  actor/                        # 可选的策略与环境执行
-  python_step/                  # 隔离执行的程序 harness
-  defaults.py                   # 显式装配内置 harness
-labs/
-  scenes/
-    math/                       # 可复用答案解析与验证
-    self_reflection/            # 长程自身改进骨架
-  local_process/                # 通用进程 Lab
-backends/                       # 可复用训推引擎
-runtime/                        # 宿主调度、状态与证据
-snapshot/                       # 快照捕获与恢复机制
-```
-
-内置算法以完整方法注册；私有 controller、Lab 与 worker 都放在方法目录。
-方法需要共享能力时再引用 `harnesses/`、`labs/` 与 `backends/`，无需把每个私有组件单独注册。
-配置统一选择 `framework.method`，方法私有 controller/Lab 不再全局注册。
-旧的拆分配置需要迁移到完整方法配置，或显式注册自己的工厂。
-每个方法通过唯一的 `register(registry)` 入口完成闭环装配，核心注册表不增加算法专属分支。
-独立研究 worker 的通信归 `runtime/execution/research_bridge.py`。
-
-`harnesses/decision/feedback/` 内，`learning.py` 管理日志与任务生命周期，
-`evidence_packet.py` 构造有界证据视图，`proposal_validation.py` 验证派生产物，
-`model_gateway.py` 管理调用准入与串行访问，`legacy.py` 隔离旧解释流程。
-这些是可选的 harness 能力；长程 Self-Reflection Lab 仍单独维护。
-
-库外开发仍可像 `_template` 一样，在注册入口旁携带私有实现，无需改核心库或把组件分别
-安装进库中。需要供其他方法复用的能力，再纳入公共实现层。harness 支撑上下文、模型和工具
-交互，具体策略、候选选择及停止由方法的 Controller 决定。
-
-`rsisys.labs` 顶层只导出通用 Lab 契约，不导入任何场景。
-场景提供可复用的领域能力或 Lab 实现。后续 coding 场景可以放在 `labs/scenes/coding/`，
-也可以位于库外的方法包内。方法可以引用共享场景或包装它，训推引擎从 `backends/` 接入。
-方法专属 Lab 留在 `algorithms/<方法>/`；`local_process` 提供通用进程执行。
-ReST EM 维护方法内的训练 Lab；RRSI 与 meta-agent 共用 `algorithms/shared/harness_lab.py`
-中的固定模型 harness 测量能力，数学验证器留在 scene；
-接受已格式化输入的 LoRA 训推执行放在 `backends/training/lora/`。
-方法负责提示格式、训练数据选择和模型谱系，backend 不依赖数据集、验证器或 RSI 算法。
-
-服务启动、历史报告、benchmark 脚本和领域演示私有维护，公开入口为
-[rsisys.api](src/rsisys/api.py)。
-
-其他内部目录的职责如下：
-
-- 默认 harness 自己维护 `harnesses/decision/public_policy.py` 中的决策器接入，
-  以及 `harnesses/decision/tools/lab.py` 中的 Lab 工具绑定；无探索任务时的空端点放在
-  `loops/exploration/operation_only.py`。
-- `adapters/exploration/` 兼容旧 exploration 端点与 Lab 任务契约，
-  `adapters/langchain_model.py` 适配可选 LangChain 接口。
-  某个实现专属的接入逻辑归该实现维护，不集中堆进 adapters。
-- `backends/training/`、`backends/serving/` 负责训练进程、推理传输与部署；
-  Lab 只负责选择这些后端，并把执行结果转换为方法反馈。
-- `runtime/orchestration/lab_group.py` 负责操作命名空间路由和 Lab 生命周期聚合；
-  后端的记录写入、文件锁放在 `runtime/storage/process_store.py`，推理后端不再借用训练实现做持久化。
-- `assembly.py` 负责端口和资源所有权；内置默认组件按需从 `harnesses/defaults.py` 装配。
-  提供独立工厂时不会构造默认 agent。循环端口协议位于 `loops/contracts/harness.py`，
-  不导入任何具体 harness。
-
-`runtime/` 按宿主机制的职责分组：
-
-```text
-runtime/
-  orchestration/  # 运行策略、循环调度、Lab 路由和作业
-  state/          # 恢复、身份和版本激活
-  execution/      # 隔离、进程、worker 和资源预留
-  storage/        # 产物、文件访问、规范 JSON 和进程记录
-  models/         # 模型通信、凭证代理和用量记账
-  evaluation/     # 评测准入和派生诊断
-  evidence/       # 共享证据记录与持久化
-  capabilities.py # 可选组件方法发现
-```
-
-workspace 候选操作放在 `labs/local_process/evolution.py`，绑定激活及其状态适配归
-`runtime/state/bindings.py`。默认决策 harness 的知识续接放在
-`harnesses/decision/continuation.py`；内置 harness 的恢复适配放在
-`snapshot/builtin_recovery.py`，runtime 维护通用恢复日志。评测准入负责批次和预算，场景评分仍由 Lab 负责。
-
-通用记录、来源追踪、内存/SQLite 持久化和基础查询放在 `runtime/evidence/`。
-决策侧的反馈选择放在 `harnesses/decision/memory/`，决定哪些证据进入决策上下文。
-Self-Reflection Lab 负责未来的长期经验整理、候选构造与验证；普通 RSI 运行
-无需启用该 Lab 就能记录和查询证据。现有记录格式与 `experience.sqlite3` 文件保持兼容。
-
-### Self-Reflection Lab：架构方向
-
-**Self-reflection 指 meta-agent 利用长期积累的 decision–Lab feedback 经验，
-改进自身决策能力的过程。** Self-Reflection Lab 是可选的 Lab 类型，通过方法的同一个
-注册入口接入，不新增第三类顶层模块。改进对象可以包括决策器的 harness、memory 策略、
-训练数据和模型权重。[代码骨架](src/rsisys/labs/scenes/self_reflection/__init__.py) 提供显式加载的
-`self_reflection` Lab 注册入口，版本为 `0-placeholder`，尚无可执行后端；
-现有 reflect 工具不等于已经实现这一完整生命周期。
-
-它应跨多次 run 持续维护经验，并支持三个阶段：
-
-1. **长期经验积累**：以多步研究过程为单位，记录任务背景、决策器/模型/harness 版本、
-   决策序列、Lab 回执、成本及后续结果。未结束过程保留待确认状态；一次实验即时失败，
-   不直接等同于研究决策无效。
-2. **候选构造**：从积累的经验中修改 harness、构造训练数据或训练候选版本。
-   候选构造完成不等于能力提升已验证。
-3. **分阶段长程验证**：验证过程绑定固定候选版本，持续返回进度与实际结果。
-   先做低成本筛选，再对少量候选开展研究过程验证，对照任务条件和预算应可比。
-   历史日志可以用于学习，不能直接证明新策略改变决策后的轨迹会更好。
-   候选构造所用经验与验证证据应分开，并用新任务或轮换窗口降低反复选择同一验证集的偏差。
-
-经验进入、候选构造和验证可以采用不同节奏。触发条件、验证周期、预算、指标和采纳规则
-由方法定义。决策器决定采纳、拒绝或继续验证；运行时在明确的版本切换边界应用被选版本。
-Lab 产生候选时不得直接覆盖正在运行的决策器。验证可以以“证据不足”结束；
-长期积累也不保证每次更新都提升。
-
-框架负责版本与证据关联、任务标识、进度和终态回执、持久化、取消及资源归属。
-长程验证可使用显式 start/poll/result/cancel 操作。完整的跨 run 自改进、候选验证及决策器
-版本切换仍需实现，注册本身不会自动提供这些语义。
-
-包内提供版本/研究过程/候选/验证记录的草案、后端协议，以及 `record_episode`、
-`build_candidate`、`start`、`poll`、`result`、`cancel` 操作面。方法可在自己的注册入口内
-调用该包的 `register`，或注册具体的替代 Lab。可以运行
-`rsisys catalog --plugin src/rsisys/labs/scenes/self_reflection` 查看骨架。
-当前所有合法调用均返回失败回执，错误码为 `self_reflection_not_implemented`；
-不会写入经验、启动任务、产生候选或切换决策器版本。
-
-## 注册自己的算法
-
-可以直接从可运行的 [_template](src/rsisys/algorithms/_template/__init__.py) 开始：
-
-```text
-algorithms/_template/
-  __init__.py       # 注册完整方法，绑定私有决策器与 Lab 工厂
-  controller.py     # 根据 Lab 反馈修改 prompt，决定下一步与何时停止
-  lab.py            # 执行检查，返回结构化回执
-  configs/run.json  # 选择一个方法，配置其决策器与 Labs
-```
-
-在仓库根目录运行，无需 GPU、模型或外部服务：
-
-```sh
-rsisys run --plugin src/rsisys/algorithms/_template \
-  --config src/rsisys/algorithms/_template/configs/run.json \
-  --data-dir runs/custom-prompt
-```
-
-决策器先提交一个 prompt，读取 Lab 返回的缺失指令，每轮补一条，再交给 Lab 检查。
-三次检查的字面指令覆盖率为 `0 → 0.5 → 1`。这是**合成接口闭环验证**，不代表 LLM
-能力提升或训练。决策器报告位于 `runs/custom-prompt/result.json`，具体反馈见操作回执。
-再次运行时使用新的 `--data-dir`。
-
-开发自己的方法时：
-
-1. 复制 `_template` 为 `src/rsisys/algorithms/my_method/`，修改方法名
-   `custom_prompt`，以及配置中对应的选择。
-   不以下划线开头的方法包会自动发现，运行其配置时不需要 `--plugin`，
-   也不需要改核心注册表或 `api.py`。
-2. 在 `controller.py` 写决策逻辑，在 `lab.py` 接自己的评测、训推引擎或 harness。
-   专属 memory、后端适配等都留在同一个方法目录，共享能力直接引用框架。
-3. 也可把整个目录放在**库外**，例如 `./my_method/`，用以下单条命令运行：
-   `rsisys run --plugin ./my_method --config ./my_method/configs/run.json --data-dir runs/my-method`。
-
-`_template` 特意不参与自动发现，避免把教学模板列为已适配的研究算法；显式 `--plugin`
-即可运行。框架只约定 `register(registry)`，不强制内部文件布局；简单方法可以全部写在
-`__init__.py`。目录插件记录本地包文件的哈希，并作为受信任的宿主代码执行。
-
-工厂接收装配上下文与 `config`；可在注册时传 `validate_config`，于构造前校验参数。
-多个 Lab 通过 `别名.操作名` 路由，Lab 收到自己的原生操作名。
-决策输入包含目标、最新回执、上次操作、能力目录、上下文和证据引用；
-输出为 `invoke`、`wait` 或 `finish`。领域参数需在产生副作用前校验。
-
-像模板一样，直接绑定私有工厂并注册完整方法：
-
-```python
-from rsisys.api import MethodDefinition
-
-registry.register_method("my_method", MethodDefinition.from_factories(
-    controller=MyController,
-    labs={"experiment": MyLab},
-    version="1",
-))
-```
-
-配置通过 `framework.method.name` 选择方法，决策器参数放在
-`framework.method.config.controller`，Lab 参数放在
-`framework.method.config.labs.experiment`。Lab 别名由方法定义；
-`validate_controller` 和 `validate_labs` 可在构造前检查参数。
-需要自定义装配时，实现 `RSIMethod.build(config)` 并使用
-`MethodDefinition.from_method(...)`，或直接提供返回 `ModuleAssembly` 的方法工厂。
-
-共享的 `harness`、`memory`、`backend`、`scene`、`verifier` 可以通过
-`register_component` 和 `resolve_component` 注册、解析。组件选择与覆盖由方法的
-Python 装配代码完成，目前没有自动的声明式覆盖层；私有组件无需分别注册。
-已有共享实现也可直接引用。底层 controller/Lab 注册接口用于显式自定义组合。
-默认独立注册的只有通用 `single_loop` 决策器与 `local_process` Lab。
-方法类从各自方法包导入，`rsisys.api` 只提供框架接口。
-
-`rsisys catalog` 可查看以下内置组件，列举时不会加载 ML 运行环境：
-
-| 角色 | 注册名 | 解析结果 |
-| --- | --- | --- |
-| `harness` | `python_step` | 接收 `(harness_path, problem, history)` 的函数；可配置 `timeout`，执行时需要 bubblewrap |
-| `backend` | `chat_pool`、`lora` | 共享推理服务池、接受已准备输入的 LoRA 引擎 |
-| `memory` | `agent_memory` | agent 自己维护的记忆与研究任务，由方法绑定 harness |
-| `verifier` | `strict_numeric`、`math_verify` | 最终答案验证；后者需要安装 `rsisys[math]` |
-
-在方法工厂内解析组件，并交给自己的 controller/Lab；绑定及生命周期由方法负责：
-
-```python
-verifier = registry.resolve_component("verifier", "strict_numeric", context)
-backend = registry.resolve_component("backend", "chat_pool", context, {
-    "endpoints": ["http://127.0.0.1:8000/v1"], "model": "my-model",
-})
-```
-
-目前不为凑齐目录额外注册 `scene`；方法可直接引用场景能力，或注册自己的完整共享场景。
-
-已有完整决策端点的高级集成可用 `endpoint=True` 注册，工厂接收 `(context, execution, config)`；
-可选的 `research_factory(config)` 提供方法自己的研究/记忆集成。
-普通决策器工厂仍接收 `(context, config)`，无需使用这两个选项。
-
-有后台资源的 Lab 应提供幂等 `close()` 与 `shutdown(mode) -> bool`，确认资源停止后才返回 true。
-异步任务建议暴露 start/poll/result/cancel 操作，并交付终态回执；注册不会自动轮询任意外部作业。
-决策器可选提供 `required_operations()` 检查操作是否存在，或 `report()` 输出 JSON 方法状态，
-保存到 `result.json.controller_report`。
-
-所有运行输出都属于可丢弃的本地状态。Git 会忽略 `runs/` 和 `runtime-output/`，其中保存结果、日志、产物、工作区、数据库和快照。仓库只保留快照/证据协议及小型确定性 fixture；可通过 `--data-dir` 指定仓库外目录或 `runtime-output/` 下的目录。
-
-## 组件组合
-
-`meta_agent` 现在也可以作为完整方法注册运行。[配置](src/rsisys/algorithms/meta_agent/configs/math.json)
-绑定模型决策器、可选研究记忆和有预算限制的数学 Lab。决策器读取初始 harness，提出不可变候选，
-依据搜索反馈决定继续、选择与停止。Lab 与 RRSI 复用同一个固定模型测量引擎，不执行 RRSI 的搜索策略。
-最终留出评测会锁定选择并关闭搜索，初始与选中 harness 使用相同最终评测预算。
-这提供可运行的 meta-agent 方案骨架；长程 self-reflection 仍未实现或验证。
-运行前需要分别配置研究模型服务（`rsisys-research`）、固定任务模型服务（`rsisys-fixed`）和互不重叠的冻结数据集。
-完整 harness 研究方法目前使用 `harness=default`；自定义组合可以直接绑定可复用 DSH harness。
-配置使用已有 vLLM 后端提供原生 JSON schema、真实 token 计数、有限响应重试与调用记账。
-`run_control.decision_steps` 提供宿主剩余决策预算，由模型决定如何分配。
-只有 Lab 返回实际最终评测回执，才能将方法记为完成。
-
-- `single_loop` 是用于自定义组合的固定迭代模板。DSH 可通过
-  `rsisys.harnesses.decision.dsh.dsh_decision_factory` 在装配中显式绑定；
-  需安装 `python -m pip install -e '.[dsh]'`，并设置原生 home/workspace/session 配置。
-- Memory、engine、scorer 在模块工厂内注入。
-  默认 memory 为显式 literal 后端。ReMe BM25 检索可通过
-  `python -m pip install -r requirements/reme.txt` 与 `rsisys.research.ResearchAssembly.reme()` 使用，
-  不引入 embedding 服务或自主 memory agent；LangMem 是独立可选 extra。
-- 需要整套状态适配时，可用 `registry.register_method` 注册 `MethodDefinition`，
-  配置 `framework.method`，不同时指定 `framework.controller/labs`。
-
-## 方法与验证范围
+当前 catalog 包含 **8 个完整方法注册项**。`ttrl` 与 `ttrl_verl` 是 TTRL 的两种执行
+profile；`meta_agent` 是本框架的方案骨架，不属于论文复现。各方法的适配范围如下。
 
 | 方法 | 接入范围 | 配置 / 证据 |
 | --- | --- | --- |
@@ -334,19 +71,25 @@ backend = registry.resolve_component("backend", "chat_pool", context, {
 | `aide` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 | `meta_agent` | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
-2026 年 11 月 9 日，SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
-SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练验证，未验收 GPT-4.1
-语义服务或完整论文实验。原生 TTRL 完成 32 道目标题、1 epoch 的 GPU 验证，
-未完成 500 题 × 10 epochs；其目标题指标属于 transductive 评估。
 
-FT-Agent 完成三次原生 SFT，留出准确率从 48/64 降到 45/64，未接完整 CoSTEER 知识/调试链。
-AIDE 完成三个搜索节点，留出准确率从 28/64 升到 34/64，但调用次数从 29 增到 67，
-token 也增加，不是等算力比较或原始 benchmark 复现。两者均未训练 meta-agent 自身权重。
-这些结果验证接入边界，不能据此把论文收益未复现归咎于论文；详细实跑与失败证据单独私有维护。
+真实实验需要配置模型/数据路径、Python 解释器、模型服务端点和 GPU 分配，仍通过统一入口运行：
 
-2026 年 11 月 10 日，整理后的注册方法完成新一轮复跑，尽量使用互不重叠的 4+4 卡分配。
-这是单种子、小规模任务适配与集成验证，未达到论文规模。权重训练使用 Qwen2.5-7B Base，
-RRSI/AIDE 使用固定的 Qwen3.5-9B。
+```sh
+rsisys run --config src/rsisys/algorithms/rest_em/configs/math-8gpu.json
+```
+
+训练需另装 PyTorch/Transformers/PEFT；配置使用 vLLM 时另备推理环境。
+SEAL/TTRL 论文后端使用独立环境与 [requirements/seal-ttrl.txt](requirements/seal-ttrl.txt)，
+SEAL 语义判分另需配置的 GPT-4.1 服务。FT-Agent/AIDE 需要 Linux bubblewrap、模型服务、
+固定 revision 的干净上游 checkout，以及 [FT-Agent](requirements/ft_agent.txt) /
+[AIDE](requirements/aide.txt) 依赖。数据格式与参数以各方法 Lab 定义为准。
+注册不会自动下载模型和数据，也不会启动外部服务。
+
+<details>
+<summary>集成结果与复现边界</summary>
+
+以下为 2026 年 11 月 10 日的单种子集成实跑与任务适配，未达到论文规模，也不构成
+跨方法排名。权重训练使用 Qwen2.5-7B Base；RRSI/AIDE 使用固定 Qwen3.5-9B。
 
 | 方法 | 评测范围 | 初始 → 最终 |
 | --- | --- | --- |
@@ -359,60 +102,187 @@ RRSI/AIDE 使用固定的 Qwen3.5-9B。
 | FT-Agent 部分适配 | GSM8K，64 道留出题；三轮原生 SFT | 48/64 → 51/64 |
 | Meta-agent 骨架 | MATH，128 道留出题 × 2 次采样；模型保留 baseline | 78.91% → 78.91% |
 
-RRSI 平均记录 token 成本从 1,176 增到 2,287，不能视作等算力收益。
-SEAL 不进行内层适配时的 F1 从 0.3756 降到 0.3282。
-ReST^EM 的 GSM8K 开发集从 106/128 提高到 111/128，完整测试集没有提升。
-FT-Agent 研究端使用 Qwen3.8-27B，原生策略选中第 2 轮；原生 Trainer 的 checkpoint 状态竞争
-通过同步写入 rank 已选出的最佳 checkpoint 修复，未替换其选择策略。
-这些单次观察不能证明稳定收益，也不足以把论文收益未复现归咎于论文。
-Meta-agent 使用 Qwen3.8-27B 控制器和固定 Qwen3.5-9B 任务模型，完成 14 次决策/模型调用：
-提出并评测候选后，模型决定保留 baseline，实际完成最终评测再结束。此前的 9B/27B 尝试
-在 32 步内未完成 finalize；补充剩余预算反馈后，一次最终 27B 运行完成闭环。
-这验证可运行性，不代表取得提升，也未训练 meta-agent 权重；长程 self-reflection 仍为占位。
-运行产物、权重和失败记录继续私有保存。
 
-## 运行已适配方法
+RRSI 平均记录 token 成本从 1,176 增至 2,287，不能视作等算力收益。
+SEAL 不进行内层适配时的 F1 从 0.3756 降至 0.3282。ReST^EM 的 GSM8K 开发集从
+106/128 提升至 111/128，完整测试集未提升。FT-Agent 使用 Qwen3.8-27B 研究模型，
+原生策略选择第 2 轮。Meta-agent 同样使用 Qwen3.8-27B 控制器和固定 Qwen3.5-9B
+任务模型：测量候选后选择 baseline，执行最终评测，再结束，共 14 次决策/模型调用；
+此前尝试曾在 32 步预算内未完成 finalize。
 
-从方法表选择配置，自行获取模型和数据，设置路径、解释器、端点及互不重叠的 GPU 分配。
-数据 JSON 格式与参数校验以各 Lab 实现为准。命令从仓库根目录执行，例如：
+SEAL paper profile 仅完成词面判分下的小规模原生训练验证，GPT-4.1 语义服务与完整论文
+实验尚未验收。原生 TTRL 完成 32 道目标题、1 epoch 的 GPU 验证，未达到
+500 题 × 10 epochs；目标题指标属于 transductive 评估。FT-Agent 未接完整 CoSTEER
+知识/调试链，AIDE 使用适配任务，两者均未训练 meta-agent 自身权重。
 
-```sh
-rsisys run --config src/rsisys/algorithms/rest_em/configs/math-8gpu.json
+详细运行产物与失败记录私有维护，未作为公开复现证据随仓库发布。这些单次观察不能证明
+稳定收益，也不足以将未复现的收益归咎于论文。长程 self-reflection 仍未实现。
+
+</details>
+
+## 注册自己的方法
+
+从可运行的 [_template](src/rsisys/algorithms/_template/__init__.py) 开始：
+
+```text
+my_method/
+  __init__.py       # register(registry)：绑定完整方法
+  controller.py     # 根据反馈决定下一步
+  lab.py            # 执行实验并返回回执
+  configs/run.json  # 选择方法并设置参数
 ```
 
-训练需另装 PyTorch/Transformers/PEFT，配置选用 vLLM 时还需对应推理环境。
-SEAL/TTRL 论文后端使用独立环境与
-[requirements/seal-ttrl.txt](requirements/seal-ttrl.txt)；SEAL 语义判分另需配置的 GPT-4.1 服务。
-FT-Agent/AIDE 需要 Linux bubblewrap、模型服务、固定 revision 的干净上游 checkout，及
-[FT-Agent](requirements/ft_agent.txt) / [AIDE](requirements/aide.txt) 依赖。
-源码校验上游版本与允许的执行参数；注册不会安装或启动这些外部依赖与服务。
-配好即可通过统一入口运行，不代表模型、数据或 GPU 环境已随库分发。
+内部布局由方法作者决定，简单方法也可只用一个文件。常规注册直接绑定接收
+`(context, config)` 的私有工厂：
+
+```python
+from rsisys.api import MethodDefinition
+from .controller import MyController
+from .lab import MyLab
+
+
+def register(registry):
+    registry.register_method("my_method", MethodDefinition.from_factories(
+        controller=MyController,
+        labs={"experiment": MyLab},
+        version="1",
+    ))
+```
+
+配置选择完整方法，controller 与 Lab 参数仍分别设置：
+
+```json
+{
+  "framework": {
+    "method": {
+      "name": "my_method",
+      "config": {
+        "controller": {},
+        "labs": {"experiment": {}}
+      }
+    }
+  }
+}
+```
+
+这里仅展示方法选择片段；目标、输出目录和预算等请参考模板的完整运行配置。
+可以先运行内置模板，无需 GPU 或服务：
+
+```sh
+rsisys run --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/algorithms/_template/configs/run.json \
+  --data-dir runs/custom-prompt
+```
+
+模板通过字面 prompt 指令覆盖率（`0 → 0.5 → 1`）展示反馈交付和完整闭环，不代表 LLM 能力提升。
+
+复制到库外，用 `--plugin ./my_method` 加载；或复制到
+`src/rsisys/algorithms/my_method/`，由内置发现机制加载。修改注册与配置中的
+`custom_prompt` 方法名即可，无需改核心注册表或 `api.py`。
+`_template` 本身不参与自动发现。
+
+Controller 实现 `decide(DecisionInput)`，返回 `invoke`、`wait` 或 `finish`。
+Lab 实现 `describe()` 与 `execute(call)`，返回包含状态、数据和证据引用的
+`OperationResult`。多个 Lab 通过 `别名.操作名` 路由；可选配置校验器在构造前拒绝错误参数。
+需要自定义装配时，实现 `RSIMethod.build(config)` 并使用
+`MethodDefinition.from_method(...)`，或提供返回 `ModuleAssembly` 的工厂。
+公共契约见 [rsisys.api](src/rsisys/api.py)。
+
+### 按需复用组件
+
+方法可直接引用共享代码，也可以在自己的工厂内解析已注册组件；私有组件无需额外注册。
+
+| 角色 | 内置注册名 | 实现 |
+| --- | --- | --- |
+| `harness` | `python_step` | 隔离执行 `(harness_path, problem, history)`；可配置 timeout，需要 bubblewrap |
+| `backend` | `chat_pool`、`lora` | 推理服务池、接受已准备输入的 LoRA 引擎 |
+| `memory` | `agent_memory` | agent 自己维护的记忆与研究任务，由方法绑定 harness |
+| `verifier` | `strict_numeric`、`math_verify` | 最终答案验证；后者需要安装 `rsisys[math]` |
+
+通过 `registry.resolve_component(kind, name, context, config)` 解析；解析不会自动安装
+依赖或把组件绑定到方法。自定义共享组件使用 `register_component`。
+DSH 可通过 `rsisys.harnesses.decision.dsh.dsh_decision_factory` 和 `rsisys[dsh]`
+显式接入；ReMe 检索使用 [requirements/reme.txt](requirements/reme.txt) 与
+`ResearchAssembly.reme()`，LangMem 是独立可选 extra。
+
+独立 controller/Lab 注册 API 保留供显式自定义组合使用，默认仅独立注册
+`single_loop` 与 `local_process`。内置方法的私有组件不再全局注册，旧拆分配置需改用
+`framework.method` 或显式注册自己的工厂。具体方法类从各自包导入，不从 `rsisys.api` 导入。
+
+## 架构与职责
+
+```mermaid
+flowchart LR
+    M["注册方法"] --> C["Controller"]
+    M --> L["Lab(s)"]
+    C -->|"决策：invoke / wait / finish"| H["宿主 Runtime"]
+    H -->|"路由操作"| L
+    L -->|"回执与证据引用"| H
+    H -->|"反馈"| C
+    L --> B["可选 harness / backend / scene"]
+```
+
+| 归属 | 职责 |
+| --- | --- |
+| 方法 | Controller 策略、Lab 操作、候选选择、停止与采纳规则 |
+| Lab | 领域校验、训推执行、指标与产物 |
+| 宿主 | 注册、运行生命周期、授权、路由、回执交付、资源归属与显式恢复集成 |
+
+```text
+src/rsisys/
+  algorithms/       # 完整方法包、开发模板和已有实际复用的共享实现
+  loops/            # 契约与循环机制
+  harnesses/        # 可选决策/actor 执行、记忆与反馈服务
+  labs/             # 通用进程 Lab 和可复用场景
+  backends/         # 训推引擎
+  runtime/          # 宿主调度、执行、证据与存储
+  snapshot/         # 捕获与显式恢复集成
+  api.py            # 公共框架入口
+  methods.py        # 方法声明
+  registry.py       # 注册目录与受信任插件加载
+```
+
+Controller 与 Lab 不必使用 LLM 或内置 harness。共享组件可选，核心负责生命周期语义，
+研究策略由方法决定。有后台资源的 Lab 应提供幂等 `close()` 与 `shutdown(mode) -> bool`；
+异步 Lab 可暴露 start/poll/result/cancel，由方法驱动其协议，注册不会自动轮询。
+
+`runs/` 与 `runtime-output/` 保存本地输出并由 Git 忽略。
+源码中的 `runtime/`、`snapshot/` 是运行机制，不是已保存的实验产物。
+
+### Self-reflection：后续方向
+
+[Self-Reflection Lab](src/rsisys/labs/scenes/self_reflection/__init__.py) 是可选架构占位
+（`0-placeholder`），目标是通过积累的决策—Lab 反馈提升 meta-agent 自己的决策能力。
+预期流程为经验积累 → 候选构建 → 长程验证，再由 Controller 决定是否采纳；
+验证可以保持待完成或证据不足。当前合法操作返回 `self_reflection_not_implemented`，
+不实现经验持久化、训练、验证或决策器切换。
+可运行的 `meta_agent` 方法搜索的是任务 harness，尚未实现上述自身改进闭环。
+Self-reflection 是后续研究方向，不作为当前已实现功能或收益卖点。
 
 ## 监控
 
-监控是独立可选包，不依赖核心包或 GPU：
+可选只读查看器，与核心包独立安装：
 
 ```sh
 python -m pip install ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
-默认只监听本机，只读，无鉴权或多租户隔离；对外提供服务需自行配置访问控制。
+默认仅监听本机，不提供鉴权或多租户隔离。
 
-## 限制与安全
+## 发布范围与限制
 
-0.x 接口仍可能调整，长实验需固定 commit、模型/数据 revision 与依赖。
-快照恢复需显式状态适配；普通注册不会自动恢复决策器内存与外部任务。
-FT-Agent/AIDE 原生搜索与同步训练配方重跑需新目录；快照元数据不冻结实际依赖环境。
-目前没有跨 Lab/run 的全局 GPU lease，长作业计费与预算接管尚不完整，设备需由操作者分配。
+- 当前是首版研究框架，0.x 接口可能调整；实验需固定 commit、模型/数据 revision 与依赖。
+- 快照恢复需要显式状态适配。注册方法不会自动恢复任意 controller 内存或外部任务。
+  FT-Agent/AIDE 原生搜索和同步训练配方需要新的运行目录。
+- GPU 由操作者分配；目前没有跨 Lab/run 的全局 GPU lease，长作业计费与预算接管尚不完整。
+- 插件是受信任宿主 Python。普通 local-process Lab 不是 OS 沙箱；不可信生成程序需显式
+  隔离执行器。自定义 Lab 负责外部访问、计费与资源退出。凭据放环境变量，分享前检查
+  提示与产物中的私有内容。
+- 回归测试与实验记录目前私有维护；公开仓库提供可执行 CPU fixture 和方法模板，
+  不包含 GitHub Actions 工作流。
 
-插件是受信任宿主 Python 代码；普通 local-process Lab 不是 OS 沙箱。
-不可信生成程序需显式隔离执行器。自定义 Lab 负责网络访问、外部计费与资源退出。
-凭据放环境变量，分享前检查日志、提示与产物中的私有内容。
-`finished` 仅描述宿主生命周期，训练和收益需结合方法报告、回执、优化器/权重证据与固定留出评测判断。
-漏洞优先通过 GitHub 私密报告；未启用时只公开请求私密联系渠道，不发布漏洞细节或凭据。
-
-## 开发与验证
+## 开发与许可
 
 ```sh
 python -m pip install -e '.[dev]'
@@ -422,13 +292,9 @@ python -m build --outdir dist/monitor src/rsimonitor
 python -m twine check --strict dist/core/* dist/monitor/*
 ```
 
-回归测试与验证脚本单独私有维护，仓库不包含 GitHub Actions 工作流。
-PR 说明行为变化、验证与算法偏差；使用合成 fixture，不提交权重、下载数据、凭据或原始运行日志。
-贡献按 Apache-2.0 接收，讨论保持尊重与具体。
-
-## 许可
+贡献请说明行为变化、验证与方法偏差，不提交下载数据、权重、凭据或原始运行日志。
+漏洞优先使用 GitHub 私密报告；不可用时请求私密联系渠道，不公开漏洞细节或凭据。
 
 Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
-第三方来源在对应适配代码中标注，
-改编 SEAL 代码的 MIT 文本保留在 [seal/lab.py](src/rsisys/algorithms/seal/lab.py)。
-外部依赖、模型权重和数据集另行获取，遵循各自条款。
+第三方来源在对应适配代码旁标注；SEAL 改编代码的 MIT 文本保留在
+[seal/lab.py](src/rsisys/algorithms/seal/lab.py)。依赖、模型权重与数据集分别遵循其条款。
