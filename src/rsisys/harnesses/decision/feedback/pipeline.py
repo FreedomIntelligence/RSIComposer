@@ -10,10 +10,7 @@ from pathlib import Path
 
 from rsisys.harnesses.decision.feedback.components import JournalContextMemory
 from rsisys.harnesses.decision.feedback.evidence import admitted_candidate_evidence
-from rsisys.harnesses.decision.feedback.learning import (
-    checked_processor_result,
-    validate_proposals,
-)
+from rsisys.harnesses.decision.feedback.proposal_validation import checked_processor_result, validate_proposals
 from rsisys.harnesses.decision.feedback.stages import FeedbackStageBinding
 
 

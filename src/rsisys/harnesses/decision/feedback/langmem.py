@@ -339,13 +339,13 @@ class LangMemContextMemory:
         retrieval/repair content that cannot fit ends this job without inference.
         The original capture and read paths remain in the journal.
         """
-        from rsisys.harnesses.decision.feedback.learning import _evidence_packet
+        from rsisys.harnesses.decision.feedback.evidence_packet import evidence_packet
         original = json_bytes(job['input']).decode()
 
         def candidates(request):
             yield request
             for count, text_limit in ((16, 256), (8, 192), (4, 128), (2, 96), (1, 64), (0, 0)):
-                packet, _ = _evidence_packet(job, count, text_limit, preview_feedback=True)
+                packet, _ = evidence_packet(job, count, text_limit, preview_feedback=True)
                 replacement = json_bytes(packet).decode()
                 if len(replacement) >= len(original):
                     continue

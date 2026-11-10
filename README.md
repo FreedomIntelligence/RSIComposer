@@ -101,11 +101,19 @@ snapshot/                       # snapshot capture and restore mechanisms
 Built-in method packages declare and register their complete method assembly.
 Method-private implementations live beside the registration entry; reusable scenes
 and components are imported from `harnesses/`, `labs/` and `backends/` when shared.
-Configurations shipped here select `framework.method`; separate controller/Lab
-registrations remain compatible with older configurations. Each method chooses its controller,
+Configurations select `framework.method`. Method-private controllers and Labs
+are not registered globally; older split selections must migrate to the method
+configuration or explicitly register their own factories. Each method chooses its controller,
 Labs, harnesses and memory through its single `register(registry)` entry; the
 core registry has no algorithm-specific branches. Independent research-worker
 transport lives in `runtime/execution/research_bridge.py`.
+
+Within `harnesses/decision/feedback/`, `learning.py` owns the journal and job
+lifecycle, `evidence_packet.py` builds bounded evidence views,
+`proposal_validation.py` validates derived products, `model_gateway.py` owns
+model-call admission and serialization, and `legacy.py` isolates the older
+interpretation workflow. These optional harness services do not implement the
+long-horizon Self-Reflection Lab.
 
 External methods may keep private implementations beside their registration
 entry, as shown by `_template`, without modifying the core or installing their
@@ -303,8 +311,32 @@ Shared `harness`, `memory`, `backend`, `scene` and `verifier` factories may use
 `register_component` and `resolve_component`. The method's Python assembly owns
 resolution and overrides; there is no automatic declarative override layer.
 Private components need no separate registration. Existing shared implementations
-can also be imported directly. Separate controller/Lab APIs support reuse and
-older configurations.
+can also be imported directly. Separate controller/Lab APIs support explicit custom composition.
+Only the generic `single_loop` controller and `local_process` Lab are registered
+separately by default. Method classes are imported from their method packages,
+not from `rsisys.api`.
+
+`rsisys catalog` lists these built-in component IDs without loading ML runtimes:
+
+| Role | IDs | Resolved implementation |
+| --- | --- | --- |
+| `harness` | `python_step` | Callable `(harness_path, problem, history)` with configurable `timeout`; requires bubblewrap at execution |
+| `backend` | `chat_pool`, `lora` | Shared chat endpoint pool or prepared-input LoRA engine |
+| `memory` | `agent_memory` | Agent-owned notes and research tasks; the method binds it to its harness |
+| `verifier` | `strict_numeric`, `math_verify` | Final-answer checking; `math_verify` requires `rsisys[math]` |
+
+Resolve components inside your method factory; pass the returned objects to your
+own controller or Lab and manage their lifecycle there. For example:
+
+```python
+verifier = registry.resolve_component("verifier", "strict_numeric", context)
+backend = registry.resolve_component("backend", "chat_pool", context, {
+    "endpoints": ["http://127.0.0.1:8000/v1"], "model": "my-model",
+})
+```
+
+No `scene` is registered just to fill a catalog category; methods can import
+existing scene capabilities or register a complete reusable scene of their own.
 
 Advanced integrations that already assemble their decision endpoint can register
 with `endpoint=True`; their factory receives `(context, execution, config)`.
@@ -334,17 +366,17 @@ not an implementation or validation of long-horizon self-reflection. Supply the
 research-model endpoint (`rsisys-research`), fixed task-model endpoints
 (`rsisys-fixed`) and frozen, disjoint datasets before running the configuration.
 The complete harness-research method currently uses `harness=default`;
-the reusable controller also supports DSH for custom assemblies.
+custom assemblies may bind the reusable DSH harness directly.
 The example selects the existing vLLM transport for native JSON schemas, measured
 token counts, bounded response recovery and archived model-call accounting.
 `run_control.decision_steps` exposes the host's remaining decision budget;
 the controller decides how to allocate it. A text-only finish cannot replace the
 Lab's finalization receipt.
 
-- `single_loop` provides fixed iteration; `meta_agent` uses the configured model
-  with `harness=default|dsh`; set actual backend, role and model identities
-  in your own JSON configuration. DSH also needs its native home/workspace/session
-  configuration and `python -m pip install -e '.[dsh]'`.
+- `single_loop` provides fixed iteration for custom composition. For DSH,
+  explicitly bind `rsisys.harnesses.decision.dsh.dsh_decision_factory` in your
+  assembly; supply native home/workspace/session configuration and install
+  `python -m pip install -e '.[dsh]'`.
 - Memory, engines and scorers are injected inside module factories.
   Default memory is explicit/literal. Optional ReMe BM25 retrieval uses
   `python -m pip install -r requirements/reme.txt` and
@@ -356,16 +388,16 @@ Lab's finalization receipt.
 
 ## Methods and evidence
 
-| Controller / Lab | Scope | Configuration / evidence |
+| Method | Scope | Configuration / evidence |
 | --- | --- | --- |
-| `rest_em` / `math` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json), [MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
-| `rrsi` / `harness_math` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](src/rsisys/algorithms/rrsi/configs/math.json) |
-| `seal` / `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](src/rsisys/algorithms/seal/configs/8gpu.json), [paper](src/rsisys/algorithms/seal/configs/paper.json) |
-| `ttrl` / `ttrl` | Majority rewards with independent LoRA GRPO | [Config](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
-| `ttrl_verl` / `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](src/rsisys/algorithms/ttrl/configs/paper.json) |
-| `ft_agent` / `llm_finetune` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
-| `aide` / `aide_program` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
-| `meta_agent` / private math Lab | Model-driven harness proposals, search feedback and sealed heldout selection; no weight training or implemented self-reflection | [Config](src/rsisys/algorithms/meta_agent/configs/math.json) |
+| `rest_em` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json), [MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
+| `rrsi` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](src/rsisys/algorithms/rrsi/configs/math.json) |
+| `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](src/rsisys/algorithms/seal/configs/8gpu.json), [paper](src/rsisys/algorithms/seal/configs/paper.json) |
+| `ttrl` | Majority rewards with independent LoRA GRPO | [Config](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
+| `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](src/rsisys/algorithms/ttrl/configs/paper.json) |
+| `ft_agent` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `aide` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
+| `meta_agent` | Model-driven harness proposals, search feedback and sealed heldout selection; no weight training or implemented self-reflection | [Config](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
 On November 9, 2026, SEAL and reference TTRL completed two-round, eight-GPU Qwen2.5-7B Base runs;
 **neither reproduced paper gains**. SEAL's paper profile has small native-training

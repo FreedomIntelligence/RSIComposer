@@ -22,12 +22,9 @@ ContextMemoryOrganizer = ContextMemory
 
 def journal_memory(row):
     """Default compatibility publication, not a requirement on other organizers."""
-    # Learning owns output validation; import at call time to avoid coupling its
-    # construction to the default organizer's publication implementation.
-    from rsisys.harnesses.decision.feedback.learning import (
-        feedback_text_preview,
-        validate_publication,
-    )
+    # Validate derived products before constructing a journal memory view.
+    from rsisys.harnesses.decision.feedback.evidence_packet import feedback_text_preview
+    from rsisys.harnesses.decision.feedback.proposal_validation import validate_publication
     evidence = validate_publication(row)
     proposals = [p for p in row['proposals'] if p['kind'] == 'memory']
     interpretations = row.get('attempt_revisions', [])

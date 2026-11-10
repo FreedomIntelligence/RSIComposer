@@ -9,7 +9,3 @@ def register(registry):
         controller=factory, labs={'seal': SEALLab}, version='1',
         validate_controller=SEALController.validate_config,
         validate_labs={'seal': validate_config}))
-    # Compatibility for existing configurations that select the two sides.
-    registry.register_controller('seal', factory,
-        version='1', validate_config=SEALController.validate_config)
-    registry.register_lab('seal', SEALLab, version='1', validate_config=validate_config)

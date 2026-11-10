@@ -93,9 +93,15 @@ snapshot/                       # 快照捕获与恢复机制
 
 内置算法以完整方法注册；私有 controller、Lab 与 worker 都放在方法目录。
 方法需要共享能力时再引用 `harnesses/`、`labs/` 与 `backends/`，无需把每个私有组件单独注册。
-旧的 controller/Lab 注册名保留用于兼容已有配置，新配置统一选择 `framework.method`。
+配置统一选择 `framework.method`，方法私有 controller/Lab 不再全局注册。
+旧的拆分配置需要迁移到完整方法配置，或显式注册自己的工厂。
 每个方法通过唯一的 `register(registry)` 入口完成闭环装配，核心注册表不增加算法专属分支。
 独立研究 worker 的通信归 `runtime/execution/research_bridge.py`。
+
+`harnesses/decision/feedback/` 内，`learning.py` 管理日志与任务生命周期，
+`evidence_packet.py` 构造有界证据视图，`proposal_validation.py` 验证派生产物，
+`model_gateway.py` 管理调用准入与串行访问，`legacy.py` 隔离旧解释流程。
+这些是可选的 harness 能力；长程 Self-Reflection Lab 仍单独维护。
 
 库外开发仍可像 `_template` 一样，在注册入口旁携带私有实现，无需改核心库或把组件分别
 安装进库中。需要供其他方法复用的能力，再纳入公共实现层。harness 支撑上下文、模型和工具
@@ -257,7 +263,29 @@ registry.register_method("my_method", MethodDefinition.from_factories(
 共享的 `harness`、`memory`、`backend`、`scene`、`verifier` 可以通过
 `register_component` 和 `resolve_component` 注册、解析。组件选择与覆盖由方法的
 Python 装配代码完成，目前没有自动的声明式覆盖层；私有组件无需分别注册。
-已有共享实现也可直接引用。底层 controller/Lab 注册接口用于复用和兼容旧配置。
+已有共享实现也可直接引用。底层 controller/Lab 注册接口用于显式自定义组合。
+默认独立注册的只有通用 `single_loop` 决策器与 `local_process` Lab。
+方法类从各自方法包导入，`rsisys.api` 只提供框架接口。
+
+`rsisys catalog` 可查看以下内置组件，列举时不会加载 ML 运行环境：
+
+| 角色 | 注册名 | 解析结果 |
+| --- | --- | --- |
+| `harness` | `python_step` | 接收 `(harness_path, problem, history)` 的函数；可配置 `timeout`，执行时需要 bubblewrap |
+| `backend` | `chat_pool`、`lora` | 共享推理服务池、接受已准备输入的 LoRA 引擎 |
+| `memory` | `agent_memory` | agent 自己维护的记忆与研究任务，由方法绑定 harness |
+| `verifier` | `strict_numeric`、`math_verify` | 最终答案验证；后者需要安装 `rsisys[math]` |
+
+在方法工厂内解析组件，并交给自己的 controller/Lab；绑定及生命周期由方法负责：
+
+```python
+verifier = registry.resolve_component("verifier", "strict_numeric", context)
+backend = registry.resolve_component("backend", "chat_pool", context, {
+    "endpoints": ["http://127.0.0.1:8000/v1"], "model": "my-model",
+})
+```
+
+目前不为凑齐目录额外注册 `scene`；方法可直接引用场景能力，或注册自己的完整共享场景。
 
 已有完整决策端点的高级集成可用 `endpoint=True` 注册，工厂接收 `(context, execution, config)`；
 可选的 `research_factory(config)` 提供方法自己的研究/记忆集成。
@@ -278,14 +306,14 @@ Python 装配代码完成，目前没有自动的声明式覆盖层；私有组�
 最终留出评测会锁定选择并关闭搜索，初始与选中 harness 使用相同最终评测预算。
 这提供可运行的 meta-agent 方案骨架；长程 self-reflection 仍未实现或验证。
 运行前需要分别配置研究模型服务（`rsisys-research`）、固定任务模型服务（`rsisys-fixed`）和互不重叠的冻结数据集。
-完整 harness 研究方法目前使用 `harness=default`；可复用决策器仍支持 DSH，用于自定义组合。
+完整 harness 研究方法目前使用 `harness=default`；自定义组合可以直接绑定可复用 DSH harness。
 配置使用已有 vLLM 后端提供原生 JSON schema、真实 token 计数、有限响应重试与调用记账。
 `run_control.decision_steps` 提供宿主剩余决策预算，由模型决定如何分配。
 只有 Lab 返回实际最终评测回执，才能将方法记为完成。
 
-- `single_loop` 是固定迭代模板；`meta_agent` 使用配置的模型，支持 `harness=default|dsh`。
-  在自己的 JSON 配置中填入实际后端、角色与模型身份。
-  DSH 需安装 `python -m pip install -e '.[dsh]'`，并设置原生 home/workspace/session 配置。
+- `single_loop` 是用于自定义组合的固定迭代模板。DSH 可通过
+  `rsisys.harnesses.decision.dsh.dsh_decision_factory` 在装配中显式绑定；
+  需安装 `python -m pip install -e '.[dsh]'`，并设置原生 home/workspace/session 配置。
 - Memory、engine、scorer 在模块工厂内注入。
   默认 memory 为显式 literal 后端。ReMe BM25 检索可通过
   `python -m pip install -r requirements/reme.txt` 与 `rsisys.research.ResearchAssembly.reme()` 使用，
@@ -295,16 +323,16 @@ Python 装配代码完成，目前没有自动的声明式覆盖层；私有组�
 
 ## 方法与验证范围
 
-| 决策器 / Lab | 接入范围 | 配置 / 证据 |
+| 方法 | 接入范围 | 配置 / 证据 |
 | --- | --- | --- |
-| `rest_em` / `math` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json)、[MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
-| `rrsi` / `harness_math` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](src/rsisys/algorithms/rrsi/configs/math.json) |
-| `seal` / `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](src/rsisys/algorithms/seal/configs/8gpu.json)、[论文配置](src/rsisys/algorithms/seal/configs/paper.json) |
-| `ttrl` / `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
-| `ttrl_verl` / `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](src/rsisys/algorithms/ttrl/configs/paper.json) |
-| `ft_agent` / `llm_finetune` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
-| `aide` / `aide_program` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
-| `meta_agent` / 方法内 math Lab | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
+| `rest_em` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json)、[MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
+| `rrsi` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](src/rsisys/algorithms/rrsi/configs/math.json) |
+| `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](src/rsisys/algorithms/seal/configs/8gpu.json)、[论文配置](src/rsisys/algorithms/seal/configs/paper.json) |
+| `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
+| `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](src/rsisys/algorithms/ttrl/configs/paper.json) |
+| `ft_agent` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `aide` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
+| `meta_agent` | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
 2026 年 11 月 9 日，SEAL 与 reference TTRL 完成 Qwen2.5-7B Base 两轮八卡真实训练，**均未复现论文收益**。
 SEAL paper profile 只完成使用词面 smoke scorer 的小规模原生训练验证，未验收 GPT-4.1

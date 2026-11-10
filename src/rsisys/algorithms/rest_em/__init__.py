@@ -10,7 +10,3 @@ def register(registry):
         controller=factory, labs={'math': RestEMLab}, version='1',
         validate_controller=RestEMController.validate_config,
         validate_labs={'math': validate_config}))
-    # Compatibility for existing configurations that select the two sides.
-    registry.register_controller('rest_em', factory,
-        version='1', validate_config=RestEMController.validate_config)
-    registry.register_lab('math', RestEMLab, version='1', validate_config=validate_config)

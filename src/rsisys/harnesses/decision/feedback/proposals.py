@@ -6,7 +6,7 @@ from importlib import resources
 from pathlib import Path
 
 from rsisys.harnesses.decision.feedback.evidence import admitted_candidate_evidence
-from rsisys.harnesses.decision.feedback.learning import _schema, validate_proposals
+from rsisys.harnesses.decision.feedback.proposal_validation import proposal_schema, validate_proposals
 from rsisys.harnesses.decision.feedback.model_gateway import FeedbackModelGateway
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
 from rsisys.runtime.storage.files import atomic_write, json_bytes
@@ -57,7 +57,7 @@ class ModelHarnessProposer:
             gateway = FeedbackModelGateway(backend, ModelRef(**job['model']),
                 max_calls=min(1, limits['max_calls']), max_input_tokens=limits['max_input_tokens'],
                 path=self.path / (job['job_id'] + '.exchanges.json'))
-            schema = _schema(job['input']['source_refs'], candidate_evidence=admitted_candidate_evidence(job),
+            schema = proposal_schema(job['input']['source_refs'], candidate_evidence=admitted_candidate_evidence(job),
                              kinds=self.kinds)
             transport = {}
             if getattr(backend, 'supports_tool_calling', False) is True:

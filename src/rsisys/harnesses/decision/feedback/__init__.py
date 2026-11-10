@@ -6,10 +6,8 @@ from rsisys.harnesses.decision.feedback.components import (
 )
 from rsisys.harnesses.decision.feedback.context_memory import CallbackContextMemory
 from rsisys.harnesses.decision.feedback.knowledge import WorkingMemoryPolicy
-from rsisys.harnesses.decision.feedback.learning import (
-    FeedbackLearning,
-    SerializedLearningBackend,
-)
+from rsisys.harnesses.decision.feedback.learning import FeedbackLearning
+from rsisys.harnesses.decision.feedback.model_gateway import SerializedLearningBackend
 from rsisys.harnesses.decision.feedback.pipeline import (
     FeedbackPipeline,
     enable_feedback_pipeline,

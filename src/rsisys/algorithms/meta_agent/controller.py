@@ -41,7 +41,7 @@ def validate_harness_research(config):
     validate_config({k: v for k, v in config.items() if k not in _METHOD_OPTIONS})
     if config.get('harness', 'default') != 'default':
         raise ValueError('The harness-research method currently requires harness=default; '
-                         'DSH remains available through the reusable meta_agent controller')
+                         'custom assemblies can bind the DSH harness directly')
     backend = config.get('backend', 'configured')
     if backend not in ('configured', 'vllm'):
         raise ValueError('backend must be configured or vllm')

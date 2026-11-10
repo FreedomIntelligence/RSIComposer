@@ -13,10 +13,8 @@ from rsisys.harnesses.decision.feedback import (
     FeedbackLearningService,
     WorkingMemoryPolicy,
 )
-from rsisys.harnesses.decision.feedback.learning import (
-    FeedbackLearning,
-    SerializedLearningBackend,
-)
+from rsisys.harnesses.decision.feedback.learning import FeedbackLearning
+from rsisys.harnesses.decision.feedback.model_gateway import SerializedLearningBackend
 from rsisys.harnesses.decision.research_state import research_working_view
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import (

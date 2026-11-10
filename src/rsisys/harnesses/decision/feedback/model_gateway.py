@@ -2,6 +2,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
+from inspect import getattr_static
 from threading import RLock
 
 from rsisys.runtime.storage.files import atomic_write, json_bytes
@@ -87,3 +88,46 @@ class FeedbackModelGateway:
     def snapshot(self):
         with self._lock:
             return deepcopy(self.exchanges)
+
+
+class SerializedLearningBackend:
+    """Share one backend, including its admission/logging, across both callers.
+
+    Generation is serialized because arbitrary backend clients and their counters
+    are not thread safe. Jobs are asynchronous to the experiment, not a promise of
+    parallel model inference. The wrapped transport must have a finite timeout
+    and permit calls from a worker thread (serialization cannot remove affinity).
+    """
+    def __init__(self, backend):
+        self.backend, self._lock = backend, RLock()
+
+    def __getattr__(self, name):
+        # Domain policies may inspect the same admission counters/capabilities.
+        # All generate/tokenize calls still pass through the serialized methods.
+        return getattr(self.backend, name)
+
+    @property
+    def supports_response_schema(self):
+        return getattr(self.backend, 'supports_response_schema', False) is True
+
+    @property
+    def token_count_mode(self):
+        return (getattr(self.backend, 'token_count_mode', 'provider_tokenizer')
+                if getattr_static(self.backend, 'count_tokens', None) is not None
+                else 'utf8_conservative_estimate')
+
+    def count_tokens(self, request):
+        with self._lock:
+            counter = (getattr(self.backend, 'count_tokens')
+                       if getattr_static(self.backend, 'count_tokens', None) is not None else None)
+            if callable(counter):
+                tokens = counter(request)
+            else:
+                tokens = len(json_bytes(asdict(request)))
+            if type(tokens) is not int or tokens < 0:
+                raise ValueError('Feedback token counter must return a nonnegative integer')
+            return tokens
+
+    def generate(self, request):
+        with self._lock:
+            return self.backend.generate(request)

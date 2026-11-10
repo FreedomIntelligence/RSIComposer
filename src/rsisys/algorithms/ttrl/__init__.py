@@ -15,10 +15,3 @@ def register(registry):
         controller=native, labs={'ttrl': TTRLVerlLab}, version='1',
         validate_controller=TTRLVerlController.validate_config,
         validate_labs={'ttrl': validate_verl}))
-    # Compatibility for existing configurations that select the two sides.
-    registry.register_controller('ttrl', reference,
-        version='1', validate_config=TTRLController.validate_config)
-    registry.register_lab('ttrl', TTRLLab, version='1', validate_config=validate_config)
-    registry.register_controller('ttrl_verl', native,
-        version='1', validate_config=TTRLVerlController.validate_config)
-    registry.register_lab('ttrl_verl', TTRLVerlLab, version='1', validate_config=validate_verl)

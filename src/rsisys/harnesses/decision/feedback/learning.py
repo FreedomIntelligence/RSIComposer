@@ -1,4 +1,4 @@
-"""Optional, bounded feedback interpretation by the decision model.
+"""Single-writer feedback journal, job scheduling and product delivery.
 
 Workers return proposals only. The owning thread journals receipts and publishes
 memory; model output never authorizes training, edits, or candidate activation.
@@ -7,9 +7,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import asdict, replace
-from inspect import getattr_static
 from pathlib import Path
-from threading import RLock, get_ident
+from threading import get_ident
 
 from rsisys.harnesses.decision.feedback.archive import (
     ArchiveBinding,
@@ -18,9 +17,7 @@ from rsisys.harnesses.decision.feedback.archive import (
 )
 from rsisys.harnesses.decision.feedback.attempts import (
     apply_attempt_updates,
-    attempt_schema,
     attempt_view,
-    validate_attempt_updates,
 )
 from rsisys.harnesses.decision.feedback.components import (
     JournalContextMemory,
@@ -32,18 +29,14 @@ from rsisys.harnesses.decision.feedback.context_memory import (
     validate_context_memory,
 )
 from rsisys.harnesses.decision.feedback.delivery import producer_delivery
-from rsisys.harnesses.decision.feedback.evidence import (
-    admitted_candidate_evidence,
-    candidate_evidence,
-    claim_schema,
-    validate_claims,
-)
 from rsisys.harnesses.decision.feedback.knowledge import (
-    SUBJECTS,
     interpretation_page,
     proposal_records,
 )
-from rsisys.harnesses.decision.feedback.legacy import LegacyFeedbackInterpreter
+from rsisys.harnesses.decision.feedback.legacy import LegacyFeedbackInterpreter, interpret_feedback
+from rsisys.harnesses.decision.feedback.evidence_packet import evidence_packet
+from rsisys.harnesses.decision.feedback.model_gateway import SerializedLearningBackend
+from rsisys.harnesses.decision.feedback.proposal_validation import checked_processor_result, validate_publication
 from rsisys.harnesses.decision.feedback.scheduling import (
     FifoFeedbackScheduler,
     validate_scheduler,
@@ -58,7 +51,7 @@ from rsisys.loops.contracts.feedback_modules import (
     PendingFeedback,
 )
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelRef
-from rsisys.loops.contracts.receipts import ExecutionReceipt, receipt_task
+from rsisys.loops.contracts.receipts import ExecutionReceipt
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 from rsisys.runtime.storage.json_tools import (
     EvidencePathError,
@@ -66,412 +59,9 @@ from rsisys.runtime.storage.json_tools import (
     evidence_value,
     result_id,
 )
-from rsisys.runtime.storage.json_tools import load_object as _load_object
 
-LEGACY_KINDS = ('memory', 'training_data', 'harness_change', 'system_change')
-KINDS = (*LEGACY_KINDS, 'policy_training')
-FIELDS = ('kind', 'content', 'applicability', 'source_refs', 'validation_plan')
 _EVIDENCE_PAGE_BYTES = 6000
 _DEFAULT_COMPONENT = object()
-_CANDIDATE_INSTRUCTIONS = (
-    'candidate_evidence binds evaluations to full candidate IDs, separately from the current receipt. '
-    'Every proposal/attempt update requires evaluation_claims: [] for hypotheses or observations without metric claims; '
-    'otherwise enumerate every factual candidate metric claim with candidate_id, evaluation_ref, protocol_ref, '
-    'metrics (exact names/values), simulated, and cite evaluation_ref in source_refs. '
-    'Use completed supplied evaluations only. Never transfer metrics between candidates or protocols. '
-    'Training completion, parents, adjacency and prior interpretations prove no candidate quality. '
-    'not_observed_in_snapshot is snapshot-scoped absence; not_supplied is omitted evidence. '
-    'Keep prose consistent with claims; structural validation does not verify prose or claim completeness. ')
-
-# Only prose is excerpted. Numbers, identities, references, receipt facts and
-# provenance are never rounded, rewritten, or inferred from narrative text.
-_PROSE = frozenset(('objective', 'strategy', 'reason', 'summary', 'title',
-                    'research_attempt_title', 'content', 'text', 'prompt',
-                    'description', 'stdout', 'stderr'))
-
-
-def feedback_text_preview(value, *, job_id, evidence_path, maximum=512):
-    """Bound receipt prose without changing its journal original or factual fields.
-
-    Keep both ends (including ordinary exception type prefixes) and an explicit
-    gap. The descriptor addresses the original string, not its JSON-text page
-    length. Even the smallest profile retains a short head and tail; if that and
-    required facts do not fit, admission must fail rather than erase the receipt.
-    """
-    maximum = max(64, maximum)
-    if not isinstance(value, str) or len(value) <= maximum:
-        return deepcopy(value), None
-    marker = '\n[... omitted ...]\n'
-    supplied = maximum - len(marker)
-    head = (supplied + 1) // 2
-    tail = supplied - head
-    return value[:head] + marker + value[-tail:], {
-        'path': evidence_path, 'preview': 'head_tail',
-        'supplied_characters': supplied, 'total_characters': len(value),
-        'omitted_characters': len(value) - supplied, 'sha256': result_id(value),
-        'read': {'operation': 'feedback_learning_read', 'job_id': job_id,
-                 'evidence_path': evidence_path}}
-
-
-def _excerpt(value, maximum, path='', omissions=None):
-    omissions = [] if omissions is None else omissions
-    if isinstance(value, dict):
-        result = {}
-        for key, item in value.items():
-            pointer = path + '/' + key.replace('~', '~0').replace('/', '~1')
-            if key in _PROSE and isinstance(item, str) and len(item) > maximum:
-                result[key] = item[:maximum]
-                omissions.append({'path': pointer, 'supplied_characters': maximum,
-                                  'total_characters': len(item), 'sha256': result_id(item)})
-            elif ('metric' in key or key in ('provenance', 'decision_model',
-                    'issuing_decision_model', 'learning_decision_model')
-                    or key.endswith(('_id', '_ids', '_ref', '_refs', '_digest'))):
-                result[key] = deepcopy(item)
-            else:
-                result[key] = _excerpt(item, maximum, pointer, omissions)
-        return result
-    if isinstance(value, (list, tuple)):
-        return [_excerpt(item, maximum, path + '/' + str(index), omissions)
-                for index, item in enumerate(value)]
-    return deepcopy(value)
-
-
-def _evidence_packet(row, count, text_limit, *, preview_feedback=True):
-    """Deterministic view of immutable raw evidence, with explicit coverage.
-
-    Stream digests/references cover omitted records without making their IDs
-    eligible citations. Record digests always identify the original, not its
-    excerpt. Current summary/error prose may use head/tail previews; all current
-    metrics, identities, status, adoption, candidates and jobs remain exact.
-    Oversized indivisible facts still fail admission honestly.
-    """
-    raw = row['raw_input']
-    manifest = {'version': 1, 'authority': 'untrusted_evidence',
-                'raw_input_ref': 'journal:' + row['job_id'] + '/raw_input',
-                'raw_input_digest': result_id(raw), 'streams': {}, 'records': [],
-                'digests_identify': 'original_evidence_not_excerpts',
-                'read': {'job_id': row['job_id'], 'path_parameter': 'evidence_path',
-                         'offset_unit': 'characters', 'characters_per_limit': 128},
-                'omitted_content_read': False}
-    if 'dispatch_attempts' in row:
-        manifest['dispatch_attempts_ref'] = 'journal:' + row['job_id'] + '/dispatch_attempts'
-        manifest['dispatch_attempts_digest'] = result_id(row['dispatch_attempts'])
-    source = 'feedback:' + row['receipt_digest']
-    refs, coverage = [source], {}
-
-    def project(record, path, ref=None, *, receipt=False, interpretation=False, excluded=()):
-        omissions = []
-        if receipt and record.get('task', {}).get('source') == 'lab':
-            # Native producer keys carry no host semantics. Bound the complete
-            # payload representation rather than protecting arbitrary *_id or
-            # *metric fields, while retaining exact originals behind read paths.
-            def native(value, pointer):
-                text = encoded(value)
-                preview, omission = feedback_text_preview(text, job_id=row['job_id'],
-                    evidence_path=pointer, maximum=max(64, text_limit * 4))
-                if omission is None:
-                    return deepcopy(value)
-                omission.update(sha256=result_id(value), representation='json_text')
-                omissions.append(omission)
-                return {'representation': 'json_preview', 'text': preview,
-                        'complete': False, 'read': omission['read']}
-
-            base = {**record, 'operation': {}, 'result': {k: v for k, v in record['result'].items()
-                    if k not in ('output', 'references')}}
-            projected = _excerpt(base, text_limit, '/receipt', omissions)
-            projected['task'] = deepcopy(record['task'])
-            if preview_feedback:
-                for key in ('summary', 'error'):
-                    projected['result'][key], omission = feedback_text_preview(
-                        record['result'].get(key), job_id=row['job_id'],
-                        evidence_path='/receipt/result/' + key, maximum=text_limit)
-                    if omission:
-                        omissions.append(omission)
-            projected['operation'] = native(record['operation'], '/receipt/operation')
-            for key in ('output', 'references'):
-                projected['result'][key] = native(record['result'].get(key), '/receipt/result/' + key)
-        elif receipt and 'directive' not in record:
-            projected = _excerpt(record, text_limit, '/receipt', omissions)
-            # Task identities and terminal facts cannot be clipped even when
-            # the tool result includes large prose or nested tables.
-            projected['task'] = deepcopy(record['task'])
-            if preview_feedback:
-                for key in ('summary', 'error'):
-                    if key not in record['result']:
-                        continue
-                    projected['result'][key], omission = feedback_text_preview(
-                        record['result'][key], job_id=row['job_id'],
-                        evidence_path='/receipt/result/' + key, maximum=text_limit)
-                    if omission:
-                        omissions.append(omission)
-        elif receipt:
-            projected = {'directive': _excerpt(record['directive'], text_limit,
-                                               '/receipt/directive', omissions),
-                         'feedback': deepcopy(record['feedback'])}
-            if 'identity' in record:
-                projected['identity'] = deepcopy(record['identity'])
-            if preview_feedback:
-                for key in ('summary', 'error'):
-                    if key not in projected['feedback']:
-                        continue
-                    projected['feedback'][key], omission = feedback_text_preview(
-                        record['feedback'][key], job_id=row['job_id'],
-                        evidence_path='/receipt/feedback/' + key, maximum=text_limit)
-                    if omission:
-                        omissions.append(omission)
-        else:
-            projected = _excerpt({k: v for k, v in record.items() if k not in excluded},
-                                 text_limit, omissions=omissions)
-        descriptor = {'raw_ref': path, 'sha256': result_id(record),
-                      'coverage': 'excerpt' if omissions else 'complete',
-                      'authority': 'model_interpretation' if interpretation else 'untrusted_evidence'}
-        if ref:
-            descriptor['source_ref'] = ref
-            refs.append(ref)
-        if omissions:
-            descriptor['omitted_text'] = omissions
-        if excluded:
-            descriptor['coverage'] = 'fields_only'
-            descriptor['separately_packaged_fields'] = list(excluded)
-        # Complete stream records are located by supplied_indices and their
-        # original identity. Avoid repeating a per-record digest unless a view
-        # actually differs from the raw record (or is the current receipt).
-        if omissions or receipt:
-            manifest['records'].append(descriptor)
-        return projected
-
-    current = raw.get('research_context', {}).get('decision_id')
-    current = current or raw.get('grouping_context', {}).get('receipt_decision_id')
-
-    def stream(records, path, maximum, identity=None, preferred=None, duplicates=()):
-        # Prefer the current receipt and newest records; retain original order in
-        # the view. Deduplicate only byte-equivalent records, never an ID alone.
-        duplicate_keys = {(r['record_id'], result_id(r)) for r in duplicates}
-        eligible = [i for i, r in enumerate(records)
-                    if not (identity == 'record_id' and (r['record_id'], result_id(r)) in duplicate_keys)]
-        important = [i for i in eligible if preferred and preferred(records[i])]
-        chosen = list(dict.fromkeys([*reversed(important), *reversed(eligible)]))[:maximum]
-        chosen.sort()
-        manifest['streams'][path] = {'raw_ref': path, 'sha256': result_id(records),
-            'total': len(records), 'supplied': len(chosen),
-            'supplied_indices': chosen,
-            'authority': 'model_interpretation' if path in ('/grouping_context/attempts', '/dispatch_attempts') else 'untrusted_evidence',
-            'deduplicated': len(records) - len(eligible), 'omitted': len(eligible) - len(chosen)}
-        supplied = []
-        for index in chosen:
-            record = records[index]
-            ref = (('history:' if identity == 'record_id' else 'decision:') + record[identity]
-                   if identity else None)
-            supplied.append(project(record, path + '/' + str(index), ref,
-                                    interpretation=path in ('/grouping_context/attempts', '/dispatch_attempts')))
-            if identity == 'record_id' and result_id(supplied[-1]) == result_id(record):
-                coverage[record['record_id']] = result_id(record)
-        return supplied
-
-    packet = {'receipt': project(raw['receipt'], '/receipt', source, receipt=True)}
-    task = receipt_task(raw['receipt'])
-    task_id = task.get('task_id') or task.get('directive_id')
-    scope = raw.get('research_context', {})
-    members = scope.get('member_decisions', [])
-    packet['research_context'] = project(scope, '/research_context', excluded=('member_decisions',))
-    if 'member_decisions' in scope:
-        packet['research_context']['member_decisions'] = stream(members,
-            '/research_context/member_decisions', count, 'decision_id',
-            lambda r: r['decision_id'] == current)
-    packet['evaluations'] = stream(raw['evaluations'], '/evaluations', min(count, 16),
-                                  preferred=lambda r: r.get('directive_id') == task_id)
-    packet['history'] = stream(raw['history'], '/history', min(count, 16), 'record_id',
-                              lambda r: r.get('task_id') == task_id)
-    if 'grouping_context' in raw:
-        group = raw['grouping_context']
-        packet['grouping_context'] = project(group, '/grouping_context',
-            excluded=('decisions', 'observations', 'attempts', 'candidate_origins'))
-        view = packet['grouping_context']
-        view['decisions'] = stream(group.get('decisions', []), '/grouping_context/decisions',
-                                  count, 'decision_id', lambda r: r['decision_id'] == current)
-        # Compare with the original history, since the supplied view may contain
-        # excerpts. The duplicate's content is supplied once at that history ref.
-        supplied_history = {r['record_id'] for r in packet['history']}
-        view['observations'] = stream(group.get('observations', []), '/grouping_context/observations',
-            min(count, 16), 'record_id',
-            lambda r: r.get('task_id') == task_id,
-            [r for r in raw['history'] if r['record_id'] in supplied_history])
-        attempt_path = '/dispatch_attempts' if 'dispatch_attempts' in row else '/grouping_context/attempts'
-        view['attempts'] = stream(row.get('dispatch_attempts', group.get('attempts', [])),
-                                  attempt_path, min(count, 8))
-        # Origins are execution links, never a claim that artifact content was read.
-        if 'candidate_origins' in group:
-            ids = {r['decision_id'] for r in view['decisions']}
-            origins = group['candidate_origins']
-            view['candidate_origins'] = {k: v for k, v in origins.items() if v in ids}
-            manifest['streams']['/grouping_context/candidate_origins'] = {
-                'raw_ref': '/grouping_context/candidate_origins', 'sha256': result_id(origins),
-                'total': len(origins), 'supplied': len(view['candidate_origins']),
-                'omitted': len(origins) - len(view['candidate_origins'])}
-    evidence = candidate_evidence(raw, manifest['streams']['/evaluations']['supplied_indices'])
-    if evidence is not None:
-        packet['candidate_evidence'] = evidence
-        refs.extend(s['source_ref'] for s in evidence['evaluations'])
-    packet['source_refs'] = list(dict.fromkeys(refs))
-    packet['evidence_packaging'] = manifest
-    return packet, coverage
-
-
-class SerializedLearningBackend:
-    """Share one backend, including its admission/logging, across both callers.
-
-    Generation is serialized because arbitrary backend clients and their counters
-    are not thread safe. Jobs are asynchronous to the experiment, not a promise of
-    parallel model inference. The wrapped transport must have a finite timeout
-    and permit calls from a worker thread (serialization cannot remove affinity).
-    """
-    def __init__(self, backend):
-        self.backend, self._lock = backend, RLock()
-
-    def __getattr__(self, name):
-        # Domain policies may inspect the same admission counters/capabilities.
-        # All generate/tokenize calls still pass through the serialized methods.
-        return getattr(self.backend, name)
-
-    @property
-    def supports_response_schema(self):
-        return getattr(self.backend, 'supports_response_schema', False) is True
-
-    @property
-    def token_count_mode(self):
-        return (getattr(self.backend, 'token_count_mode', 'provider_tokenizer')
-                if getattr_static(self.backend, 'count_tokens', None) is not None
-                else 'utf8_conservative_estimate')
-
-    def count_tokens(self, request):
-        with self._lock:
-            counter = (getattr(self.backend, 'count_tokens')
-                       if getattr_static(self.backend, 'count_tokens', None) is not None else None)
-            if callable(counter):
-                tokens = counter(request)
-            else:
-                tokens = len(json_bytes(asdict(request)))
-            if type(tokens) is not int or tokens < 0:
-                raise ValueError('Feedback token counter must return a nonnegative integer')
-            return tokens
-
-    def generate(self, request):
-        with self._lock:
-            return self.backend.generate(request)
-
-
-def _schema(refs, grouping_context=None, candidate_evidence=None, *, kinds=LEGACY_KINDS):
-    properties = {
-        'kind': {'enum': list(KINDS)},
-        'subject': {'enum': list(SUBJECTS)},
-        'content': {'type': 'string', 'minLength': 1, 'maxLength': 2400},
-        'applicability': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
-        'source_refs': {'type': 'array', 'minItems': 1, 'maxItems': 16,
-                        'items': {'enum': list(refs)}},
-        'validation_plan': {'type': 'string', 'minLength': 1, 'maxLength': 1200},
-    }
-    if candidate_evidence is not None:
-        properties['evaluation_claims'] = claim_schema(candidate_evidence)
-    branches = []
-    for kind in kinds:
-        fields = {**properties, 'kind': {'const': kind}}
-        if kind == 'training_data':
-            fields['training_example'] = {'type': 'object', 'properties': {
-                'input': {'type': 'string', 'minLength': 1, 'maxLength': 4000},
-                'target': {'type': 'string', 'minLength': 1, 'maxLength': 4000},
-                'target_status': {'const': 'unverified'}},
-                'required': ['input', 'target', 'target_status'], 'additionalProperties': False}
-        branches.append({'type': 'object', 'properties': fields, 'required': list(fields),
-                         'additionalProperties': False})
-    fields = {'proposals': {'type': 'array', 'maxItems': 6, 'items': {'oneOf': branches}}}
-    if grouping_context is not None:
-        fields['attempt_updates'] = attempt_schema(grouping_context, refs, candidate_evidence)
-    return {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}
-
-
-def validate_proposals(text, refs, *, candidate_evidence=None, maximum=6):
-    payload = _load_object(text)
-    if (set(payload) != {'proposals'} or not isinstance(payload['proposals'], list)
-            or (maximum is not None and len(payload['proposals']) > maximum)):
-        raise ValueError('Expected at most six learning proposals')
-    for row in payload['proposals']:
-        if not isinstance(row, dict) or row.get('kind') not in KINDS:
-            raise ValueError('Invalid learning proposal fields or kind')
-        fields = set(FIELDS) | ({'training_example'} if row['kind'] == 'training_data' else set())
-        if 'subject' in row:
-            fields.add('subject')
-            if row['subject'] not in SUBJECTS:
-                raise ValueError('Invalid feedback proposal subject')
-        if candidate_evidence is not None:
-            fields.add('evaluation_claims')
-        if set(row) != fields:
-            raise ValueError('Invalid learning proposal fields')
-        if row['kind'] == 'training_data':
-            sample = row['training_example']
-            if (not isinstance(sample, dict) or set(sample) != {'input', 'target', 'target_status'}
-                    or sample['target_status'] != 'unverified'
-                    or any(not isinstance(sample[k], str) or not sample[k].strip()
-                           or len(sample[k]) > 4000 for k in ('input', 'target'))):
-                raise ValueError('Training example must be a bounded, unverified input/target pair')
-        for key, maximum in (('content', 2400), ('applicability', 1000), ('validation_plan', 1200)):
-            if not isinstance(row[key], str) or not row[key].strip() or len(row[key]) > maximum:
-                raise ValueError(f'Invalid proposal {key}')
-        sources = row['source_refs']
-        if (not isinstance(sources, list) or not 1 <= len(sources) <= 16
-                or any(not isinstance(ref, str) or ref not in refs for ref in sources)
-                or len(set(sources)) != len(sources)):
-            raise ValueError('Proposal cites unknown or duplicate evidence')
-        if candidate_evidence is not None:
-            validate_claims(row, candidate_evidence)
-    return payload['proposals']
-
-
-def validate_publication(row):
-    """Recheck saved output against admitted raw evidence before exposing it.
-
-    Structured attribution is checked; free text is still an unverified model
-    interpretation. Legacy candidate-related outputs require the new contract.
-    """
-    evidence = admitted_candidate_evidence(row)
-    validate_proposals(encoded({'proposals': row['proposals']}), row['input']['source_refs'],
-                       candidate_evidence=evidence, maximum=None)
-    validate_attempt_updates(row.get('attempt_updates', []), row['input'].get('grouping_context', {}),
-                             row['input']['source_refs'], evidence)
-    if evidence is not None:
-        for revision in row.get('attempt_revisions', ()):
-            validate_claims(revision, evidence)
-    return evidence
-
-
-def checked_processor_result(result, reserved):
-    """Validate product/accounting metadata without granting journal ownership."""
-    fields = {'status', 'error', 'charged_calls', 'proposals', 'attempt_updates',
-              'response', 'simulated', 'grouping_error', 'products', 'output', 'outputs'}
-    error = None
-    if not isinstance(result, dict):
-        error = 'Feedback processor must return a result object'
-    elif type(result.get('charged_calls')) is not int or not 0 <= result['charged_calls'] <= reserved:
-        error = 'Invalid native workflow accounting; full reservation retained'
-    elif result.keys() - fields:
-        error = 'Feedback processor cannot overwrite host journal fields'
-    elif result.get('status') not in ('completed', 'failed', 'input_too_large',
-                                      'budget_exhausted', 'cancelled', 'interrupted'):
-        error = 'Feedback processor must return a terminal status'
-    elif 'simulated' in result and type(result['simulated']) is not bool:
-        error = 'Feedback processor simulated flag must be a boolean'
-    try:
-        json_bytes(result)
-    except (ValueError, TypeError, OverflowError):
-        error = 'Feedback processor result must be finite JSON data'
-    if error:
-        return {'status': 'failed', 'error': error, 'charged_calls': reserved,
-                'proposals': [], 'attempt_updates': []}
-    value = deepcopy(result)
-    value.setdefault('proposals', [])
-    value.setdefault('attempt_updates', [])
-    if value['status'] != 'completed':
-        value.update(proposals=[], attempt_updates=[])
-    return value
 
 
 class FeedbackLearning:
@@ -502,8 +92,9 @@ class FeedbackLearning:
         self._context_memory, self._trajectory_archive = context_memory, trajectory_archive
         self._processor_binding = binding
         self.processor = processor
-        self.legacy_interpreter = LegacyFeedbackInterpreter() if legacy_interpreter is None else legacy_interpreter
-        if not callable(getattr(self.legacy_interpreter, 'request', None)):
+        self.legacy_interpreter = ((LegacyFeedbackInterpreter() if legacy_interpreter is None else legacy_interpreter)
+                                   if processor is None else None)
+        if processor is None and not callable(getattr(self.legacy_interpreter, 'request', None)):
             raise TypeError('Legacy feedback interpreter requires request(row, backend, limits)')
         processor_config = self._processor_binding.configuration() if processor is not None else None
         self.scheduler = FifoFeedbackScheduler() if scheduler is None else scheduler
@@ -697,7 +288,7 @@ class FeedbackLearning:
         for count, text_limit, preview_feedback in (
                 (32, 512, False), (32, 512, True), (16, 256, True), (8, 192, True),
                 (4, 128, True), (2, 96, True), (1, 64, True), (0, 0, True)):
-            row['input'], row['coverage'] = _evidence_packet(
+            row['input'], row['coverage'] = evidence_packet(
                 row, count, text_limit, preview_feedback=preview_feedback)
             if len(json_bytes(row['input'])) > self.limits['max_input_bytes']:
                 continue
@@ -721,37 +312,7 @@ class FeedbackLearning:
                 {**self.limits, 'max_calls': row['reserved_calls'],
                  'exchange_directory': str(directory) if directory is not None else None},
                 path=directory / 'product.json' if directory is not None else None)
-        # No stores, policy mutation, or memory writes in this thread.
-        request = self._request(row)
-        if self.backend.count_tokens(request) > self.limits['max_input_tokens']:
-            return {'status': 'input_too_large', 'error': 'Complete request exceeds token budget', 'response': None}
-        try:
-            response = self.backend.generate(request)
-        except Exception as exc:
-            return {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}', 'response': None}
-        receipt = asdict(response)
-        try:
-            if response.model != request.model:
-                raise ValueError('Learning model identity mismatch')
-            if response.finish_reason == 'length':
-                raise ValueError('Feedback interpretation output was truncated')
-            payload = _load_object(response.text)
-            grouping = row['input'].get('grouping_context')
-            updates = payload.pop('attempt_updates', []) if grouping is not None else []
-            evidence = admitted_candidate_evidence(row)
-            proposals = validate_proposals(json.dumps(payload), row['input']['source_refs'],
-                                           candidate_evidence=evidence)
-            # Grouping failure is isolated from valid feedback and execution.
-            grouping_error = None
-            try:
-                updates = validate_attempt_updates(updates, grouping or {}, row['input']['source_refs'], evidence)
-            except (ValueError, TypeError, KeyError) as exc:
-                updates, grouping_error = [], str(exc)
-        except (ValueError, TypeError, KeyError) as exc:
-            return {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}', 'response': receipt}
-        return {'status': 'completed', 'error': None, 'proposals': proposals,
-                'attempt_updates': updates, 'grouping_error': grouping_error,
-                'response': receipt, 'simulated': row['simulated'] or response.simulated}
+        return interpret_feedback(row, self.backend, self.limits, self._request(row))
 
     @staticmethod
     def _settle_processor(state, row, result):

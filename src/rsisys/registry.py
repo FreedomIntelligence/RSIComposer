@@ -1,4 +1,4 @@
-"""Register RSI controllers and Labs; assemble them through the host runtime.
+"""Register complete RSI methods and reusable components for host assembly.
 
 Configuration selects registered names, never Python import strings. Plugins
 are trusted host code explicitly loaded by the caller, not agent-written code.
@@ -36,7 +36,8 @@ class Registry:
     or a callable. A Lab factory returns describe()/execute(call). Harness,
     memory, engines and verifiers may be injected from registered reusable
     components. Whole methods are the primary registration unit; separate
-    controller/Lab registrations remain available for compatibility and reuse.
+    controller/Lab registration APIs support explicit custom composition.
+    Method-private implementations are not added to those global catalogs.
     """
     def __init__(self, *, builtins=True):
         self._controllers, self._labs, self._methods = {}, {}, {}
@@ -44,7 +45,13 @@ class Registry:
         self._plugins = []
         if builtins:
             from .algorithms import register_builtins
+            from .backends import register_components as register_backends
+            from .harnesses import register_components as register_harnesses
+            from .labs.scenes.math import register_components as register_math
             register_builtins(self)
+            register_backends(self)
+            register_harnesses(self)
+            register_math(self)
             self.register_lab('local_process', self._local_lab, version='1', validate_config=self._local_config)
 
     @staticmethod

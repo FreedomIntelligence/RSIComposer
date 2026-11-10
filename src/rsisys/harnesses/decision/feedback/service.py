@@ -9,7 +9,7 @@ from typing import Protocol
 
 from rsisys.harnesses.decision.feedback.components import journal_memory
 from rsisys.harnesses.decision.feedback.knowledge import proposal_records
-from rsisys.harnesses.decision.feedback.learning import validate_publication
+from rsisys.harnesses.decision.feedback.proposal_validation import validate_publication
 from rsisys.harnesses.memory import Memory
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.receipts import ExecutionReceipt

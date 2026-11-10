@@ -1,6 +1,6 @@
-"""Complete meta-agent harness-research method and optional controller reuse."""
+"""Complete meta-agent harness-research method registration."""
 from rsisys.algorithms.meta_agent.controller import (
-    build_harness_research, build_meta_agent, validate_config, validate_harness_research,
+    build_harness_research, validate_harness_research,
 )
 
 
@@ -18,6 +18,3 @@ def register(registry):
         controller=build_harness_research, labs={'math': HarnessResearchLab}, version='1',
         validate_controller=validate_harness_research, validate_labs={'math': validate_lab},
         endpoint=True, research_factory=_research))
-    registry.register_controller('meta_agent', build_meta_agent, version='3',
-                                 validate_config=validate_config, endpoint=True,
-                                 research_factory=_research)
