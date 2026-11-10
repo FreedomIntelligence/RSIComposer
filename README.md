@@ -73,17 +73,16 @@ The catalog lists **8 complete method registrations**. `ttrl` and `ttrl_verl` ar
 two execution profiles of TTRL; `meta_agent` is our framework scaffold, not a
 paper reproduction. Adaptation scope is part of each method's description.
 
-| Method | Scope | Configuration / evidence |
+| Method | Scope | Configuration |
 | --- | --- | --- |
 | `rest_em` | Generate, filter, retrain from the initial model; lightweight LoRA adaptation | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json), [MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
 | `rrsi` | Fixed-model harness evolution; MATH port with regularization and critic | [Config](src/rsisys/algorithms/rrsi/configs/math.json) |
 | `seal` | Self-edits, inner adaptation, selection, outer SFT; reference and paper profiles | [Reference](src/rsisys/algorithms/seal/configs/8gpu.json), [paper](src/rsisys/algorithms/seal/configs/paper.json) |
 | `ttrl` | Majority rewards with independent LoRA GRPO | [Config](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
 | `ttrl_verl` | Pinned official full-parameter backend with continuous optimizer/reference state | [Config](src/rsisys/algorithms/ttrl/configs/paper.json) |
-| `ft_agent` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `ft_agent` | Partial native RD-Agent policy with local GSM8K/LLaMA-Factory execution; full CoSTEER pipeline excluded | [Config](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
 | `aide` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 | `meta_agent` | Model-driven harness proposals, search feedback and sealed heldout selection; no weight training or implemented self-reflection | [Config](src/rsisys/algorithms/meta_agent/configs/math.json) |
-
 
 To run a real-model configuration, prepare its model/data paths, Python
 interpreters, model-service endpoints and GPU assignment, then use the same CLI:
@@ -99,48 +98,6 @@ and AIDE require Linux bubblewrap, model services, pinned clean upstream
 checkouts and their [FT-Agent](requirements/ft_agent.txt) / [AIDE](requirements/aide.txt)
 dependencies. Data formats and accepted parameters are defined by each method's
 Lab. Registration does not download models/data or start external services.
-
-<details>
-<summary>Integration results and reproduction limits</summary>
-
-The November 10, 2026 runs below are single-seed integration pilots and task
-adaptations, not paper-scale score reproductions. Weight runs use Qwen2.5-7B
-Base; RRSI/AIDE use fixed Qwen3.5-9B. Results are not a cross-method ranking.
-
-| Method | Evaluation | Before → after |
-| --- | --- | --- |
-| ReST^EM | MATH, 500 heldout questions | 239/500 → 255/500 |
-| ReST^EM | GSM8K, complete 1,319-question test | 1073/1319 → 1070/1319 |
-| RRSI | MATH, 128 heldout questions × 2 trials | 80.47% → 88.67% |
-| SEAL reference | 45 heldout QA pairs, adapted F1 | 0.2399 → 0.3533 |
-| TTRL reference | 32 target / 128 disjoint transfer questions | Target 71.88% → 71.88%; transfer 71.88% → 71.09% |
-| AIDE adaptation | GSM8K, 64 heldout questions | 32/64 → 31/64 |
-| FT-Agent partial adaptation | GSM8K, 64 heldout questions; three native SFT experiments | 48/64 → 51/64 |
-| Meta-agent scaffold | MATH, 128 heldout questions × 2 trials; model retained baseline | 78.91% → 78.91% |
-
-
-RRSI's average recorded token cost grew from 1,176 to 2,287; the gain is not an
-equal-compute result. SEAL's no-adaptation F1 fell from 0.3756 to 0.3282.
-ReST^EM improved GSM8K dev (106/128 → 111/128) without improving the complete
-test set. FT-Agent used a Qwen3.8-27B researcher; its native policy selected
-experiment 2. The meta-agent also used a Qwen3.8-27B controller and fixed
-Qwen3.5-9B task model: it measured a candidate, chose baseline, executed final
-validation and finished in 14 decisions/model calls. Earlier attempts exhausted
-the 32-decision budget without finalization.
-
-SEAL's paper profile has only small native-training validation with lexical
-grading; its GPT-4.1 semantic service/full-paper experiment is not validated.
-Native TTRL has a 32-target-question, one-epoch GPU check, not the full
-500-question × 10-epoch experiment; target metrics are transductive.
-FT-Agent omits the full CoSTEER debugging/knowledge pipeline; AIDE uses an
-adapted task. Neither adapter trains the meta-agent's own weights.
-
-Detailed run artifacts and failure records are maintained privately and are not
-bundled as public reproduction evidence. These observations establish neither
-statistically reliable gains nor a basis for attributing unreproduced gains to
-the papers. Long-horizon self-reflection remains unimplemented.
-
-</details>
 
 ## Register your own method
 
@@ -161,7 +118,6 @@ registration binds private factories accepting `(context, config)`:
 from rsisys.api import MethodDefinition
 from .controller import MyController
 from .lab import MyLab
-
 
 def register(registry):
     registry.register_method("my_method", MethodDefinition.from_factories(
@@ -197,8 +153,8 @@ rsisys run --plugin src/rsisys/algorithms/_template \
   --data-dir runs/custom-prompt
 ```
 
-It checks literal prompt instruction coverage (`0 → 0.5 → 1`), demonstrating
-feedback delivery and method execution, not LLM improvement.
+It checks literal prompt instructions to demonstrate feedback delivery and
+method execution. This is an interface example without LLM inference or training.
 
 Copy the template outside the library and run with `--plugin ./my_method`, or
 copy it to `src/rsisys/algorithms/my_method/` for built-in discovery. Rename
@@ -318,9 +274,8 @@ It binds to loopback by default and has no authentication or multi-tenant isolat
   sandbox; generated untrusted code requires an explicitly isolated executor.
   Custom Labs own external access, charges and resource termination. Credentials
   belong in environment variables; review saved prompts/artifacts before sharing.
-- Regression suites and experiment records are currently private; the public
-  checkout includes executable CPU fixtures and a method template, with no
-  GitHub Actions workflows.
+- The public checkout includes executable CPU fixtures and a method template.
+  Regression suites are maintained separately; no GitHub Actions workflows are included.
 
 ## Development and license
 

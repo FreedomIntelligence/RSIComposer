@@ -60,17 +60,16 @@ rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json
 当前 catalog 包含 **8 个完整方法注册项**。`ttrl` 与 `ttrl_verl` 是 TTRL 的两种执行
 profile；`meta_agent` 是本框架的方案骨架，不属于论文复现。各方法的适配范围如下。
 
-| 方法 | 接入范围 | 配置 / 证据 |
+| 方法 | 接入范围 | 配置 |
 | --- | --- | --- |
 | `rest_em` | 生成、筛选、每轮从初始模型重新训练；轻量 LoRA 实现 | [GSM8K](src/rsisys/algorithms/rest_em/configs/gsm8k-8gpu.json)、[MATH](src/rsisys/algorithms/rest_em/configs/math-8gpu.json) |
 | `rrsi` | 固定权重的 harness 进化；保留正则化与 critic，移植到 MATH | [配置](src/rsisys/algorithms/rrsi/configs/math.json) |
 | `seal` | self-edit、内层适配、选择、外层 SFT；reference/paper 两种 profile | [参考配置](src/rsisys/algorithms/seal/configs/8gpu.json)、[论文配置](src/rsisys/algorithms/seal/configs/paper.json) |
 | `ttrl` | 多数奖励与独立 LoRA GRPO 参考后端 | [配置](src/rsisys/algorithms/ttrl/configs/8gpu.json) |
 | `ttrl_verl` | 固定官方全参数后端，连续保持优化器与 reference 状态 | [配置](src/rsisys/algorithms/ttrl/configs/paper.json) |
-| `ft_agent` | 部分原生 RD-Agent 策略，本地 GSM8K/LLaMA-Factory 执行适配 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
+| `ft_agent` | 部分原生 RD-Agent 策略与本地 GSM8K/LLaMA-Factory 适配；未接完整 CoSTEER 链路 | [配置](src/rsisys/algorithms/ft_agent/configs/gsm8k.json) |
 | `aide` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 | `meta_agent` | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
-
 
 真实实验需要配置模型/数据路径、Python 解释器、模型服务端点和 GPU 分配，仍通过统一入口运行：
 
@@ -84,41 +83,6 @@ SEAL 语义判分另需配置的 GPT-4.1 服务。FT-Agent/AIDE 需要 Linux bub
 固定 revision 的干净上游 checkout，以及 [FT-Agent](requirements/ft_agent.txt) /
 [AIDE](requirements/aide.txt) 依赖。数据格式与参数以各方法 Lab 定义为准。
 注册不会自动下载模型和数据，也不会启动外部服务。
-
-<details>
-<summary>集成结果与复现边界</summary>
-
-以下为 2026 年 11 月 10 日的单种子集成实跑与任务适配，未达到论文规模，也不构成
-跨方法排名。权重训练使用 Qwen2.5-7B Base；RRSI/AIDE 使用固定 Qwen3.5-9B。
-
-| 方法 | 评测范围 | 初始 → 最终 |
-| --- | --- | --- |
-| ReST^EM | MATH，500 道留出题 | 239/500 → 255/500 |
-| ReST^EM | GSM8K，完整 1,319 道测试题 | 1073/1319 → 1070/1319 |
-| RRSI | MATH，128 道留出题 × 2 次采样 | 80.47% → 88.67% |
-| SEAL reference | 45 道留出 QA，适配后 F1 | 0.2399 → 0.3533 |
-| TTRL reference | 32 道目标题 / 128 道独立迁移题 | 目标 71.88% → 71.88%；迁移 71.88% → 71.09% |
-| AIDE 任务适配 | GSM8K，64 道留出题 | 32/64 → 31/64 |
-| FT-Agent 部分适配 | GSM8K，64 道留出题；三轮原生 SFT | 48/64 → 51/64 |
-| Meta-agent 骨架 | MATH，128 道留出题 × 2 次采样；模型保留 baseline | 78.91% → 78.91% |
-
-
-RRSI 平均记录 token 成本从 1,176 增至 2,287，不能视作等算力收益。
-SEAL 不进行内层适配时的 F1 从 0.3756 降至 0.3282。ReST^EM 的 GSM8K 开发集从
-106/128 提升至 111/128，完整测试集未提升。FT-Agent 使用 Qwen3.8-27B 研究模型，
-原生策略选择第 2 轮。Meta-agent 同样使用 Qwen3.8-27B 控制器和固定 Qwen3.5-9B
-任务模型：测量候选后选择 baseline，执行最终评测，再结束，共 14 次决策/模型调用；
-此前尝试曾在 32 步预算内未完成 finalize。
-
-SEAL paper profile 仅完成词面判分下的小规模原生训练验证，GPT-4.1 语义服务与完整论文
-实验尚未验收。原生 TTRL 完成 32 道目标题、1 epoch 的 GPU 验证，未达到
-500 题 × 10 epochs；目标题指标属于 transductive 评估。FT-Agent 未接完整 CoSTEER
-知识/调试链，AIDE 使用适配任务，两者均未训练 meta-agent 自身权重。
-
-详细运行产物与失败记录私有维护，未作为公开复现证据随仓库发布。这些单次观察不能证明
-稳定收益，也不足以将未复现的收益归咎于论文。长程 self-reflection 仍未实现。
-
-</details>
 
 ## 注册自己的方法
 
@@ -139,7 +103,6 @@ my_method/
 from rsisys.api import MethodDefinition
 from .controller import MyController
 from .lab import MyLab
-
 
 def register(registry):
     registry.register_method("my_method", MethodDefinition.from_factories(
@@ -174,7 +137,7 @@ rsisys run --plugin src/rsisys/algorithms/_template \
   --data-dir runs/custom-prompt
 ```
 
-模板通过字面 prompt 指令覆盖率（`0 → 0.5 → 1`）展示反馈交付和完整闭环，不代表 LLM 能力提升。
+模板通过字面 prompt 指令检查展示反馈交付与完整闭环，不调用 LLM 或执行训练。
 
 复制到库外，用 `--plugin ./my_method` 加载；或复制到
 `src/rsisys/algorithms/my_method/`，由内置发现机制加载。修改注册与配置中的
@@ -279,7 +242,7 @@ rsimonitor --runs-dir runs
 - 插件是受信任宿主 Python。普通 local-process Lab 不是 OS 沙箱；不可信生成程序需显式
   隔离执行器。自定义 Lab 负责外部访问、计费与资源退出。凭据放环境变量，分享前检查
   提示与产物中的私有内容。
-- 回归测试与实验记录目前私有维护；公开仓库提供可执行 CPU fixture 和方法模板，
+- 公开仓库提供可执行 CPU fixture 和方法模板；回归测试单独维护，
   不包含 GitHub Actions 工作流。
 
 ## 开发与许可
