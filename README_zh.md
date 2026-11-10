@@ -230,9 +230,13 @@ DSH 可通过 `rsisys.harnesses.decision.dsh.dsh_decision_factory` 和 `rsisys[d
 `local_process`。私有组件留在各自方法包中；具体方法类从各自包导入，框架契约从
 `rsisys.api` 导入。
 
-## 架构与职责
+## 运行流程与职责
 
-![RSISys 架构：完整方法包含 Controller 与 Labs，通过决策和反馈构成闭环，按需复用共享组件，由宿主 Runtime 支持执行。](assets/architecture.png)
+![通用 RSI 流程：输入进入 Controller，决策交给可并行的 Labs，反馈返回 Controller；下方展示含可替换 harness 组件与 LM 的可选实现。](assets/architecture.png)
+
+上层闭环不要求使用 LM 或 harness。Labs 叠框表示可并行的实验分支，具体异步执行与
+资源分配由方法定义。下层仅展示一种可选 LM 实现：Tools、Skills、Memory、Context
+属于 harness，LM 合并表示本地或 API 模型访问；虚线组件由方法选择并绑定。
 
 | 归属 | 职责 |
 | --- | --- |

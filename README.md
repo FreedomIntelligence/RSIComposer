@@ -260,9 +260,15 @@ composition. Default standalone registrations are `single_loop` and
 Import concrete method classes from their packages and framework contracts
 from `rsisys.api`.
 
-## Architecture and boundaries
+## Workflow and boundaries
 
-![RSISys architecture: a registered method owns the Controller and Labs; optional shared components and the host runtime support the decision and feedback loop.](assets/architecture.png)
+![General RSI workflow: input to Controller, decision to parallel-capable Labs, and feedback to Controller. Optional examples contain replaceable harness components and LM bindings.](assets/architecture.png)
+
+The upper loop is independent of LM or harness implementations. Stacked Labs
+represent parallel-capable experiments; methods define asynchronous execution
+and resource allocation. The lower examples show one optional LM-based design:
+Tools, Skills, Memory and Context belong to its harness, while LM includes local
+or API-backed access. Dashed components are selected and bound by the method.
 
 | Owner | Responsibility |
 | --- | --- |
