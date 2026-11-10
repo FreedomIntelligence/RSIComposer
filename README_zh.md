@@ -232,16 +232,7 @@ DSH 可通过 `rsisys.harnesses.decision.dsh.dsh_decision_factory` 和 `rsisys[d
 
 ## 架构与职责
 
-```mermaid
-flowchart LR
-    M["注册方法"] --> C["Controller"]
-    M --> L["Lab(s)"]
-    C -->|"决策：invoke / wait / finish"| H["宿主 Runtime"]
-    H -->|"路由操作"| L
-    L -->|"回执与证据引用"| H
-    H -->|"反馈"| C
-    L --> B["可选 harness / backend / scene"]
-```
+![RSISys 架构：完整方法包含 Controller 与 Labs，通过决策和反馈构成闭环，按需复用共享组件，由宿主 Runtime 支持执行。](assets/architecture.png)
 
 | 归属 | 职责 |
 | --- | --- |

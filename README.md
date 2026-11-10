@@ -262,16 +262,7 @@ from `rsisys.api`.
 
 ## Architecture and boundaries
 
-```mermaid
-flowchart LR
-    M["Registered method"] --> C["Controller"]
-    M --> L["Lab(s)"]
-    C -->|"Decision: invoke / wait / finish"| H["Host runtime"]
-    H -->|"Route operation"| L
-    L -->|"Receipt and evidence references"| H
-    H -->|"Feedback"| C
-    L --> B["Optional harness / backend / scene"]
-```
+![RSISys architecture: a registered method owns the Controller and Labs; optional shared components and the host runtime support the decision and feedback loop.](assets/architecture.png)
 
 | Owner | Responsibility |
 | --- | --- |

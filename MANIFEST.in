@@ -1,4 +1,5 @@
 include README.md README_zh.md LICENSE
+include assets/architecture.png
 recursive-include src/rsisys/algorithms *.json *.jsonl *.txt
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js LICENSE
 recursive-include requirements *.txt
