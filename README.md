@@ -364,12 +364,6 @@ downloaded data, weights and raw run logs out of the repository.
 Use GitHub private vulnerability reporting when available; otherwise request a
 private contact channel without publishing exploit details or secrets.
 
-## Related work
-
-[FlashRSI](https://github.com/RUC-NLPIR/FlashRSI) is a related RSI framework.
-Method-specific sources and attribution are linked beside the corresponding
-implementations in `algorithms/`.
-
 ## License
 
 Copyright 2026 RSISys contributors. Licensed under [Apache-2.0](LICENSE).

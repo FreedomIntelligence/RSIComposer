@@ -320,11 +320,6 @@ python -m twine check --strict dist/core/* dist/monitor/*
 仓库不接收实验结果、过程记录、下载数据、权重或原始运行日志。
 漏洞优先使用 GitHub 私密报告；不可用时请求私密联系渠道，不公开漏洞细节或凭据。
 
-## 相关工作
-
-[FlashRSI](https://github.com/RUC-NLPIR/FlashRSI) 是相关 RSI 框架。
-各方法的上游来源与归属说明在 `algorithms/` 对应实现旁标注。
-
 ## 许可
 
 Copyright 2026 RSISys contributors，采用 [Apache-2.0](LICENSE)。
