@@ -262,13 +262,14 @@ from `rsisys.api`.
 
 ## Workflow and boundaries
 
-![General RSI workflow: input to Controller, decision to parallel-capable Labs, and feedback to Controller. Optional examples contain replaceable harness components and LM bindings.](assets/architecture.png)
+![General RSI framework: input, Controller, parallel-capable Labs and feedback form one loop; policies, workflows, harness components and LM are method-selected replaceable bindings.](assets/architecture.png)
 
-The upper loop is independent of LM or harness implementations. Stacked Labs
-represent parallel-capable experiments; methods define asynchronous execution
-and resource allocation. The lower examples show one optional LM-based design:
-Tools, Skills, Memory and Context belong to its harness, while LM includes local
-or API-backed access. Dashed components are selected and bound by the method.
+Controller and Labs are generic roles: each method supplies its decision policy
+and experiment workflow. Stacked Labs represent parallel-capable experiments;
+methods define asynchronous execution and resource allocation. Dashed slots are
+replaceable implementations or components selected by the method. Harnesses,
+Tools, Skills, Memory, Context and LM are bound as needed; LM includes local or
+API-backed access. Methods need not use every depicted component.
 
 | Owner | Responsibility |
 | --- | --- |
