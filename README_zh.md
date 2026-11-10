@@ -232,11 +232,11 @@ DSH 可通过 `rsisys.harnesses.decision.dsh.dsh_decision_factory` 和 `rsisys[d
 
 ## 运行流程与职责
 
-![通用 RSI 框架：输入、Controller、可并行 Labs 与反馈构成一个闭环；策略、实验流程、harness 组件与 LM 均由方法选择并绑定。](assets/architecture.png)
+![通用 RSI 框架：输入、Controller、可并行 Labs 与反馈构成一个闭环；策略、实验流程、harness 组件与 Language Model 均由方法选择并绑定。](assets/architecture.png)
 
 Controller 与 Labs 是通用角色，具体决策策略和实验流程由方法提供。Labs 叠框表示可并行的
 实验分支，异步执行与资源分配由方法定义。虚线表示由方法选择、可替换的实现或组件；
-harness、Tools、Skills、Memory、Context 与 LM 均按需绑定，LM 合并表示本地或 API
+harness、Tools、Skills、Memory、Context 与 Language Model（语言模型）均按需绑定，合并表示本地或 API
 模型访问。方法不必使用图中的所有组件。
 
 | 归属 | 职责 |
