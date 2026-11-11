@@ -46,8 +46,25 @@ class GenerationRequest:
     tools: tuple[dict, ...] = ()  # Native function declarations, not executable bindings.
     tool_choice: str | dict | None = None
     parallel_tool_calls: bool | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    seed: int | None = None
+    stop: tuple[str, ...] | None = None
 
     def __post_init__(self):
+        import math
+        for name, upper, include_zero in (('temperature', 2, True), ('top_p', 1, False)):
+            value = getattr(self, name)
+            if value is not None and (type(value) not in (int, float) or value > upper
+                    or (value < 0 if include_zero else value <= 0) or not math.isfinite(value)):
+                raise ValueError(f'Invalid {name}')
+        if self.seed is not None and (type(self.seed) is not int or not 0 <= self.seed < 2**63):
+            raise ValueError('seed must be a nonnegative signed 64-bit integer')
+        if self.stop is not None:
+            if (not isinstance(self.stop, (list, tuple)) or not 1 <= len(self.stop) <= 4
+                    or any(not isinstance(item, str) or not 1 <= len(item) <= 256 for item in self.stop)):
+                raise ValueError('stop must contain one to four nonempty strings of at most 256 characters')
+            object.__setattr__(self, 'stop', tuple(self.stop))
         if type(self.max_output_tokens) is not int or self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be positive")
         if self.response_schema is not None:
@@ -124,6 +141,18 @@ class GenerationRequest:
             options['tool_choice'] = json.loads(json.dumps(self.tool_choice))
         if self.parallel_tool_calls is not None:
             options['parallel_tool_calls'] = self.parallel_tool_calls
+        return options
+
+    def sampling_options(self) -> dict:
+        """Per-call wire options; None preserves the deployment's existing defaults.
+
+        A seed is a provider hint, not a guarantee of deterministic inference.
+        Multiple samples remain separate requests with separate host admission.
+        """
+        options = {name: getattr(self, name) for name in ('temperature', 'top_p', 'seed')
+                   if getattr(self, name) is not None}
+        if self.stop is not None:
+            options['stop'] = list(self.stop)
         return options
 
 

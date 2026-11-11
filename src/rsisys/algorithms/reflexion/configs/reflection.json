@@ -1,0 +1,54 @@
+{
+  "objective": "Reflexion HumanEval reflexion, isolated Python execution",
+  "data_dir": "../../../../../runs/reflexion-reflection",
+  "max_decision_steps": 550,
+  "backends": {
+    "local": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:18096/v1",
+      "json_mode": false,
+      "timeout_seconds": 180
+    }
+  },
+  "roles": {
+    "decision_maker": {
+      "backend_id": "local",
+      "model_id": "Qwen3.5-9B",
+      "revision": "local-readonly-base"
+    },
+    "actor": {
+      "backend_id": "local",
+      "model_id": "Qwen3.5-9B",
+      "revision": "local-readonly-base"
+    }
+  },
+  "framework": {
+    "method": {
+      "name": "reflexion",
+      "config": {
+        "controller": {
+          "condition": "reflexion",
+          "count": 64,
+          "max_iters": 2
+        },
+        "labs": {
+          "reflexion": {
+            "source_dir": "external/reflexion",
+            "seed": 17,
+            "data": {
+              "source": "official-164",
+              "count": 64
+            },
+            "parameters": {
+              "max_internal_tests": 6
+            },
+            "model": {
+              "max_output_tokens": 1024
+            },
+            "max_model_calls": 256
+          }
+        }
+      }
+    }
+  }
+}

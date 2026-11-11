@@ -64,6 +64,7 @@ class RemoteModelBackend:
             headers["Authorization"] = f"Bearer {key}"
         payload = {"model": request.model.model_id, "messages": request.chat_messages(),
                    "stream": False, "max_tokens": request.max_output_tokens}
+        payload.update(request.sampling_options())
         if self.binding.json_mode and not request.tools:
             payload["response_format"] = {"type": "json_object"}
         payload.update(request.chat_tools())

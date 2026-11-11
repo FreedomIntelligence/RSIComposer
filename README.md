@@ -94,6 +94,8 @@ paper reproduction. Adaptation scope is part of each method's description.
 | `aide` | Native Agent/search/review/Journal, adapted to fixed-model LLM inference programs | [Config](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 | `meta_agent` | Model-driven harness proposals, search feedback and sealed heldout selection; no weight training or implemented self-reflection | [Config](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
+The classic experiment packages (OPRO, GEPA, FunSearch, Reflexion, PromptPG and STaR) are documented in [Classic methods](docs/classic_methods.md).
+
 ### Prepare a real-model run
 
 **GPU/model-service configurations are templates**, not prepared environments.

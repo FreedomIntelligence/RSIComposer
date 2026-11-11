@@ -1,0 +1,47 @@
+{
+  "objective": "FunSearch online bin packing with sealed development and held-out cases",
+  "data_dir": "../../../../../runs/funsearch-evolution",
+  "max_decision_steps": 256,
+  "backends": {
+    "local": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:18096/v1",
+      "json_mode": false
+    }
+  },
+  "roles": {
+    "decision_maker": {
+      "backend_id": "local",
+      "model_id": "Qwen3.5-9B",
+      "revision": "local-readonly-base"
+    }
+  },
+  "framework": {
+    "method": {
+      "name": "funsearch",
+      "config": {
+        "controller": {
+          "proposals": 192,
+          "samples_per_prompt": 4,
+          "islands": 10,
+          "reset_every": 64,
+          "development_count": 40,
+          "heldout_count": 200,
+          "seed": 17,
+          "source_dir": "external/funsearch",
+          "condition": "evolution"
+        },
+        "labs": {
+          "funsearch": {
+            "development_count": 40,
+            "heldout_count": 200,
+            "temperature": 0.9,
+            "max_output_tokens": 256,
+            "seed": 17,
+            "max_model_calls": 192
+          }
+        }
+      }
+    }
+  }
+}

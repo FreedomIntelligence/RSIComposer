@@ -81,6 +81,8 @@ profile；`meta_agent` 是本框架的方案骨架，不属于论文复现。
 | `aide` | 原生 Agent/search/review/Journal，任务改为固定模型推理程序搜索 | [配置](src/rsisys/algorithms/aide/configs/gsm8k.json) |
 | `meta_agent` | 模型提出 harness、读取搜索反馈并锁定最终留出选择；不训练权重，self-reflection 尚未实现 | [配置](src/rsisys/algorithms/meta_agent/configs/math.json) |
 
+OPRO、GEPA、FunSearch、Reflexion、PromptPG 和 STaR 的配置和运行方式见[经典方法](docs/classic_methods.md)。
+
 ### 准备真实模型运行
 
 **GPU/模型服务配置是模板，不是已经准备好的环境。** 配置含示例本地路径、服务模型名

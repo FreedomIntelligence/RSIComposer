@@ -1,0 +1,85 @@
+{
+  "objective": "OPRO GSM8K independent_candidates prompt optimization",
+  "data_dir": "../../../../../runs/opro-independent_candidates",
+  "max_decision_steps": 192,
+  "backends": {
+    "local": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:18096/v1",
+      "json_mode": false,
+      "timeout_seconds": 180
+    }
+  },
+  "roles": {
+    "decision_maker": {
+      "backend_id": "local",
+      "model_id": "Qwen3.5-9B",
+      "revision": "local-readonly-base"
+    },
+    "actor": {
+      "backend_id": "local",
+      "model_id": "Qwen3.5-9B",
+      "revision": "local-readonly-base"
+    }
+  },
+  "framework": {
+    "method": {
+      "name": "opro",
+      "config": {
+        "controller": {
+          "source_dir": "external/opro",
+          "seed": 17,
+          "parameters": {
+            "rounds": 2,
+            "candidates_per_round": 2,
+            "history_size": 20,
+            "exemplars": 3,
+            "initial_instruction": "Let's solve the problem.",
+            "instruction_pos": "Q_end",
+            "condition": "independent_candidates",
+            "local_adapter": "qwen-instructions-v1",
+            "optimizer_max_output_tokens": 512
+          },
+          "data": {
+            "search_count": 16,
+            "validation_count": 16,
+            "test_count": 16
+          }
+        },
+        "labs": {
+          "opro": {
+            "source_dir": "external/opro",
+            "seed": 17,
+            "parameters": {
+              "rounds": 2,
+              "candidates_per_round": 2,
+              "history_size": 20,
+              "exemplars": 3,
+              "initial_instruction": "Let's solve the problem.",
+              "instruction_pos": "Q_end",
+              "condition": "independent_candidates",
+              "local_adapter": "qwen-instructions-v1",
+              "optimizer_max_output_tokens": 512
+            },
+            "data": {
+              "search_count": 16,
+              "validation_count": 16,
+              "test_count": 16
+            },
+            "model": {
+              "max_output_tokens": 1024,
+              "optimizer_temperature": 1.0,
+              "scorer_temperature": 0.0
+            },
+            "files": {
+              "search": "data/opro/search.jsonl",
+              "validation": "data/opro/validation.jsonl",
+              "test": "data/opro/test.jsonl"
+            },
+            "max_model_calls": 256
+          }
+        }
+      }
+    }
+  }
+}

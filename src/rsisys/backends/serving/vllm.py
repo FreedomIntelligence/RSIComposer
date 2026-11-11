@@ -127,6 +127,7 @@ class VLLMBackend(RemoteModelBackend):
         if self.binding.json_mode and not request.tools:
             payload['response_format'] = {'type': 'json_object'}
         payload.update(self.generation_options)
+        payload.update(request.sampling_options())
         if request.tools:
             conflicts = {'response_format', 'structured_outputs', 'guided_json', 'guided_regex',
                          'guided_grammar', 'tools', 'tool_choice', 'parallel_tool_calls'} & self.generation_options.keys()
