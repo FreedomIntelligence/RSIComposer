@@ -13,6 +13,7 @@ from rsisys.loops.contracts.directive import Directive
 from rsisys.loops.contracts.feedback import Feedback
 from rsisys.loops.contracts.jobs import JobRef
 from rsisys.runtime.state.recovery import durable_mutation
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 from rsisys.runtime.orchestration.run_policy import (RunPolicy, ResearcherRunPolicy, TimeRunPolicy, GoalRunPolicy,
                          RunContext, RunDecision, ExperimentOutcome, MetricGoal, positive)
 
@@ -596,6 +597,9 @@ class Runner:
                                               'used': decision_steps, 'remaining': limit - decision_steps}
                 result = self.step(objective)
                 events.append(result.event)
+                monitor = active_monitor.get()
+                if monitor is not None:
+                    monitor.record(result.event)
                 decision_steps += result.decision_steps
                 if result.kind == 'finished' and 'feedback' in result.event:
                     completed += 1

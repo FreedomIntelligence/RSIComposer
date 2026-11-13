@@ -10,6 +10,7 @@ from rsisys.snapshot.local import LocalSnapshotCapture, restore_snapshot, load_m
 from rsisys.registry import Registry
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.storage.files import atomic_write, json_bytes
+from rsisys.runtime.orchestration.monitor_snapshot import run_monitored
 
 
 def main() -> None:
@@ -28,6 +29,7 @@ def main() -> None:
     run = commands.add_parser('run', help='Start a new persistent local run')
     run.add_argument('--config', type=Path, required=True)
     run.add_argument('--data-dir', type=Path)
+    run.add_argument('--experiment-name', help='Name shown in RSIMonitor')
     run.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
     run.add_argument('--literature', type=Path, action='append', default=[])
     run.add_argument('--plugin', type=Path, action='append', default=[],
@@ -88,7 +90,9 @@ def main() -> None:
                 if args.command == 'run':
                     for path in args.literature:
                         app.artifacts.put_file(path, kind='literature')
-                result = app.run(rounds=args.rounds, max_decision_steps=args.max_decision_steps)
+                result = run_monitored(app, rounds=args.rounds, max_decision_steps=args.max_decision_steps,
+                                       framework=selection if args.command == 'run' else None,
+                                       experiment_name=getattr(args, 'experiment_name', None))
                 snapshot = None
                 snapshot_supported = not app.custom_assembly or bool(app.assembly.state_adapters)
                 # Waiting work is explicitly not checkpointable in this first local format.

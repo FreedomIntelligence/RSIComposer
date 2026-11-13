@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rsimonitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only experiment monitoring and research visualization"
 readme = {text = "RSIMonitor is the optional read-only viewer for RSISys run directories. Install with pip install ./src/rsimonitor and launch rsimonitor --runs-dir runs. See https://github.com/satsuki2486441738/RSISys#monitor for usage and security boundaries.", content-type = "text/plain"}
 requires-python = ">=3.12"
@@ -31,4 +31,6 @@ package-dir = {rsimonitor = "."}
 include-package-data = false
 
 [tool.setuptools.package-data]
-rsimonitor = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js"]
+rsimonitor = ["static/index.html", "static/style.css", "static/i18n.js", "static/decisions.js", "static/app.js",
+              "static/board.html", "static/board.css", "static/board.js",
+              "static/live.js", "static/lucide.min.js", "static/LUCIDE-LICENSE"]

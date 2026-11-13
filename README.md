@@ -324,6 +324,12 @@ python -m pip install ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
+Open `http://127.0.0.1:8765/` for the new dashboard or `/legacy` for the original project view.
+Give each experiment a distinct output directory, for example
+`rsisys run --config config.json --data-dir runs/experiment-002 --experiment-name 'Experiment 002'`.
+Point `--runs-dir` at the common parent of these directories. `rsisys run` publishes `monitor.json`;
+the dashboard follows newly started experiments and displays the observations reported for each run.
+
 It binds to loopback by default and has no authentication or multi-tenant isolation.
 
 ## Release scope and limits

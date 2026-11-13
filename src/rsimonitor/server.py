@@ -22,7 +22,12 @@ MAX_PANEL_METRICS = 12
 MAX_METRIC_DEFINITIONS = 100
 MAX_METRIC_POINTS = 10000
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
+STATIC = {"/": ("board.html", "text/html; charset=utf-8"),
+          "/legacy": ("index.html", "text/html; charset=utf-8"),
+          "/board.js": ("board.js", "text/javascript; charset=utf-8"),
+          "/live.js": ("live.js", "text/javascript; charset=utf-8"),
+          "/lucide.min.js": ("lucide.min.js", "text/javascript; charset=utf-8"),
+          "/board.css": ("board.css", "text/css; charset=utf-8"),
           "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
           "/decisions.js": ("decisions.js", "text/javascript; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -38,11 +43,11 @@ DETAIL_KEYS = {"job_id", "candidate_id", "model_id", "revision", "base_revision"
 WORKFLOW_FIELDS = ("phase", "round", "rounds", "completed_directives", "elapsed_seconds")
 CURRENT_FIELDS = ("directive_id", "mode", "status", "state", "phase", "strategy", "decision_revision", "actor_revision",
                   "job_id", "elapsed_seconds", "review_after_seconds", "next_review_seconds", "review_status",
-                  "step", "total_steps")
+                  "step", "total_steps", "decision_id", "operation", "started_at", "finished_at", "split", "model", "label", "round")
 DECISION_FIELDS = ("decision_id", "timestamp", "kind", "source", "round", "directive_id", "mode", "action",
                    "strategy", "reason", "status", "state", "decision_revision", "actor_revision", "job_id", "candidate_id",
                    "protocol_ref", "recipe_ref", "method", "review_after_seconds", "next_review_seconds", "operation", "parent_decision_id",
-                   "feedback_summary", "error")
+                   "feedback_summary", "error", "started_at", "finished_at", "step", "total_steps", "split", "model", "label")
 ROUND_FIELDS = ("round", "base_revision", "candidate_revision", "selection", "actor_revision", "applied",
                 "answer_correct", "training_review_count")
 JOB_FIELDS = ("job_id", "kind", "status", "state", "role", "candidate_id", "directive_id", "round", "step", "total_steps", "elapsed_seconds")
@@ -168,6 +173,11 @@ def evaluations_only(source):
         if not isinstance(row, dict) or row.get("verified") is False:
             continue
         item = reported_text(row, ("evaluation_id", "job_id", "decision_id", "candidate_id", "protocol", "role"))
+        item.update(reported_text(row, ("split", "model", "label", "timestamp"), 200))
+        for key in ("round", "elapsed_seconds"):
+            value = row.get(key)
+            if type(value) in (int, float) and scalar(value) is not None and value >= 0:
+                item[key] = value
         for key in ("record_sha256", "dataset_sha256", "evaluator_sha256"):
             if isinstance(row.get(key), str) and SHA256.fullmatch(row[key]):
                 item[key] = row[key]
@@ -362,10 +372,71 @@ def attempt_interpretations(raw):
             'ungrouped_decision_ids': strings(raw.get('ungrouped_decision_ids'))}
 
 
+BOARD_CONFIG_FIELDS = ("method", "seed", "rounds", "plain_rounds", "warmup_steps", "max_seconds",
+                       "max_decision_steps", "runner_round_limit", "dev_count", "test_count", "train_count",
+                       "search_count", "validation_count", "model_id", "condition", "candidates_per_round",
+                       "minibatch_size", "learning_rate", "global_batch", "max_length")
+BOARD_RESOURCE_FIELDS = ("allocated_gpu_count", "model_calls_attempted", "model_call_limit")
+BOARD_ID = re.compile(r"[\w.-]{1,200}\Z")
+
+
+def board_rows(raw, key, limit, text_fields, identity=None):
+    value = raw.get(key)
+    if not isinstance(value, list):
+        return []
+    result = []
+    for row in value[-limit:]:
+        if not isinstance(row, dict):
+            continue
+        item = reported_text(row, text_fields, 200 if key != "logs" else 1000)
+        if identity and not BOARD_ID.fullmatch(item.get(identity, "")):
+            continue
+        if key == "samples":
+            item.update({field: row[field] for field in ("correct", "parsed") if type(row.get(field)) is bool})
+            for field in ("predicted", "expected"):
+                answer = row.get(field)
+                if isinstance(answer, str) and re.fullmatch(r"-?[0-9./]{1,80}", answer):
+                    item[field] = answer
+        if item:
+            result.append(item)
+    return result
+
+
+def board_fields(raw):
+    result = {}
+    for key, limit, text_fields, identity in (
+            ("samples", 500, ("id", "decision_id"), "id"),
+            ("artifacts", MAX_ROWS, ("artifact_id", "kind", "decision_id", "model"), "artifact_id"),
+            ("logs", 400, ("timestamp", "level", "source", "decision_id", "message"), None)):
+        if isinstance(raw.get(key), list):
+            result[key] = board_rows(raw, key, limit, text_fields, identity)
+    config = raw.get("config")
+    if isinstance(config, dict):
+        result["config"] = {
+            key: value for key, value in pick(config, BOARD_CONFIG_FIELDS).items()
+            if type(value) in (int, float) or isinstance(value, str) and BOARD_ID.fullmatch(value)
+        }
+    resources = raw.get("resources")
+    if isinstance(resources, dict):
+        result["resources"] = {
+            key: value for key, value in pick(resources, BOARD_RESOURCE_FIELDS).items() if type(value) is int and value >= 0
+        }
+        result["resources"].update(reported_text(resources, ("decision_id",), 200))
+        metrics = metrics_only(resources.get("latest_execution_metrics"))
+        if metrics:
+            result["resources"]["latest_execution_metrics"] = metrics
+    return result
+
+
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
-    result = pick(raw, ("objective", "status", "updated_at"))
+    if "engine_run_id" in raw and raw.get("run_id") != run_id:
+        raise SnapshotError(422, "Run snapshot ID does not match its directory.")
+    result = pick(raw, ("objective", "status", "started_at", "updated_at", "engine_run_id"))
+    if type(raw.get("simulated")) is bool:
+        result["simulated"] = raw["simulated"]
+    result.update(board_fields(raw))
     result.update(schema_version=1, run_id=run_id, experiment_name=experiment_name(raw, run_id))
     if type(raw.get("weight_applied")) is bool:
         result["weight_applied"] = raw["weight_applied"]
@@ -531,7 +602,7 @@ class RunStore:
                     continue
                 try:
                     snapshot = self.read(name, root_fd)
-                    row = pick(snapshot, ("schema_version", "run_id", "experiment_name", "objective", "status", "updated_at"))
+                    row = pick(snapshot, ("schema_version", "run_id", "experiment_name", "objective", "status", "started_at", "updated_at", "engine_run_id", "simulated"))
                     row["project"] = snapshot["project"]
                     for field in ("parent_run_id", "source_run_ids"):
                         if field in snapshot:
@@ -563,7 +634,7 @@ class MonitorHandler(BaseHTTPRequestHandler):
         # Do not log request paths, query strings, or monitoring contents.
         pass
 
-    def respond(self, status, body, content_type="application/json; charset=utf-8"):
+    def respond(self, status, body, content_type="application/json; charset=utf-8", *, board=False):
         if not isinstance(body, bytes):
             body = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
@@ -572,7 +643,8 @@ class MonitorHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+        style = "'self' 'unsafe-inline'" if board else "'self'"
+        self.send_header("Content-Security-Policy", f"default-src 'none'; script-src 'self'; style-src {style}; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
         if status == 503:
             self.send_header("Retry-After", "2")
         self.end_headers()
@@ -591,7 +663,7 @@ class MonitorHandler(BaseHTTPRequestHandler):
             path = unquote(urlsplit(self.path).path, errors="strict")
             if path in STATIC:
                 filename, mime = STATIC[path]
-                return self.respond(200, (STATIC_DIR / filename).read_bytes(), mime)
+                return self.respond(200, (STATIC_DIR / filename).read_bytes(), mime, board=path == "/")
             if path == "/api/projects":
                 return self.respond(200, {"schema_version": 1, "projects": self.server.store.projects()})
             if path == "/api/runs":

@@ -1,5 +1,6 @@
 """GSM8K operations using the pinned OPRO prompt builder and evaluator."""
 import hashlib
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 import json
 
 from rsisys.loops.contracts.coordination import OperationResult
@@ -37,6 +38,9 @@ class OPROGSM8KLab:
         payload = json.dumps({'operation': call.name, 'request': call.arguments,
                               'evidence': evidence}, ensure_ascii=False, allow_nan=False).encode()
         artifact = self.artifacts.put(payload, kind='opro-' + call.name)
+        monitor = active_monitor.get()
+        if monitor is not None and monitor.current_id and call.name == "score":
+            monitor.add_samples(evidence.get("records", ()), monitor.current_id)
         return OperationResult(f"OPRO {call.name}: {call.arguments['request_id']}", (artifact,), False,
             data={'request': call.arguments, 'receipt_id': hashlib.sha256(payload).hexdigest(), **values})
 

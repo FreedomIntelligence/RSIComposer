@@ -55,6 +55,7 @@ from rsisys.runtime.evidence.records import ExperienceRecord
 from rsisys.runtime.evidence.retrieval import ExperienceSystem
 from rsisys.runtime.models.activation import prepare_model_activation
 from rsisys.runtime.orchestration.jobs import JobBook
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 
 
 def _json_details(value):
@@ -743,6 +744,9 @@ class DefaultDecisionHarness:
                 # boundary, an unknown outcome is never blindly executed again.
                 row['status'] = 'executing'
                 self.state.pending_operation_decision_id = ident
+                monitor = active_monitor.get()
+                if monitor is not None:
+                    monitor.start(ident, decision.operation.name, decision.operation.arguments)
                 execution = execute_operation(self.tools, action_space, decision.operation,
                                               simulated=decision.simulated, clock=perf_counter)
                 if isinstance(execution.outcome, JobRef):

@@ -287,6 +287,11 @@ python -m pip install ./src/rsimonitor
 rsimonitor --runs-dir runs
 ```
 
+打开 `http://127.0.0.1:8765/` 查看新版看板，`/legacy` 保留原项目视图。
+每次用独立目录启动实验，例如 `rsisys run --config config.json --data-dir runs/experiment-002 --experiment-name '实验 002'`。
+Monitor 的 `--runs-dir` 必须是这些输出目录的共同父目录。`rsisys run` 写入 `monitor.json`，
+看板发现新实验后自动切换到其运行总览。各板块只显示该次运行已上报的数据。
+
 默认仅监听本机，不提供鉴权或多租户隔离。
 
 ## 发布范围与限制

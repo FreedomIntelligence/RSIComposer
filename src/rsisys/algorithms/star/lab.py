@@ -12,6 +12,7 @@ from rsisys.api import LabFeedback, OperationSpec
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 from ..shared.numeric_answers import extract_answer, score_math
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 from ..shared.prompt_data import load_splits
 from .gpu import admit_gpu
 from .protocol import MAX_LENGTH, curriculum, keep_reasoning, render_prompt, write_records
@@ -95,6 +96,9 @@ class StarLab:
         return LabFeedback(summary, (), False, data={"request": request, **data})
 
     def workers(self, commands):
+        monitor = active_monitor.get()
+        if monitor is not None:
+            monitor.observe_devices(self.devices)
         processes = []
         try:
             for command, env, log in commands:
@@ -107,6 +111,8 @@ class StarLab:
                     raise TimeoutError("STaR reached its configured run budget")
                 for process, log in processes[:]:
                     code = process.poll()
+                    if monitor is not None and log.name == "worker.log":
+                        monitor.read_training_log(log)
                     if code is None:
                         continue
                     if code:

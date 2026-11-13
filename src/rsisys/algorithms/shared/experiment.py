@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from rsisys.loops.contracts.model_service import ModelResponseError
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 
 
 class MethodEvents:
@@ -42,7 +43,12 @@ class ModelCalls:
             raise RuntimeError('Method model-call budget exhausted')
         self.count += 1
         service = self.session or self.backends[request.model.backend_id]
-        return service.generate(request)
+        try:
+            return service.generate(request)
+        finally:
+            monitor = active_monitor.get()
+            if monitor is not None:
+                monitor.observe_model_calls(self.count, self.max_calls)
 
     def text(self, request):
         try:

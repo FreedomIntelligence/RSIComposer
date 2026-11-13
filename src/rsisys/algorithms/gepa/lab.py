@@ -3,6 +3,7 @@ from hashlib import sha256
 import json
 
 from rsisys.loops.contracts.artifacts import ArtifactRef
+from rsisys.runtime.orchestration.monitor_snapshot import active_monitor
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.model_service import GenerationRequest
@@ -58,6 +59,9 @@ class GEPAGSM8KLab:
         payload = json.dumps({'operation': call.name, 'request': call.arguments,
                               'evidence': evidence}, ensure_ascii=False, allow_nan=False).encode()
         artifact = self.artifacts.put(payload, kind='gepa-' + call.name)
+        monitor = active_monitor.get()
+        if monitor is not None and monitor.current_id and call.name == "score":
+            monitor.add_samples(evidence.get("records", ()), monitor.current_id)
         return OperationResult(f"GEPA {call.name}: {call.arguments['request_id']}", (artifact,), False,
             data={'request': call.arguments, 'receipt_id': sha256(payload).hexdigest(), **values})
 
