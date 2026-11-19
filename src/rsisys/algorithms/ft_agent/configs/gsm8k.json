@@ -1,0 +1,74 @@
+{
+  "objective": "Run the pinned FT-Agent research policy on a frozen GSM8K fine-tuning task.",
+  "data_dir": "../../../../../runs/ft-agent",
+  "max_decision_steps": 32,
+  "framework": {
+    "method": {
+      "name": "ft_agent",
+      "config": {
+        "controller": {
+          "upstream_root": "/absolute/path/to/rd-agent",
+          "python": "/absolute/path/to/ft-controller-env/bin/python",
+          "iterations": 2,
+          "timeout": 3600,
+          "lab": "finetune",
+          "researcher": {
+            "endpoints": [
+              "http://127.0.0.1:18500/v1"
+            ],
+            "model": "rsisys-research",
+            "max_tokens": 8192,
+            "timeout": 600,
+            "temperature": 0.6
+          }
+        },
+        "labs": {
+          "finetune": {
+            "initial_model": "models/Qwen2.5-7B",
+            "train_data": "runs/ft-agent-data/train.jsonl",
+            "dev_data": "runs/ft-agent-data/dev.jsonl",
+            "test_data": "runs/ft-agent-data/test.jsonl",
+            "llama_factory_root": "/absolute/path/to/llama-factory",
+            "training_python": "/absolute/path/to/ft-training-env/bin/python",
+            "inference_python": "/absolute/path/to/ft-inference-env/bin/python",
+            "max_train_samples": 64,
+            "max_epochs": 2,
+            "max_steps": 32,
+            "max_cutoff_len": 1024,
+            "max_batch_size": 8,
+            "max_length": 2048,
+            "max_tokens": 512,
+            "enforce_eager": true,
+            "seed": 7308
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "executor": "local",
+    "pools": {
+      "train": {
+        "nodes": 1,
+        "gpus": [
+          1,
+          2,
+          3
+        ],
+        "gpus_per_node": 3
+      }
+    },
+    "placement": {
+      "finetune.rollout": {
+        "pool": "train",
+        "gpus": 3,
+        "timeout": 3600
+      },
+      "finetune.trainer": {
+        "pool": "train",
+        "gpus": 3,
+        "timeout": 3600
+      }
+    }
+  }
+}

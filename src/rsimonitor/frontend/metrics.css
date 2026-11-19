@@ -1,0 +1,81 @@
+@tailwind components;
+@tailwind utilities;
+.rsi-metrics-ui{--background-default:#fff;--background-higher:#faf9f5;--background-highest:#eeeae2;--outline-default:#ddd8ce;--outline-dimmer:#e8e4dc;--outline-dimmest:#f1eee7;--foreground-default:#292821;--foreground-dimmer:#6d6a60;--foreground-dimmest:#99968b;--primary-default:#a85739;--primary-dimmer:#bf8269;--primary-dimmest:#e8cabc;--background-overlay:#25231dcc;color:var(--foreground-default);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.rsi-metrics-ui *{box-sizing:border-box;border-width:0;border-style:solid;border-color:var(--outline-default)}
+.rsi-metrics-ui p{margin:0}.rsi-metrics-ui svg{fill:currentColor}
+.rsi-metrics-ui button,.rsi-metrics-ui input,.rsi-metrics-ui select{font:inherit;color:inherit;background:transparent}
+.rsi-metrics-ui button{cursor:pointer}.rsi-metrics-ui input{min-width:0}
+.rsi-metrics-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--outline-default)}
+.rsi-metrics-toolbar select{border:1px solid var(--outline-default);border-radius:5px;padding:5px 8px}
+.rsi-metrics-runs{display:flex;gap:12px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--outline-default);font-size:12px}
+.rsi-metrics-runs label{display:flex;align-items:center;gap:5px}.rsi-metrics-runs input{accent-color:#a85739}
+.rsi-metrics-ui .sl-dialog-mask{position:fixed;inset:0;background:var(--background-overlay);display:flex;align-items:center;justify-content:center;z-index:9998}
+.rsi-metrics-ui .sl-dialog{width:calc(100% - 40px);max-height:95vh;overflow:auto;background:white;border-radius:8px;position:relative;padding:25px}
+.rsi-metrics-empty{padding:40px;text-align:center;color:var(--foreground-dimmer)}
+.rsi-metrics-ui .rsi-config-button{border:1px solid var(--outline-default);border-radius:5px;background:white;padding:5px 10px;font-size:12px}
+.rsi-metrics-ui .rsi-config-button:hover{background:var(--background-higher)}.rsi-metrics-ui .rsi-config-button.primary{background:#a85739;color:white;border-color:#a85739}
+.rsi-chart-config{position:absolute;right:10px;top:7px;font-size:11px!important;border:1px solid var(--outline-default)!important;border-radius:4px;padding:2px 7px;z-index:2;background:white!important}
+.rsi-metrics-ui .chart-panel{right:62px}.rsi-chart-manager{padding:12px 16px;border-bottom:1px solid var(--outline-default);display:grid;gap:10px}
+.rsi-chart-manager>div{display:flex;align-items:center;gap:10px}.rsi-chart-manager>div>span{flex:1;overflow-wrap:anywhere}.rsi-chart-manager small{display:block;color:var(--foreground-dimmer);font-size:11px}
+.rsi-panel-editor{position:fixed;inset:0 0 0 auto;margin:0!important;width:min(480px,100vw)!important;max-width:480px;height:100dvh;max-height:100dvh;padding:0!important;background:white;color:var(--foreground-default);border:1px solid var(--outline-default)!important;border-radius:0;box-shadow:-10px 0 60px #0002}
+.rsi-panel-editor::backdrop{background:#29251d66}.rsi-panel-editor form{display:flex;flex-direction:column;height:100%;max-height:100dvh}
+.rsi-panel-editor header,.rsi-panel-editor footer{display:flex;align-items:center;gap:12px;padding:16px 20px;flex-shrink:0}.rsi-panel-editor header{justify-content:space-between;border-bottom:1px solid var(--outline-default)}
+.rsi-panel-editor h2{font-size:20px;margin:3px 0 0}.rsi-panel-editor small{font-size:11px;color:var(--foreground-dimmer)}.rsi-panel-editor footer{border-top:1px solid var(--outline-default)}.rsi-panel-editor footer>span{flex:1}
+.rsi-editor-body{padding:18px 20px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:14px}.rsi-editor-body section{display:grid;gap:18px;align-content:start}.rsi-editor-body label{display:grid;gap:5px;font-size:12px}
+.rsi-editor-body input:not([type=checkbox]),.rsi-editor-body select{width:100%;padding:7px 9px;background:white;border:1px solid var(--outline-default);border-radius:4px;min-height:34px}
+.rsi-editor-body fieldset{border:1px solid var(--outline-default);border-radius:5px;margin:0;padding:12px;display:grid;gap:12px}.rsi-editor-body legend{padding:0 5px;font-size:13px;font-weight:600}
+.rsi-axis-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.rsi-y-options{display:grid;gap:7px;max-height:150px;overflow:auto;padding:9px;background:var(--background-higher);border-radius:4px}
+.rsi-y-options label{display:flex;align-items:center;gap:7px;overflow-wrap:anywhere}.rsi-y-options input{accent-color:#a85739}
+.rsi-editor-help{font-size:11px;color:var(--foreground-dimmer);line-height:1.7}.rsi-editor-error{font-size:12px;color:#b63232}
+
+.rsi-editor-tabs{display:flex;gap:24px;padding:0 20px;border-bottom:1px solid var(--outline-default)}
+.rsi-editor-tabs button{padding:12px 3px;border-bottom:2px solid transparent;font-weight:500}
+.rsi-editor-tabs button[aria-selected=true]{color:var(--primary-default);border-color:var(--primary-default)}
+.rsi-editor-tabs button:focus-visible,.rsi-config-button:focus-visible,.rsi-chart-config:focus-visible{outline:2px solid var(--primary-default);outline-offset:2px}
+.rsi-smoothing-inputs{display:grid;grid-template-columns:1fr 85px;align-items:center;gap:16px}
+.rsi-editor-body input[type=range]{accent-color:var(--primary-default);border:0;padding:0}
+.rsi-editor-body .rsi-original-option{display:flex;align-items:center;gap:8px}
+.rsi-original-option input{accent-color:var(--primary-default)}
+.rsi-smoothing-caption{font-size:10px;text-align:center;color:var(--foreground-dimmer)}
+.rsi-chart-title{padding-inline:40px;overflow-wrap:anywhere}
+
+/* ---- RSIMonitor look for the chart workspace: flat on the page, hairlines, one accent ---- */
+.rsi-metrics-ui{--background-default:#fff;--background-higher:#fbfaf8;--background-highest:#f4f2ee;--outline-default:#ebe8e2;--outline-dimmer:#ebe8e2;--outline-dimmest:#f1efea;--foreground-default:#1c1b19;--foreground-dimmer:#77746d;--foreground-dimmest:#a5a299;font-size:13px}
+.rsi-metrics-ui .rsi-metrics-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 0 18px;border:0}
+.rsi-metrics-ui .rsi-metrics-toolbar{flex-wrap:nowrap;align-items:flex-start}
+.rsi-metrics-ui .rsi-metrics-runs{display:flex;flex:1;min-width:0;flex-wrap:wrap;gap:6px;padding:0;border:0}
+.rsi-metrics-ui .rsi-toolbar-space{flex:1}.rsi-metrics-ui .rsi-metrics-error{font-size:12px;color:#b04a3f}
+.rsi-metrics-ui .chip{height:28px;padding:0 11px;border:1px solid #ebe8e2;border-radius:999px;font-size:12px;color:#77746d;background:#fff}
+.rsi-metrics-ui .chip:hover{color:#1c1b19;border-color:#d9d5cc}.rsi-metrics-ui .chip.active{background:#1c1b19;border-color:#1c1b19;color:#fff}
+.rsi-metrics-ui .chip:disabled{cursor:default}
+.rsi-metrics-ui .button{display:inline-flex;align-items:center;height:30px;padding:0 11px;border:1px solid #ebe8e2;border-radius:6px;background:#fff;font-size:12px;white-space:nowrap}
+.rsi-metrics-ui .button:hover{background:#f4f2ee;border-color:#d9d5cc}
+.rsi-metrics-ui .button.primary{background:#1c1b19;border-color:#1c1b19;color:#fff}.rsi-metrics-ui .button.primary:hover{background:#3a3833}
+.rsi-metrics-ui .charts-pannel{position:static;padding:0 0 8px;background:transparent;border:0}
+.rsi-metrics-ui .swan-search input{height:30px;border:1px solid #ebe8e2;border-radius:6px;background:#fff;font-size:12px}
+.rsi-metrics-ui .charts-container{padding:22px 0 26px;border-color:#ebe8e2}
+.rsi-metrics-ui .charts-container>div:first-child button{font-size:14px;font-weight:600;gap:0}
+.rsi-metrics-ui .charts-container>div:first-child button svg{position:static;width:16px;height:16px;margin-right:4px;color:#a5a299}
+.rsi-metrics-ui .rsi-group-count{margin-left:8px;font-weight:400;color:#a5a299;font-variant-numeric:tabular-nums}
+.rsi-metrics-ui .charts-slot{gap:16px;margin-top:14px}
+.rsi-metrics-ui .chart-container{border:1px solid #ebe8e2;border-radius:10px;padding:16px 16px 10px;min-height:280px}
+.rsi-metrics-ui .rsi-chart-title{padding:0 28px 0 4px;text-align:left;font-size:13px;font-weight:500}
+.rsi-metrics-ui .rsi-smoothing-caption{text-align:left;padding-left:4px}
+.rsi-metrics-ui .lc-legend{justify-content:flex-start;padding:0 4px;margin:6px 0 2px;max-height:34px;gap:3px 10px;font-size:11px}
+.rsi-metrics-ui .lc-legend-item a{color:#77746d}
+.rsi-metrics-ui .rsi-chart-config{right:10px;top:10px;width:24px;height:24px;padding:0;border:0!important;border-radius:6px;background:transparent!important;font-size:16px!important;line-height:1;color:#a5a299;opacity:0;transition:opacity .15s}
+.rsi-metrics-ui .chart-container:hover .rsi-chart-config,.rsi-metrics-ui .rsi-chart-config:focus-visible{opacity:1}
+.rsi-metrics-ui .rsi-chart-config:hover{background:#f4f2ee!important;color:#1c1b19}
+.rsi-metrics-ui .chart-panel{right:40px;top:14px}
+.rsi-metrics-ui .rsi-chart-manager{padding:0 0 18px;border:0;gap:6px}
+.rsi-metrics-ui .rsi-chart-manager>div{padding:8px 0;border-bottom:1px solid #ebe8e2}
+.rsi-metrics-ui .rsi-metrics-empty{padding:56px 0;color:#a5a299}
+.rsi-panel-editor{border:0!important;border-left:1px solid #ebe8e2!important;box-shadow:-24px 0 80px #1c1b1918}
+.rsi-panel-editor::backdrop{background:#1c1b1940}
+.rsi-panel-editor header{padding:18px 20px 14px}.rsi-panel-editor h2{font-size:16px;font-weight:600}.rsi-panel-editor header small{display:none}
+.rsi-editor-tabs{gap:20px}.rsi-editor-tabs button{padding:10px 0;font-size:13px;color:#77746d}
+.rsi-editor-tabs button[aria-selected=true]{color:#1c1b19;border-color:#1c1b19}
+.rsi-editor-body label{color:#77746d}.rsi-editor-body input:not([type=checkbox]),.rsi-editor-body select{border-radius:6px;min-height:32px;color:#1c1b19}
+.rsi-editor-body fieldset{border:0;border-top:1px solid #ebe8e2;border-radius:0;padding:16px 0 0}.rsi-editor-body legend{padding:0 8px 0 0;font-size:12px;font-weight:500;color:#1c1b19}
+.rsi-y-options{background:#fbfaf8;border:1px solid #ebe8e2;border-radius:6px}.rsi-y-options label{color:#1c1b19}
+.rsi-panel-editor footer{padding:14px 20px}

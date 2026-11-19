@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rsisys"
+version = "0.1.0"
+description = "Modular RSI framework with pluggable controllers and Lab execution environments"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{name = "RSISys contributors"}]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/satsuki2486441738/RSISys"
+Documentation = "https://github.com/satsuki2486441738/RSISys/blob/main/src/rsisys/README.md"
+Issues = "https://github.com/satsuki2486441738/RSISys/issues"
+
+[project.scripts]
+rsisys = "rsisys.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rsisys", "rsisys.*"]
+
+[project.optional-dependencies]
+ray = ["ray[default]==2.47.1"]
+langmem = ["langmem==0.0.30", "trustcall==0.0.39",
+           "langgraph==1.2.22", "langchain-core==1.8.1", "langsmith==0.15.0"]
+coding = ["harbor==0.26.0", "openai>=3.51,<4"]
+math = ["math-verify[antlr4_13_2]==0.9.0"]
+dsh = ["deepseek-harness-sdk==0.2.1rc2"]
+dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
+
+[tool.setuptools.package-data]
+"rsisys.harnesses.decision" = ["dsh.patch.yml"]
+"rsisys.harnesses.decision.feedback" = ["prompts/*.txt"]
+"rsisys.harnesses.decision.policy" = ["prompts/*.txt"]
+
+"rsisys.algorithms" = ["*/configs/*.json", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
+
+"rsisys.runtime.orchestration" = ["monitor_contract.json"]
+"rsisys.labs.scenes.coding" = ["README.md"]

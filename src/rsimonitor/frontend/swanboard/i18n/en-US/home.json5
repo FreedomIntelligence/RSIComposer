@@ -1,0 +1,29 @@
+/*
+Adapted from SwanLab-Dashboard, revision e2a7a84f49dcf18ff09c50846f5516b69093c0b9.
+Source: https://github.com/SwanHubX/SwanLab-Dashboard
+Copyright SwanLab-Dashboard contributors. SPDX-License-Identifier: Apache-2.0
+Modified for RSIMonitor: local data binding, scoped styling and host navigation.
+See the repository LICENSE for the complete Apache-2.0 terms.
+*/
+{
+  overview: {
+    create: 'Created',
+    latest: 'Latest Run',
+    total: 'Total Experiments',
+    logdir: 'Logdir'
+  },
+  list: {
+    title: 'Experiment Lists',
+    table: {
+      header: {
+        name: 'Name',
+        status: 'State',
+        create: 'Created',
+        duration: 'Runtime'
+      }
+    }
+  },
+  empty: {
+    table: 'There are no experiments, you can create one by importing SwanLog in your code.'
+  }
+}

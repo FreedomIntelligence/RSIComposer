@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "max_bytes": 4194304,
+  "max_rows": 300,
+  "max_samples": 500,
+  "max_artifacts": 300,
+  "max_logs": 400,
+  "max_metric_history": 1000,
+  "max_metric_points": 10000,
+  "max_metric_definitions": 100,
+  "max_dashboard_panels": 24,
+  "max_panel_metrics": 12,
+  "metric_units": ["number", "percent", "seconds", "tokens_per_second"],
+  "metric_directions": ["higher", "lower", "neutral"],
+  "panel_types": ["line", "scalar", "table"],
+  "panel_x": ["step", "elapsed_seconds", "evaluation"],
+  "panel_group_by": ["task", "attempt", "none"],
+  "panel_layout": {"w": [3, 12], "h": [240, 720]},
+  "private_key_pattern": "secret|password|credential|api.?key|authorization|token(?!_count)|config|prompt|response|payload|sample|dataset|training_data",
+  "count_metric_keys": ["eval_samples", "num_samples", "sample_count"]
+}

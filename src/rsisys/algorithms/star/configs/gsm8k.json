@@ -1,0 +1,63 @@
+{
+  "objective": "STaR full-text GSM8K local four-round profile",
+  "data_dir": "../../../../../runs/star-gsm8k",
+  "max_decision_steps": 18,
+  "framework": {
+    "method": {
+      "name": "star",
+      "config": {
+        "controller": {
+          "rounds": 4,
+          "plain_rounds": 2
+        },
+        "labs": {
+          "star": {
+            "base_model": "external/Qwen3.5-9B",
+            "files": {
+              "train": "data/star/train.jsonl",
+              "dev": "data/star/dev.jsonl",
+              "test": "data/star/test.jsonl"
+            },
+            "counts": {
+              "train": 1024,
+              "dev": 256,
+              "test": 512
+            },
+            "rounds": 4,
+            "plain_rounds": 2,
+            "warmup_steps": 10,
+            "seed": 17
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "executor": "local",
+    "pools": {
+      "train": {
+        "nodes": 1,
+        "gpus": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "gpus_per_node": 4
+      }
+    },
+    "placement": {
+      "star.rollout": {
+        "pool": "train",
+        "gpus": 4
+      },
+      "star.trainer": {
+        "pool": "train",
+        "gpus": 4
+      }
+    }
+  },
+  "budget": {
+    "seconds": 39600
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "objective": "Improve the fixed Qwen3.5-9B coding agent through multiple measured meta-agent harness-search rounds on the frozen SWE-bench Verified and Terminal-Bench 2.1 search subsets. Inspect persisted state, measure baseline, register and evaluate at least three distinct general coding strategies, read failure traces, and select using search evidence. Record a measured selection and finish; the host measures baseline and selected on disjoint heldout tasks with equal budgets. Report only search evidence available to the Controller. Do not train weights or claim subset results as full leaderboard scores.",
+  "data_dir": "/absolute/path/to/new-controller-attempt",
+  "max_decision_steps": 48,
+  "backends": {
+    "local": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:18500/v1",
+      "timeout_seconds": 600,
+      "json_mode": true
+    }
+  },
+  "roles": {
+    "decision_maker": {
+      "backend_id": "local",
+      "model_id": "Qwen3.8-27B",
+      "revision": "record-your-frozen-model-revision"
+    }
+  },
+  "framework": {
+    "method": {
+      "name": "coding_meta_agent",
+      "config": {
+        "controller": {
+          "memory": true,
+          "harness": "default",
+          "backend": "vllm",
+          "max_output_tokens": 4096,
+          "max_model_calls": 256,
+          "context_window": 32768
+        },
+        "labs": {
+          "coding": {
+            "experiment_dir": "/absolute/path/to/coding-experiment",
+            "manifest": "/absolute/path/to/task-manifest.json",
+            "python": "/absolute/path/to/.venv-coding/bin/python",
+            "endpoints": [
+              "http://127.0.0.1:18501/v1",
+              "http://127.0.0.1:18502/v1",
+              "http://127.0.0.1:18503/v1",
+              "http://127.0.0.1:18504/v1",
+              "http://127.0.0.1:18505/v1",
+              "http://127.0.0.1:18506/v1",
+              "http://127.0.0.1:18507/v1"
+            ],
+            "model": "Qwen3.5-9B",
+            "workers": 14,
+            "max_candidates": 5,
+            "min_candidates": 3,
+            "max_steps": 48,
+            "max_tokens": 4096,
+            "total_tokens": 98304,
+            "agent_timeout": 1800,
+            "verifier_timeout": 1800,
+            "seed": 73,
+            "thinking": false
+          }
+        }
+      }
+    }
+  }
+}

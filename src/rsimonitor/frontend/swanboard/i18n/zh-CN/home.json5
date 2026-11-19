@@ -1,0 +1,29 @@
+/*
+Adapted from SwanLab-Dashboard, revision e2a7a84f49dcf18ff09c50846f5516b69093c0b9.
+Source: https://github.com/SwanHubX/SwanLab-Dashboard
+Copyright SwanLab-Dashboard contributors. SPDX-License-Identifier: Apache-2.0
+Modified for RSIMonitor: local data binding, scoped styling and host navigation.
+See the repository LICENSE for the complete Apache-2.0 terms.
+*/
+{
+  overview: {
+    create: '创建时间',
+    latest: '最近运行时间',
+    total: '总实验数',
+    logdir: '存储路径'
+  },
+  list: {
+    title: '实验列表',
+    table: {
+      header: {
+        name: '实验名',
+        status: '状态',
+        create: '创建时间',
+        duration: '运行时间'
+      }
+    }
+  },
+  empty: {
+    table: '目前没有实验，您可以通过在代码中导入 SwanLog 来创建一个实验'
+  }
+}

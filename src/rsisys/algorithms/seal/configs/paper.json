@@ -1,0 +1,62 @@
+{
+  "objective": "SEAL paper protocol: disjoint 50-document rounds, 5 candidates, 3 inner seeds, semantic rewards",
+  "data_dir": "../../../../../runs/seal-paper",
+  "max_decision_steps": 12,
+  "framework": {
+    "method": {
+      "name": "seal",
+      "config": {
+        "controller": {
+          "initial_model": "models/Qwen2.5-7B-d1497293",
+          "train_data": [
+            "runs/seal-paper-data/train-round-1.json",
+            "runs/seal-paper-data/train-round-2.json"
+          ],
+          "eval_data": "runs/seal-paper-data/heldout.json",
+          "iterations": 2,
+          "candidates": 5
+        },
+        "labs": {
+          "seal": {
+            "profile": "paper",
+            "outer_gradient_accumulation_steps": 5,
+            "seed": 73,
+            "training_python": "/absolute/path/to/seal-env/bin/python",
+            "inference_python": "/absolute/path/to/seal-env/bin/python"
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "executor": "local",
+    "pools": {
+      "train": {
+        "nodes": 1,
+        "gpus": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "gpus_per_node": 8
+      }
+    },
+    "placement": {
+      "seal.rollout": {
+        "pool": "train",
+        "gpus": 8,
+        "timeout": 86400
+      },
+      "seal.trainer": {
+        "pool": "train",
+        "gpus": 2,
+        "timeout": 86400
+      }
+    }
+  }
+}

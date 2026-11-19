@@ -1,0 +1,26 @@
+/*
+Adapted from SwanLab-Dashboard, revision e2a7a84f49dcf18ff09c50846f5516b69093c0b9.
+Source: https://github.com/SwanHubX/SwanLab-Dashboard
+Copyright SwanLab-Dashboard contributors. SPDX-License-Identifier: Apache-2.0
+Modified for RSIMonitor: local data binding, scoped styling and host navigation.
+See the repository LICENSE for the complete Apache-2.0 terms.
+*/
+import sider from './sider.json5'
+import home from './home.json5'
+import experiment from './experiment.json5'
+import moment from './moment.json5'
+import common from './common.json5'
+import error from './error.json5'
+import chart from './chart.json5'
+import nav from './nav.json5'
+
+export default {
+  chart,
+  sider,
+  home,
+  experiment,
+  moment,
+  common,
+  error,
+  nav
+}

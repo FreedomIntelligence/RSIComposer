@@ -1,0 +1,2 @@
+{"id":"train-1","prompt":"There are 3 red balls and 5 blue balls. How many balls are there?","answer":"3 + 5 = 8.\n#### 8"}
+{"id":"train-2","prompt":"Four notebooks cost 3 dollars each. What is their total cost in dollars?","answer":"4 * 3 = 12.\n#### 12"}

@@ -1,0 +1,32 @@
+{
+  "objective": "Train the PromptPG example selector and compare three conditions on held-out TabMWP",
+  "data_dir": "../../../../../runs/promptpg-tabmwp",
+  "max_decision_steps": 400,
+  "backends": {
+    "local": {"kind": "chat_completions", "endpoint": "http://127.0.0.1:18096/v1", "json_mode": false}
+  },
+  "roles": {
+    "actor": {"backend_id": "local", "model_id": "Qwen3.5-9B", "revision": "local-readonly-base"}
+  },
+  "framework": {
+    "method": {
+      "name": "promptpg",
+      "config": {
+        "controller": {"epochs": 30, "batch_size": 20, "evaluation_batch_size": 40},
+        "labs": {
+          "tabmwp": {
+            "source_dir": "external/promptpg",
+            "encoder_path": "external/bert-base-uncased",
+            "seed": 17,
+            "train_count": 160,
+            "candidate_count": 20,
+            "test_count": 1000,
+            "learning_rate": 0.001,
+            "max_output_tokens": 512,
+            "max_model_calls": 7800
+          }
+        }
+      }
+    }
+  }
+}

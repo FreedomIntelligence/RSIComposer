@@ -1,0 +1,39 @@
+# Local environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.env
+.env.*
+!.env.example
+.venv/
+.ruff_cache/
+.pytest_cache/
+.DS_Store
+
+# Local run databases, artifacts and snapshots
+runs/
+
+# Local verification evidence and optional runtime tooling
+.local/
+
+# Generated run state (source contracts remain under src/rsisys/)
+artifacts/
+snapshots/
+workspaces/
+checkpoints/
+outputs/
+logs/
+*.sqlite3
+*.sqlite
+*.db
+
+# Explicit disposable runtime workspace (use --data-dir runtime-output/<run>)
+runtime-output/
+*.events.jsonl
+*.snapshot
+*.checkpoint
+
+# Frontend build dependencies
+node_modules/

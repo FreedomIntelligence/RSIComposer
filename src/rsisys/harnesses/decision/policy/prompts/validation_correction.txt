@@ -1,0 +1,2 @@
+Previous decision failed JSON/schema validation (error data): ${error}
+Return a corrected decision using only the documented decision kinds and fields.

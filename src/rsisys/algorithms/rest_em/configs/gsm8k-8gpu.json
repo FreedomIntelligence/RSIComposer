@@ -1,0 +1,71 @@
+{
+  "objective": "Eight-GPU ReST^EM pilot with Qwen2.5-7B Base and GSM8K",
+  "data_dir": "../../../../../runs/rest-em-gsm8k-8gpu",
+  "max_decision_steps": 12,
+  "framework": {
+    "method": {
+      "name": "rest_em",
+      "config": {
+        "controller": {
+          "initial_model": "models/Qwen2.5-7B-d1497293",
+          "train_data": "runs/gsm8k-data/train.jsonl",
+          "eval_data": "runs/gsm8k-data/dev.jsonl",
+          "iterations": 2,
+          "samples_per_prompt": 8,
+          "max_accepted_per_prompt": 4
+        },
+        "labs": {
+          "math": {
+            "engine": "vllm",
+            "model_kind": "causal_lm",
+            "prompt_format": "completion",
+            "few_shot_data": "runs/gsm8k-data/few-shot.jsonl",
+            "device": "cuda",
+            "epochs": 1,
+            "learning_rate": 2e-05,
+            "max_new_tokens": 1024,
+            "max_length": 4096,
+            "seed": 73,
+            "train_batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "gpu_memory_utilization": 0.85,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "train_gradient_checkpointing": false
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "executor": "local",
+    "pools": {
+      "train": {
+        "nodes": 1,
+        "gpus": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "gpus_per_node": 8
+      }
+    },
+    "placement": {
+      "math.rollout": {
+        "pool": "train",
+        "gpus": 8,
+        "timeout": 3600
+      },
+      "math.trainer": {
+        "pool": "train",
+        "gpus": 8,
+        "timeout": 3600
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# sdk-minimal 0.2.1rc2: external actions pass through RSISys ActionSpace.
+# Do not silently inherit sdk-minimal's unrestricted native shell/file tools.
+- id: persistent-bash
+  disabled: true
+- id: persistent-pwsh
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-working-directory
+  disabled: true
+- id: compaction-basic
+  config:
+    thresholdRatio: 0.75
+    headroomTokens: 1024
+    retainRatio: 0.16
+    maxTokens: 1024
+- id: system-prompt
+  config:
+    personaPrefix: >-
+      You are the meta-agent (decision side) in an RSI system. Choose research steps yourself.
+      Respond using the current RSISys JSON action protocol. Only the advertised
+      operations and directives are available. A completed turn proposes one
+      action; the external RunPolicy controls the overall research duration.

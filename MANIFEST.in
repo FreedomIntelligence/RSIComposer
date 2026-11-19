@@ -1,0 +1,17 @@
+include README.md README_zh.md LICENSE
+include src/rsisys/README.md src/rsimonitor/README.md
+recursive-include src/rsisys/labs/scenes README.md
+include assets/rsisys-overview.png
+include src/rsisys/runtime/orchestration/monitor_contract.json
+recursive-include src/rsisys/algorithms *.json *.jsonl *.txt README.md
+recursive-include src/rsimonitor *.py *.toml *.html *.css *.js *.json LICENSE
+recursive-include requirements *.txt
+prune recipes
+prune examples
+prune tests
+prune tools
+prune .local
+global-exclude __pycache__ *.py[cod] .DS_Store
+
+recursive-include src/rsimonitor/frontend *.vue *.js *.mjs *.json *.json5 *.css
+prune src/rsimonitor/frontend/node_modules
