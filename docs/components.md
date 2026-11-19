@@ -73,10 +73,10 @@ scoring, or framework Labs, which serve any domain.
 | `coding` | Scene | Evaluates an agent artifact on frozen coding tasks in Harbor containers | [Coding Lab guide](../src/rsisys/labs/scenes/coding/README.md) |
 | `math` | Scene | Scores an actor on development questions and a sealed 70-question benchmark | [Math Lab guide](../src/rsisys/labs/scenes/math/README.md) |
 | `self_reflection` | Framework | Builds candidate Controllers and tests them in nested runs | [Source](../src/rsisys/labs/scenes/self_reflection/lab.py) |
-| `local_process` | Framework | Runs trusted local programs as jobs | Requires `"execution": "local_process"` in the run config |
 
-The Lab template registers `template_math`, an arithmetic Lab that scores a
-model through a Chat Completions endpoint, when loaded as a plugin. The Labs of
+The [Lab template](../src/rsisys/labs/_template/README.md) registers
+`template_math` when loaded as a plugin. It is the Lab prototype: an arithmetic
+Lab whose `evaluate` operation runs either synchronously or as a background job. The Labs of
 the built-in methods are private to their methods.
 
 ## Reusable components

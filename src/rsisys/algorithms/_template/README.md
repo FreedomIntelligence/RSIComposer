@@ -8,7 +8,7 @@ changes the prompt configuration; the model weights stay fixed.
 
 | File | What to change |
 | --- | --- |
-| [`controller.py`](controller.py) | `decide()` sends `math.evaluate`, matches the receipt by `call_id`, and chooses the next candidate or finishes. `report()` selects from measured candidates. |
+| [`controller.py`](controller.py) | The Controller prototype. Its docstring lists the Policy contract. `decide()` sends `math.evaluate` (the first candidate synchronously, the rest as background jobs), matches each receipt by `call_id`, waits while a job runs, and finishes after the last candidate. `report()` selects from measured candidates. |
 | [`__init__.py`](__init__.py) | `register()` binds the Controller and a Lab factory. It resolves the template Lab through the registry so the Lab can also be used independently. Replace the factory if your method needs a different environment. |
 | [`configs/run.json`](configs/run.json) | `framework.method` selects the registered method and passes the Controller and Lab options. `backends` and `roles.actor` select the GPU model. |
 

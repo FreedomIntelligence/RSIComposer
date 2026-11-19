@@ -42,7 +42,7 @@ This example runs the method template, so it needs
 | `roles` | no | Which model fills each role: `actor` (the model a Lab uses) or `decision_maker` (the model a model-driven Controller uses). |
 | `budget` | no | Run-wide limits: `seconds`, `model_calls`, `gpu_seconds`. The host stops the run when one is reached. |
 | `resources` | no | GPU and CPU pools and their placement by role, for local or Ray execution. See `rest_em/configs/gsm8k-8gpu.json` for an example. |
-| `execution` | no | How Lab programs run: `mock` (default) or `local_process`. The `local_process` Lab requires `local_process`. |
+| `execution` | no | Process sandbox for Controller tools: `mock` (default) or `local_process` (trusted local processes, not OS isolation). |
 | `rounds` | no | Host rounds to run. Default: 1. Same as `--rounds`. |
 | `run_id`, `parent_run_id` | no | Run identity. Generated if omitted. |
 

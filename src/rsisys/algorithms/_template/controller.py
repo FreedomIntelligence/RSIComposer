@@ -1,4 +1,26 @@
-"""Search prompt and few-shot choices using measured development scores."""
+"""Controller prototype: copy this file to build your own Controller.
+
+A Controller decides what to try next and which result to keep. Its Policy is an
+object with decide(window) -> Decision. This one searches prompt and few-shot
+settings using measured development scores, and shows each part of the Policy
+contract:
+
+  Required
+    decide(window)          Read new receipts in window.feedbacks and return a
+                            Decision: invoke operations, wait, or finish.
+
+  Optional, recognized by the host when present
+    required_operations()   Lab operations this Controller needs; checked at startup.
+    report()                Summary written to result.json as controller_report.
+    state(), restore()      Save and reload Policy state for durable runs.
+
+The factory receives (context, config). context.lab_catalog describes the Labs;
+config is this Controller's section of the run config.
+
+The first candidate is evaluated synchronously and the rest as background jobs,
+so one run shows both receipt paths. While a job runs, its call ID is in
+window.pending and this Controller returns Decision('wait').
+"""
 from rsisys.api import Decision, ExecutionStatus, OperationCall
 
 
@@ -31,7 +53,8 @@ class PromptSearchController:
         if self.pending is not None:
             receipt = next((item for item in window.feedbacks if item.call_id == self.pending.call_id), None)
             if receipt is None:
-                raise ValueError('Expected a matching Lab receipt')
+                # A background job is still running; its call ID is in window.pending.
+                return Decision('wait', reason='Waiting for the evaluation job')
             self.pending = None
             if receipt.status != ExecutionStatus.COMPLETED:
                 self.status = receipt.status.value
@@ -40,7 +63,9 @@ class PromptSearchController:
         if len(self.results) == self.limit:
             self.status = 'completed'
             return Decision('finish', reason='All prompt candidates evaluated')
-        self.pending = OperationCall('math.evaluate', {'split': 'dev', **CANDIDATES[len(self.results)]})
+        background = len(self.results) > 0  # Baseline runs synchronously, later candidates as jobs.
+        self.pending = OperationCall('math.evaluate', {
+            'split': 'dev', **CANDIDATES[len(self.results)], 'background': background})
         return Decision.invoke(self.pending)
 
     def report(self):

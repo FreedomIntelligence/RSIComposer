@@ -55,27 +55,6 @@ class Registry:
             register_coding(self)
             from .labs.scenes.self_reflection import register as register_self_reflection
             register_self_reflection(self)
-            self.register_lab('local_process', self._local_lab, version='1', validate_config=self._local_config)
-
-    @staticmethod
-    def _local_config(config):
-        from rsisys.runtime.orchestration.run_policy import positive
-        allowed = {'timeout_seconds', 'max_jobs', 'max_parallel', 'max_file_bytes', 'max_poll_wait_seconds'}
-        if set(config) - allowed:
-            raise ValueError('Unknown local_process Lab option')
-        for key, value in config.items():
-            if key in {'max_jobs', 'max_parallel', 'max_file_bytes'}:
-                if type(value) is not int or value < 1:
-                    raise ValueError(f'{key} must be a positive integer')
-            else:
-                positive(value, key)
-
-    @staticmethod
-    def _local_lab(context, config):
-        from rsisys.labs.local_process.lab import LocalProcessLab
-        if context.execution != 'local_process':
-            raise ValueError('local_process Lab requires host execution=local_process')
-        return LocalProcessLab(context.sandbox, context.artifacts, **config)
 
     @staticmethod
     def _register(catalog, name, factory, version, validate_config):

@@ -1,5 +1,9 @@
 # GPU Lab template: connect a dataset and a benchmark
 
+This is the Lab prototype: copy it to build a Lab. The docstring in
+[`lab.py`](lab.py) lists the Lab contract, which methods are required, and which
+are optional.
+
 The [arithmetic Lab](lab.py) implements `evaluate` using GPU inference.
 `few_shot` controls how many rows from `train` appear in the prompt. The Lab
 scores the model's answers on `dev`. The template keeps model weights fixed.
@@ -28,6 +32,25 @@ CUDA_VISIBLE_DEVICES=0 vllm serve "$MODEL_DIR" \
 Leave the server running in a separate terminal. The template configs already
 point to this endpoint and model name. Replace `local-snapshot` in the config
 with the actual model revision. Adjust the memory limit for your GPU and model.
+
+## Synchronous and asynchronous operations
+
+Both use the same `execute(call)` method; only the return value differs.
+
+| `execute()` returns | Meaning | The host then |
+| --- | --- | --- |
+| `OperationResult` | The work is done | Delivers the receipt at once |
+| `JobRef` | The work continues | Calls `poll_job(job)` until it returns a terminal `JobOutcome`, then delivers that outcome's receipt |
+
+The template's `evaluate` accepts `"background": true` to run as a job, and each
+`poll_job()` call scores one batch. While a job runs, its call ID is in the
+Controller's `window.pending`; the template Controller returns
+`Decision('wait')`. An asynchronous Lab also implements `cancel_job(job)` and,
+for durable runs, `reattach_job(job)` and job state in `state()`.
+
+Use a job for work that outlives one call, such as training or a long
+evaluation. In a real Lab, `execute()` usually starts a process or cluster job
+and `poll_job()` checks it.
 
 ## Copy and configure the Lab
 
