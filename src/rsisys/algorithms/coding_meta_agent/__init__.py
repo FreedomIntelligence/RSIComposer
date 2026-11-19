@@ -4,7 +4,7 @@ from .lab import CodingSearchLab
 from rsisys.algorithms.meta_agent.controller import (
     build_harness_research, validate_harness_research,
 )
-from rsisys.algorithms.meta_agent import _harness
+from rsisys.algorithms.meta_agent import _memory
 
 PROMPT = '''<role>
 You are the 27B RSI meta-agent optimizing a fixed 9B coding agent. Use the runtime
@@ -66,7 +66,7 @@ def build(context, execution, config):
 
 def register(registry):
     registry.register_method('coding_meta_agent', MethodDefinition.from_factories(
-        controller=ControllerDefinition(build, harness=_harness, endpoint=True),
+        controller=ControllerDefinition(build, memory=_memory, endpoint=True),
         labs={'coding': CodingSearchLab}, version='3',
         validate_controller=validate_harness_research,
         validate_labs={'coding': CodingSearchLab.validate_config}))

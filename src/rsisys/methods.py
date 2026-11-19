@@ -74,24 +74,31 @@ class MethodIdentity:
 
 @dataclass(frozen=True)
 class ControllerDefinition:
-    """A Controller: its decision policy plus an optional harness.
+    """A Controller: a Policy, plus an optional Harness and Memory.
 
-    policy(context, config) returns a DecisionPolicy. With endpoint=True,
-    policy(context, execution, config) returns an assembled decision endpoint.
-    harness(config) returns a HarnessAssembly or None; it only describes memory
-    and feedback products, which the host installs once the loop is built.
+    policy(context, config) returns a DecisionPolicy.
+    harness(context, config) returns a ControllerHarness that builds the Policy's
+    input window and supplies Controller-local tools, or None for the default.
+    memory(config) returns a MemoryAssembly or None: the Controller Memory and
+    feedback products, which the host installs once the loop is built.
+    With endpoint=True, policy(context, execution, config) instead returns an
+    assembled decision endpoint that owns its Harness; harness must be omitted.
     """
     policy: Callable
-    harness: Callable | None = None
+    memory: Callable | None = None
     endpoint: bool = False
+    harness: Callable | None = None
 
     def __post_init__(self):
         if not callable(self.policy):
             raise TypeError('Controller policy factory must be callable')
-        if self.harness is not None and not callable(self.harness):
-            raise TypeError('Controller harness factory must be callable')
+        for name in ('memory', 'harness'):
+            if getattr(self, name) is not None and not callable(getattr(self, name)):
+                raise TypeError(f'Controller {name} factory must be callable')
         if type(self.endpoint) is not bool:
             raise TypeError('endpoint must be boolean')
+        if self.endpoint and self.harness is not None:
+            raise ValueError('An endpoint factory builds its own Harness; omit harness')
 
 
 @dataclass(frozen=True)
@@ -100,6 +107,7 @@ class _FactoryDefinition:
     version: str
     validate_config: object = None
     endpoint: bool = False
+    memory: object = None
     harness: object = None
 
     def validate(self, config):
@@ -145,7 +153,8 @@ class MethodDefinition:
                 raise ValueError('Lab aliases must be simple names without dots')
             definitions[alias] = _FactoryDefinition(factory, version, validate_labs.get(alias))
         policy = _FactoryDefinition(controller.policy, version, validate_controller,
-                                    endpoint=controller.endpoint, harness=controller.harness)
+                                    endpoint=controller.endpoint, memory=controller.memory,
+                                    harness=controller.harness)
         for definition in (policy, *definitions.values()):
             if not callable(definition.factory):
                 raise TypeError('Method component factories must be callable')

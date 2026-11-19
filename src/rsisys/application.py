@@ -104,7 +104,7 @@ class Application:
         if not isinstance(modules, ModuleAssembly):
             raise TypeError('modules must be a ModuleAssembly')
         has_lab = modules.has_port('lab')
-        harness = modules.harness
+        memory = modules.memory
         module_layout = modules.configuration()
         if modules.method_identity is not None:
             if durable and recovery_contract is None and modules.state_factory is None:
@@ -112,9 +112,9 @@ class Application:
         if modules.components is not None:
             if durable and recovery_contract is None and modules.state_factory is None:
                 raise TypeError('Components require explicit state_factory or recovery_contract for durable=True')
-        if harness is not None:
+        if memory is not None:
             if durable and recovery_contract is None and modules.state_factory is None:
-                raise ValueError('A controller harness requires an explicit recovery_contract for durable=True')
+                raise ValueError('Controller Memory requires an explicit recovery_contract for durable=True')
         if action_permissions is not None and not isinstance(action_permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         if type(durable) is not bool:
@@ -161,8 +161,8 @@ class Application:
                 if (root / 'lab_execution.json').exists() and (
                         not has_lab or (recovery_contract is None and modules.state_factory is None)):
                     raise TypeError('Lab execution requires explicit recovery integration; automatic restore is unsupported')
-                if (root / 'research_assembly.json').exists() and harness is None:
-                    raise ValueError('Supply the original controller harness when restoring this workspace')
+                if (root / 'research_assembly.json').exists() and memory is None:
+                    raise ValueError('Supply the original Controller Memory when restoring this workspace')
                 modules.validate_saved(root)
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:

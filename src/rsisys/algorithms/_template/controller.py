@@ -32,9 +32,16 @@ CANDIDATES = (
 
 
 def validate_config(config):
+    # harness and memory select the optional prototypes registered in __init__.py.
     limit = config.get('max_evaluations', len(CANDIDATES))
-    if set(config) - {'max_evaluations'} or type(limit) is not int or not 1 <= limit <= len(CANDIDATES):
+    if set(config) - {'max_evaluations', 'harness', 'memory', 'scoreboard_rows'}:
+        raise ValueError('Unknown template Controller option')
+    if type(limit) is not int or not 1 <= limit <= len(CANDIDATES):
         raise ValueError(f'max_evaluations must be between 1 and {len(CANDIDATES)}')
+    if config.get('harness', 'default') not in ('default', 'scoreboard'):
+        raise ValueError('harness must be default or scoreboard')
+    if config.get('memory', 'none') not in ('none', 'best_score'):
+        raise ValueError('memory must be none or best_score')
 
 
 class PromptSearchController:

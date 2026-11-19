@@ -171,7 +171,7 @@ class ModuleAssembly:
 
     decision_factory: DecisionFactory | None = None
     lab_factory: LabExecutionFactory | None = None
-    harness: object = None
+    memory: object = None
     state_factory: Callable | None = None
     components: ComponentGraph | None = None
     component_bindings: Mapping = field(default_factory=dict)
@@ -232,10 +232,10 @@ class ModuleAssembly:
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f'{name} must be callable')
-        if self.harness is not None:
-            from rsisys.research import HarnessAssembly
-            if not isinstance(self.harness, HarnessAssembly):
-                raise TypeError('harness must be a HarnessAssembly')
+        if self.memory is not None:
+            from rsisys.research import MemoryAssembly
+            if not isinstance(self.memory, MemoryAssembly):
+                raise TypeError('memory must be a MemoryAssembly')
 
     @classmethod
     def from_components(cls, components, *, decision, lab=None, **options):
@@ -305,7 +305,7 @@ class ModuleAssembly:
     def configuration(self):
         """Stable assembly identity, shared by durable and portable restore."""
         layout = {role + '_factory': self.has_port(role) for role in ('decision', 'lab')}
-        layout.update(harness=self.harness is not None, state_factory=self.state_factory is not None)
+        layout.update(memory=self.memory is not None, state_factory=self.state_factory is not None)
         if self.components is not None:
             layout['components'] = self.component_configuration()
         if self.method_identity is not None:
@@ -316,6 +316,7 @@ class ModuleAssembly:
         if self.controller_catalog:
             layout['controller_catalog'] = {name: {
                 'policy': _factory_identity(item.policy),
+                'memory': _factory_identity(item.memory) if item.memory else None,
                 'harness': _factory_identity(item.harness) if item.harness else None,
                 'endpoint': item.endpoint,
             } for name, item in sorted(self.controller_catalog.items())}
@@ -352,12 +353,13 @@ def _build_policy_assembly(controller, options, selected_labs):
 
     def decision_factory(context, execution):
         from rsisys.host.lifecycle import build_controller, initial_controller_version
-        definition = ControllerDefinition(controller.factory, harness=controller.harness, endpoint=controller.endpoint)
+        definition = ControllerDefinition(controller.factory, memory=controller.memory,
+                                          endpoint=controller.endpoint, harness=controller.harness)
         selection = {'name': 'current', 'config': deepcopy(options)}
         override = getattr(context, '_initial_controller_version', None)
         version = override or initial_controller_version(selection, context.roles.get('decision_maker'))
         params = options
-        initial_harness = getattr(context, '_initial_harness', None)
+        initial_memory = getattr(context, '_initial_memory', None)
         if override is not None:
             if version.config['name'] not in context._controller_catalog:
                 raise ValueError('Initial version selects an unavailable Controller')
@@ -366,20 +368,21 @@ def _build_policy_assembly(controller, options, selected_labs):
             validator = context._controller_validators.get(version.config['name'])
             if validator is not None and validator(deepcopy(params)) is not None:
                 raise TypeError('Controller validators must return None')
-            if definition.harness is not None:
-                initial_harness = None
-        instance = build_controller(context, definition, params, version, initial=True, harness=initial_harness)
+            if definition.memory is not None:
+                initial_memory = None
+        instance = build_controller(context, definition, params, version, initial=True, memory=initial_memory)
         context.add_owned_cleanup(instance.close)
         context._initial_controller_instance = instance
         context._initial_controller_version = version
         return instance.endpoint
 
-    harness = controller.harness(deepcopy(options)) if controller.harness is not None else None
+    memory = controller.memory(deepcopy(options)) if controller.memory is not None else None
     from rsisys.method_state import method_state_factory
-    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory, harness=harness,
+    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory, memory=memory,
                           state_factory=method_state_factory,
                           controller_catalog={'current': ControllerDefinition(controller.factory,
-                              harness=controller.harness, endpoint=controller.endpoint)},
+                              memory=controller.memory, endpoint=controller.endpoint,
+                              harness=controller.harness)},
                           controller_selection={'name': 'current', 'config': deepcopy(options)},
                           controller_validators=({'current': controller.validate_config}
                               if controller.validate_config is not None else {}))
@@ -487,7 +490,7 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         context.components = modules.components.build(context, bindings=modules.component_bindings)
     context._controller_catalog = dict(modules.controller_catalog)
     context._controller_validators = dict(modules.controller_validators)
-    context._initial_harness = modules.harness
+    context._initial_memory = modules.memory
     if modules.controller_catalog:
         from rsisys.host.lifecycle import controller_capabilities
         context._host_capabilities = controller_capabilities(lambda arguments: context.controller_host.request(arguments))
@@ -523,8 +526,8 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     if context.method_identity is not None:
         from rsisys.methods import validate_method_ports
         validate_method_ports(decision, context.lab_execution)
-    if modules.harness is not None and not hasattr(context, '_initial_controller_instance'):
-        modules.harness.install(decision, owner=context, path=context.data_dir / 'feedback_learning.json'
+    if modules.memory is not None and not hasattr(context, '_initial_controller_instance'):
+        modules.memory.install(decision, owner=context, path=context.data_dir / 'feedback_learning.json'
                                           if context.data_dir is not None else None)
     if hasattr(context, '_initial_controller_instance'):
         from rsisys.host.lifecycle import ControllerEndpoint, build_controller
@@ -538,8 +541,8 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
             if validator is not None and validator(deepcopy(options)) is not None:
                 raise TypeError('Controller validators must return None')
             definition = context._controller_catalog[name]
-            inherited = modules.harness if definition.harness is None and name == 'current' else None
-            return build_controller(context, definition, options, version, harness=inherited)
+            inherited = modules.memory if definition.memory is None and name == 'current' else None
+            return build_controller(context, definition, options, version, memory=inherited)
         host = ControllerHost(context, initial, context._initial_controller_version, construct_version,
                               activator=modules.controller_activator, learner=modules.controller_learner)
         context.add_owned_cleanup(host.close)

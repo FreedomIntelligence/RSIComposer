@@ -79,7 +79,7 @@ _EXPORTS = {
     'ControllerDefinition': ('rsisys.methods', 'ControllerDefinition'),
     'StatefulPolicy': ('rsisys.method_state', 'StatefulPolicy'),
     'StatefulLab': ('rsisys.method_state', 'StatefulLab'),
-    'HarnessAssembly': ('rsisys.research', 'HarnessAssembly'),
+    'MemoryAssembly': ('rsisys.research', 'MemoryAssembly'),
     'ModuleAssembly': ('rsisys.assembly', 'ModuleAssembly'),
     'RSIMethod': ('rsisys.methods', 'RSIMethod'),
     'Registry': ('rsisys.registry', 'Registry'),
@@ -305,7 +305,7 @@ if _TYPE_CHECKING:
     from rsisys.method_state import StatefulLab as StatefulLab, StatefulPolicy as StatefulPolicy
     from rsisys.registry import Registry as Registry
     from rsisys.harnesses.decision.langmem import LangMemMemory as LangMemMemory
-    from rsisys.research import HarnessAssembly as HarnessAssembly, ResearchAssembly as ResearchAssembly
+    from rsisys.research import MemoryAssembly as MemoryAssembly, ResearchAssembly as ResearchAssembly
     from rsisys.runtime.execution.isolation import (
         ExecutionPolicy as ExecutionPolicy,
         ProcessIsolation as ProcessIsolation,

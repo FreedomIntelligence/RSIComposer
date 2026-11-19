@@ -53,3 +53,28 @@ def build_default_decision(context, execution, *, policy=None):
     return DecisionMakingLoop(policy, harness, parts.action_space,
         host_execution=owner.host_execution, lab_execution=execution, model=model,
         model_scope=models.scope if native else None)
+
+
+def build_harness_decision(context, execution, *, policy, harness):
+    """Run a Policy with a user-supplied ControllerHarness.
+
+    The action space is the Lab operations plus the Harness's own tools. Lab
+    calls go to the Lab; every other name goes to harness.execute_tool().
+    """
+    from rsisys.loops.decision_making.action_space.capabilities import Capability
+    owner = controller_wiring(context)
+    for port in ('window', 'observe', 'tools', 'execute_tool'):
+        if not callable(getattr(harness, port, None)):
+            raise TypeError(f'ControllerHarness requires {port}()')
+    local = tuple(harness.tools())
+    tools = LabExecutionTools(execution, extra_definitions=tuple(
+        Capability.from_spec(spec, lambda arguments, name=spec.name: _local_call(name, arguments),
+                             lambda arguments: None).definition for spec in local))
+    space = ModularDecisionActionSpace(tools.definitions, permissions=owner.action_permissions)
+    return DecisionMakingLoop(policy, harness, space, host_execution=owner.host_execution,
+                              lab_execution=execution, model=context.roles.get('decision_maker'))
+
+
+def _local_call(name, arguments):
+    from rsisys.loops.contracts.decision import OperationCall
+    return OperationCall(name, arguments)

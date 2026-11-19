@@ -16,8 +16,9 @@ class ControllerHarness(Protocol):
     window, and freeze_decision_metadata(policy, decision_id),
     admit_decision_metadata(decision, requested, records), and
     validate_execution_records(records) to own domain metadata semantics.
-    HarnessAssembly owns Memory and feedback integration independently; those
-    services never require extra attributes on a four-port Harness.
+    MemoryAssembly owns Memory and feedback integration independently; those
+    services never require extra attributes on a four-port Harness. Supply a
+    Harness through ControllerDefinition(policy, harness=factory).
     """
     def window(self, objective: str, capabilities: tuple[dict, ...],
                feedback: tuple['OperationResult', ...]) -> 'DecisionInput': ...

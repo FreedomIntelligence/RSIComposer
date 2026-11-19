@@ -163,19 +163,39 @@ To write a Lab, start from the [Lab template](../src/rsisys/labs/_template/READM
 
 ## Add Memory or a custom Harness
 
-Memory and Harness apply to Controllers whose Policy is a model, such as
-`ModelDecisionPolicy`. Declare them in a `ControllerDefinition`:
+A Controller is a Policy plus two optional parts, each with its own factory:
+
+| Part | Factory | What it does |
+| --- | --- | --- |
+| Harness | `harness(context, config)` | Builds the Policy's `DecisionInput` and supplies local tools |
+| Memory | `memory(config)` | Turns recorded evidence into text context |
+
+Omit either one to use the default. Pass them to `ControllerDefinition`:
 
 ```python
-from rsisys.api import ControllerDefinition, HarnessAssembly, ResearchAssembly
+from rsisys.api import ControllerDefinition, MemoryAssembly, ResearchAssembly
 
-def harness(config):
-    return HarnessAssembly(ResearchAssembly(context_memory=MyMemory()))
+def harness(context, config):
+    return MyHarness(context, config)
 
-controller = ControllerDefinition(build_policy, harness=harness, endpoint=True)
+def memory(config):
+    return MemoryAssembly(ResearchAssembly(context_memory=MyMemory()))
+
+controller = ControllerDefinition(build_policy, harness=harness, memory=memory)
 ```
 
 `MyMemory` implements [`ControllerMemory`](../src/rsisys/loops/contracts/feedback_context.py);
 `LangMemMemory` is a ready-made option (`.[langmem]`). The
-[`meta_agent` registration](../src/rsisys/algorithms/meta_agent/__init__.py)
-shows a complete model-driven Controller with Memory.
+[method template](../src/rsisys/algorithms/_template/README.md) includes a
+working [Harness](../src/rsisys/algorithms/_template/harness.py) and
+[Memory](../src/rsisys/algorithms/_template/memory.py) that both run with it;
+select them with `"harness": "scoreboard"` and `"memory": "best_score"` in the
+Controller config.
+
+Two things to know:
+
+- **A custom Harness replaces the default one**, including its Memory
+  integration. If you want Memory, keep the default Harness unless your Harness
+  adds memory text to `window.context` itself.
+- **Memory needs a `decision_maker` role** in the run config, because the host
+  attributes memory observations to it.

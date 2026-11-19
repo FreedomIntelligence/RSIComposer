@@ -115,9 +115,10 @@ def _context(owner, version, *, initial, endpoint):
     return local, scope(local, owner)
 
 
-def build_controller(owner, definition, options, version, *, initial=False, harness=None):
+def build_controller(owner, definition, options, version, *, initial=False, memory=None):
     """Rebuild a catalog-selected policy, harness and Memory with local ownership."""
     from rsisys.assembly import build_default_decision
+    from rsisys.harnesses.defaults import build_harness_decision
     local, scoped = _context(owner, version, initial=initial, endpoint=definition.endpoint)
     try:
         if definition.endpoint:
@@ -129,7 +130,11 @@ def build_controller(owner, definition, options, version, *, initial=False, harn
                 local.add_owned_cleanup(close)
             if not callable(policy) and optional_method(policy, 'decide') is None:
                 raise TypeError('Controller factory must return a policy or explicit endpoint')
-            endpoint = build_default_decision(scoped, owner.lab_execution, policy=policy)
+            custom = definition.harness(scoped, deepcopy(options)) if definition.harness is not None else None
+            if custom is not None:
+                endpoint = build_harness_decision(scoped, owner.lab_execution, policy=policy, harness=custom)
+            else:
+                endpoint = build_default_decision(scoped, owner.lab_execution, policy=policy)
         endpoint.controller_version = local._controller_version
         endpoint.model_scope = scoped.models.scope
         close = optional_method(endpoint.harness, 'close')
@@ -151,10 +156,10 @@ def build_controller(owner, definition, options, version, *, initial=False, harn
             available = {spec.name for spec in owner.lab_execution.describe()}
             if set(names) - available:
                 raise ValueError('Controller requires missing Lab operations: ' + ', '.join(sorted(set(names) - available)))
-        if harness is None and definition.harness is not None:
-            harness = definition.harness(deepcopy(options))
-        if harness is not None:
-            harness.install(endpoint, owner=local,
+        if memory is None and definition.memory is not None:
+            memory = definition.memory(deepcopy(options))
+        if memory is not None:
+            memory.install(endpoint, owner=local,
                 path=local.data_dir / 'feedback_learning.json' if local.data_dir is not None else None)
         return BuiltController(endpoint, local)
     except BaseException as error:

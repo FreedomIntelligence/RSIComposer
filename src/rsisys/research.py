@@ -147,8 +147,8 @@ class ResearchAssembly:
 
 
 @dataclass(frozen=True)
-class HarnessAssembly:
-    """A Controller's harness integration: memory and feedback products for its decision loop.
+class MemoryAssembly:
+    """A Controller's Memory integration: memory and feedback products for its decision loop.
 
     research describes the products; backend optionally overrides the model used by
     feedback stages; adapter_factory(harness) supplies an explicit feedback adapter
@@ -162,7 +162,7 @@ class HarnessAssembly:
 
     def __post_init__(self):
         if not isinstance(self.research, ResearchAssembly):
-            raise TypeError('HarnessAssembly.research must be a ResearchAssembly')
+            raise TypeError('MemoryAssembly.research must be a ResearchAssembly')
         if self.adapter_factory is not None and not callable(self.adapter_factory):
             raise TypeError('adapter_factory must be callable')
         if not isinstance(self.options, dict):

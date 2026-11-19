@@ -47,6 +47,7 @@ def build_nested_manifest(controller, labs, host_config, *, catalog=None, inheri
     definition = None
     if isinstance(controller, ControllerDefinition):
         definition = {'policy': _factory_manifest(controller.policy),
+                      'memory': _factory_manifest(controller.memory),
                       'harness': _factory_manifest(controller.harness), 'endpoint': controller.endpoint}
         version = ControllerVersion('nested-initial', {'name': 'nested_python', 'config': {}})
     else:
@@ -86,7 +87,8 @@ def _build_modules(manifest):
     if manifest['definition'] is not None:
         raw = manifest['definition']
         definition = ControllerDefinition(_load_factory(raw['policy']),
-            _load_factory(raw['harness']) if raw['harness'] else None, raw['endpoint'])
+            memory=_load_factory(raw['memory']) if raw['memory'] else None, endpoint=raw['endpoint'],
+            harness=_load_factory(raw['harness']) if raw['harness'] else None)
     elif version.config['name'] == 'current':
         definition = original.controller_catalog['current']
     elif version.config['name'] in registry._controllers:
