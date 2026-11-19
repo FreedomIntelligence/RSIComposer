@@ -9,7 +9,7 @@
 
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 
-<p align="center"><a href="#framework-overview">Overview</a> · <a href="#news">News</a> · <a href="#highlights">Highlights</a> · <a href="#getting-started">Getting started</a> · <a href="#adapted-methods">Methods</a> · <a href="#citation">Citation</a></p>
+<p align="center"><a href="#framework-overview">Overview</a> · <a href="#news">News</a> · <a href="#highlights">Highlights</a> · <a href="#getting-started">Getting started</a> · <a href="docs/README.md">Docs</a> · <a href="#adapted-methods">Methods</a> · <a href="#citation">Citation</a></p>
 
 RSISys runs recursive self-improvement (RSI) experiments as a loop. A Controller decides what to try next, Labs run the experiments and return receipts, and the Controller reads the evidence to choose its next step or the candidate to adopt. Prompt search, harness search, supervised fine-tuning and reinforcement learning share this loop, so you can swap a Controller, reuse a Lab, or add a method without changing the core.
 
@@ -33,7 +33,7 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 
 ## Getting started
 
-Clone the repository and install it with Python 3.12 or 3.13 on Linux or macOS. The core has no third-party dependencies; install [optional extras](pyproject.toml) for the components your method uses.
+Install with Python 3.12 or 3.13 on Linux or macOS. The core has no third-party dependencies; methods list their [optional extras](docs/components.md#methods).
 
 ```sh
 git clone https://github.com/satsuki2486441738/RSISys.git
@@ -41,27 +41,32 @@ cd RSISys
 python -m pip install -e .
 ```
 
-**Run a first GPU experiment.** [Start or configure a GPU model endpoint](src/rsisys/labs/_template/README.md#connect-a-gpu-model), then run prompt search against the arithmetic Lab. Results are written to `runs/gpu-quickstart/result.json`; use a new `--data-dir` for each run.
+**Run a first experiment without a GPU.** This runs two ReST^EM rounds on fixture data with a simulated model. It checks the installation and shows what a run produces.
+
+```sh
+rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json --data-dir runs/quickstart
+```
+
+**Run with a GPU model.** [Start a Chat Completions endpoint](src/rsisys/labs/_template/README.md#connect-a-gpu-model), then run the method template, which searches prompt and few-shot settings:
 
 ```sh
 rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
-  --config src/rsisys/algorithms/_template/configs/run.json \
-  --data-dir runs/gpu-quickstart
+  --config src/rsisys/algorithms/_template/configs/run.json --data-dir runs/gpu-quickstart
 ```
 
-**Watch the run.** RSIMonitor is an optional read-only dashboard. It shows the decision graph, metrics, samples and logs, and compares experiments.
+The [Quickstart](docs/quickstart.md) explains how to read the results, watch runs in RSIMonitor, and resume interrupted runs.
 
-```sh
-python -m pip install ./src/rsimonitor
-rsimonitor --runs-dir runs    # then open http://127.0.0.1:8765/
-```
+## Documentation
 
-## Guides
-
-- [Reproduce an existing method](src/rsisys/README.md#reproduce-an-existing-method)
-- [Write or customize a method](src/rsisys/README.md#define-a-method)
-- [Define a Lab or connect a benchmark or dataset](src/rsisys/README.md#define-a-lab-or-connect-data)
-- [Inspect and compare runs with RSIMonitor](src/rsimonitor/README.md)
+| I want to… | Read |
+| --- | --- |
+| Learn the terms: Controller, Lab, operation, receipt, split | [Concepts](docs/concepts.md) |
+| See the built-in methods, Controllers, Labs, and components | [Components](docs/components.md) |
+| Run a Controller on a different Lab, or load my own Controller | [Compose a system](docs/compose.md) |
+| Write a new method | [Method template](src/rsisys/algorithms/_template/README.md) |
+| Write a Lab or connect my own benchmark | [Lab template](src/rsisys/labs/_template/README.md) |
+| Look up a config field or CLI option | [Run configuration](docs/config.md) |
+| Inspect and compare runs | [RSIMonitor](src/rsimonitor/README.md) |
 
 ## Adapted methods
 
@@ -74,13 +79,13 @@ rsimonitor --runs-dir runs    # then open http://127.0.0.1:8765/
 | Harness search | [RRSI](https://arxiv.org/abs/2609.24972) · Meta-Agent · [Coding Meta-Agent](src/rsisys/algorithms/coding_meta_agent/README.md) | A model proposes harness changes | An agent solves tasks with the candidate harness | Agent harness |
 | Reflection | [Reflexion](https://arxiv.org/abs/2303.11366) | Decides when to retry | The same agent writes code, runs tests and reflects on failures | Its own reflections (unified) |
 | Research agents | [AIDE](https://github.com/WecoAI/aideml) · [FT-Agent](https://github.com/microsoft/RD-Agent) | The upstream agent drafts, debugs and selects solutions | Candidate programs and fine-tuning jobs run | Solutions and fine-tuned models |
-| Self-reflection | Self-Reflection Lab | The current Controller | Candidate Controllers run in nested experiments | The Controller itself |
+| Self-reflection | [Self-Reflection Lab](src/rsisys/labs/scenes/self_reflection/lab.py) (a Lab, paired with a Controller) | The current Controller | Candidate Controllers run in nested experiments | The Controller itself |
 
-Run `rsisys catalog` to list the registered methods. For each method’s benchmark, model and training setup, see the [reproduction guide](src/rsisys/README.md#reproduce-an-existing-method).
+Run `rsisys catalog` to list the registered methods. [Components](docs/components.md#methods) lists each method's presets, hardware, and dependencies. Guides exist for ReST^EM, GEPA, and Coding Meta-Agent; the other methods have presets but no guide yet. A preset is a starting point, not a verified reproduction of the paper.
 
 ## Contributing
 
-Start with the [GPU method template](src/rsisys/algorithms/_template/) or the [Lab template](src/rsisys/labs/_template/). For a new method or Lab, include a runnable configuration and the source of any upstream adaptation. Import framework interfaces from `rsisys.api`.
+Start with the [method template](src/rsisys/algorithms/_template/) or the [Lab template](src/rsisys/labs/_template/), and see [Compose a system](docs/compose.md) for plugins. For a new method or Lab, include a runnable configuration, state which results it has been checked against, and cite the source of any upstream adaptation. Import framework interfaces from `rsisys.api`.
 
 ## Citation
 
