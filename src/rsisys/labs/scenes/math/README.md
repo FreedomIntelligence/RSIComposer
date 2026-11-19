@@ -2,8 +2,8 @@
 
 `math` is a reserved Lab name in the registry. The placeholder in
 [`lab.py`](lab.py) can be assembled with an empty config, but publishes no
-operations and produces no measurements. Existing methods continue to use
-their own Labs.
+operations and produces no measurements. ReST^EM and STaR will run on this Lab
+once it is implemented; until then they use method-private Labs.
 
 Implement the shared math task environment in `MathLab`. Choose the operation
 contract and primary metric when wiring the first consumer, and bump the

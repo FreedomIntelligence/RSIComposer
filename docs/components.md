@@ -16,8 +16,8 @@ require; check the preset before running it.
 
 | Method | Presets | Needs | Guide |
 | --- | --- | --- | --- |
-| `rest_em` | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsisys/algorithms/rest_em/README.md) |
-| `star` | `gsm8k` | 4 GPUs, local base model, GSM8K files | — |
+| `rest_em`¹ | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsisys/algorithms/rest_em/README.md) |
+| `star`¹ | `gsm8k` | 4 GPUs, local base model, GSM8K files | — |
 | `ttrl` | `8gpu` | 8 GPUs, local base model | — |
 | `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
@@ -32,6 +32,9 @@ require; check the preset before running it.
 | `reflexion` | `control`, `reflection` | Model endpoint, HumanEval files | — |
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
 | `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs | — |
+
+¹ ReST^EM and STaR will run on the shared [math Lab](../src/rsisys/labs/scenes/math/README.md)
+once it is implemented. Until then each uses its own method-private Lab.
 
 A preset is a starting configuration, not a verified reproduction. Datasets are
 not included; prepare the files that each preset names. A dash in the Guide
@@ -51,31 +54,30 @@ Matching a paper's numbers also requires its full protocol and benchmark.
 
 ## Controllers
 
-These Controllers are registered on their own, so a run config can pair them
-with any compatible Lab.
-
-| Name | What it does | Config |
-| --- | --- | --- |
-| `single_loop` | Calls one Lab operation a fixed number of times and stops on failure. Use it to schedule a pipeline that the Lab implements. | `operation`, `iterations`, `arguments`, `stop_on_failure` |
-| `rest_em` | Runs ReST^EM rounds: evaluate the baseline, then generate, filter, train, and evaluate. | `initial_model`, `train_data`, `eval_data`, `iterations`, `samples_per_prompt`, `max_accepted_per_prompt` |
-| `star` | Runs STaR rounds against the `star` Lab. | `rounds`, `plain_rounds` |
+`single_loop` is registered on its own, so a run config can pair it with any
+Lab. It calls one Lab operation a fixed number of times and stops on failure;
+use it to schedule a pipeline that the Lab implements. Its options are
+`operation`, `iterations`, `arguments`, and `stop_on_failure`.
 
 The method template registers one more, `template_prompt_search`, when loaded
-as a plugin.
+as a plugin. The Controllers of the built-in methods are private to their
+methods.
 
 ## Labs
 
-| Name | What it runs | Notes |
-| --- | --- | --- |
-| `rest_em` | Numeric math operations: `generate`, `filter`, `train`, `evaluate`, `select` | `engine`: `fixture` (CPU, simulated), `transformers`, or `vllm` |
-| `star` | STaR collection, fitting, and evaluation on GSM8K | GPU |
-| `coding` | Evaluates an agent artifact on frozen coding tasks in Harbor containers | [Coding Lab guide](../src/rsisys/labs/scenes/coding/README.md) |
-| `local_process` | Runs trusted local programs as jobs | Requires `"execution": "local_process"` in the run config |
-| `self_reflection` | Builds candidate Controllers and tests them in nested runs | [Source](../src/rsisys/labs/scenes/self_reflection/lab.py) |
-| `math` | Placeholder for a shared math Lab. It publishes no operations yet. | [Status](../src/rsisys/labs/scenes/math/README.md) |
+Registered Labs are either domain scenes, which hold one task domain's data and
+scoring, or framework Labs, which serve any domain.
+
+| Name | Kind | What it runs | Notes |
+| --- | --- | --- | --- |
+| `coding` | Scene | Evaluates an agent artifact on frozen coding tasks in Harbor containers | [Coding Lab guide](../src/rsisys/labs/scenes/coding/README.md) |
+| `math` | Scene | Placeholder; publishes no operations yet | [Status](../src/rsisys/labs/scenes/math/README.md) |
+| `self_reflection` | Framework | Builds candidate Controllers and tests them in nested runs | [Source](../src/rsisys/labs/scenes/self_reflection/lab.py) |
+| `local_process` | Framework | Runs trusted local programs as jobs | Requires `"execution": "local_process"` in the run config |
 
 The Lab template registers `template_math`, an arithmetic Lab that scores a
-model through a Chat Completions endpoint, when loaded as a plugin.
+model through a Chat Completions endpoint, when loaded as a plugin. The Labs of
+the built-in methods are private to their methods.
 
 ## Reusable components
 
@@ -111,7 +113,7 @@ not a registry component. The math scene provides two in
 | `StrictNumericVerifier` | A single number | GSM8K |
 | `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
 
-A Lab picks one in its own config; for example, the `rest_em` Lab accepts
+A Lab picks one in its own config; for example, ReST^EM's Lab accepts
 `"verifier": "numeric"` or `"math_verify"`. A new Lab imports a verifier from
 `rsisys.api`, or implements its own scoring for a new answer format.
 

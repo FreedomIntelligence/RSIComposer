@@ -9,42 +9,38 @@ forms:
 
 // A registered Controller paired with registered Labs that you choose
 "framework": {
-  "controller": {"name": "rest_em", "config": {…}},
-  "labs": {"math": {"name": "rest_em", "config": {…}}}
+  "controller": {"name": "single_loop", "config": {…}},
+  "labs": {"math": {"name": "template_math", "config": {…}}}
 }
 ```
 
-Use the method form to run a built-in algorithm as published. Use the
-Controller-and-Labs form to try a Controller on a different Lab, or a Lab with
-a different Controller. In the second form, each key under `labs` is an
-**alias**. The Controller calls operations as `<alias>.<operation>`, so the
-alias must match the name the Controller expects (`math` for the examples
-below).
+Use the method form to run a built-in algorithm. Use the Controller-and-Labs
+form to try a Controller on a different Lab, or a Lab with a different
+Controller. In the second form, each key under `labs` is an **alias**. The
+Controller calls operations as `<alias>.<operation>`, so the alias must match
+the name the Controller expects (`math` in the examples below).
 
-Every example on this page runs on a CPU. Run them from the repository root;
-the `data_root` paths are relative to it.
+The examples use the template Controller and Lab, so they need the
+`--plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template`
+options and a [Chat Completions endpoint](../src/rsisys/labs/_template/README.md#connect-a-gpu-model).
+Run them from the repository root; the dataset paths are relative to it.
 
 ## Pair a registered Controller with a Lab
 
-This config runs the same ReST^EM loop as the [Quickstart](quickstart.md), but
-selects the Controller and the Lab separately:
+[`labs/_template/configs/run.json`](../src/rsisys/labs/_template/configs/run.json)
+selects the template Controller and the template Lab separately:
 
 ```json
-{
-  "objective": "Pair the rest_em Controller with the rest_em Lab",
-  "data_dir": "runs/compose",
-  "framework": {
-    "controller": {
-      "name": "rest_em",
+"framework": {
+  "controller": {"name": "template_prompt_search", "config": {"max_evaluations": 3}},
+  "labs": {
+    "math": {
+      "name": "template_math",
       "config": {
-        "initial_model": "fixture-initial", "train_data": "train.jsonl", "eval_data": "eval.jsonl",
-        "iterations": 1, "samples_per_prompt": 4, "max_accepted_per_prompt": 1
-      }
-    },
-    "labs": {
-      "math": {
-        "name": "rest_em",
-        "config": {"engine": "fixture", "data_root": "src/rsisys/algorithms/rest_em/configs/cpu/data"}
+        "datasets": {
+          "train": "src/rsisys/labs/_template/data/train.jsonl",
+          "dev": "src/rsisys/labs/_template/data/dev.jsonl"
+        }
       }
     }
   }
@@ -52,98 +48,80 @@ selects the Controller and the Lab separately:
 ```
 
 ```sh
-rsisys run --config compose.json --data-dir runs/compose
+rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/labs/_template/configs/run.json --data-dir runs/compose
 ```
 
 ## Swap the Controller
 
 Replace the Controller and keep the Lab. `single_loop` calls one operation a
-fixed number of times; here it only measures the starting model:
+fixed number of times; here it measures one prompt setting:
 
 ```json
 "controller": {
   "name": "single_loop",
   "config": {
     "operation": "math.evaluate",
-    "arguments": {"round": 0, "model": "fixture-initial", "dataset": "eval.jsonl", "split": "dev"}
+    "arguments": {"split": "dev", "instruction": "Solve the arithmetic problem.", "few_shot": 2}
   }
 }
 ```
-
-To run on a GPU instead, keep the Controller and change the Lab's `engine` to
-`transformers` or `vllm`. The [ReST^EM guide](../src/rsisys/algorithms/rest_em/README.md)
-lists the model and data settings.
 
 ## Write a Controller and load it as a plugin
 
 A plugin is a Python file or package with a `register(registry)` function. Load
 it with `--plugin`; RSISys never imports code named in a config.
 
-Save this as `my_controller/__init__.py`. It runs one self-training round on the
-built-in `rest_em` Lab and keeps the better model:
+Save this as `few_shot_sweep/__init__.py`. It evaluates one instruction with
+several few-shot counts on the template Lab and reports the best count:
 
 ```python
-"""One self-training round on the built-in rest_em Lab, keeping the better model."""
+"""Try each few-shot count with one instruction and keep the best."""
 from rsisys.api import Decision, ExecutionStatus, OperationCall
 
-STAGES = ('evaluate_base', 'generate', 'filter', 'train', 'evaluate_new')
 
-
-class OneRoundController:
+class FewShotSweep:
     def __init__(self, context, config):
-        self.base_model = config['model']
-        self.train_data, self.eval_data = config['train_data'], config['eval_data']
-        self.stage, self.pending, self.outputs = 0, None, {}
+        self.instruction = config['instruction']
+        self.counts = list(config['few_shot_counts'])
+        self.metric = context.lab_catalog.primary_metric('math')
+        self.pending, self.scores = None, {}
 
     def decide(self, window):
         if self.pending is not None:
             receipt = next(r for r in window.feedbacks if r.call_id == self.pending.call_id)
             if receipt.status != ExecutionStatus.COMPLETED:
-                return Decision('finish', reason=f'{STAGES[self.stage]} failed: {receipt.error}')
-            self.outputs[STAGES[self.stage]] = receipt.data
-            self.stage += 1
-        if self.stage == len(STAGES):
-            return Decision('finish', reason='Round complete')
-        self.pending = OperationCall('math.' + STAGES[self.stage].split('_')[0], self._arguments())
+                return Decision('finish', reason=f'Evaluation failed: {receipt.error}')
+            self.scores[self.pending.arguments['few_shot']] = self.metric.value(receipt.data)
+            self.pending = None
+        remaining = [count for count in self.counts if count not in self.scores]
+        if not remaining:
+            return Decision('finish', reason='All few-shot counts evaluated')
+        self.pending = OperationCall('math.evaluate', {
+            'split': 'dev', 'instruction': self.instruction, 'few_shot': remaining[0]})
         return Decision.invoke(self.pending)
 
-    def _arguments(self):
-        name = STAGES[self.stage]
-        if name == 'evaluate_base':
-            return {'round': 0, 'model': self.base_model, 'dataset': self.eval_data, 'split': 'dev',
-                    'baseline': True}
-        if name == 'generate':
-            return {'round': 1, 'model': self.base_model, 'dataset': self.train_data,
-                    'samples_per_prompt': 4, 'temperature': 0.7, 'condition': 'none'}
-        if name == 'filter':
-            return {'round': 1, 'samples': self.outputs['generate']['dataset'], 'max_accepted_per_prompt': 1}
-        if name == 'train':
-            return {'round': 1, 'parent': self.base_model, 'dataset': self.outputs['filter']['dataset']}
-        return {'round': 1, 'model': self.outputs['train']['model'], 'dataset': self.eval_data, 'split': 'dev'}
-
     def report(self):
-        scores = {name: self.outputs[name]['quality_metrics']['accuracy']
-                  for name in ('evaluate_base', 'evaluate_new') if name in self.outputs}
-        keep_new = scores.get('evaluate_new', -1) > scores.get('evaluate_base', -1)
-        return {'scores': scores,
-                'selected': self.outputs['train']['model'] if keep_new else self.base_model}
+        best = max(self.scores, key=self.scores.get) if self.scores else None
+        return {'scores': self.scores, 'best_few_shot': best}
 
 
 def register(registry):
-    registry.register_controller('one_round', OneRoundController, version='1')
+    registry.register_controller('few_shot_sweep', FewShotSweep, version='1')
 ```
 
 Select it in the run config, with the same `labs` section as above:
 
 ```json
 "controller": {
-  "name": "one_round",
-  "config": {"model": "fixture-initial", "train_data": "train.jsonl", "eval_data": "eval.jsonl"}
+  "name": "few_shot_sweep",
+  "config": {"instruction": "Solve the arithmetic problem.", "few_shot_counts": [0, 1, 2]}
 }
 ```
 
 ```sh
-rsisys run --plugin my_controller --config one_round.json --data-dir runs/one-round
+rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
+  --plugin few_shot_sweep --config few_shot_sweep.json --data-dir runs/few-shot-sweep
 ```
 
 `controller_report` in `result.json` contains the value that `report()` returns.
@@ -153,9 +131,7 @@ Things to know when writing a Controller:
 - **Match receipts by `call_id`.** `window.feedbacks` holds the receipts
   delivered at this step.
 - **Follow the Lab's rules.** The host checks each call against the Lab's
-  schema and profile and returns a failed receipt if a rule is broken. For
-  example, the `rest_em` Lab requires a baseline evaluation
-  (`"baseline": true`) before it accepts `generate`.
+  schema and profile and returns a failed receipt if a rule is broken.
 - **Keep `model` free.** If a Policy has a `model` attribute, the host treats
   it as the Policy's own decision model and requires a `ModelRef`.
 - **For durable runs**, add `state()` and `restore(state)`; see the
