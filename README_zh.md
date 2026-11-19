@@ -17,11 +17,11 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 
 ![RSISys 架构分为两部分。（a）Controller 向 Domain Labs 请求操作，Labs 将轨迹、指标和产物作为证据返回。（b）Self-Reflection Lab 构建 Controller 更新，可用嵌套试验验证；当前 Controller 决定是否采纳更新。](assets/rsisys-overview.png)
 
-**Controller** 是承担研究角色的那个 agent：由决策策略（规则、搜索或语言模型）和可选的 harness（Memory、上下文、工具）组成。**Lab** 承担探索角色，声明自己支持的操作并负责执行，例如评测、采样、微调或强化学习。两者之间的宿主负责转发每次调用、执行预算和数据划分规则、记录每条回执，并在方法选定候选之前一直封存测试集。运行中途崩溃后可以接着跑，不会重复执行不能安全重复的操作。默认使用本地执行器；可选的 Ray 执行器可以跨节点调度 Lab。
+**Controller** 决定下一步试什么、采纳什么。Policy 负责决策，Harness 准备输入和工具，可选的 Memory 提供上下文。**Lab** 使用配置好的输入执行评测、采样或训练等操作。宿主负责转发调用、执行预算和数据划分规则，并保存回执以支持恢复。
 
 ## 最新动态
 
-- **[2026 年 11 月]** RSISys 开源，内置 16 个已注册的方法，支持可恢复运行和可选的 Ray 调度。
+- **[2026 年 11 月]** RSISys 开源，内置 16 个已注册的方法，支持可恢复运行。
 
 ## 亮点
 
@@ -33,7 +33,7 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 
 ## 快速开始
 
-在 Linux 或 macOS 上用 Python 3.12 或 3.13 克隆并安装。核心没有第三方依赖；可选 extra 提供 Ray 调度（`ray`）、LangMem 记忆（`langmem`）、Harbor 代码环境（`coding`）和答案校验（`math`）。[安装说明](src/rsisys/README.md#start-with-a-runnable-method)
+在 Linux 或 macOS 上用 Python 3.12 或 3.13 克隆并安装。核心没有第三方依赖；按方法所用的组件安装[可选依赖](pyproject.toml)。
 
 ```sh
 git clone https://github.com/satsuki2486441738/RSISys.git
@@ -41,11 +41,12 @@ cd RSISys
 python -m pip install -e .
 ```
 
-**先跑一个实验。** 这个 ReST^EM 示例使用模拟的算术 Lab，在 CPU 上即可运行，不需要 GPU、API key 或模型服务。结果写在 `runs/rest-em-quickstart/result.json`，每次运行请换一个新的 `--data-dir`。
+**先跑一个 GPU 实验。** [启动或配置 GPU 模型服务](src/rsisys/labs/_template/README.md#connect-a-gpu-model)，然后在算术 Lab 上运行提示词搜索。结果写在 `runs/gpu-quickstart/result.json`，每次运行请换一个新的 `--data-dir`。
 
 ```sh
-rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json \
-  --data-dir runs/rest-em-quickstart
+rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/algorithms/_template/configs/run.json \
+  --data-dir runs/gpu-quickstart
 ```
 
 **查看运行过程。** RSIMonitor 是可选的只读面板，可以查看决策图、指标、样本和日志，并对比多次实验。
@@ -57,13 +58,10 @@ rsimonitor --runs-dir runs    # 然后打开 http://127.0.0.1:8765/
 
 ## 使用指南
 
-| 你想做什么？ | 指南 | 能得到什么 |
-| --- | --- | --- |
-| 运行或对比已有方法 | [方法目录](src/rsisys/README.md#available-methods) | 各方法的配置、所需资源和适配范围 |
-| 编写 Controller、Harness、Memory 或 Lab | [方法作者指南](src/rsisys/README.md) | 最小接口、完整装配示例和恢复规则（英文） |
-| 跟踪和对比运行 | [RSIMonitor](src/rsimonitor/README.md) | 实时浏览运行目录的面板 |
-| 复用代码任务环境 | [Coding Lab](src/rsisys/labs/scenes/coding/README.md) | 可供不同搜索方法共用的 Lab |
-| 配置调度和恢复 | [运行配置](src/rsisys/README.md#runtime-configuration) | 资源放置、数据划分和恢复边界（英文） |
+- [复现已有方法](src/rsisys/README.md#reproduce-an-existing-method)
+- [编写或定制方法](src/rsisys/README.md#define-a-method)
+- [定义 Lab 或接入评测集与数据集](src/rsisys/README.md#define-a-lab-or-connect-data)
+- [用 RSIMonitor 查看和对比运行](src/rsimonitor/README.md)
 
 ## 已适配的方法
 
@@ -78,11 +76,11 @@ rsimonitor --runs-dir runs    # 然后打开 http://127.0.0.1:8765/
 | 研究型 agent | [AIDE](https://github.com/WecoAI/aideml) · [FT-Agent](https://github.com/microsoft/RD-Agent) | 上游 agent 起草、调试并选择方案 | 运行候选程序和微调任务 | 解决方案与微调模型 |
 | 自我反思 | Self-Reflection Lab | 当前 Controller | 候选 Controller 在嵌套实验中运行 | Controller 自身 |
 
-运行 `rsisys catalog` 查看已注册的方法。CPU Quickstart 用模拟 Lab 验证框架运行；真实基准、训练和上游 agent 需要单独配置环境，详见[方法目录与验证范围](src/rsisys/README.md#available-methods)。
+运行 `rsisys catalog` 查看已注册的方法。各方法的基准、模型和训练环境要求见[复现指南](src/rsisys/README.md#reproduce-an-existing-method)。
 
 ## 参与贡献
 
-请从 [CPU 方法模板](src/rsisys/algorithms/_template/)和[方法作者指南](src/rsisys/README.md)开始。新增方法或 Lab 时，请提供可运行的 CPU 示例，并标注改编来源。框架接口统一从 `rsisys.api` 导入。
+请从 [GPU 方法模板](src/rsisys/algorithms/_template/)或 [Lab 模板](src/rsisys/labs/_template/)开始。新增方法或 Lab 时，请提供可运行的配置，并标注改编来源。框架接口统一从 `rsisys.api` 导入。
 
 ## 引用
 

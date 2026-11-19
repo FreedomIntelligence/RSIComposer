@@ -41,15 +41,10 @@ measure its cost before increasing the round limit substantially. Because a Lab
 call contacts the model service, an interruption with no committed receipt
 requires reconciliation by the host before continuing.
 
-## Verify behavior
+## Compare runs
 
-```sh
-PYTHONPATH=src RSISYS_GEPA_SOURCE=external/gepa \
-  python -m unittest tests.test_gepa_merge
-```
-
-The deterministic fixture compares RSISys to direct upstream execution,
-including accepted and rejected merges, parent lineage, evaluation batches,
-model call counts, final selection, and resume after the merge minibatch. This
-validates algorithm behavior for the GSM8K adapter. Paper benchmark scores and
-real model performance need separate runs.
+Run the same preset twice in separate workspaces with `use_merge` enabled and
+then disabled. Check the baseline and selected candidate on the same sealed
+cohort, and record the actual metric and model calls for each run. A small
+cohort checks the adapter under a controlled budget; it does not establish the
+paper's benchmark scores.

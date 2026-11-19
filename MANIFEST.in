@@ -1,6 +1,7 @@
 include README.md README_zh.md LICENSE
 include src/rsisys/README.md src/rsimonitor/README.md
 recursive-include src/rsisys/labs/scenes README.md
+recursive-include src/rsisys/labs/_template *.json *.jsonl README.md
 include assets/rsisys-overview.png
 include src/rsisys/runtime/orchestration/monitor_contract.json
 recursive-include src/rsisys/algorithms *.json *.jsonl *.txt README.md

@@ -17,11 +17,11 @@ RSISys runs recursive self-improvement (RSI) experiments as a loop. A Controller
 
 ![RSISys architecture, in two panels. (a) The Controller requests operations from Domain Labs, which return trajectories, metrics, and artifacts as evidence. (b) The Self-Reflection Lab constructs a Controller update and can validate it in a nested trial. The current Controller decides whether to adopt the update.](assets/rsisys-overview.png)
 
-A **Controller** is one agent playing the research role: a decision policy (rules, search or a language model) with an optional harness of Memory, context and tools. A **Lab** plays the exploration role and declares its operations: evaluation, sampling, fine-tuning or RL. The host between them routes each call, enforces budgets and data splits, journals every receipt, and keeps the test split sealed until the method has selected its candidate. A run can resume after a crash without repeating operations that are unsafe to repeat. Runs use a local executor by default; the optional Ray executor schedules Labs across nodes.
+A **Controller** decides what to try and what to adopt. Its Policy makes decisions, its Harness prepares inputs and tools, and optional Memory provides context. A **Lab** executes operations such as evaluation, sampling, or training against its configured inputs. The host routes calls, enforces budgets and split rules, and preserves receipts for recovery.
 
 ## News
 
-- **[2026-11]** RSISys is open-sourced, with 16 built-in method registrations, durable recovery and optional Ray scheduling.
+- **[2026-11]** RSISys is open-sourced, with 16 built-in method registrations and support for durable runs.
 
 ## Highlights
 
@@ -33,7 +33,7 @@ A **Controller** is one agent playing the research role: a decision policy (rule
 
 ## Getting started
 
-Clone the repository and install it with Python 3.12 or 3.13 on Linux or macOS. The core has no third-party dependencies. Optional extras add Ray scheduling (`ray`), LangMem memory (`langmem`), the Harbor coding environment (`coding`), and answer checking (`math`). [Installation details](src/rsisys/README.md#start-with-a-runnable-method)
+Clone the repository and install it with Python 3.12 or 3.13 on Linux or macOS. The core has no third-party dependencies; install [optional extras](pyproject.toml) for the components your method uses.
 
 ```sh
 git clone https://github.com/satsuki2486441738/RSISys.git
@@ -41,11 +41,12 @@ cd RSISys
 python -m pip install -e .
 ```
 
-**Run a first experiment.** This ReST^EM example uses a simulated arithmetic Lab, so it runs on CPU without a GPU, API key or model server. Results are written to `runs/rest-em-quickstart/result.json`; use a new `--data-dir` for each run.
+**Run a first GPU experiment.** [Start or configure a GPU model endpoint](src/rsisys/labs/_template/README.md#connect-a-gpu-model), then run prompt search against the arithmetic Lab. Results are written to `runs/gpu-quickstart/result.json`; use a new `--data-dir` for each run.
 
 ```sh
-rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json \
-  --data-dir runs/rest-em-quickstart
+rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
+  --config src/rsisys/algorithms/_template/configs/run.json \
+  --data-dir runs/gpu-quickstart
 ```
 
 **Watch the run.** RSIMonitor is an optional read-only dashboard. It shows the decision graph, metrics, samples and logs, and compares experiments.
@@ -57,13 +58,10 @@ rsimonitor --runs-dir runs    # then open http://127.0.0.1:8765/
 
 ## Guides
 
-| What do you need? | Guide | What you get |
-| --- | --- | --- |
-| Run or compare existing methods | [Method catalog](src/rsisys/README.md#available-methods) | Configs, required resources and the scope of each adaptation |
-| Write a Controller, Harness, Memory or Lab | [Method author guide](src/rsisys/README.md) | The minimal contracts, a complete assembly example and recovery rules |
-| Follow and compare runs | [RSIMonitor](src/rsimonitor/README.md) | A live dashboard over the runs directory |
-| Reuse a coding task environment | [Coding Lab](src/rsisys/labs/scenes/coding/README.md) | A Lab that different search methods can share |
-| Configure scheduling and recovery | [Runtime configuration](src/rsisys/README.md#runtime-configuration) | Resource placement, data split roles and recovery limits |
+- [Reproduce an existing method](src/rsisys/README.md#reproduce-an-existing-method)
+- [Write or customize a method](src/rsisys/README.md#define-a-method)
+- [Define a Lab or connect a benchmark or dataset](src/rsisys/README.md#define-a-lab-or-connect-data)
+- [Inspect and compare runs with RSIMonitor](src/rsimonitor/README.md)
 
 ## Adapted methods
 
@@ -78,11 +76,11 @@ rsimonitor --runs-dir runs    # then open http://127.0.0.1:8765/
 | Research agents | [AIDE](https://github.com/WecoAI/aideml) · [FT-Agent](https://github.com/microsoft/RD-Agent) | The upstream agent drafts, debugs and selects solutions | Candidate programs and fine-tuning jobs run | Solutions and fine-tuned models |
 | Self-reflection | Self-Reflection Lab | The current Controller | Candidate Controllers run in nested experiments | The Controller itself |
 
-Run `rsisys catalog` to list the registered methods. The CPU Quickstart verifies the runtime with a simulated Lab. Real benchmarks, model training and upstream agents require their own environments; see the [method catalog and verification scope](src/rsisys/README.md#available-methods).
+Run `rsisys catalog` to list the registered methods. For each method’s benchmark, model and training setup, see the [reproduction guide](src/rsisys/README.md#reproduce-an-existing-method).
 
 ## Contributing
 
-Start with the [CPU method template](src/rsisys/algorithms/_template/) and the [method author guide](src/rsisys/README.md). For a new method or Lab, include a runnable CPU example and the source of any upstream adaptation. Import framework interfaces from `rsisys.api`.
+Start with the [GPU method template](src/rsisys/algorithms/_template/) or the [Lab template](src/rsisys/labs/_template/). For a new method or Lab, include a runnable configuration and the source of any upstream adaptation. Import framework interfaces from `rsisys.api`.
 
 ## Citation
 

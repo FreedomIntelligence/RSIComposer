@@ -13,5 +13,6 @@ verification. Candidate generation, search, and selection belong to the method.
 
 Define benchmark and training inputs when wiring the first consumer,
 and keep their splits explicit. Keep the math problem format and scoring
-logic in the scene. See the [method author guide](../../../README.md) for the
-Lab contract.
+logic in the scene. See the [Lab template](../../_template/README.md) for the data binding and
+operation contracts. The [ReST^EM adapter](../../../algorithms/rest_em/README.md#connect-training-and-evaluation-data)
+shows a separate math Lab that already accepts training and evaluation JSONL.

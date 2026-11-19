@@ -14,7 +14,7 @@ the method catalog and adaptation scope.
 
 Use Python 3.12/3.13 on Linux/macOS. All repository paths and development commands
 below assume the repository root as the working directory. The
-[CPU example](../../README.md#getting-started) writes a run that the dashboard can open.
+[GPU example](../../README.md#getting-started) writes a run that the dashboard can open.
 
 ```sh
 python -m pip install ./src/rsimonitor
@@ -184,7 +184,7 @@ Build the standalone wheel from the repository root:
 python -m pip wheel --no-deps --wheel-dir dist/monitor ./src/rsimonitor
 ```
 
-To try the viewer locally, open a run from the [CPU Quickstart](../../README.md#getting-started).
+To try the viewer locally, open a run from the [GPU Quickstart](../../README.md#getting-started).
 
 After a frontend edit, rebuild and include the generated `static/app` assets in
 the same change. Use Node 24 and run `npm ci` followed by `npm run build` in

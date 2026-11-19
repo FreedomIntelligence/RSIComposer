@@ -2,8 +2,7 @@
 
 `CodingLab` is a reusable task-scene environment. Any RSI method can submit an
 immutable agent artifact, evaluate it on frozen coding tasks, and inspect the
-result. The method owns proposal generation, search, selection, stopping and
-heldout access. The environment owns task validation, artifact snapshots, bounded
+result. The method owns proposal generation, search, selection and stopping. The environment owns task validation, artifact snapshots, bounded
 Harbor trials, official grading, trajectories, usage and recovery.
 
 ```mermaid
@@ -39,9 +38,14 @@ calibration evidence separate from model measurements. Preserve failures caused
 by unavailable sites, expired certificates or other environment limitations.
 Version any task repairs before freezing a new experiment.
 
-## Frozen tasks and configuration
+## Connect a benchmark
 
-The host provides a JSON manifest with arbitrary named, nonempty splits:
+1. Prepare the official Harbor tasks for the benchmark and revision you want.
+2. Write a JSON manifest with named, nonempty splits and task file hashes.
+3. Point the Lab config at it with `manifest` and assign the split roles with
+   `split_roles` (for example, `{"development": "dev", "final": "sealed"}`).
+
+The manifest uses this shape:
 
 ```json
 {
@@ -62,9 +66,15 @@ The host provides a JSON manifest with arbitrary named, nonempty splits:
 Include hashes for **all** task files, pin upstream revisions and image digests.
 The two displayed files are mandatory. Duplicate `(benchmark, id)` entries across
 splits are rejected. Legacy top-level `search`/`heldout` lists are accepted too.
-The environment exposes the configured splits; a method needing blind heldout
-selection must gate access in its own wrapper or use a separate host-only Lab.
-Subset scores are development measurements, not full leaderboard scores.
+For framework-routed calls, the host enforces sealed split roles. If calling
+`CodingLab` directly in Python, the caller is responsible for withholding the
+final split until selection. Subset scores are development measurements, not
+full leaderboard scores.
+
+This scene takes task manifests for evaluation and has no training dataset
+operation. A method that trains weights should bind training inputs to its
+training Lab. See the [Lab template](../../_template/README.md) for a minimal
+example that binds training and development inputs separately.
 
 Required config: `experiment_dir`, `manifest`, `python` (absolute virtualenv
 interpreter), `endpoints` (nonempty URL list), and explicit `model`. Optional:
