@@ -122,6 +122,7 @@ _EXPORTS = {
     'report_training_log': ('rsisys.runtime.observation', 'report_training_log'),
     'trigger_probe': ('rsisys.runtime.observation', 'trigger_probe'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
+    'MathLab': ('rsisys.labs.scenes.math.lab', 'MathLab'),
     'CodingLab': ('rsisys.labs.scenes.coding.lab', 'CodingLab'),
     'CodingArtifact': ('rsisys.labs.scenes.coding.artifacts', 'CodingArtifact'),
     'HarborCodingAgent': ('rsisys.labs.scenes.coding.agents', 'HarborCodingAgent'),
@@ -221,6 +222,7 @@ if _TYPE_CHECKING:
     from rsisys.runtime.execution.budget import HostBudget as HostBudget
     from rsisys.runtime.execution.budget import BudgetExhausted as BudgetExhausted
 
+    from rsisys.labs.scenes.math.lab import MathLab as MathLab
     from rsisys.labs.scenes.coding.lab import CodingLab as CodingLab
     from rsisys.labs.scenes.coding.artifacts import CodingArtifact as CodingArtifact
     from rsisys.labs.scenes.coding.agents import HarborCodingAgent as HarborCodingAgent

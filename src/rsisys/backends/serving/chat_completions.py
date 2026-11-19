@@ -89,20 +89,27 @@ class RemoteModelBackend:
             choice = data["choices"][0]
             finish_reason = choice.get('finish_reason')
             message = choice["message"]
+            usage_data = data.get("usage")
+            usage = (TokenUsage(usage_data.get("prompt_tokens"), usage_data.get("completion_tokens"))
+                     if usage_data is not None else None)
             tool_calls = ()
             if request.tools:
                 text, tool_calls = parse_tool_response(request, message, finish_reason, data['model'])
             else:
                 if finish_reason not in (None, 'stop'):
-                    raise ModelResponseError('Model did not finish a complete text response')
+                    raise ModelResponseError('Model did not finish a complete text response',
+                                             reason='output_truncated' if finish_reason == 'length' else 'unspecified',
+                                             finish_reason=finish_reason,
+                                             provider_model=data['model'], usage=usage)
                 if message.get('refusal') or message.get('tool_calls'):
                     raise ModelResponseError('This policy transport requires a JSON text response')
                 text = message['content']
-                if not isinstance(text, str) or not text.strip():
-                    raise ModelResponseError('Model response content is empty or invalid')
-            usage_data = data.get("usage")
-            usage = (TokenUsage(usage_data.get("prompt_tokens"), usage_data.get("completion_tokens"))
-                     if usage_data is not None else None)
+                if text is not None and not isinstance(text, str):
+                    raise ModelResponseError('Model response content is invalid')
+                if text is None or not text.strip():
+                    raise ModelResponseError('Model response content is empty or invalid',
+                                             reason='empty_response', finish_reason=finish_reason,
+                                             provider_model=data['model'], usage=usage)
         except ModelResponseError:
             raise
         except (KeyError, IndexError, TypeError, AttributeError, ValueError):

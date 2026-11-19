@@ -52,6 +52,42 @@ def final_boxed(text):
     return None
 
 
+class CompetitionIntegerVerifier:
+    """Compare a terminal boxed integer with a separately parsed gold label."""
+
+    def __init__(self, maximum):
+        if type(maximum) is not int or maximum not in (999, 99999):
+            raise ValueError('maximum must be 999 or 99999')
+        self.maximum = maximum
+        self.name = f'competition-integer-0-{maximum}-v1'
+
+    def parse_gold(self, value):
+        if type(value) is int:
+            return value if 0 <= value <= self.maximum else None
+        if not isinstance(value, str) or not re.fullmatch(r'[0-9]+', value.strip()):
+            return None
+        digits = value.strip().lstrip('0') or '0'
+        if len(digits) > len(str(self.maximum)):
+            return None
+        return int(digits)
+
+    def parse(self, text):
+        if not isinstance(text, str):
+            return None
+        # Match only the last marker so an unfinished final box cannot fall
+        # back to an earlier value in the reasoning.
+        markers = list(re.finditer(r'\\boxed\s*\{', text))
+        if not markers:
+            return None
+        answer = re.fullmatch(r'\s*([0-9]+)\s*\}\s*(?:\$\$?|\\[\]\)])?\s*\.?\s*',
+                              text[markers[-1].end():])
+        return self.parse_gold(answer.group(1)) if answer else None
+
+    def is_correct(self, completion, answer):
+        expected = self.parse_gold(answer)
+        return expected is not None and self.parse(completion) == expected
+
+
 class MathVerifyVerifier:
     """Optional Math-Verify adapter; compare final boxed answers, never reasoning."""
     def __init__(self):

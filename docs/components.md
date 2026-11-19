@@ -71,7 +71,7 @@ scoring, or framework Labs, which serve any domain.
 | Name | Kind | What it runs | Notes |
 | --- | --- | --- | --- |
 | `coding` | Scene | Evaluates an agent artifact on frozen coding tasks in Harbor containers | [Coding Lab guide](../src/rsisys/labs/scenes/coding/README.md) |
-| `math` | Scene | Placeholder; publishes no operations yet | [Status](../src/rsisys/labs/scenes/math/README.md) |
+| `math` | Scene | Scores an actor on development questions and a sealed 70-question benchmark | [Math Lab guide](../src/rsisys/labs/scenes/math/README.md) |
 | `self_reflection` | Framework | Builds candidate Controllers and tests them in nested runs | [Source](../src/rsisys/labs/scenes/self_reflection/lab.py) |
 | `local_process` | Framework | Runs trusted local programs as jobs | Requires `"execution": "local_process"` in the run config |
 
@@ -105,11 +105,12 @@ Other implementations are importable from `rsisys.api` without registration:
 
 A verifier checks a model answer against the reference answer. It is part of a
 Lab's scoring and lives in the scene whose answer format it handles, so it is
-not a registry component. The math scene provides two in
+not a registry component. The math scene provides these in
 [`labs/scenes/math/verifiers.py`](../src/rsisys/labs/scenes/math/verifiers.py):
 
 | Verifier | Answer format | Example benchmarks |
 | --- | --- | --- |
+| `CompetitionIntegerVerifier` | A terminal boxed integer in the benchmark range | AIME, AIMO3 Reference |
 | `StrictNumericVerifier` | A single number | GSM8K |
 | `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
 

@@ -3,4 +3,4 @@
 
 def register_components(registry):
     from .lab import MathLab
-    registry.register_lab('math', MathLab, version='0-placeholder', validate_config=MathLab.validate_config)
+    registry.register_lab('math', MathLab, version='1', validate_config=MathLab.validate_config)
