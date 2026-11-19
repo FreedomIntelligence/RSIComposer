@@ -187,9 +187,8 @@ python -m pip wheel --no-deps --wheel-dir dist/monitor ./src/rsimonitor
 To try the viewer locally, open a run from the [CPU Quickstart](../../README.md#getting-started).
 
 After a frontend edit, rebuild and include the generated `static/app` assets in
-the same change. The [CI workflow](../../.github/workflows/ci.yml) uses Node 24,
-`npm ci --no-audit --no-fund`, `npm run build` and checks that generated assets
-match the committed bundle. Installing or serving the Python wheel needs no
+the same change. Use Node 24 and run `npm ci` followed by `npm run build` in
+`src/rsimonitor/frontend/`. Installing or serving the Python wheel needs no
 Node toolchain and does not rebuild the frontend.
 
 The viewer's package metadata uses this README. Installing `rsimonitor` does not

@@ -2,7 +2,6 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="License: Apache 2.0"></a>
-  <a href="https://github.com/satsuki2486441738/RSISys/actions/workflows/ci.yml"><img src="https://github.com/satsuki2486441738/RSISys/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://github.com/satsuki2486441738/RSISys/stargazers"><img src="https://img.shields.io/github/stars/satsuki2486441738/RSISys?logo=github" alt="GitHub stars"></a>
 </p>
 
