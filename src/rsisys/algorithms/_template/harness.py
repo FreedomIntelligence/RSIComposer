@@ -18,9 +18,9 @@ the Controller uses the default one, which also adds Controller Memory.
     state(), restore()  Save and reload Harness state for durable runs.
     close()             Release resources when the Controller is replaced.
 
-A Harness replaces the default one. Memory is installed by the default Harness,
-so a replacement does not receive memory context. If you need Memory, either
-keep the default Harness or add the memory text to window.context yourself.
+A Harness replaces the default one, including the tools and context that come
+with it. Memory is installed separately by MemoryAssembly, so a custom Harness
+still receives memory text in window.context; do not add it yourself.
 
 This Harness adds a short summary of recent receipts to window.context, so a
 Policy can compare all candidates instead of only the newest receipt. It also

@@ -120,7 +120,9 @@ class ArithmeticLab:
                 'few_shot': {'type': 'integer', 'minimum': 0, 'maximum': len(self.rows['train'])},
                 'background': {'type': 'boolean', 'description': 'Run as a job and return its result later'},
             }, 'required': ['split', 'instruction', 'few_shot'], 'additionalProperties': False,
-        }, read_only=True),)
+        # read_only=False: the operation calls the model, so the host records its
+        # receipt as evidence and delivers it to Controller Memory.
+        }, read_only=False),)
 
     def execute(self, call):
         args = call.arguments

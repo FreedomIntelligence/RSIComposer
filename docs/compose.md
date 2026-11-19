@@ -192,10 +192,12 @@ working [Harness](../src/rsisys/algorithms/_template/harness.py) and
 select them with `"harness": "scoreboard"` and `"memory": "best_score"` in the
 Controller config.
 
-Two things to know:
+Three things to know:
 
-- **A custom Harness replaces the default one**, including its Memory
-  integration. If you want Memory, keep the default Harness unless your Harness
-  adds memory text to `window.context` itself.
+- **A custom Harness replaces the default one**, including its local tools and
+  navigation. Memory is separate: the host adds memory text to
+  `window.context`, so both work together.
 - **Memory needs a `decision_maker` role** in the run config, because the host
   attributes memory observations to it.
+- **Mark operations that call a model or change data as `read_only=False`.** The
+  host keeps read-only receipts out of Memory and the evidence journal.
