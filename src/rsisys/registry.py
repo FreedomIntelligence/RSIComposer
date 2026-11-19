@@ -33,8 +33,7 @@ class Registry:
 
     A controller factory returns a public decide(DecisionInput) implementation
     or a callable. A Lab factory returns describe()/execute(call). Harness,
-    memory, engines and verifiers may be injected from registered reusable
-    components. Whole methods are the primary registration unit; registered
+    memory and engines may be injected from registered reusable components. Whole methods are the primary registration unit; registered
     Controllers and Labs can also be paired by a run config.
     Method-private implementations are not added to those global catalogs.
     """
@@ -112,11 +111,12 @@ class Registry:
     def register_component(self, kind, name, factory, *, version, validate_config=None):
         """Register a reusable method component by role and stable name.
 
-        Supported roles are harness, memory, backend, scene and verifier. The
+        Supported roles are harness, memory, backend and scene. Answer verifiers
+        belong to the scene whose answer format they check, not to this catalog. The
         factory is intentionally opaque: the method assembly supplies its
         context and configuration when it resolves the component.
         """
-        allowed = {'harness', 'memory', 'backend', 'scene', 'verifier'}
+        allowed = {'harness', 'memory', 'backend', 'scene'}
         if kind not in allowed:
             raise ValueError(f'Unknown component role: {kind}')
         _name(name, 'Component')
