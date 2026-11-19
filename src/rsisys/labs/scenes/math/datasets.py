@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from unicodedata import normalize
 
-from rsisys.api import DatasetBinding
+from rsisys.loops.contracts.data import DatasetBinding
 
 from .benchmarks import BENCHMARKS, load_benchmark
 from .verifiers import CompetitionIntegerVerifier, MathVerifyVerifier, final_boxed

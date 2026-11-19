@@ -3,10 +3,14 @@ from dataclasses import asdict
 import json
 from time import monotonic
 
-from rsisys.api import (
-    DEV, SEALED, ArtifactRef, GenerationRequest, LabToolError, MetricSpec, ModelResponseError,
-    OperationResult, OperationSpec, report_samples,
-)
+# Scene code imports its layers directly; rsisys.api is the composition layer.
+from rsisys.loops.contracts.artifacts import ArtifactRef
+from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.decision import OperationSpec
+from rsisys.loops.contracts.execution import LabToolError
+from rsisys.loops.contracts.model_service import GenerationRequest, ModelResponseError
+from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec
+from rsisys.runtime.observation import report_samples
 
 from .datasets import load_splits
 from .verifiers import CompetitionIntegerVerifier

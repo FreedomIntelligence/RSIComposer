@@ -33,8 +33,9 @@ require; check the preset before running it.
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
 | `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs | — |
 
-¹ ReST^EM and STaR will run on the shared [math Lab](../src/rsisys/labs/scenes/math/README.md)
-once it is implemented. Until then each uses its own method-private Lab.
+¹ ReST^EM and STaR still use their own method-private Labs. Moving them onto the
+shared [math Lab](../src/rsisys/labs/scenes/math/README.md) is separate work: the
+scene scores a fixed model and does not run training or generation loops.
 
 A preset is a starting configuration, not a verified reproduction. Datasets are
 not included; prepare the files that each preset names. A dash in the Guide
