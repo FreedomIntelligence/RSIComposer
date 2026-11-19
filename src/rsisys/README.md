@@ -83,3 +83,10 @@ Implement `describe()` and `execute()` for the operations your Controller
 calls. Declare split roles and a primary `MetricSpec`; publish its value in
 `OperationResult.data['quality_metrics']`. Each Lab defines its own data format
 and scoring logic.
+
+A Lab can declare fixed training or evaluation inputs with
+`data_bindings() -> tuple[DatasetBinding, ...]`. Import
+[`DatasetBinding`](loops/contracts/data.py) from `rsisys.api` and use the same
+role as the declared split. The host records the bindings in the Lab identity
+for recovery. The Lab still loads and validates its own data. Record data
+created during a run in artifacts and receipts.

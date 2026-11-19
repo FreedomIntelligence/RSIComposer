@@ -100,7 +100,7 @@ class LabGroup:
 
     def profile_identity(self):
         return {alias: binding.identity() for alias, binding in self._bindings.items()
-                if binding.profiles or binding.metric is not None or binding.model_roles}
+                if binding.profiles or binding.metric is not None or binding.model_roles or binding.data_bindings}
 
     def primary_metric(self, alias):
         """The declaration of this Lab instance; callers must not compare across aliases."""

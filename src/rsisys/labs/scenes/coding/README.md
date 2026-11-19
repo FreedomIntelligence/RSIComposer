@@ -85,6 +85,18 @@ bound to its arguments; Harbor enforces the agent/verifier timeouts. Use the
 virtualenv interpreter path directly: resolving its symlink can select the system
 Python. Model services and GPU allocation belong to deployment configuration.
 
+## Data bindings
+
+Coding Lab declares one `DatasetBinding` per benchmark split. Each binding
+includes the split role, manifest source, schema version, provenance, and a
+content digest over the task IDs, benchmark names, and frozen file hashes. For
+sealed splits, the host records only the logical identifiers and a binding
+fingerprint.
+
+The manifest must list every file in each task directory. The Lab rejects
+unlisted files, symlinks, and special files. The `coding-environment/v5`
+protocol requires a new `experiment_dir` for runs created with v4.
+
 ## Public interface
 
 ```python

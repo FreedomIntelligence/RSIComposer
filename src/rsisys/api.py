@@ -38,6 +38,7 @@ _EXPORTS = {
     'HostBudget': ('rsisys.runtime.execution.budget', 'HostBudget'),
     'BudgetExhausted': ('rsisys.runtime.execution.budget', 'BudgetExhausted'),
 
+    'DatasetBinding': ('rsisys.loops.contracts.data', 'DatasetBinding'),
     'MetricSpec': ('rsisys.loops.contracts.profiles', 'MetricSpec'),
     'SplitRole': ('rsisys.loops.contracts.profiles', 'SplitRole'),
     'Invariant': ('rsisys.loops.contracts.profiles', 'Invariant'),
@@ -362,6 +363,7 @@ if _TYPE_CHECKING:
     from rsisys.host.ledger import DecisionResearchMetadata as DecisionResearchMetadata
 
 if _TYPE_CHECKING:
+    from rsisys.loops.contracts.data import DatasetBinding as DatasetBinding
     from rsisys.loops.contracts.profiles import (
         MetricSpec as MetricSpec,
         SplitRole as SplitRole,

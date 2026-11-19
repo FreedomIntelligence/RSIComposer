@@ -130,7 +130,12 @@ class CodingAgent(BaseAgent):
             context.n_input_tokens = n_input
             context.n_output_tokens = n_output
             context.metadata = {'status': status, 'endpoint': self.endpoint,
-                                'candidate_id': self.candidate['id'],
+                                # A reusable CodingLab artifact only needs to
+                                # provide the fields consumed by its adapter.
+                                # Method-owned candidate registries may add an
+                                # id, but the default instruction artifact does
+                                # not have to carry one.
+                                'candidate_id': self.candidate.get('id'),
                                 'command_timeouts': command_timeouts,
                                 'elapsed_seconds': time.monotonic() - started}
             await client.close()

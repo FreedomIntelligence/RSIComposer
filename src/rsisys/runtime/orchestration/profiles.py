@@ -2,13 +2,15 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict, replace
+from hashlib import sha256
 import json
 
 from rsisys.loops.contracts.coordination import OperationResult
+from rsisys.loops.contracts.data import DatasetBinding
 from rsisys.loops.contracts.lifecycle import ExecutionStatus
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.loops.contracts.metrics import validated_metrics
-from rsisys.loops.contracts.profiles import Invariant, MetricSpec, SplitRole, get_profile
+from rsisys.loops.contracts.profiles import Invariant, MetricSpec, SPLIT_ROLES, SplitRole, get_profile
 from rsisys.runtime.capabilities import optional_method
 
 
@@ -62,6 +64,26 @@ class ProfileBinding:
             if name in self.roles and self.roles[name].after_finish_only and role != self.roles[name]:
                 raise ValueError(f'Lab {alias} cannot weaken sealed split {name}')
             self.roles[name] = role
+        bindings = _optional(lab, 'data_bindings', ())
+        if not isinstance(bindings, tuple) or any(not isinstance(item, DatasetBinding) for item in bindings):
+            raise TypeError(f'Lab {alias} data_bindings() must return a DatasetBinding tuple')
+        self.data_bindings = []
+        seen = set()
+        for item in sorted(bindings, key=lambda item: (item.name, item.split)):
+            key = (item.name, item.split)
+            if key in seen:
+                raise ValueError(f'Lab {alias} data_bindings() must use distinct name/split pairs')
+            seen.add(key)
+            role = self.roles.get(item.split)
+            if role is None or role != SPLIT_ROLES[item.role]:
+                raise ValueError(f'Lab {alias} dataset role disagrees with split {item.split}')
+            identity = item.identity
+            if not role.inputs_visible:
+                # Retain the recovery check without serializing private cohort metadata.
+                fingerprint = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+                identity = {'name': item.name, 'split': item.split, 'role': item.role,
+                            'binding_sha256': fingerprint}
+            self.data_bindings.append(identity)
         rules = _optional(lab, 'invariants', ())
         if not isinstance(rules, tuple) or any(not isinstance(rule, Invariant) for rule in rules):
             raise TypeError(f'Lab {alias} invariants() must return an Invariant tuple')
@@ -74,7 +96,10 @@ class ProfileBinding:
 
     def identity(self):
         return {**({'model_roles': {name: asdict(model) for name, model in sorted(self.model_roles.items())}}
-                   if self.model_roles else {}), 'profiles': [p.identity for p in self.profiles],
+                   if self.model_roles else {}),
+                **({'data_bindings': deepcopy(self.data_bindings)}
+                   if self.data_bindings else {}),
+                'profiles': [p.identity for p in self.profiles],
                 'primary_metric': asdict(self.metric) if self.metric is not None else None,
                 'split_roles': {name: asdict(role) for name, role in sorted(self.roles.items())},
                 'invariants': [{**asdict(rule), 'key': list(rule.key)} for rule in self.rules]}

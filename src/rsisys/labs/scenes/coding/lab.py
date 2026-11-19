@@ -20,8 +20,9 @@ import time
 from uuid import uuid4
 
 from rsisys.loops.contracts.coordination import OperationResult, ExecutionStatus
+from rsisys.loops.contracts.data import DatasetBinding
 from rsisys.loops.contracts.decision import OperationSpec
-from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec, SPLIT_ROLES
+from rsisys.loops.contracts.profiles import MetricSpec, SPLIT_ROLES
 from rsisys.loops.contracts.execution import LabInfrastructureError, LabToolError
 from .agents import HarborCodingAgent
 from .artifacts import digest, snapshot
@@ -31,6 +32,7 @@ from .harbor_runner import atomic_json
 OPTIONS = {'experiment_dir', 'manifest', 'python', 'endpoints', 'model', 'workers',
            'max_steps', 'max_tokens', 'total_tokens', 'agent_timeout', 'verifier_timeout',
            'seed', 'thinking', 'split_roles'}
+PROTOCOL_VERSION = 'coding-environment/v5'
 
 
 def _infrastructure_failure(message):
@@ -85,7 +87,7 @@ class CodingLab:
         self.protocol = {name: hashlib.sha256((package / name).read_bytes()).hexdigest()
                          for name in ('agent.py', 'agents.py', 'artifacts.py', 'lab.py',
                                       'harbor_runner.py', 'history.py')}
-        self.binding = {'protocol_version': 'coding-environment/v4', 'manifest': self.manifest,
+        self.binding = {'protocol_version': PROTOCOL_VERSION, 'manifest': self.manifest,
                         'config': self.config, 'agent': self.agent, 'source': self.protocol}
         self.fingerprint = digest(self.binding)
         binding = self.root / 'binding.json'
@@ -111,19 +113,45 @@ class CodingLab:
             if not isinstance(rows, list) or not rows:
                 raise ValueError('Nonempty task lists required')
             for row in rows:
+                if not isinstance(row, dict) or any(not isinstance(row.get(key), str) or not row[key].strip()
+                        for key in ('benchmark', 'id', 'path')) or not isinstance(row.get('files'), dict):
+                    raise ValueError('Invalid task manifest row: expected benchmark, id, path and file hashes')
                 key = (row['benchmark'], row['id'])
                 if key in seen:
                     raise ValueError('Task overlap or duplicate: ' + str(key))
                 seen.add(key)
                 path = Path(row['path'])
+                if path.is_symlink():
+                    raise ValueError('Task directories must not be symlinks: ' + str(path))
                 if not path.is_absolute() or not (path / 'task.toml').is_file() or not (path / 'instruction.md').is_file():
                     raise ValueError('Missing real benchmark task: ' + str(path))
                 if not {'task.toml', 'instruction.md'} <= row['files'].keys():
                     raise ValueError('Task manifest must hash task.toml and instruction.md')
+                declared = set(row['files'])
+                for relative in declared:
+                    entry = Path(relative)
+                    if not relative or entry.is_absolute() or '..' in entry.parts or entry.as_posix() != relative:
+                        raise ValueError('Task manifest contains an invalid file path: ' + repr(relative))
+                actual = set()
+                for entry in sorted(path.rglob('*')):
+                    relative = entry.relative_to(path).as_posix()
+                    if entry.is_symlink():
+                        raise ValueError('Task directories must not contain symlinks: ' + relative)
+                    if entry.is_file():
+                        actual.add(relative)
+                    elif not entry.is_dir():
+                        raise ValueError('Unsupported task entry: ' + relative)
+                if actual != declared:
+                    missing = sorted(actual - declared)
+                    extra = sorted(declared - actual)
+                    details = []
+                    if missing:
+                        details.append('unlisted task files: ' + ', '.join(missing))
+                    if extra:
+                        details.append('missing task files: ' + ', '.join(extra))
+                    raise ValueError('Task manifest must hash exactly all task files; ' + '; '.join(details))
                 for relative, sha in row['files'].items():
                     entry = path / relative
-                    if not entry.resolve().is_relative_to(path.resolve()):
-                        raise ValueError('Task hash entry leaves its task directory')
                     if hashlib.sha256(entry.read_bytes()).hexdigest() != sha:
                         raise ValueError('Frozen task changed: ' + str(entry))
 
@@ -148,10 +176,39 @@ class CodingLab:
         return MetricSpec('task_reward', 'maximize', 'harbor-official-reward/task-mean/v1')
 
     def split_roles(self):
-        return {name: SPLIT_ROLES[self.config['split_roles'][name]]
-                if name in self.config.get('split_roles', {}) else
-                (SEALED if name in ('test', 'heldout', 'sealed') else DEV)
-                for name in self.datasets}
+        return {name: SPLIT_ROLES[self._split_role_name(name)] for name in self.datasets}
+
+    def _split_role_name(self, split):
+        return self.config.get('split_roles', {}).get(
+            split, 'sealed' if split in ('test', 'heldout', 'sealed') else 'dev')
+
+    def data_bindings(self):
+        """Publish stable references for every configured benchmark split.
+
+        The binding describes the frozen cohort and its access role. Task file
+        formats and benchmark-specific records remain owned by CodingLab.
+        """
+        bindings = []
+        for split, rows in sorted(self.datasets.items()):
+            role = self._split_role_name(split)
+            cohort = [{
+                'id': row['id'],
+                'benchmark': row['benchmark'],
+                'files': dict(sorted(row['files'].items())),
+            } for row in rows]
+            bindings.append(DatasetBinding(
+                name='coding/' + split,
+                split=split,
+                role=role,
+                source=str(Path(self.config['manifest']).resolve()),
+                schema_version='coding-task-manifest/v1',
+                content_digest=digest({'split': split, 'tasks': cohort}),
+                provenance={
+                    'benchmarks': sorted({row['benchmark'] for row in rows}),
+                    'task_count': len(rows),
+                },
+            ))
+        return tuple(bindings)
 
     def describe(self):
         artifact = {'type': 'object', 'properties': {
@@ -181,7 +238,7 @@ class CodingLab:
         args = dict(call.arguments)
         if call.name == 'inspect' and not args:
             return OperationResult('Coding task environment', (), False, data={
-                'protocol': 'coding-environment/v4', 'splits': {
+                'protocol': PROTOCOL_VERSION, 'splits': {
                     key: [{'id': r['id'], 'benchmark': r['benchmark']} for r in rows]
                     for key, rows in self.datasets.items() if self.split_roles()[key].inputs_visible},
                 'agent': self.agent, 'protocol_fingerprint': self.fingerprint,
