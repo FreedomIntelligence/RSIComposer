@@ -15,7 +15,7 @@ If you already have an endpoint, set `backends.gpu.endpoint` (base URL ending in
 If the server requires a key, set `backends.gpu.credential_env` to the name of
 its environment variable. The GPU can be on a separate serving machine.
 
-Example on one B200 with vLLM and a local Qwen3.5-9B snapshot:
+Example on one GPU with vLLM and a local Qwen3.5-9B snapshot:
 
 ```sh
 MODEL_DIR=/path/to/Qwen3.5-9B-snapshot
@@ -62,7 +62,12 @@ its declared primary metric (`accuracy` in this example).
 Keep train and dev disjoint. For blind final evaluation, declare a `SEALED`
 split and implement `final_evaluations()` to give the host a final-evaluation
 plan; see [Coding Meta-Agent’s Lab](../../algorithms/coding_meta_agent/lab.py).
-The template records dataset hashes and rejects a resume with changed inputs.
+The template declares its inputs in `data_bindings()`: one
+[`DatasetBinding`](../../loops/contracts/data.py) per split, with the split role,
+source path, format version, content hash, and row IDs. The host records the
+bindings with the Lab's identity and rejects a resume with changed inputs. For a
+`sealed` split it stores only a fingerprint. Keep the binding's `role` equal to
+the role that `split_roles()` declares for that split.
 For larger benchmarks, store detailed records as artifacts instead of returning
 all rows in the receipt. Record the benchmark revision, scorer, and settings
 alongside model results.

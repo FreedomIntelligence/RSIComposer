@@ -65,7 +65,8 @@ def validate_resources(config):
         if entry.get('pool') not in pools:
             raise ValueError(f'Unknown resource pool for {role}')
         if entry.get('colocate', 'exclusive') != 'exclusive':
-            raise ValueError('hybrid/shared colocate is scheduled for step 7b')
+            raise ValueError('Local execution supports only colocate=exclusive; '
+                             'use resources.executor=ray for shared or hybrid GPU placement')
         ResourceRequest(**{k: v for k, v in entry.items() if k in {'gpus', 'cpus', 'timeout'}})
         if type(entry.get('max_concurrent', 1)) is not int or entry.get('max_concurrent', 1) < 1:
             raise ValueError('max_concurrent must be positive')

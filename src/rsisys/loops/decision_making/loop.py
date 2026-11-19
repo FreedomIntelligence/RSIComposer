@@ -21,7 +21,8 @@ class DecisionMakingLoop:
         from rsisys.loops.contracts.model_service import ModelRef
         declared = getattr(self.policy, 'model', None)
         if declared is not None and not isinstance(declared, ModelRef):
-            raise TypeError('Controller model identity must be a ModelRef')
+            raise TypeError('Policy attribute `model` is reserved for the decision model identity and '
+                            'must be a ModelRef; rename the attribute if it holds something else')
         if declared is not None and self.model_binding is not None and declared != self.model_binding:
             raise ValueError('Policy model identity differs from endpoint binding')
         return declared if declared is not None else self.model_binding

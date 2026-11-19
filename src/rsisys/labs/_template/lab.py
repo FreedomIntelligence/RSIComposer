@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from rsisys.api import DEV, TRAIN, GenerationRequest, MetricSpec, OperationResult, OperationSpec
+from rsisys.api import (
+    DEV, TRAIN, DatasetBinding, GenerationRequest, MetricSpec, OperationResult, OperationSpec,
+)
 
 
 SPLITS = {'train': TRAIN, 'dev': DEV}
@@ -38,6 +40,7 @@ class ArithmeticLab:
         if self.actor is None or context.backends[self.actor.backend_id].binding.kind != 'chat_completions':
             raise ValueError('The template Lab requires an actor on a GPU-backed chat_completions endpoint')
         self.rows, self.hashes = {}, {}
+        self.paths = {split: str(Path(path).resolve()) for split, path in config['datasets'].items()}
         for split, path in config['datasets'].items():
             self.rows[split], self.hashes[split] = read_dataset(path)
         for field in ('id', 'question'):
@@ -47,6 +50,14 @@ class ArithmeticLab:
 
     def split_roles(self):
         return dict(SPLITS)
+
+    def data_bindings(self):
+        # The host records these in the Lab identity and rejects a resume with changed inputs.
+        return tuple(DatasetBinding(
+            name='arithmetic/' + split, split=split, role=split, source=self.paths[split],
+            schema_version='arithmetic-jsonl/v1', content_digest=self.hashes[split],
+            row_ids=tuple(row['id'] for row in self.rows[split]),
+        ) for split in sorted(SPLITS))
 
     def primary_metric(self):
         return MetricSpec('accuracy', 'maximize', 'integer-text-exact-match/v1')
