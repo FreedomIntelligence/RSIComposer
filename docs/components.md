@@ -17,7 +17,7 @@ require; check the preset before running it.
 | Method | Presets | Needs | Guide |
 | --- | --- | --- | --- |
 | `rest_em`¹ | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsisys/algorithms/rest_em/README.md) |
-| `star`¹ | `gsm8k` | 4 GPUs, local base model, GSM8K files | — |
+| `star`¹ | `gsm8k` | 4 GPUs, local base model, a math dataset manifest with `train`, `dev` and `test` splits | — |
 | `ttrl` | `8gpu` | 8 GPUs, local base model | — |
 | `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |

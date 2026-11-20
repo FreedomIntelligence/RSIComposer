@@ -118,6 +118,20 @@ class MathLab:
     def split_roles(self):
         return dict(self.roles)
 
+    def split_named(self, ref, role=None):
+        """The split a dataset reference names: its split name or its source file's path.
+
+        With role, the split must be assigned that role (train, dev or sealed).
+        """
+        from pathlib import Path
+
+        for binding in self.bindings:
+            if ref == binding.split or Path(ref).resolve() == Path(binding.source).resolve():
+                if role is not None and self.role_names[binding.split] != role:
+                    raise ValueError(f'Dataset {ref} is not a {role} split')
+                return binding.split
+        raise ValueError('Dataset must name a split of the configured manifest')
+
     def data_bindings(self):
         return self.bindings
 

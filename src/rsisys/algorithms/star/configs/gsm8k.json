@@ -13,16 +13,7 @@
         "labs": {
           "star": {
             "base_model": "external/Qwen3.5-9B",
-            "files": {
-              "train": "data/star/train.jsonl",
-              "dev": "data/star/dev.jsonl",
-              "test": "data/star/test.jsonl"
-            },
-            "counts": {
-              "train": 1024,
-              "dev": 256,
-              "test": 512
-            },
+            "manifest": "data/star/manifest.json",
             "rounds": 4,
             "plain_rounds": 2,
             "warmup_steps": 10,

@@ -1,4 +1,10 @@
-"""Execute one STaR collection, fit or evaluation operation."""
+"""STaR's Lab: a MathLab whose candidates are checkpoints fitted on their own correct rationales.
+
+The dataset manifest has `train` (problems sampled from), `dev` (measured every
+round) and sealed `test` splits, each selecting its answer verifier. Sampling and
+fitting run in GPU workers (or the fixture engine); evaluation reuses MathLab's
+solve/score/trace, and filtering reuses each problem's verifier.
+"""
 
 from collections import Counter
 import json
@@ -8,12 +14,10 @@ import sys
 from time import sleep
 
 from rsisys.api import (
-    DEV, SEALED, Invariant, OperationResult, MetricSpec, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
-    score_record,
+    Invariant, MathAttempt, MathLab, OperationResult, MetricSpec, ModelRef, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
 )
 
-from ..shared.prompt_data import load_splits
-from .protocol import VERIFIER, MAX_LENGTH, keep_reasoning, render_prompt, write_records
+from .protocol import MAX_LENGTH, keep_reasoning, render_prompt, write_records
 from .records import GLOBAL_BATCH, training_example
 
 
@@ -47,42 +51,36 @@ def filter_overlength(source, destination, base_model):
     return dropped
 
 
-class StarLab:
+class StarLab(MathLab):
     def __init__(self, context, config, *, engine=None):
         if 'max_seconds' in config:
             raise ValueError('Configure host budget.seconds instead of STaR max_seconds')
         self.resources, self.executor = execution_capabilities(context)
         self.root = Path(context.data_dir)
-        self.groups = groups = load_splits(config['files'], config['counts'], splits=('train', 'dev', 'test'))
         from .engine import FixtureStarEngine
         self.engine = engine if engine is not None else (FixtureStarEngine() if config.get('engine') == 'fixture' else None)
         self.simulated = self.engine is not None and self.engine.simulated
+        MathLab.__init__(self, context, {
+            'manifest': config['manifest'], 'split_roles': {'train': 'train', 'dev': 'dev', 'test': 'sealed'}})
         self.resources.declare(self.resource_roles())
         self.config = dict(config)
         self.selected = None
         self.default_steps = config.get('train_steps', 40)
-        self.files = {name: Path(ref).resolve() for name, ref in config['files'].items()}
-        self.input_root = Path(config.get('data_root', Path.cwd())).resolve()
         self.seed = config['seed']
         self.warmup_steps = config.get('warmup_steps', 100)
         self.base = Path(config['base_model']).resolve(strict=True)
-        self.models, self.datasets, self.dataset_hashes = {'base': self.base}, {}, {}
+        self.models, self.datasets_by_round, self.dataset_hashes = {'base': self.base}, {}, {}
         self.dev_file = self.root / 'development.jsonl'
         # A resumed run rebuilds the Lab over its own workspace; the cohorts and
         # development file it wrote before must match the configured data.
         restoring = bool(getattr(context, 'restoring', False))
-        cohorts = {split: [row['id'] for row in rows] for split, rows in groups.items()}
+        cohorts = {split: [row.id for row in rows] for split, rows in self.datasets.items()}
         cohort_file = self.root / 'cohorts.json'
         if restoring and cohort_file.exists() and read_json(cohort_file) != cohorts:
             raise ValueError('STaR data cohorts differ from the resumed run')
         atomic_json(cohort_file, cohorts)
-        development = []
-        for row in groups["dev"]:
-            answer = VERIFIER.parse_reference(row["answer"])
-            if answer is None:
-                raise ValueError(f"Invalid GSM8K reference for {row['id']}")
-            development.append({"id": row["id"], "prompt": row["question"],
-                                "answer": "\\boxed{" + str(answer) + "}"})
+        development = [{"id": row.id, "prompt": row.prompt, "answer": "\\boxed{" + row.expected + "}"}
+                       for row in self.datasets["dev"]]
         if restoring and self.dev_file.exists():
             written = [json.loads(line) for line in self.dev_file.read_text(encoding='utf-8').splitlines()]
             if written != development:
@@ -90,15 +88,21 @@ class StarLab:
         else:
             write_records(self.dev_file, development)
 
+    def bind_actor(self, context, config):
+        # The measured models are checkpoints the workers load; the binding records the engine.
+        return ModelRef('local-weights', getattr(self.engine, 'name', 'star-workers/v1'), 'checkpoint')
+
     def state(self):
         # Workers write checkpoint directories; the host persists the run budget.
-        return {'models': {name: str(path) for name, path in self.models.items()},
-                'datasets': {number: str(path) for number, path in self.datasets.items()},
+        return {'binding': self.binding(), 'models': {name: str(path) for name, path in self.models.items()},
+                'datasets': {number: str(path) for number, path in self.datasets_by_round.items()},
                 'dataset_hashes': dict(self.dataset_hashes), 'selected': self.selected}
 
     def restore(self, state):
-        if set(state) != {'models', 'datasets', 'dataset_hashes', 'selected'}:
+        if set(state) != {'binding', 'models', 'datasets', 'dataset_hashes', 'selected'}:
             raise ValueError('Unexpected STaR Lab state')
+        if state['binding'] != self.binding():
+            raise ValueError('STaR input binding changed since the checkpoint')
         if state['models'].get('base') != str(self.base):
             raise ValueError('STaR base model differs from the resumed run')
         if set(state['datasets']) != set(state['dataset_hashes']):
@@ -111,7 +115,7 @@ class StarLab:
             if name != 'base' and not (Path(ref) / 'model.safetensors.index.json').is_file():
                 raise ValueError(f'STaR checkpoint {name} is missing: {ref}')
         self.models = {name: Path(ref) for name, ref in state['models'].items()}
-        self.datasets = {number: Path(ref) for number, ref in state['datasets'].items()}
+        self.datasets_by_round = {number: Path(ref) for number, ref in state['datasets'].items()}
         self.dataset_hashes = dict(state['dataset_hashes'])
         self.selected = state['selected']
 
@@ -119,10 +123,7 @@ class StarLab:
         return ('round-weight-training/v1',)
 
     def primary_metric(self):
-        return MetricSpec('accuracy', 'maximize', VERIFIER.name)
-
-    def split_roles(self):
-        return {'dev': DEV, 'test': SEALED}
+        return MetricSpec('accuracy', 'maximize', self.datasets['dev'][0].verifier.name)
 
     def invariants(self):
         return (Invariant.once_per('round', operation='generate'),
@@ -169,6 +170,8 @@ class StarLab:
             if kind == 'boolean' and type(value) is not bool:
                 raise ValueError(f'{key} must be bool')
         self._call_id = call.call_id
+        if call.name == 'evaluate':
+            return self._evaluate(call.call_id, request)
         summary, data = getattr(self, '_' + call.name)(request)
         return OperationResult(summary, (), self.simulated, data={'request': request, **data})
 
@@ -181,13 +184,9 @@ class StarLab:
             raise ValueError('Model must be the configured base or a committed checkpoint')
         return matches[0]
 
-    def _cohort(self, ref, split):
-        if split not in self.groups:
-            raise ValueError('Unknown STaR data split')
-        path = (self.input_root / ref).resolve()
-        if ref != split and path != self.files[split]:
-            raise ValueError(f'Dataset must identify the configured {split} cohort')
-        return self.groups[split]
+    def _items(self, problems):
+        # Sampling workers read the question; the fixture engine and hinted prompts read the reference answer.
+        return [{'id': row.id, 'question': row.prompt, 'answer': row.answer} for row in problems]
 
     def resource_roles(self):
         count = 0 if self.engine is not None else 4
@@ -250,47 +249,49 @@ class StarLab:
             return {item['id']: [generated[str(index * count + sample)] for sample in range(count)]
                     for index, item in enumerate(items)}
 
-    def _evaluate(self, request):
-        split, model = request['split'], self._model(request['model'])
-        label = self._call_id
-        if split not in ("dev", "test"):
-            raise ValueError("Evaluation must use a fixed held-out split")
-        items = self._cohort(request['dataset'], split)
-        directory = self.root / f"evaluation-{label}"
-        outputs = self._sample(items, model, directory)
-        rows = [{"id": row["id"], "text": outputs[row["id"]][0],
-                 **score_record(VERIFIER, outputs[row["id"]][0], row["answer"])} for row in items]
-        write_records(directory / "scores.jsonl", rows)
-        metrics = {"correct": sum(row["correct"] for row in rows), "total": len(rows),
-                   "parsed": sum(row["parsed"] for row in rows)}
-        metrics["accuracy"] = metrics["correct"] / metrics["total"]
-        atomic_json(directory / "metrics.json", metrics)
-        return f"GSM8K {label}: {metrics['correct']}/{metrics['total']}", {
-            "protocol": f"GSM8K STaR {label}", "quality_metrics": metrics, "model": model,
-            "evidence": str(directory / "scores.jsonl")}
+    def _evaluate(self, call_id, request):
+        split = request['split']
+        self._model(request['model'])
+        if split not in ('dev', 'test') or self.split_named(request['dataset'], 'dev' if split == 'dev' else 'sealed') != split:
+            raise ValueError('Evaluation must use a fixed held-out split')
+        return self.evaluate(call_id, request)
+
+    def problems(self, arguments):
+        return self.datasets[arguments['split']]
+
+    def solve(self, problems, arguments):
+        directory = self.root / f"evaluation-{self._call_id}"
+        outputs = self._sample(self._items(problems), self._model(arguments['model']), directory)
+        return [MathAttempt(outputs[row.id][0], simulated=self.simulated) for row in problems]
+
+    def result_data(self, records, ref, arguments):
+        return {'protocol': f'GSM8K STaR {self._call_id}', 'request': arguments,
+                'model': self._model(arguments['model'])}
 
     def _generate(self, request):
         number, model = request['round'], self._model(request['model'])
         if request['condition'] not in ('none', 'answer'):
             raise ValueError('condition must be none or answer')
         rationalize = request['condition'] == 'answer'
-        items = self._cohort(request['dataset'], 'train')
+        problems = self.datasets[self.split_named(request['dataset'], 'train')]
+        items = self._items(problems)
         directory = self.root / f'round-{number}'
         directory.mkdir()
         options = {'count': request['samples_per_prompt'], 'temperature': request['temperature']}
         outputs = self._sample(items, model, directory / 'plain', **options)
         accepted, misses = [], []
-        for item in items:
-            kept = [row for text in outputs[item['id']] if (row := keep_reasoning(item, text)) is not None]
+        for problem, item in zip(problems, items, strict=True):
+            kept = [row for text in outputs[item['id']] if (row := keep_reasoning(problem, text)) is not None]
             if not kept:
-                misses.append(item)
+                misses.append((problem, item))
             accepted.extend({**row, 'origin': 'plain'} for row in kept)
         plain_count = len(accepted)
         if rationalize and misses:
-            hinted = self._sample(misses, model, directory / 'rationalized', hinted=True, **options)
-            for item in misses:
+            hinted = self._sample([item for _, item in misses], model, directory / 'rationalized',
+                                  hinted=True, **options)
+            for problem, item in misses:
                 for text in hinted[item['id']]:
-                    row = keep_reasoning(item, text)
+                    row = keep_reasoning(problem, text)
                     if row is not None:
                         accepted.append({**row, 'origin': 'rationalized'})
         path = directory / 'generated.jsonl'
@@ -299,13 +300,13 @@ class StarLab:
                    'generated_rationalized': len(misses) * options['count'] if rationalize else 0,
                    'accepted_rationalized': len(accepted) - plain_count, 'accepted_total': len(accepted)}
         atomic_json(directory / 'collection.json', {'model': model, **metrics})
-        self.datasets[number] = path
+        self.datasets_by_round[number] = path
         self.dataset_hashes[number] = file_hash(path)
         return f'Round {number}: accepted {len(accepted)} rationales', {
             'dataset': str(path), 'count': len(accepted), 'collection': metrics}
 
     def _owned_dataset(self, number, ref):
-        dataset = self.datasets[number]
+        dataset = self.datasets_by_round[number]
         if ref != str(dataset) or file_hash(dataset) != self.dataset_hashes[number]:
             raise ValueError('Dataset differs from the committed round artifact')
         return dataset
@@ -321,7 +322,7 @@ class StarLab:
                 counts[row['id']] += 1
         destination = source.parent / 'accepted.jsonl'
         write_records(destination, kept)
-        self.datasets[number] = destination
+        self.datasets_by_round[number] = destination
         self.dataset_hashes[number] = file_hash(destination)
         return f'Filtered {len(kept)} accepted rationales', {'dataset': str(destination), 'count': len(kept)}
 

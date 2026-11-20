@@ -168,15 +168,6 @@ class RestEMLab(MathLab):
     def evaluate_schema(self):
         return next(spec for spec in self.describe() if spec.name == 'evaluate').input_schema
 
-    def _split(self, ref, role):
-        """The split a `dataset` reference names: its split name or its source file's path."""
-        for binding in self.bindings:
-            if ref == binding.split or Path(ref).resolve() == Path(binding.source).resolve():
-                if self.role_names[binding.split] != role:
-                    raise ValueError(f'Dataset {ref} is not a {role} split')
-                return binding.split
-        raise ValueError('Dataset must name a split of the configured manifest')
-
     def _read(self, path):
         return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
@@ -245,7 +236,7 @@ class RestEMLab(MathLab):
     def _generate(self, args):
         if self.initial is None:
             raise ValueError('Evaluate the held-out baseline before generation')
-        problems = self.datasets[self._split(args['dataset'], 'train')]
+        problems = self.datasets[self.split_named(args['dataset'], 'train')]
         rows = self._rows(problems)
         sample, temperature = args['temperature'] > 0, args['temperature']
         completions = self._completions(args['model'], rows, args['samples_per_prompt'], args['round'],
@@ -298,7 +289,7 @@ class RestEMLab(MathLab):
         return {'model': str(output.resolve()), 'manifest': manifest}
 
     def _evaluate(self, call, args):
-        if self._split(args['dataset'], 'dev') != args['split']:
+        if self.split_named(args['dataset'], 'dev') != args['split']:
             raise ValueError('ReST EM evaluates its configured development dataset')
         if args['round'] == 0:
             self.initial = args['model']

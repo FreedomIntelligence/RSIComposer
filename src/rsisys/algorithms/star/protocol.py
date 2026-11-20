@@ -1,14 +1,11 @@
-"""STaR curriculum, numeric rationale filtering and Qwen prompt rendering."""
+"""STaR curriculum, rationale filtering and Qwen prompt rendering."""
 
 import json
 import re
 
-from rsisys.api import MarkedNumericVerifier
-
 
 MAX_LENGTH, MAX_NEW_TOKENS = 1024, 768
 LEARNING_RATE = 1e-6
-VERIFIER = MarkedNumericVerifier()
 ANSWER_MARKER = re.compile(r'####|\\boxed\{|(?:final answer|the answer is|答案是)', re.I)
 
 
@@ -17,16 +14,17 @@ def curriculum(rounds, plain_rounds):
             for number in range(1, rounds + 1)]
 
 
-def keep_reasoning(item, answer):
-    if not VERIFIER.is_correct(answer, item["answer"]):
+def keep_reasoning(problem, answer):
+    """The training record for a correct answer to a math problem, or None."""
+    if not problem.verifier.is_correct(answer, problem.answer):
         return None
     marker = list(ANSWER_MARKER.finditer(answer))[-1]
     rationale = re.sub(r'(?:final answer|the answer is|答案是)\s*[:：]?\s*$', '',
                        answer[:marker.start()].strip(), flags=re.I).strip(" \t\n:：*$")
     if not any(ch.isalpha() for ch in rationale):
         return None
-    return {"id": item["id"], "prompt": item["question"],
-            "completion": rationale + "\n\\boxed{" + str(VERIFIER.parse_reference(item["answer"])) + "}"}
+    return {"id": problem.id, "prompt": problem.prompt,
+            "completion": rationale + "\n\\boxed{" + problem.expected + "}"}
 
 
 def write_records(path, rows):

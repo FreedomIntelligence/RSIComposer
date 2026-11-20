@@ -172,6 +172,10 @@ Weight-training methods split a manifest into `train` and `dev` splits
 `train` split with its engine, filters with `verify()`, trains, and measures
 checkpoints on `dev` with MathLab's `evaluate()`: `bind_actor()` records the
 engine as the measured model, and `solve()` asks the engine instead of the actor.
+STaR's Lab ([`algorithms/star/lab.py`](../../algorithms/star/lab.py)) does the
+same with GPU workers and adds a sealed `test` split that the host measures after
+the Controller finishes. `split_named(ref, role)` resolves a Controller's
+`dataset` argument, a split name or the split file's path, to a manifest split.
 
 ## Public operations
 

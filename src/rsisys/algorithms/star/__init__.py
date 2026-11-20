@@ -1,4 +1,4 @@
-"""Register STaR. Its Lab is method-private until the shared math Lab is implemented."""
+"""Register STaR; its Lab is a MathLab subclass."""
 
 from rsisys.api import MethodDefinition
 
