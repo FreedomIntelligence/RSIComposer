@@ -3,6 +3,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="License: Apache 2.0"></a>
   <a href="https://github.com/satsuki2486441738/RSISys/stargazers"><img src="https://img.shields.io/github/stars/satsuki2486441738/RSISys?logo=github" alt="GitHub stars"></a>
+  <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv paper: Coming soon">
 </p>
 
 <p align="center"><strong>A general framework for recursive self-improvement: research, explore, and improve the whole system</strong></p>
@@ -25,11 +26,11 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 
 ## Highlights
 
-**One loop for every RSI method.** RSISys describes recursive self-improvement as a single loop: the Controller decides what to try, Labs run experiments in the target environment, and the evidence they return drives the next decision. What improves is not fixed. It can be a model's weights, a prompt, a program, an agent harness, or the Controller itself. Self-training, prompt and program search, harness evolution and autonomous research agents all fit this loop without a second structure; the [method table](#adapted-methods) shows how each one maps.
+**One loop for every RSI method.** RSISys takes a reinforcement learning view: a Controller chooses an action, a Lab runs it, and the evidence guides the next decision. Single-agent RSI is a special case: the same agent decides what to try and performs the task in the Lab. The same loop also lets a separate research agent direct experiments for a task agent. [Different methods](#adapted-methods) can use this loop with their own optimizers.
 
-**Research and exploration are roles, not extra components.** The Controller plays the research role; each Lab plays the exploration role. Assign the roles to different agents, for example a strong model deciding how to train a small one, and the system is decoupled. Assign both to the same agent and you get the usual single-agent self-improvement loop. RSISys expresses both through the same interfaces, so you can move between them without rewriting the method.
+**Choose what to improve.** A method can change an agent's prompts, programs, harness, or model weights. It can also change the RSI policy that decides how to improve. The Self-Reflection Lab can test a candidate Controller in a nested run, and the current Controller decides whether to adopt it based on the evidence.
 
-**The Controller can improve itself.** In most systems the self-improvement algorithm is fixed. Here the Controller is a replaceable component: it can trial new versions of itself in nested experiments and switch to one at a checkpoint, so the research loop is itself open to improvement.
+**Swap and reuse components.** Controllers and Labs compose through public interfaces, and their policies, harnesses, memory, and backends can be replaced independently. Reuse the same Coding Lab with different compatible Controllers, or connect a new dataset or benchmark through a Lab, without changing the core. [See how to compose a system](docs/compose.md).
 
 ## Getting started
 

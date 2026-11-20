@@ -3,6 +3,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="许可证：Apache 2.0"></a>
   <a href="https://github.com/satsuki2486441738/RSISys/stargazers"><img src="https://img.shields.io/github/stars/satsuki2486441738/RSISys?logo=github" alt="GitHub 星标数"></a>
+  <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv 论文：Coming soon">
 </p>
 
 <p align="center"><strong>通用的递归自改进框架：研究、探索，并改进整个系统</strong></p>
@@ -25,11 +26,11 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 
 ## 亮点
 
-**一个闭环覆盖所有 RSI 方法。** RSISys 把递归自改进描述为一个闭环：Controller 决定下一步做什么，Lab 在目标环境中运行实验，返回的证据驱动下一次决策。改进对象不固定，可以是模型权重、提示词、程序、agent harness，也可以是 Controller 自身。自训练、提示词与程序搜索、harness 演化和自主研究 agent 都能放进这个闭环，不需要第二种结构；各方法的对应关系见[方法表](#已适配的方法)。
+**一个闭环覆盖所有 RSI 方法。** RSISys 用强化学习的交互视角组织自改进：Controller 选择动作，Lab 执行，返回的证据驱动下一次决策。单 agent RSI 是其中的特例：同一个 agent 既决定试什么，也在 Lab 里执行任务。这两个角色也可以分开，由独立的研究 agent 为任务 agent 决定下一步实验。[不同方法](#已适配的方法)可以共用这个闭环，各自保留优化算法。
 
-**研究与探索是角色，不是额外组件。** Controller 承担研究角色，每个 Lab 承担探索角色。把两个角色交给不同的 agent，例如由强模型决定如何训练一个小模型，系统就是解耦的；交给同一个 agent，就回到常见的单 agent 自改进闭环。RSISys 用同一套接口表达这两种情况，切换时不需要重写方法。
+**改进对象由方法决定。** 方法可以改 agent 的提示词、程序、harness 或模型权重，也可以改决定「如何改进」的 RSI 策略。Self-Reflection Lab 可以在嵌套实验中验证候选 Controller，再由当前 Controller 根据证据决定是否采纳。
 
-**Controller 自身也能被改进。** 大多数系统里，自改进算法本身是固定的。在 RSISys 中 Controller 是可替换的组件：它可以在嵌套实验中试跑自己的新版本，并在 checkpoint 处切换过去，研究闭环本身也在改进范围之内。
+**组件可替换、可复用。** Controller 和 Lab 通过公开接口装配，Policy、Harness、Memory 和后端都可以独立替换。同一个 Coding Lab 可以配合不同的兼容 Controller 使用，也可以通过 Lab 接入新的数据集或 benchmark，无需改动核心。[查看装配方式](docs/compose.md)。
 
 ## 快速开始
 

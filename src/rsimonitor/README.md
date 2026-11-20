@@ -63,7 +63,7 @@ axes omit nonpositive points. **Manage charts** removes panels or restores remov
 automatic panels; these changes only affect the current browser's layout.
 
 ```sh
-rsisys run --plugin src/rsisys/algorithms/_template \
+rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
   --config src/rsisys/algorithms/_template/configs/run.json \
   --probe src/rsisys/algorithms/_template/probes.py --data-dir runs/custom-observed
 rsimonitor --runs-dir runs
