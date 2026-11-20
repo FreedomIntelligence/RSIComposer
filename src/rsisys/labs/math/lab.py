@@ -43,7 +43,7 @@ from time import monotonic
 # Lab code imports its layers directly; rsisys.api is the composition layer.
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.benchmark import choose_primary_metric
-from rsisys.loops.contracts.agent_runtime import CandidateRejected, runtime_identity
+from rsisys.loops.contracts.domain_agent import DomainAgentRejected, runtime_identity
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
@@ -115,7 +115,7 @@ class MathLab:
                     {row.benchmark for row in rows})], aggregates=AGGREGATES)
 
     def make_runtime(self, config):
-        """The AgentRuntime that answers this Lab's problems."""
+        """The DomainAgentRuntime that answers this Lab's problems with its domain agent."""
         return self.runtime_factory()
 
     def runtime_options(self, config):
@@ -278,13 +278,13 @@ class MathLab:
         """Ask the actor each problem after the instruction and the verifier's answer format."""
         return self.run_runtime({'instruction': arguments.get('instruction')}, problems)
 
-    def run_runtime(self, candidate, problems):
-        """Run the Lab's runtime on a batch after checking the candidate against what it accepts."""
+    def run_runtime(self, domain_agent, problems):
+        """Run the Lab's runtime on a batch after checking the domain agent against what it accepts."""
         try:
-            self.runtime.accepts.check(candidate)
-        except CandidateRejected as error:
-            raise LabToolError(f'Runtime {self.runtime.name!r} rejects the candidate: {error}') from error
-        return self.runtime.run(candidate, problems, self)
+            self.runtime.accepts.check(domain_agent)
+        except DomainAgentRejected as error:
+            raise LabToolError(f'Runtime {self.runtime.name!r} rejects the domain agent: {error}') from error
+        return self.runtime.run(domain_agent, problems, self)
 
     def ask_actor(self, problem, system):
         """One temperature-zero actor answer; the system text ends with the answer format."""

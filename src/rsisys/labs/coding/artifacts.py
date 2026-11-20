@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from rsisys.loops.contracts.agent_runtime import path_digest
+from rsisys.loops.contracts.domain_agent import path_digest
 
 
 def digest(value):

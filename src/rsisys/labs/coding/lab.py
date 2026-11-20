@@ -23,8 +23,8 @@ from rsisys.loops.contracts.execution import LabToolError
 from .agents import RUNTIMES
 from .artifacts import digest, snapshot
 from rsisys.loops.contracts.benchmark import choose_primary_metric
-from rsisys.loops.contracts.agent_runtime import (
-    CandidateRejected, Subject, allowed_trust, read_subject_data, require_trust)
+from rsisys.loops.contracts.domain_agent import (
+    DomainAgentRejected, DomainAgent, allowed_trust, read_domain_agent_data, require_trust)
 from .benchmarks import load_task_manifests, validate_benchmark_config
 from .harbor_runner import atomic_json
 from .trial_runner import HarborTrialRunner, infrastructure_failure
@@ -284,26 +284,26 @@ class CodingLab:
             wanted = set(task_ids)
             rows = [r for r in rows if r['id'] in wanted]
         pinned = snapshot(artifact, self.artifacts)
-        self.check_candidate(pinned, rows)
+        self.check_domain_agent(pinned, rows)
         request = {'artifact_sha256': pinned.sha256, 'split': split, 'trials': trials,
                    'tasks': rows, 'protocol_fingerprint': self.fingerprint,
                    'protocols': {name: self.protocols[name].protocol_id for name in sorted({r['benchmark'] for r in rows})}}
         return pinned, request
 
-    def check_candidate(self, pinned, rows):
-        """Every benchmark in the request must accept this candidate's shape; reject before any trial runs."""
+    def check_domain_agent(self, pinned, rows):
+        """Every benchmark in the request must accept this domain agent's shape; reject before any trial runs."""
         for name in sorted({row['benchmark'] for row in rows}):
             spec = self.runtimes[name].accepts
-            subject = Subject.from_path(spec.kind, pinned.path)
+            agent = DomainAgent.from_path(spec.kind, pinned.path)
             try:
                 if spec.kind == 'agent-tree':
                     if not Path(pinned.path).is_dir():
-                        raise CandidateRejected('An agent-tree candidate must be a directory')
+                        raise DomainAgentRejected('An agent-tree domain agent must be a directory')
                 else:
-                    spec.check(read_subject_data(subject))
-            except CandidateRejected as error:
+                    spec.check(read_domain_agent_data(agent))
+            except DomainAgentRejected as error:
                 raise LabToolError(f'Benchmark {name!r} runtime {self.runtimes[name].name!r} rejects the '
-                                   f'candidate: {error}') from error
+                                   f'domain agent: {error}') from error
 
     def evaluate(self, artifact, split, trials=1, task_ids=None):
         """Public method-neutral measurement entry point; safe to reattach/repeat.
@@ -347,7 +347,7 @@ class CodingLab:
                         raise infrastructure_failure('Invalid bounded score in receipt: ' + str(receipt))
                     data.update(task_id=row['id'], benchmark=row['benchmark'], endpoint=endpoint,
                                 trial=trial, seed=seed, artifact_sha256=pinned.sha256,
-                                candidate_sha256=pinned.sha256, protocol_id=protocol.protocol_id,
+                                domain_agent_sha256=pinned.sha256, protocol_id=protocol.protocol_id,
                                 runtime={'name': self.runtimes[row['benchmark']].name,
                                          'version': self.runtimes[row['benchmark']].version})
                     atomic_json(receipt, data)

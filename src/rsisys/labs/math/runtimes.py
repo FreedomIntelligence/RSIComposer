@@ -1,18 +1,19 @@
-"""Runtimes for math benchmarks: how a candidate answers a batch of problems.
+"""Runtimes for math benchmarks: how a domain agent answers a batch of problems.
 
-A runtime is named in the Lab's wiring (never in candidate data) and run by
-MathLab.solve(). Its identity (name, version, model access, accepted candidate
-shape) is part of each benchmark's protocol, and the candidate's content hash is
-recorded on every receipt.
+The domain agent is what the Lab measures; the RSI policy in the Controller submits
+and revises it. A runtime is named in the Lab's wiring (never in the domain agent's
+own data) and run by MathLab.solve(). Its identity (name, version, model access,
+accepted domain agent shape) is part of each benchmark's protocol, and the domain
+agent's content hash is recorded on every receipt.
 
-    instruction   One actor call per problem; the candidate is the instruction text.
-    step-program  A sandboxed step(problem, history) program asks the Lab to call a
-                  fixed model pool until it returns an answer; the candidate is the
-                  program's source file.
-    checkpoint    A trained checkpoint generates through an engine; the candidate is the
+    instruction   One actor call per problem; the domain agent is the instruction text.
+    step-program  A sandboxed step(problem, history) program (the domain agent's own
+                  harness, not the Controller's) asks the Lab to call a fixed model pool
+                  until it returns an answer; the domain agent is the program's source file.
+    checkpoint    A trained checkpoint generates through an engine; the domain agent is the
                   checkpoint reference.
 
-run(candidate, problems, host) takes a batch because engines and trial pools work in
+run(domain_agent, problems, host) takes a batch because engines and trial pools work in
 batches. `host` is what the Lab lends the runtime: its model access and budgets. A
 runtime never reaches the host's artifacts, graders or other splits.
 """
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 import subprocess
 import time
 
-from rsisys.loops.contracts.agent_runtime import CandidateRejected, CandidateSpec
+from rsisys.loops.contracts.domain_agent import DomainAgentRejected, DomainAgentSpec
 from rsisys.loops.contracts.execution import LabToolError
 
 from .lab import Attempt
@@ -33,10 +34,10 @@ class InstructionRuntime:
     name: str = 'instruction'
     version: str = '1'
     model_access: str = 'lab-mediated'
-    accepts: CandidateSpec = CandidateSpec('instruction', {'instruction': {'type': 'string', 'required': True}}, 'data')
+    accepts: DomainAgentSpec = DomainAgentSpec('instruction', {'instruction': {'type': 'string', 'required': True}}, 'data')
 
-    def run(self, candidate, problems, host):
-        instruction = candidate['instruction']
+    def run(self, domain_agent, problems, host):
+        instruction = domain_agent['instruction']
         if not isinstance(instruction, str) or not instruction.strip():
             raise LabToolError('instruction must be nonempty text')
         return [host.ask_actor(problem, instruction) for problem in problems]
@@ -44,18 +45,18 @@ class InstructionRuntime:
 
 @dataclass(frozen=True)
 class StepProgramRuntime:
-    """A harness program stepped in a sandbox, with model calls made by the Lab on its behalf."""
+    """A domain agent harness program stepped in a sandbox, with model calls made by the Lab on its behalf."""
     max_calls: int = 3
     name: str = 'step-program'
     version: str = '1'
     model_access: str = 'lab-mediated'
-    accepts: CandidateSpec = CandidateSpec('program', {'harness': {'type': 'string', 'required': True}}, 'sandboxed-code')
+    accepts: DomainAgentSpec = DomainAgentSpec('program', {'harness': {'type': 'string', 'required': True}}, 'sandboxed-code')
 
-    def run(self, candidate, problems, host):
-        """host provides pool, executor, sandbox_slots, candidate_errors, seed, trials_per_problem and workers (FixedModelHarnessLab)."""
+    def run(self, domain_agent, problems, host):
+        """host provides pool, executor, sandbox_slots, domain_agent_errors, seed, trials_per_problem and workers (FixedModelHarnessLab)."""
         trials = host.trials_per_problem
         with ThreadPoolExecutor(max_workers=host.workers) as pool:
-            return list(pool.map(lambda item: copy_context().run(self.trial, host, candidate['harness'], *item),
+            return list(pool.map(lambda item: copy_context().run(self.trial, host, domain_agent['harness'], *item),
                                  [(k // trials, k % trials, problem) for k, problem in enumerate(problems)]))
 
     def trial(self, host, harness, index, trial, problem):
@@ -76,8 +77,8 @@ class StepProgramRuntime:
                     answer = history[-1]['content'] if history else ''
                     break
                 history.append(host.pool.complete(action['messages'], seed=host.seed + index * 100 + trial * 10 + step))
-        except (*host.candidate_errors, subprocess.TimeoutExpired) as exc:
-            # A candidate crash is an observed failed trial; transport and verifier failures propagate.
+        except (*host.domain_agent_errors, subprocess.TimeoutExpired) as exc:
+            # A domain agent crash is an observed failed trial; transport and verifier failures propagate.
             error, answer = str(exc), ''
         usage = {name: sum(reply[key] for reply in history)
                  for name, key in (('input_tokens', 'prompt_tokens'), ('output_tokens', 'completion_tokens'))}
@@ -92,11 +93,11 @@ class CheckpointRuntime:
     name: str = 'checkpoint'
     version: str = '1'
     model_access: str = 'engine'
-    accepts: CandidateSpec = CandidateSpec('checkpoint', {'model': {'type': 'string', 'required': True}}, 'data')
+    accepts: DomainAgentSpec = DomainAgentSpec('checkpoint', {'model': {'type': 'string', 'required': True}}, 'data')
 
-    def run(self, candidate, problems, host):
+    def run(self, domain_agent, problems, host):
         """host.generate(model, problems) -> one completion per problem."""
-        return [Attempt(text, simulated=host.simulated) for text in host.generate(candidate['model'], problems)]
+        return [Attempt(text, simulated=host.simulated) for text in host.generate(domain_agent['model'], problems)]
 
 
 RUNTIMES = {
@@ -118,4 +119,4 @@ def _no_options(factory, options):
     return factory()
 
 
-__all__ = ['RUNTIMES', 'InstructionRuntime', 'StepProgramRuntime', 'CheckpointRuntime', 'CandidateRejected']
+__all__ = ['RUNTIMES', 'InstructionRuntime', 'StepProgramRuntime', 'CheckpointRuntime', 'DomainAgentRejected']

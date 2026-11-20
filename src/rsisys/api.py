@@ -147,10 +147,10 @@ _EXPORTS = {
     'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
     'HarborAgentRuntime': ('rsisys.labs.coding.agents', 'HarborAgentRuntime'),
     'Benchmark': ('rsisys.loops.contracts.benchmark', 'Benchmark'),
-    'AgentRuntime': ('rsisys.loops.contracts.agent_runtime', 'AgentRuntime'),
-    'Subject': ('rsisys.loops.contracts.agent_runtime', 'Subject'),
-    'CandidateRejected': ('rsisys.loops.contracts.agent_runtime', 'CandidateRejected'),
-    'CandidateSpec': ('rsisys.loops.contracts.agent_runtime', 'CandidateSpec'),
+    'DomainAgentRuntime': ('rsisys.loops.contracts.domain_agent', 'DomainAgentRuntime'),
+    'DomainAgent': ('rsisys.loops.contracts.domain_agent', 'DomainAgent'),
+    'DomainAgentRejected': ('rsisys.loops.contracts.domain_agent', 'DomainAgentRejected'),
+    'DomainAgentSpec': ('rsisys.loops.contracts.domain_agent', 'DomainAgentSpec'),
     # Optional serving and training implementations.
     'ChatPool': ('rsisys.backends.serving.chat', 'ChatPool'),
     'LoRAEngine': ('rsisys.backends.training.lora.engine', 'LoRAEngine'),
@@ -253,9 +253,9 @@ if _TYPE_CHECKING:
     from rsisys.labs.coding.artifacts import CodingArtifact as CodingArtifact
     from rsisys.labs.coding.agents import HarborAgentRuntime as HarborAgentRuntime
     from rsisys.loops.contracts.benchmark import Benchmark as Benchmark
-    from rsisys.loops.contracts.agent_runtime import (
-        AgentRuntime as AgentRuntime, Subject as Subject, CandidateRejected as CandidateRejected,
-        CandidateSpec as CandidateSpec,
+    from rsisys.loops.contracts.domain_agent import (
+        DomainAgentRuntime as DomainAgentRuntime, DomainAgent as DomainAgent, DomainAgentRejected as DomainAgentRejected,
+        DomainAgentSpec as DomainAgentSpec,
     )
     from rsisys.application import Application as Application, ApplicationConfig as ApplicationConfig
     from rsisys.assembly import (

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 
-from rsisys.loops.contracts.agent_runtime import CandidateSpec
+from rsisys.loops.contracts.domain_agent import DomainAgentSpec
 
 _BINDINGS = {'artifact', 'artifact_dir', 'endpoint', 'model', 'max_steps',
              'max_output_tokens', 'total_output_tokens', 'seed', 'thinking'}
@@ -30,7 +30,7 @@ DEFAULT_BINDINGS = {
     'max_steps': 'max_steps', 'max_output_tokens': 'max_output_tokens',
     'total_output_tokens': 'total_output_tokens', 'seed': 'seed', 'thinking': 'thinking',
 }
-INSTRUCTION = CandidateSpec('instruction', {
+INSTRUCTION = DomainAgentSpec('instruction', {
     'instruction': {'type': 'string', 'max_length': 12000, 'required': True},
     'hypothesis': {'type': 'string'}, 'id': {'type': 'string'}, 'sha256': {'type': 'string'},
     'harness': {'type': 'object'},
@@ -48,7 +48,7 @@ class HarborAgentRuntime:
     bindings: dict = field(default_factory=lambda: dict(DEFAULT_BINDINGS))
     python_paths: tuple = ()
     skip_model_parsing: bool = True
-    accepts: CandidateSpec = INSTRUCTION
+    accepts: DomainAgentSpec = INSTRUCTION
 
     def run(self, candidate, task, budget):
         raise NotImplementedError('Harbor trials run in a worker process; see HarborTrialRunner')
@@ -89,7 +89,7 @@ def agent_tree_runtime(options):
         name='harbor-agent-tree', version=str(options.get('version', '1')), import_path=options['import_path'],
         kwargs=dict(options.get('kwargs', {})), bindings={**DEFAULT_BINDINGS, **options.get('bindings', {})},
         python_paths=tuple(options.get('python_paths', ())),
-        accepts=CandidateSpec('agent-tree', {}, 'host-code'))
+        accepts=DomainAgentSpec('agent-tree', {}, 'host-code'))
 
 
 RUNTIMES = {'harbor-instruction': instruction_runtime, 'harbor-agent-tree': agent_tree_runtime}

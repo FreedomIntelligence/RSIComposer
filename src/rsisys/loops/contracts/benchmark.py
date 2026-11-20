@@ -8,9 +8,9 @@ override their protocol. A setting a benchmark cannot take is rejected, not
 ignored, and mounting order never matters, so the same benchmark has the same
 protocol_id on any Lab, in any combination, on one Lab instance or several.
 
-A benchmark also names its runtime (rsisys.loops.contracts.agent_runtime): how a
-submitted candidate is run on its tasks. The runtime's name, version, options and
-accepted candidate shape are part of the protocol, so a benchmark is scored by the
+A benchmark also names its runtime (rsisys.loops.contracts.domain_agent): how a
+submitted domain agent is run on its tasks. The runtime's name, version, options and
+accepted domain agent shape are part of the protocol, so a benchmark is scored by the
 same runtime wherever it is mounted.
 
 Mounting several benchmarks reports each one's metrics separately. A Lab never
@@ -76,7 +76,7 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults, runtimes=
     another Lab.
 
     runtimes maps the installed runtime names to factories (name -> callable(options)
-    returning an AgentRuntime). An entry may set `runtime` = {"name", "options"}, else
+    returning an DomainAgentRuntime). An entry may set `runtime` = {"name", "options"}, else
     default_runtime applies; the runtime's identity is recorded in the protocol.
     """
     if not isinstance(entries, Mapping) or not entries:
@@ -97,7 +97,7 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults, runtimes=
                 raise ValueError(f'Benchmark {name!r} {key} must be a path')
         protocol = {key: entry.get(key, default) for key, default in protocol_defaults.items()}
         if runtimes:
-            from .agent_runtime import runtime_identity, validate_runtime_config
+            from .domain_agent import runtime_identity, validate_runtime_config
             chosen = entry.get('runtime', default_runtime)
             rname, options = validate_runtime_config(chosen, known=runtimes)
             protocol['runtime'] = runtime_identity(runtimes[rname](options), options)

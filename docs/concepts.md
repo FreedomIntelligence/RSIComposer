@@ -6,8 +6,8 @@ enforces budgets and data-access rules, and stores the results.
 
 ```mermaid
 flowchart LR
-    C["Controller<br/>Policy · Harness · Memory"] -- "OperationCall<br/>(e.g. math.evaluate)" --> H[Host]
-    H -- call --> L["Lab<br/>evaluate · sample · train …"]
+    C["Controller<br/>RSI policy · Harness · Memory"] -- "OperationCall<br/>(e.g. math.evaluate)" --> H[Host]
+    H -- call --> L["Lab<br/>benchmark · domain agent · evaluate …"]
     L -- "OperationResult (receipt)" --> H
     H -- "receipts, budget, context" --> C
     H --- S[("Run directory<br/>receipts · artifacts · snapshots")]
@@ -24,14 +24,17 @@ finishes or a budget or step limit is reached.
 | Term | Meaning | In code |
 | --- | --- | --- |
 | **Run** | One execution of a run config. All its outputs go to one data directory. | `rsisys run --config … --data-dir …` |
-| **Controller** | Decides what to try next and which candidate to adopt. It has a Policy and may also have a Harness and Memory. | `ControllerDefinition` |
-| **Policy** | The decision logic. It can be plain Python or a model that chooses actions. | `DecisionPolicy.decide(DecisionInput) -> Decision` |
-| **Harness** | Builds the Policy's input window and provides Controller-local tools. Without one, the default Harness is used. | `ControllerHarness` |
+| **Controller** | Decides what to try next and which domain agent to adopt. It has an RSI policy and may also have a Harness and Memory. | `ControllerDefinition` |
+| **RSI policy** | The researcher: the decision logic that proposes and revises domain agents. It can be plain Python or a model that chooses actions. Called Policy in code. | `DecisionPolicy.decide(DecisionInput) -> Decision` |
+| **Harness** | The Controller's own: builds the RSI policy's input window and provides Controller-local tools. Without one, the default Harness is used. Not the harness of a domain agent. | `ControllerHarness` |
 | **Memory** | Builds text context from past evidence for model-driven Policies. | `ControllerMemory.context(query) -> str` |
 | **Lab** | An environment that runs operations against its own data, models, and scorer, and returns receipts. | `describe()`, `execute(call)` |
+| **Domain agent** | What a Lab measures: the thing that does the domain task and is under study, such as an instruction, a configuration, a `step` program, a Harbor agent source tree or a checkpoint. The RSI policy submits and revises it; the Lab pins it by content hash, runs it and never edits or selects it. Any harness it has belongs to it, not to the Controller. | `DomainAgent`, `DomainAgentSpec` |
+| **Runtime** | How a Lab runs one domain agent on a benchmark's tasks. It is named in the benchmark entry and recorded in the benchmark's `protocol_id`, with a trust level: `data`, `sandboxed-code` or `host-code`. | `DomainAgentRuntime` |
+| **Benchmark** | A frozen task set with its verifier, budgets and runtime. A Lab mounts benchmarks and does not override their protocol. | `Benchmark`, `protocol_id` |
 | **Operation** | A named action that a Lab publishes, with a JSON input schema. The Controller calls it as `<lab alias>.<operation>`, for example `math.evaluate`. | `OperationSpec`, `OperationCall` |
 | **Receipt** | The result of one operation: status, summary, data, and artifacts. The host stores every receipt; the Controller reads them in `DecisionInput.feedbacks`. | `OperationResult` |
-| **Primary metric** | The score a Lab declares and reports in `data['quality_metrics']`. Controllers use it to compare candidates. | `MetricSpec(name, direction, scorer)` |
+| **Primary metric** | The score a Lab declares and reports in `data['quality_metrics']`. The RSI policy uses it to compare domain agents. | `MetricSpec(name, direction, scorer)` |
 | **Split role** | How much of a data split the Controller can see. | `TRAIN`, `TRAIN_UNLABELED`, `DEV`, `SEALED` |
 | **Method** | A Controller bound to its own Labs and registered under one name. Most built-in algorithms are methods. | `MethodDefinition`, `registry.register_method` |
 | **Registry** | The catalog of methods, Controllers, Labs, and components that a run config can select by name. | `rsisys catalog` |

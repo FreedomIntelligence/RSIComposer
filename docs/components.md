@@ -126,17 +126,28 @@ named aggregate, and assembly fails without it. See the
 [Math](../src/rsisys/labs/math/README.md#benchmarks) Labs. The contract is in
 [`loops/contracts/benchmark.py`](../src/rsisys/loops/contracts/benchmark.py).
 
-### Candidates and runtimes
+### RSI policy and domain agent
 
-What a Lab measures is a candidate: an instruction, a configuration, a program or an
-agent source tree. A Controller submits it and the Lab pins it by content hash; the Lab
-never proposes, edits or selects it. How a candidate runs on a benchmark's tasks is the
-benchmark's **runtime**, recorded in its `protocol_id` next to the budgets, so a benchmark
-is run the same way wherever it is mounted. A runtime declares what a candidate may set
-(any other field is rejected), how it reaches a model, and a trust level: `data`,
+A research system has two parts that are easy to confuse because both can be "an agent"
+with a "harness":
+
+| | Lives in | What it is | Changed by |
+| --- | --- | --- | --- |
+| **RSI policy** | the Controller (`ControllerDefinition`: a policy, with its harness and memory) | The researcher. It decides what to try next and which domain agent to adopt. | the method's author |
+| **domain agent** | the Lab | What does the domain task and is under study: an instruction, a configuration, a program, an agent source tree or a checkpoint. | the RSI policy |
+
+The RSI policy submits and revises domain agents. The Lab pins each one by content hash,
+runs it under a fixed protocol and reports the result; it never proposes, edits or selects
+a domain agent. The harness of a coding or math domain agent (a `step` program, a Harbor
+agent) is part of the domain agent and is not the Controller's `ControllerHarness`.
+
+How a domain agent runs on a benchmark's tasks is the benchmark's **runtime**, recorded in
+its `protocol_id` next to the budgets, so a benchmark is run the same way wherever it is
+mounted. A runtime declares what a domain agent may set (any other field is rejected), how
+it reaches a model, and a trust level: `data`,
 `sandboxed-code` (bwrap or a task container) or `host-code` (imported on a worker host).
 `host-code` runs only when the Lab config lists `trust = ["host-code"]`. The contract is
-in [`loops/contracts/agent_runtime.py`](../src/rsisys/loops/contracts/agent_runtime.py);
+in [`loops/contracts/domain_agent.py`](../src/rsisys/loops/contracts/domain_agent.py);
 see the [Coding](../src/rsisys/labs/coding/README.md#plugging-in-a-method-or-coding-agent) and
 [Math](../src/rsisys/labs/math/README.md#runtimes) runtimes.
 
@@ -173,7 +184,7 @@ A method resolves components with
 | --- | --- | --- |
 | `backend` | `chat_pool` | Pool of Chat Completions clients for batched generation |
 | `backend` | `lora` | LoRA training engine |
-| `harness` | `python_step` | Runs a candidate agent program, `step(problem, history)`, in an isolated Python process. Used by harness-search Labs. |
+| `harness` | `python_step` | Runs a domain agent program, `step(problem, history)`, in an isolated Python process. Used by harness-search Labs. This is the domain agent's harness, not the Controller's `ControllerHarness`. |
 | `memory` | `agent_memory` | Default Controller Memory: notes written and retrieved by the decision model |
 
 Other implementations are importable from `rsisys.api` without registration:

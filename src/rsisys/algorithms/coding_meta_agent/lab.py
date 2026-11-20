@@ -8,14 +8,14 @@ import json
 from pathlib import Path
 import time
 
-from rsisys.api import (CandidateRejected, CandidateSpec, CodingLab, CodingArtifact, DEV, SEALED, Invariant, MetricSpec,
+from rsisys.api import (DomainAgentRejected, DomainAgentSpec, CodingLab, CodingArtifact, DEV, SEALED, Invariant, MetricSpec,
                         OperationCall, OperationResult, OperationSpec, LabToolError, atomic_write, json_bytes)
 
 BASELINE = 'Inspect the project, implement a correct minimal fix, and run relevant tests before finishing.'
 POLICY_OPTIONS = {'min_candidates', 'max_candidates'}
 POLICY_VERSION = 'coding-meta-agent/v5'
-# What this method registers: the shape every mounted benchmark's runtime must also accept.
-REGISTERED = CandidateSpec('instruction', {
+# The domain agent this method's RSI policy registers: the shape every mounted benchmark's runtime must also accept.
+REGISTERED = DomainAgentSpec('instruction', {
     'instruction': {'type': 'string', 'min_length': 20, 'max_length': 12000, 'required': True},
     'hypothesis': {'type': 'string', 'required': True}}, 'data')
 
@@ -63,11 +63,11 @@ class CodingSearchLab:
         if set(self.manifest) != {'search', 'heldout'}:
             raise ValueError('coding_meta_agent requires search and heldout splits')
         self.fingerprint = self.environment.fingerprint
-        # Assembly-time check: each mounted benchmark's runtime must accept what this method registers.
+        # Assembly-time check: each mounted benchmark's runtime must accept the domain agents this method registers.
         for name, runtime in self.environment.runtimes.items():
             if runtime.accepts.kind != REGISTERED.kind or set(REGISTERED.fields) - set(runtime.accepts.fields):
                 raise ValueError(f'Benchmark {name!r} runtime {runtime.name!r} does not accept the instruction '
-                                 'candidates this method registers')
+                                 'domain agents this method registers')
         self.candidates = self.root / 'candidates'
         self.evaluations = self.root / 'evaluations'
         with self._lock():
@@ -205,7 +205,7 @@ class CodingSearchLab:
             candidate = args['candidate']
             try:
                 REGISTERED.check(candidate)
-            except CandidateRejected as error:
+            except DomainAgentRejected as error:
                 raise LabToolError('Candidate requires instruction (20–12000 characters) and hypothesis: ' + str(error)) from error
             instruction, hypothesis = candidate['instruction'], candidate['hypothesis']
             # Meta-agent cannot smuggle benchmark task names or copied questions.

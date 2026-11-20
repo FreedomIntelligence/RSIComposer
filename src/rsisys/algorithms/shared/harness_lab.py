@@ -74,8 +74,8 @@ class FixedModelHarnessLab(MathSearchLab):
     def runtime_options(self, config):
         return {'max_calls': self.runtime.max_calls}
 
-    # Errors that mean the candidate program failed on a task: observed failed trials, not Lab failures.
-    candidate_errors = (HarnessExecutionError,)
+    # Errors that mean the domain agent's program failed on a task: observed failed trials, not Lab failures.
+    domain_agent_errors = (HarnessExecutionError,)
 
     @property
     def sandbox_slots(self):

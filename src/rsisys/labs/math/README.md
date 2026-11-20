@@ -123,19 +123,20 @@ cannot be mounted twice with different protocols.
 
 ## Runtimes
 
-A runtime is how a candidate answers a batch of problems. It is part of each
-benchmark's protocol (name, version, options, accepted candidate shape and how it
-reaches a model), and the candidate's content hash is on each receipt. The Lab picks
-its runtime; a candidate cannot, and a runtime rejects a candidate that sets fields it
-does not accept.
+A runtime is how a domain agent answers a batch of problems. The domain agent is what
+the Lab measures; the RSI policy in the Controller submits and revises it. A runtime is
+part of each benchmark's protocol (name, version, options, accepted domain agent shape
+and how it reaches a model), and the domain agent's content hash is on each receipt. The
+Lab picks its runtime; a domain agent cannot, and a runtime rejects a domain agent that
+sets fields it does not accept.
 
-| Runtime | Candidate | Trust | Used by |
+| Runtime | Domain agent | Trust | Used by |
 | --- | --- | --- | --- |
 | `instruction` | An instruction; one actor call per problem | `data` | `MathLab` |
 | `step-program` | A `step(problem, history)` program run in a bwrap sandbox, with the Lab calling a fixed model pool for it (`max_calls` option) | `sandboxed-code` | the RRSI and Meta-Agent harness Lab |
 | `checkpoint` | A checkpoint reference; an engine the Lab owns generates | `data` | ReST^EM, STaR, FT-Agent |
 
-`MathLab.solve()` runs the Lab's runtime (`make_runtime()`), after checking the candidate
+`MathLab.solve()` runs the Lab's runtime (`make_runtime()`), after checking the domain agent
 with `run_runtime()`. GEPA and OPRO keep their own `solve()` to stay identical to the
 pinned upstream prompts, so their protocol records the default `instruction` runtime.
 

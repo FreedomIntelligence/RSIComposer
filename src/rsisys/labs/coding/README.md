@@ -235,19 +235,19 @@ trust = ["host-code"]    # required for harbor-agent-tree
 | `harbor-instruction` (default) | A JSON file: `instruction` (up to 12,000 characters), optional `hypothesis`, `id`, `sha256` and a `harness` object limited to `stdout_tail_chars`. Any other key is rejected. | `data` |
 | `harbor-agent-tree` | A source directory, imported by Harbor on the worker host | `host-code` |
 
-Each runtime declares what an artifact may set, and the Lab checks it before any trial
-runs, for every benchmark in the request: an artifact one benchmark's runtime rejects
-fails the whole evaluation up front. `coding_meta_agent` checks at assembly that every
-mounted runtime accepts the instruction candidates it registers. `bindings` map the
+A domain agent here is the artifact a method submits. Each runtime declares what a domain
+agent may set, and the Lab checks it before any trial runs, for every benchmark in the
+request: an artifact one benchmark's runtime rejects fails the whole evaluation up front. `coding_meta_agent` checks at assembly that every
+mounted runtime accepts the instruction domain agents it registers. `bindings` map the
 agent's constructor arguments to `artifact`, `artifact_dir`, `endpoint`, `model`,
 `max_steps`, `max_output_tokens`, `total_output_tokens`, `seed` and `thinking`; budgets
-come from the benchmark. Candidate data cannot select imports or override a runtime.
+come from the benchmark. A domain agent's own data cannot select imports or override a runtime.
 
-`host-code` means the artifact's Python executes on the worker host, outside the task
+`host-code` means the domain agent's Python executes on the worker host, outside the task
 sandbox, so only enable it for sources you trust to run there. The Lab refuses to
 assemble a `host-code` runtime unless its config lists `trust = ["host-code"]`; `data`
 and `sandboxed-code` are always allowed. Every trial receipt records the
-`candidate_sha256` and the runtime name and version. The candidate is the subject under
+`domain_agent_sha256` and the runtime name and version. The domain agent is the thing under
 test, so it is not part of any `protocol_id`.
 
 ## Evidence and recovery
