@@ -26,7 +26,7 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 
 ## Highlights
 
-**A general RSI framework built around the research loop.** A researcher designs experiments to improve an AI system on a target task, gathers feedback from each run, and builds up experience that guides the next decision. RSISys automates this human–AI research loop: the Controller decides what to try, Labs run the experiments and return evidence, and the Controller draws on evidence from prior experiments to decide what to try next or what to adopt. A single agent can both direct experiments and perform the task, or separate agents can take on those roles. This loop gives [different RSI methods](#adapted-methods) a common structure while letting each use its own optimization algorithm.
+**A general RSI framework built around the research loop.** RSISys automates the human–AI research loop: the Controller chooses what to try, Labs run the experiments, and accumulated evidence guides what to try next or what to adopt. [Different RSI methods](#adapted-methods) use this structure with their own optimization algorithms.
 
 **Choose what to improve.** A method can change an agent's prompts, programs, harness, or model weights. It can also change the RSI policy that decides how to improve. The Self-Reflection Lab can test a candidate Controller in a nested run, and the current Controller decides whether to adopt it based on the evidence.
 
