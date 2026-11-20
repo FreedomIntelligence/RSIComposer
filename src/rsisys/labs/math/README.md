@@ -176,6 +176,12 @@ STaR's Lab ([`algorithms/star/lab.py`](../../algorithms/star/lab.py)) does the
 same with GPU workers and adds a sealed `test` split that the host measures after
 the Controller finishes. `split_named(ref, role)` resolves a Controller's
 `dataset` argument, a split name or the split file's path, to a manifest split.
+FT-Agent's Lab ([`algorithms/ft_agent/lab.py`](../../algorithms/ft_agent/lab.py))
+is the same shape with LLaMA-Factory training; it adds `math_verify_gsm8k` to its
+verifier catalog, which grades GSM8K `#### n` references with Math-Verify.
+TTRL keeps its own Lab: its training prompts are unlabeled and gold answers must
+never reach rollouts or rewards, which a manifest that requires an answer per row
+cannot express. It still uses the shared verifiers.
 
 ## Public operations
 

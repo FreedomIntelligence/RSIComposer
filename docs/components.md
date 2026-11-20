@@ -31,7 +31,7 @@ require; check the preset before running it.
 | `coding_meta_agent` | `coding` | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsisys/algorithms/coding_meta_agent/README.md) |
 | `reflexion` | `control`, `reflection` | Model endpoint, HumanEval files | — |
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
-| `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs | — |
+| `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs, a math dataset manifest with `train`, `dev` and `test` splits | — |
 
 ¹ ReST^EM and STaR provide their own Labs for sampling, training, and evaluation.
 The [reusable Math Lab](#labs) evaluates a fixed actor and does not train it.

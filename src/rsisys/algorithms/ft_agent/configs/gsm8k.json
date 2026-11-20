@@ -25,9 +25,7 @@
         "labs": {
           "finetune": {
             "initial_model": "models/Qwen2.5-7B",
-            "train_data": "runs/ft-agent-data/train.jsonl",
-            "dev_data": "runs/ft-agent-data/dev.jsonl",
-            "test_data": "runs/ft-agent-data/test.jsonl",
+            "manifest": "runs/ft-agent-data/manifest.json",
             "llama_factory_root": "/absolute/path/to/llama-factory",
             "training_python": "/absolute/path/to/ft-training-env/bin/python",
             "inference_python": "/absolute/path/to/ft-inference-env/bin/python",

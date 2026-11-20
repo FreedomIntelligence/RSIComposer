@@ -1,4 +1,9 @@
-"""Frozen-data LLM fine-tuning Lab for the FT-Agent reference policy.
+"""Frozen-data LLM fine-tuning Lab for the FT-Agent reference policy: a MathLab over checkpoints.
+
+The dataset manifest has train, dev and sealed test splits, each selecting its
+answer verifier; the Lab's catalog adds math_verify_gsm8k, which grades GSM8K
+`#### n` references with Math-Verify after converting them to a final box.
+Development and test scoring reuse MathLab's solve/score/trace.
 
 Data code runs in a filesystem/network-isolated CPU sandbox. The trusted Lab
 owns native LLaMA-Factory execution and independent development/test scoring.
@@ -17,7 +22,7 @@ from pathlib import Path
 from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.api import WorkerLostError
 from rsisys.api import (
-    DEV, SEALED, MetricSpec, OperationCall,
+    MATH_VERIFIERS, AnswerCheck, MathAttempt, MathLab, MathVerifyVerifier, MetricSpec, ModelRef, OperationCall,
     OperationResult,
     OperationSpec,
     WeightEngine,
@@ -46,23 +51,38 @@ TRAIN_FIELDS = {
 def evaluation_answer(answer):
     """Convert GSM8K's final numeric label to the verifier's boxed notation.
 
-    Keep the original reasoning and answer untouched for native SFT. Both
-    installed verifiers accept this exact final numeric value.
+    Keep the original reasoning and answer untouched for native SFT; only the
+    verifier sees the boxed form.
     """
     from rsisys.api import numeric_answer
     value = numeric_answer(answer)
     return '\\boxed{' + str(value) + '}' if value is not None else answer
 
 
+class GSM8KMathVerify(MathVerifyVerifier):
+    """Math-Verify on the final box, against GSM8K references written as `#### n`."""
+    spec = {'name': 'math_verify_gsm8k'}
+
+    def __init__(self):
+        super().__init__()
+        self.name = self.name + '-gsm8k-reference'
+
+    def parse_reference(self, answer):
+        return super().parse_reference(evaluation_answer(answer) if isinstance(answer, str) else answer)
+
+    def check(self, completion, answer):
+        return super().check(completion, evaluation_answer(answer) if isinstance(answer, str) else answer)
+
+
 def validate_config(config):
-    allowed = {'initial_model', 'train_data', 'dev_data', 'test_data',
+    allowed = {'initial_model', 'manifest',
         'llama_factory_root', 'training_python', 'inference_python', 'inference_cuda_home',
         'training_cuda_home', 'max_tokens', 'max_length', 'enforce_eager',
         'seed', 'output_subdir', 'max_epochs', 'max_steps', 'max_train_samples',
-        'max_batch_size', 'max_cutoff_len', 'data_timeout', 'verifier'}
+        'max_batch_size', 'max_cutoff_len', 'data_timeout'}
     if not isinstance(config, dict) or set(config) - allowed:
         raise ValueError('Unknown llm_finetune Lab option')
-    for key in ('initial_model', 'train_data', 'dev_data', 'test_data', 'llama_factory_root'):
+    for key in ('initial_model', 'manifest', 'llama_factory_root'):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError('Missing llm_finetune ' + key)
     validate_engine(config)
@@ -70,8 +90,6 @@ def validate_config(config):
                          ('max_batch_size', 8), ('max_cutoff_len', 1024), ('data_timeout', 120)):
         if type(config.get(key, default)) is not int or config.get(key, default) < 1:
             raise ValueError(key + ' must be a positive integer')
-    from rsisys.api import validate_verifier
-    validate_verifier(config.get('verifier', 'math_verify'))
 
 
 def bounded_train_config(raw, config, directory, *, world_size=1):
@@ -154,13 +172,14 @@ def bounded_train_config(raw, config, directory, *, world_size=1):
     return result
 
 
-class LLMFinetuneLab:
+class LLMFinetuneLab(MathLab):
+    verifiers = {**MATH_VERIFIERS, 'math_verify_gsm8k': GSM8KMathVerify}
+
     def __init__(self, context, config, *, engine=None):
         validate_config(config)
         from rsisys.api import execution_capabilities
         self.resources, self.executor = execution_capabilities(context)
         self.resources.declare(self.resource_roles())
-        from rsisys.api import build_verifier, parse_reference
         self.config = deepcopy(config)
         self.root = Path(context.data_dir).resolve() / config.get('output_subdir', 'llm-finetune')
         # A resumed run rebuilds the Lab over its own existing output directory.
@@ -169,39 +188,36 @@ class LLMFinetuneLab:
         bind = getattr(self.engine, 'bind_execution', None)
         if callable(bind):
             bind(context)
-        self.verifier = build_verifier(config.get('verifier', 'math_verify'))
-        self.data = {name: self._read(config[name + '_data']) for name in ('train', 'dev', 'test')}
-        if any(parse_reference(self.verifier, evaluation_answer(row['answer'])) is None
-               for rows in self.data.values() for row in rows):
-            raise ValueError('FT-Agent gold answer does not match the configured verifier')
-        self.input_hashes = {config[name + '_data']: file_hash(config[name + '_data']) for name in self.data}
-        for left, right in (('train', 'dev'), ('train', 'test'), ('dev', 'test')):
-            for key in ('id', 'prompt'):
-                if {r[key] for r in self.data[left]} & {r[key] for r in self.data[right]}:
-                    raise ValueError('FT-Agent data splits overlap by ' + key)
-        if len(self.data['train']) > config.get('max_train_samples', 128):
+        MathLab.__init__(self, context, {
+            'manifest': config['manifest'], 'split_roles': {'train': 'train', 'dev': 'dev', 'test': 'sealed'},
+            'max_output_tokens': config.get('max_tokens', 512)})
+        if len(self.datasets['train']) > config.get('max_train_samples', 128):
             raise ValueError('Frozen training dataset exceeds max_train_samples')
         self.models = {0: str(Path(config['initial_model']).resolve(strict=True))}
         self.prepared, self.seen = {}, set()
         self.initialized = False
         self.selected = None
 
+    def bind_actor(self, context, config):
+        # The measured models are fine-tuned checkpoints the engine loads.
+        return ModelRef('local-weights', getattr(self.engine, 'name', 'llm-finetune/v1'), 'checkpoint')
+
     def resource_roles(self):
         from rsisys.api import ResourceRequest
         return {'trainer': ResourceRequest(gpus=1), 'rollout': ResourceRequest(gpus=1),
                 'processor': ResourceRequest()}
 
-    _STATE = ('models', 'prepared', 'seen', 'initialized', 'input_hashes', 'selected')
+    _STATE = ('models', 'prepared', 'seen', 'initialized', 'binding', 'selected')
 
     def state(self):
         return {'models': dict(self.models), 'seen': sorted(self.seen), 'initialized': self.initialized,
                 'prepared': {k: {**v, 'directory': str(v['directory'])} for k, v in self.prepared.items()},
-                'input_hashes': dict(self.input_hashes), 'selected': self.selected}
+                'binding': self.binding(), 'selected': self.selected}
 
     def restore(self, state):
         if set(state) != set(self._STATE):
             raise ValueError('Unexpected FT-Agent Lab state')
-        if state['input_hashes'] != self.input_hashes:
+        if state['binding'] != self.binding():
             raise ValueError('Frozen FT-Agent dataset changed while the run was stopped')
         if state['models'].get(0) != self.models[0]:
             raise ValueError('FT-Agent base model path differs from the checkpoint')
@@ -247,26 +263,12 @@ class LLMFinetuneLab:
         elif name == 'select':
             self.selected = key[1]
 
-    @staticmethod
-    def _read(path):
-        text = Path(path).read_text()
-        rows = json.loads(text) if text.lstrip().startswith('[') else [json.loads(line) for line in text.splitlines() if line.strip()]
-        if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) or any(
-                not isinstance(row.get(k), str) or not row[k].strip() for k in ('id', 'prompt', 'answer')) for row in rows):
-            raise ValueError('Expected nonempty id/prompt/answer dataset')
-        if any(len({row[k] for row in rows}) != len(rows) for k in ('id', 'prompt')):
-            raise ValueError('Duplicate dataset rows')
-        return rows
-
     def profiles(self):
         # Native prepare/train bundles remain intact; this is not weight-training/v1.
         return ()
 
     def primary_metric(self):
-        return MetricSpec('accuracy', 'maximize', self.verifier.name)
-
-    def split_roles(self):
-        return {'dev': DEV, 'test': SEALED}
+        return MetricSpec('accuracy', 'maximize', self.datasets['dev'][0].verifier.name)
 
     def final_evaluations(self):
         if self.selected is None:
@@ -302,9 +304,6 @@ class LLMFinetuneLab:
         if key in self.seen:
             raise ValueError('FT-Agent operation replay requires a recovery adapter')
         self.seen.add(key)
-        for path, digest in self.input_hashes.items():
-            if file_hash(path) != digest:
-                raise ValueError('Frozen FT-Agent dataset changed')
         # Domain failures are usable experiment feedback. Transport/host failures
         # remain distinct exceptions from the host operation itself.
         try:
@@ -320,30 +319,35 @@ class LLMFinetuneLab:
         return OperationResult('FT-Agent Lab ' + call.name, (), False, data=data)
 
     def _score(self, model, split, directory):
-        rows = self.data[split]
-        prompts = ['<|im_start|>user\n' + r['prompt'] +
+        # The worker directory is where the engine writes samples; it stays out of the stored evidence.
+        self._directory = directory
+        return self.evaluate(None, {'split': split, 'model': model})
+
+    def problems(self, arguments):
+        return self.datasets[arguments['split']]
+
+    def solve(self, problems, arguments):
+        prompts = ['<|im_start|>user\n' + problem.prompt +
             '\nPlease reason step by step and put the final answer in \\boxed{}.<|im_end|>\n<|im_start|>assistant\n'
-            for r in rows]
-        outputs = self.engine.generate(model, prompts, directory, sample=False)
-        traces = [{**row, 'completion': out['completion'],
-            'correct': self.verifier.is_correct(out['completion'], evaluation_answer(row['answer']))}
-            for row, out in zip(rows, outputs, strict=True)]
-        (directory / 'scores.json').write_text(json.dumps(traces, indent=2))
-        accuracy = sum(row['correct'] for row in traces) / len(traces)
-        return {'accuracy_summary': [{'dataset': 'gsm8k-' + split, 'accuracy': accuracy,
-                    'questions': len(rows), 'correct': sum(r['correct'] for r in traces)}],
-                'error_samples': [{'question': row['prompt'], 'gold': row['answer'],
-                                  'model_output': row['completion']} for row in traces if not row['correct']][:5]}
+            for problem in problems]
+        outputs = self.engine.generate(arguments['model'], prompts, self._directory, sample=False)
+        return [MathAttempt(output['completion']) for output in outputs]
+
+    def result_data(self, records, ref, arguments):
+        correct = sum(row['correct'] for row in records)
+        return {'benchmark': {'accuracy_summary': [{'dataset': 'gsm8k-' + arguments['split'],
+                    'accuracy': correct / len(records), 'questions': len(records), 'correct': correct}],
+                'error_samples': [{'question': row['question'], 'gold': row['expected'],
+                                   'model_output': row['completion']} for row in records if not row['correct']][:5]}}
 
     def _baseline(self, args):
         if args:
             raise ValueError('baseline accepts no arguments')
         assets = self.root / 'seed-data' / 'seed'
         assets.mkdir(parents=True, exist_ok=False)
-        raw = [{'instruction': row['prompt'], 'input': '', 'output': row.get('completion', row['answer'])}
-               for row in self.data['train']]
+        raw = [{'instruction': row.prompt, 'input': '', 'output': row.answer} for row in self.datasets['train']]
         (assets / 'train.json').write_text(json.dumps(raw))
-        benchmark = self._score(self.models[0], 'dev', self.root / 'baseline-dev')
+        benchmark = self._score(self.models[0], 'dev', self.root / 'baseline-dev').data['benchmark']
         self.initialized = True
         parameter_info = {'methods': ['lora'], 'supported_models': {'target': 'target'}, 'parameters': {
             'model': {}, 'data': {}, 'training': {}, 'finetuning': {'lora': {}}}}
@@ -484,7 +488,7 @@ class LLMFinetuneLab:
             if not training.get('weights_changed') or training.get('steps', 0) < 1:
                 raise ValueError('No verified trained model was published')
             model = str(directory / 'model')
-        benchmark = self._score(model, 'dev', directory / 'dev-evaluation')
+        benchmark = self._score(model, 'dev', directory / 'dev-evaluation').data['benchmark']
         self.models[iteration] = model
         return {'result': {'benchmark': benchmark, 'training_metrics': training},
                 'training_performed': True, 'elapsed_seconds': time.monotonic() - started}
@@ -502,7 +506,7 @@ class LLMFinetuneLab:
         iteration, split = args['iteration'], args['split']
         if iteration not in self.models:
             raise ValueError('Experiment has no verified model')
-        benchmark = self._score(self.models[iteration], split, self.root / f'evaluate-{split}-{iteration}')
-        return {'iteration': iteration, 'split': split, 'benchmark': benchmark,
-                'quality_metrics': {'accuracy': benchmark['accuracy_summary'][0]['accuracy']},
+        result = self._score(self.models[iteration], split, self.root / f'evaluate-{split}-{iteration}')
+        return {'iteration': iteration, 'split': split, 'benchmark': result.data['benchmark'],
+                'quality_metrics': {'accuracy': result.data['quality_metrics']['accuracy']}, 'evidence_refs': result.data['evidence_refs'],
                 'training_performed': iteration != 0, 'paper_gain_reproduced': False}
