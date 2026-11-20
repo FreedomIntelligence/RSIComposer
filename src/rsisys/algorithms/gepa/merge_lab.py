@@ -6,6 +6,7 @@ from .merge_controller import candidate_id
 
 
 class GEPAMergeLab(GEPAGSM8KLab):
+    template_name = 'gepa-merge-components/v1'
     def _candidate_id(self, candidate):
         return candidate_id(candidate)
 
@@ -22,11 +23,15 @@ class GEPAMergeLab(GEPAGSM8KLab):
             raise ValueError('Invalid GEPA example offsets')
         return indices
 
-    def solve(self, problems, arguments):
+    def domain_agent(self, arguments):
+        # Two prompt components rather than one instruction; the runtime sees them as one agent.
         candidate = arguments['candidate']
-        return [self.ask(f"Problem:\n{problem.prompt}\n\nStrategy:\n{candidate['strategy']}"
-                         f"\n\nVerification:\n{candidate['verification']}", ACTOR_SYSTEM, seed=self.config['seed'])
-                for problem in problems]
+        return {'instruction': f"{candidate['strategy']}\x00{candidate['verification']}"}
+
+    def render(self, problem, instruction, request):
+        strategy, verification = instruction.split('\x00', 1)
+        return (f"Problem:\n{problem.prompt}\n\nStrategy:\n{strategy}"
+                f"\n\nVerification:\n{verification}"), ACTOR_SYSTEM
 
     def result_data(self, records, ref, arguments):
         data = super().result_data(records, ref, arguments)

@@ -175,20 +175,31 @@ def read_domain_agent_data(domain_agent):
 
 
 class DomainAgentRuntime(Protocol):
-    """How one domain agent runs on one task. Members are all a Lab relies on."""
+    """How a domain agent runs on a batch of a benchmark's tasks. Members are all a Lab relies on.
+
+    settings holds everything that changes what a score means: generation parameters,
+    seed policy, trial counts, timeouts, call budgets. It is the runtime's own
+    configuration, and run() reads it, so the protocol that is recorded and the one
+    that executes are the same object.
+    """
     name: str
     version: str
     model_access: str               # One of MODEL_ACCESS.
     accepts: DomainAgentSpec
+    settings: Mapping               # JSON-compatible; recorded in the benchmark's protocol.
 
-    def run(self, domain_agent, task, budget):
-        """Run domain_agent on task under budget; return an Attempt (rsisys.labs.math.lab)."""
+    def run(self, domain_agent, tasks, run):
+        """Answer every task with domain_agent; return one Attempt per task, in order.
+
+        `run` is this call's own context and the resources the Lab lends it. Nothing about one
+        call is stored on the Lab, so concurrent calls cannot see each other.
+        """
 
 
-def runtime_identity(runtime, options):
-    """What the benchmark's protocol records about its runtime."""
+def runtime_identity(runtime):
+    """What the benchmark's protocol records about its runtime: all of its settings."""
     return {'name': runtime.name, 'version': runtime.version, 'model_access': runtime.model_access,
-            'options': json.loads(canonical_json(dict(options))), 'accepts': runtime.accepts.identity()}
+            'settings': json.loads(canonical_json(dict(runtime.settings))), 'accepts': runtime.accepts.identity()}
 
 
 def validate_runtime_config(config, *, known):

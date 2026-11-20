@@ -15,7 +15,7 @@ PromptSearchLab is the case where the candidate is prompt text for the actor
 from dataclasses import asdict
 import json
 
-from rsisys.api import GenerationRequest, MathLab, MetricSpec, OperationResult
+from rsisys.api import MathLab, MetricSpec, OperationResult, PromptTemplateRuntime
 
 from .experiment import ModelCalls
 from .search_registry import SearchRegistry
@@ -92,16 +92,48 @@ class MathSearchLab(SearchRegistry, MathLab):
 
 
 class PromptSearchLab(MathSearchLab):
-    """Prompt candidates answered by the actor role under a model-call budget.
+    """Prompt domain agents answered by the actor role under a model-call budget.
+
+    The Lab runs a PromptTemplateRuntime, so the template name, system text, temperature, top_p,
+    seed, token limit and call budget that decide a score are all recorded in each benchmark's
+    protocol and are the values that execute. A method supplies template(), the render function
+    that reproduces its pinned upstream prompt exactly.
 
     Config: {"manifest": ..., "seed": 17, "max_model_calls": 256,
              "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}}
     """
     source_budgets = False  # Generation is set by this Lab, not by a benchmark.
+    template_name = None    # Names the method's upstream prompt format, e.g. 'gepa-instruction/v1'.
+    system = ''
 
     def __init__(self, context, config):
         self.calls = ModelCalls(context, config['max_model_calls'])
         super().__init__(context, config)
+
+    def make_runtime(self, _math_config):
+        # Built from this Lab's own config (MathLab only passes its derived one).
+        config = self.config
+        return PromptTemplateRuntime(
+            template=self.template_name, system=self.system_text(config), temperature=config['model']['scorer_temperature'],
+            top_p=1.0, seed=self.seed_policy(config), max_output_tokens=config['model']['max_output_tokens'],
+            max_model_calls=config['max_model_calls'], render=self.render)
+
+    def system_text(self, config):
+        return self.system
+
+    def seed_policy(self, config):
+        return config['seed']
+
+    def render(self, problem, instruction, request):
+        """(prompt, system) for one problem under one domain agent; reproduces the pinned upstream prompt."""
+        raise NotImplementedError
+
+    def solve(self, problems, arguments):
+        return self.run_runtime(self.domain_agent(arguments), problems, arguments['request'])
+
+    def domain_agent(self, arguments):
+        """The submitted domain agent as the runtime accepts it."""
+        return {'instruction': arguments['candidate']['instruction']}
 
     def math_config(self, config):
         return {**super().math_config(config), 'max_output_tokens': config['model']['max_output_tokens']}
@@ -113,8 +145,6 @@ class PromptSearchLab(MathSearchLab):
         super().restore(state)
         self.calls.count = state['model_calls']
 
-    def ask(self, prompt, system, *, seed):
-        """One budgeted actor answer at the configured scorer temperature."""
-        return self.attempt(GenerationRequest('actor', self.actor, prompt, system=system,
-            temperature=self.config['model']['scorer_temperature'], top_p=1,
-            max_output_tokens=self.max_output_tokens, seed=seed), self.calls.generate)
+    def ask_actor(self, problem, text, **options):
+        # Every actor call spends the Lab's model-call budget.
+        return super().ask_actor(problem, text, generate=self.calls.generate, **options)

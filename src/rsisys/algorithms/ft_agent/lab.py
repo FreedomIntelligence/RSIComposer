@@ -320,29 +320,32 @@ class LLMFinetuneLab(MathLab):
         return OperationResult('FT-Agent Lab ' + call.name, (), False, data=data)
 
     def _score(self, model, split, directory):
-        # The worker directory is where the engine writes samples; it stays out of the stored evidence.
-        self._directory = directory
-        return self.evaluate(None, {'split': split, 'model': model})
+        # The worker directory is where the engine writes samples; it is this call's own and stays out of
+        # the stored evidence.
+        return self.evaluate(None, {'split': split, 'model': model, '_directory': directory})
 
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
-    def make_runtime(self, config):
-        return CheckpointRuntime()
+    def make_runtime(self, _math_config):
+        return CheckpointRuntime(engine=getattr(self.engine, 'name', 'llm-finetune/v1'), temperature=0.0,
+                                 max_new_tokens=self.config.get('max_tokens', 512))
 
     @property
     def simulated(self):
         return False
 
     def solve(self, problems, arguments):
-        return self.run_runtime({'model': arguments['model']}, problems)
+        directory = arguments['_directory']
 
-    def generate(self, model, problems):
-        """What the checkpoint runtime lends: one greedy completion per problem."""
-        prompts = ['<|im_start|>user\n' + problem.prompt +
-            '\nPlease reason step by step and put the final answer in \\boxed{}.<|im_end|>\n<|im_start|>assistant\n'
-            for problem in problems]
-        return [output['completion'] for output in self.engine.generate(model, prompts, self._directory, sample=False)]
+        def generate(model, tasks):
+            # One greedy completion per problem, written to this call's own worker directory.
+            prompts = ['<|im_start|>user\n' + problem.prompt +
+                '\nPlease reason step by step and put the final answer in \\boxed{}.<|im_end|>\n<|im_start|>assistant\n'
+                for problem in tasks]
+            return [output['completion'] for output in self.engine.generate(model, prompts, directory, sample=False)]
+
+        return self.run_runtime({'model': arguments['model']}, problems, arguments, context={'generate': generate})
 
     def result_data(self, records, ref, arguments):
         correct = sum(row['correct'] for row in records)

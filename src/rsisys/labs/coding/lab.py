@@ -20,7 +20,6 @@ from rsisys.loops.contracts.data import DatasetBinding
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.profiles import MetricSpec, SPLIT_ROLES
 from rsisys.loops.contracts.execution import LabToolError
-from .agents import RUNTIMES
 from .artifacts import digest, snapshot
 from rsisys.loops.contracts.benchmark import choose_primary_metric
 from rsisys.loops.contracts.domain_agent import (
@@ -46,7 +45,7 @@ def validate_config(config):
     benchmarks = validate_benchmark_config(config)
     allowed = allowed_trust(config)
     for benchmark in benchmarks:
-        runtime = RUNTIMES[benchmark.protocol['runtime']['name']](benchmark.protocol['runtime']['options'])
+        runtime = benchmark.runtime
         require_trust(runtime.accepts, allowed, where=f'Benchmark {benchmark.name!r} runtime {runtime.name!r}')
     choose_primary_metric(config.get('primary_metric'), benchmarks, aggregates=AGGREGATES)
     endpoints = config.get('endpoints')
@@ -82,8 +81,7 @@ class CodingLab:
                 or any(not isinstance(role, str) or role not in SPLIT_ROLES for role in roles.values())):
             raise ValueError('split_roles must map installed splits to named profile roles')
         # One runtime per benchmark: the agent a benchmark's tasks run under is part of its protocol.
-        self.runtimes = {b.name: RUNTIMES[b.protocol['runtime']['name']](b.protocol['runtime']['options'])
-                         for b in self.benchmarks}
+        self.runtimes = {b.name: b.runtime for b in self.benchmarks}
         self.agent = {name: runtime.to_json() for name, runtime in self.runtimes.items()}
         self._runner = HarborTrialRunner(execution_context, self.config, self.root / 'agents')
         package = Path(__file__).parent

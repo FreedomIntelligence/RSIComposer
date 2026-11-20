@@ -139,9 +139,10 @@ _EXPORTS = {
     'validate_verifier': ('rsisys.labs.math.verifiers', 'validate_verifier'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
     'MathLab': ('rsisys.labs.math.lab', 'MathLab'),
-    'MathAttempt': ('rsisys.labs.math.lab', 'Attempt'),
+    'MathAttempt': ('rsisys.labs.math.attempt', 'Attempt'),
     'CheckpointRuntime': ('rsisys.labs.math.runtimes', 'CheckpointRuntime'),
     'InstructionRuntime': ('rsisys.labs.math.runtimes', 'InstructionRuntime'),
+    'PromptTemplateRuntime': ('rsisys.labs.math.runtimes', 'PromptTemplateRuntime'),
     'StepProgramRuntime': ('rsisys.labs.math.runtimes', 'StepProgramRuntime'),
     'CodingLab': ('rsisys.labs.coding.lab', 'CodingLab'),
     'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
@@ -244,9 +245,10 @@ if _TYPE_CHECKING:
     from rsisys.runtime.execution.budget import BudgetExhausted as BudgetExhausted
 
     from rsisys.labs.math.lab import MathLab as MathLab
-    from rsisys.labs.math.lab import Attempt as MathAttempt
+    from rsisys.labs.math.attempt import Attempt as MathAttempt
     from rsisys.labs.math.runtimes import (
         CheckpointRuntime as CheckpointRuntime, InstructionRuntime as InstructionRuntime,
+        PromptTemplateRuntime as PromptTemplateRuntime,
         StepProgramRuntime as StepProgramRuntime,
     )
     from rsisys.labs.coding.lab import CodingLab as CodingLab

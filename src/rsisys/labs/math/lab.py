@@ -51,6 +51,8 @@ from rsisys.loops.contracts.model_service import GenerationRequest, ModelRespons
 from rsisys.loops.contracts.profiles import DEV, SEALED, TRAIN, MetricSpec
 from rsisys.runtime.observation import report_samples
 
+from .attempt import Attempt
+from .runtimes import Run
 from .tasks import load_splits
 from .verifiers import VERIFIERS
 
@@ -60,24 +62,6 @@ _TRACE_PAGE_CHARS = 4000
 _SPLIT_ROLES = {'train': TRAIN, 'dev': DEV, 'sealed': SEALED}
 AGGREGATES = {'pooled-accuracy': 'math-answer-exact-match/pooled/v1',
               'benchmark-mean': 'math-answer-exact-match/benchmark-mean/v1'}
-
-
-@dataclass(frozen=True)
-class Attempt:
-    """One model answer to one problem, before verification.
-
-    status is answered, truncated (the provider stopped at its output limit) or
-    invalid_format (no usable text); only answered attempts are verified.
-    extra holds a subclass's per-attempt evidence (trial, tool calls, errors),
-    which the record keeps alongside the shared fields.
-    """
-    completion: str | None
-    status: str = 'answered'
-    finish_reason: str | None = None
-    usage: dict = field(default_factory=dict)
-    simulated: bool = False
-    elapsed_seconds: float = 0.0
-    extra: dict = field(default_factory=dict)
 
 
 def _check_isolated(verifier, completion, answer):
@@ -90,8 +74,9 @@ class MathLab:
     verifiers = VERIFIERS
     # False for a subclass whose own engine or config sets generation: its sources then take no budget.
     source_budgets = True
-    # The runtime that answers problems; its identity is recorded in every benchmark's protocol.
-    # A subclass sets a different one, and a Lab that overrides solve() entirely keeps this default.
+    # The runtime that answers problems; all of its settings are recorded in every benchmark's protocol.
+    # A subclass makes its own in make_runtime() and runs it from solve(): a Lab never runs one runtime
+    # while recording another.
     runtime_factory = staticmethod(lambda: __import__('rsisys.labs.math.runtimes', fromlist=['x']).InstructionRuntime())
 
     def __init__(self, context, config):
@@ -106,7 +91,7 @@ class MathLab:
         self.datasets, self.bindings, self.manifest_sha256, self.benchmarks = load_splits(
             config['manifest'], self.roles, verifiers=self.verifiers, role_names=self.role_names,
             budgets=self.source_budgets, max_output_tokens=self.max_output_tokens,
-            runtime=runtime_identity(self.runtime, self.runtime_options(config)))
+            runtime=runtime_identity(self.runtime))
         self.grading_workers = config.get('grading_workers', 1)
         self.declared_metric = config.get('primary_metric')
         for split, rows in self.datasets.items():
@@ -117,10 +102,6 @@ class MathLab:
     def make_runtime(self, config):
         """The DomainAgentRuntime that answers this Lab's problems with its domain agent."""
         return self.runtime_factory()
-
-    def runtime_options(self, config):
-        """The runtime options recorded in each benchmark's protocol."""
-        return {}
 
     def bind_actor(self, context, config):
         """The ModelRef of the model being measured."""
@@ -180,7 +161,7 @@ class MathLab:
         return {'manifest_sha256': self.manifest_sha256, 'actor': asdict(self.actor),
                 'max_output_tokens': self.max_output_tokens,
                 'benchmarks': {name: benchmark.protocol_id for name, benchmark in self.benchmarks.items()},
-                'runtime': runtime_identity(self.runtime, self.runtime_options({})),
+                'runtime': runtime_identity(self.runtime),
                 'primary_metric': self.declared_metric,
                 'split_roles': dict(self.role_names),
                 'verifiers': {name: sorted({row.verifier.name for row in rows})
@@ -276,22 +257,37 @@ class MathLab:
 
     def solve(self, problems, arguments):
         """Ask the actor each problem after the instruction and the verifier's answer format."""
-        return self.run_runtime({'instruction': arguments.get('instruction')}, problems)
+        return self.run_runtime({'instruction': arguments.get('instruction')}, problems, arguments)
 
-    def run_runtime(self, domain_agent, problems):
-        """Run the Lab's runtime on a batch after checking the domain agent against what it accepts."""
+    def run_runtime(self, domain_agent, problems, arguments, *, trials=1, context=None):
+        """Run the Lab's runtime on a batch after checking the domain agent against what it accepts.
+
+        The Run it receives is built here, for this call only; nothing about the call is kept on the Lab.
+        """
         try:
             self.runtime.accepts.check(domain_agent)
         except DomainAgentRejected as error:
             raise LabToolError(f'Runtime {self.runtime.name!r} rejects the domain agent: {error}') from error
-        return self.runtime.run(domain_agent, problems, self)
+        run = Run(ask=self.ask_actor, request=dict(arguments), trials=trials, context=context or {})
+        return self.runtime.run(domain_agent, problems, run)
 
-    def ask_actor(self, problem, system):
-        """One temperature-zero actor answer; the system text ends with the answer format."""
-        request = GenerationRequest('actor', self.actor, problem.prompt,
-            system=system + '\n\n' + problem.verifier.answer_format,
-            temperature=0.0, max_output_tokens=problem.max_output_tokens or self.max_output_tokens)
-        return self.attempt(request)
+    def ask_actor(self, problem, text, *, system=None, seed=None, temperature=0.0, top_p=None,
+                  max_output_tokens=None, raw_prompt=False, generate=None):
+        """One actor answer under the runtime's own generation parameters.
+
+        Default: `text` is an instruction, sent as the system text and followed by the verifier's
+        answer format, and the problem is the user prompt. With raw_prompt, `text` is the complete
+        user prompt (a method's own template) and `system` is its system text, plus the answer format.
+        """
+        answer_format = '\n\n' + problem.verifier.answer_format
+        if raw_prompt:
+            prompt, system_text = text, (system or '') + answer_format
+        else:
+            prompt, system_text = problem.prompt, text + answer_format
+        request = GenerationRequest('actor', self.actor, prompt, system=system_text,
+            temperature=temperature, top_p=top_p, seed=seed,
+            max_output_tokens=max_output_tokens or problem.max_output_tokens or self.max_output_tokens)
+        return self.attempt(request, generate)
 
     def attempt(self, request, generate=None):
         """One model call as an Attempt; truncated or empty replies are recorded, not raised."""
@@ -379,7 +375,10 @@ class MathLab:
                 execution[key] = sum(known)
 
         sealed = self.roles[split].after_finish_only
-        candidate = {key: value for key, value in arguments.items() if key not in ('split', 'task_ids')}
+        # Keys starting with an underscore are this call's own plumbing (directories, call ids); they are
+        # never stored as part of the evaluated request.
+        candidate = {key: value for key, value in arguments.items()
+                     if key not in ('split', 'task_ids') and not key.startswith('_')}
         # A distinct kind keeps standalone sealed artifacts restricted too.
         evidence = {'binding': self.binding(), 'split': split, **candidate, 'records': records}
         ref = self.artifacts.put(json.dumps(evidence, ensure_ascii=False, allow_nan=False).encode(),

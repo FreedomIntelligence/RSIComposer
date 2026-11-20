@@ -40,6 +40,7 @@ class Benchmark:
     kind: str                      # The Lab family that can run it, such as coding-task or math-qa.
     protocol: Mapping = field(default_factory=dict)   # Complete: every defaulted setting is present.
     source: Mapping = field(default_factory=dict)     # Where its tasks are read from; not part of the protocol.
+    runtime: object = field(default=None, compare=False, repr=False)  # The built DomainAgentRuntime, if the kind has one.
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not _NAME.fullmatch(self.name):
@@ -100,8 +101,9 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults, runtimes=
             from .domain_agent import runtime_identity, validate_runtime_config
             chosen = entry.get('runtime', default_runtime)
             rname, options = validate_runtime_config(chosen, known=runtimes)
-            protocol['runtime'] = runtime_identity(runtimes[rname](options), options)
-        mounted.append(Benchmark(name, kind, protocol, {key: entry[key] for key in source_keys}))
+            protocol['runtime'] = runtime_identity(runtimes[rname](options))
+        mounted.append(Benchmark(name, kind, protocol, {key: entry[key] for key in source_keys},
+                                 runtimes[rname](options) if runtimes else None))
     return tuple(mounted)
 
 

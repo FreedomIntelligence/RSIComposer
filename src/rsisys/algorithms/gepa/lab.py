@@ -14,13 +14,13 @@ ACTOR_SYSTEM = ('Solve each math word problem. End with one line containing ####
 
 class GEPAGSM8KLab(PromptSearchLab):
     receipt_kind = 'gepa'
+    template_name = 'gepa-instruction/v1'
+    system = ACTOR_SYSTEM
 
     def _candidate_id(self, candidate):
         if not isinstance(candidate, dict) or set(candidate) != {'instruction'} or not valid_instruction(candidate['instruction']):
             raise ValueError('Expected one valid GEPA instruction')
         return candidate_id(candidate['instruction'])
 
-    def solve(self, problems, arguments):
-        instruction = arguments['candidate']['instruction']
-        return [self.ask(f'Problem:\n{problem.prompt}\n\nInstruction:\n{instruction}', ACTOR_SYSTEM,
-                         seed=self.config['seed']) for problem in problems]
+    def render(self, problem, instruction, request):
+        return f'Problem:\n{problem.prompt}\n\nInstruction:\n{instruction}', ACTOR_SYSTEM

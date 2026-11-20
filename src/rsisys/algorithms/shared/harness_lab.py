@@ -60,30 +60,23 @@ class FixedModelHarnessLab(MathSearchLab):
         self._sandbox_slots = threading.BoundedSemaphore(config.get('sandbox_workers', 32))
         # Harness paths measured so far, with their hashes; a measured file must not change.
         self._harnesses = {}
-        self.seed = config.get('seed', 73)
-        self.workers = config.get('workers', 32)
         super().__init__(context, config)
 
     def math_config(self, config):
         return {**super().math_config(config), 'max_output_tokens': config.get('max_tokens', 2048),
                 'grading_workers': config.get('grading_workers', 1)}
 
-    def make_runtime(self, config):
-        return StepProgramRuntime(max_calls=config.get('max_calls', 3))
-
-    def runtime_options(self, config):
-        return {'max_calls': self.runtime.max_calls}
+    def make_runtime(self, _math_config):
+        # Every setting that decides what a score means is the runtime's, and so is recorded in the
+        # protocol. The model pool is built from the same config values, so they agree by construction.
+        config = self.config
+        return StepProgramRuntime(
+            max_calls=config.get('max_calls', 3), seed=config.get('seed', 73),
+            temperature=config.get('temperature', 0.7), max_tokens=config.get('max_tokens', 2048),
+            timeout=config.get('timeout', 180), trials=config.get('trials', 2))
 
     # Errors that mean the domain agent's program failed on a task: observed failed trials, not Lab failures.
     domain_agent_errors = (HarnessExecutionError,)
-
-    @property
-    def sandbox_slots(self):
-        return self._sandbox_slots
-
-    @property
-    def trials_per_problem(self):
-        return self._trials
 
     def bind_actor(self, context, config):
         # The measured model is the pool serving this Lab's model from its endpoints.
@@ -111,7 +104,7 @@ class FixedModelHarnessLab(MathSearchLab):
         return specs
 
     def trials(self, request):
-        trials = request.get('trials', self.config.get('trials', 2))
+        trials = request.get('trials', self.runtime.trials)
         if type(trials) is not int or not 1 <= trials <= 16:
             raise ValueError('Invalid trial count')
         return trials
@@ -133,8 +126,10 @@ class FixedModelHarnessLab(MathSearchLab):
             raise ValueError('Previously measured harness changed')
         if any(len(problem.prompt) > 20 and problem.prompt in source for problem in problems):
             raise ValueError('Task-specific problem in harness source')
-        self._trials = self.trials(request)
-        attempts = self.run_runtime({'harness': harness}, problems)
+        attempts = self.run_runtime({'harness': harness}, problems, request, trials=self.trials(request),
+            context={'pool': self.pool, 'executor': self.executor, 'sandbox_slots': self._sandbox_slots,
+                     'domain_agent_errors': self.domain_agent_errors,
+                     'workers': self.config.get('workers', 32)})
         if digest(harness) != harness_hash:
             raise ValueError('Harness changed during evaluation')
         return attempts
@@ -153,7 +148,7 @@ class FixedModelHarnessLab(MathSearchLab):
                 'cost': sum(row['tokens'] for row in records) / len(records),
                 'rewards': rewards, 'samples': len(records), 'traces': asdict(ref),
                 'harness_errors': sum(row['error'] is not None for row in records),
-                'training_performed': False,
+                'training_performed': False, 'trials': trials,
                 'endpoints_used': sorted({reply['endpoint'] for row in records for reply in row['history']}),
                 # One score per problem: the fraction of its trials that were correct.
                 'scores': [sum(group) / len(group) for group in rewards],

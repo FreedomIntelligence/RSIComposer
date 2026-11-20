@@ -19,6 +19,7 @@ from .verifier import OPROVerifier
 
 class OPROGSM8KLab(PromptSearchLab):
     receipt_kind = 'opro'
+    template_name = 'opro-gsm8k-gen_prompt/v1'
 
     def __init__(self, context, config):
         self.opt = upstream(config['source_dir'])
@@ -46,16 +47,25 @@ class OPROGSM8KLab(PromptSearchLab):
     def feedback(self, record):
         return f"Accuracy: {float(record['correct'])}"
 
-    def solve(self, problems, arguments):
+    def adapted(self, config):
+        return config['parameters'].get('local_adapter') == 'qwen-instructions-v1'
+
+    def system_text(self, config):
+        return SCORER_SYSTEM_V1 if self.adapted(config) else ''
+
+    def seed_policy(self, config):
+        # The upstream scorer sends no seed; the Qwen adapter pins one.
+        return config['seed'] if self.adapted(config) else None
+
+    def make_runtime(self, math_config):
+        runtime = super().make_runtime(math_config)
+        # instruction_pos changes the rendered prompt, so it is part of the recorded protocol.
+        return replace(runtime, template=f"{self.template_name}:{self.config['parameters']['instruction_pos']}")
+
+    def render(self, problem, instruction, request):
         import pandas as pd
 
-        instruction = arguments['candidate']['instruction']
-        adapted = self.config['parameters'].get('local_adapter') == 'qwen-instructions-v1'
-        attempts = []
-        for problem in problems:
-            prompt = self.opt.eval_utils.gen_prompt(pd.DataFrame([(problem.prompt, problem.answer)]),
-                instruction=instruction, idx=0, include_qa=False,
-                instruction_pos=self.config['parameters']['instruction_pos'], dataset_name='gsm8k')
-            attempts.append(self.ask(prompt, SCORER_SYSTEM_V1 if adapted else '',
-                                     seed=self.config['seed'] if adapted else None))
-        return attempts
+        prompt = self.opt.eval_utils.gen_prompt(pd.DataFrame([(problem.prompt, problem.answer)]),
+            instruction=instruction, idx=0, include_qa=False,
+            instruction_pos=self.config['parameters']['instruction_pos'], dataset_name='gsm8k')
+        return prompt, self.system_text(self.config)

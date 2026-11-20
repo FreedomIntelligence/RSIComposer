@@ -124,21 +124,35 @@ cannot be mounted twice with different protocols.
 ## Runtimes
 
 A runtime is how a domain agent answers a batch of problems. The domain agent is what
-the Lab measures; the RSI policy in the Controller submits and revises it. A runtime is
-part of each benchmark's protocol (name, version, options, accepted domain agent shape
-and how it reaches a model), and the domain agent's content hash is on each receipt. The
-Lab picks its runtime; a domain agent cannot, and a runtime rejects a domain agent that
-sets fields it does not accept.
+the Lab measures; the RSI policy in the Controller submits and revises it.
 
-| Runtime | Domain agent | Trust | Used by |
-| --- | --- | --- | --- |
-| `instruction` | An instruction; one actor call per problem | `data` | `MathLab` |
-| `step-program` | A `step(problem, history)` program run in a bwrap sandbox, with the Lab calling a fixed model pool for it (`max_calls` option) | `sandboxed-code` | the RRSI and Meta-Agent harness Lab |
-| `checkpoint` | A checkpoint reference; an engine the Lab owns generates | `data` | ReST^EM, STaR, FT-Agent |
+**Everything that decides what a score means is a field of the runtime**: temperature,
+token limits, seed policy, trial counts, timeouts and call budgets. The runtime's
+`settings` is exactly what is recorded in each benchmark's protocol, and `run()` reads the
+same object, so the protocol that is recorded and the one that executes cannot differ.
+Changing any of those settings changes `protocol_id`; resources that do not change a score
+(`workers`, `sandbox_workers`, `grading_workers`) do not. The domain agent's content hash
+is on each receipt. The Lab picks its runtime; a domain agent cannot, and a runtime rejects
+a domain agent that sets fields it does not accept.
 
-`MathLab.solve()` runs the Lab's runtime (`make_runtime()`), after checking the domain agent
-with `run_runtime()`. GEPA and OPRO keep their own `solve()` to stay identical to the
-pinned upstream prompts, so their protocol records the default `instruction` runtime.
+| Runtime | Domain agent | Settings recorded in the protocol | Trust | Used by |
+| --- | --- | --- | --- | --- |
+| `instruction` | An instruction; one actor call per problem | `temperature`, `max_output_tokens` | `data` | `MathLab` |
+| `prompt-template` | An instruction rendered into a method's own pinned prompt, answered by the actor under a call budget | `template`, `system`, `temperature`, `top_p`, `seed`, `max_output_tokens`, `max_model_calls` | `data` | GEPA, GEPA-Merge, OPRO |
+| `step-program` | A `step(problem, history)` program run in a bwrap sandbox, with the Lab calling a fixed model pool for it | `max_calls`, `seed`, `temperature`, `max_tokens`, `timeout`, `trials`, `sandbox_timeout` | `sandboxed-code` | the RRSI and Meta-Agent harness Lab |
+| `checkpoint` | A checkpoint reference; an engine the Lab owns generates | `engine`, `temperature`, `max_new_tokens` | `data` | ReST^EM, STaR, FT-Agent |
+
+`MathLab.solve()` runs the Lab's runtime (`make_runtime()`) through `run_runtime()`, which
+checks the domain agent first and hands the runtime a `Run`: this call's own request, trial
+count and lent resources. Nothing about one evaluation is stored on the Lab, so two
+evaluations in flight cannot see each other. A Lab that needs a different runtime overrides
+`make_runtime()` and calls `run_runtime()` from `solve()`; it never runs one runtime while
+recording another.
+
+GEPA, GEPA-Merge and OPRO keep their prompts identical to the pinned upstream by supplying
+`render()` to `PromptSearchLab`, which builds a `prompt-template` runtime. The template name
+is recorded (OPRO's includes `instruction_pos`) and the rendering function is not, so a change
+to the upstream prompt format must change the template name.
 
 ## Answer verifiers
 

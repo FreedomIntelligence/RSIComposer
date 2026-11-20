@@ -143,7 +143,10 @@ agent) is part of the domain agent and is not the Controller's `ControllerHarnes
 
 How a domain agent runs on a benchmark's tasks is the benchmark's **runtime**, recorded in
 its `protocol_id` next to the budgets, so a benchmark is run the same way wherever it is
-mounted. A runtime declares what a domain agent may set (any other field is rejected), how
+mounted. Everything that decides what a score means (generation parameters, seed policy,
+trial counts, timeouts, call budgets) is a setting of the runtime, so changing one changes
+`protocol_id`, and the recorded settings are the ones that execute. A runtime declares what a
+domain agent may set (any other field is rejected), how
 it reaches a model, and a trust level: `data`,
 `sandboxed-code` (bwrap or a task container) or `host-code` (imported on a worker host).
 `host-code` runs only when the Lab config lists `trust = ["host-code"]`. The contract is

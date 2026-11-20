@@ -17,7 +17,7 @@ from rsisys.api import (
     CheckpointRuntime, Invariant, MathLab, OperationResult, MetricSpec, ModelRef, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
 )
 
-from .protocol import MAX_LENGTH, keep_reasoning, render_prompt, write_records
+from .protocol import MAX_LENGTH, MAX_NEW_TOKENS, keep_reasoning, render_prompt, write_records
 from .records import GLOBAL_BATCH, training_example
 
 
@@ -171,7 +171,6 @@ class StarLab(MathLab):
                 raise ValueError(f'{key} must be finite and nonnegative')
             if kind == 'boolean' and type(value) is not bool:
                 raise ValueError(f'{key} must be bool')
-        self._call_id = call.call_id
         if call.name == 'evaluate':
             return self._evaluate(call.call_id, request)
         summary, data = getattr(self, '_' + call.name)(request)
@@ -256,24 +255,29 @@ class StarLab(MathLab):
         self._model(request['model'])
         if split not in ('dev', 'test') or self.split_named(request['dataset'], 'dev' if split == 'dev' else 'sealed') != split:
             raise ValueError('Evaluation must use a fixed held-out split')
-        return self.evaluate(call_id, request)
+        # The evaluation carries its own call id and request; nothing about it is kept on the Lab.
+        return self.evaluate(call_id, {**request, '_request': request, '_call_id': call_id})
 
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
-    def make_runtime(self, config):
-        return CheckpointRuntime()
+    def make_runtime(self, _math_config):
+        return CheckpointRuntime(engine=getattr(self.engine, 'name', 'star-workers/v1'), temperature=0.0,
+                                 max_new_tokens=MAX_NEW_TOKENS)
 
     def solve(self, problems, arguments):
-        return self.run_runtime({'model': self._model(arguments['model'])}, problems)
+        items, directory = self._items(problems), self.root / f"evaluation-{arguments['_call_id']}"
 
-    def generate(self, model, problems):
-        """What the checkpoint runtime lends: one greedy completion per problem."""
-        outputs = self._sample(self._items(problems), model, self.root / f"evaluation-{self._call_id}")
-        return [outputs[row.id][0] for row in problems]
+        def generate(model, _problems):
+            # One greedy completion per problem, in this call's own directory.
+            outputs = self._sample(items, model, directory)
+            return [outputs[item['id']][0] for item in items]
+
+        return self.run_runtime({'model': self._model(arguments['model'])}, problems, arguments['_request'],
+                                context={'generate': generate, 'simulated': self.simulated})
 
     def result_data(self, records, ref, arguments):
-        return {'protocol': f'GSM8K STaR {self._call_id}', 'request': arguments,
+        return {'protocol': f"GSM8K STaR {arguments['_call_id']}", 'request': arguments['_request'],
                 'model': self._model(arguments['model'])}
 
     def _generate(self, request):

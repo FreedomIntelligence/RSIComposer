@@ -50,7 +50,14 @@ class HarborAgentRuntime:
     skip_model_parsing: bool = True
     accepts: DomainAgentSpec = INSTRUCTION
 
-    def run(self, candidate, task, budget):
+    @property
+    def settings(self):
+        """Everything that decides how this agent is run: the agent class and revision, its fixed
+        constructor arguments and which benchmark budgets are bound into it."""
+        return {'import_path': self.import_path, 'kwargs': self.kwargs, 'bindings': self.bindings,
+                'python_paths': list(self.python_paths), 'skip_model_parsing': self.skip_model_parsing}
+
+    def run(self, domain_agent, tasks, run):
         raise NotImplementedError('Harbor trials run in a worker process; see HarborTrialRunner')
 
     def validate(self):

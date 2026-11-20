@@ -300,16 +300,21 @@ class RestEMLab(MathLab):
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
-    def make_runtime(self, config):
-        return CheckpointRuntime()
+    def make_runtime(self, _math_config):
+        # The engine's identity and every generation setting that decides a score are recorded. They come
+        # from this Lab's own config, which MathLab's derived config does not carry.
+        return CheckpointRuntime(engine=self.engine.name, temperature=0.0,
+                                 max_new_tokens=self.config.get('max_new_tokens', 512))
 
     def solve(self, problems, arguments):
-        self._round = arguments['round']
-        return self.run_runtime({'model': arguments['model']}, problems)
+        rows, round_number = self._rows(problems), arguments['round']
 
-    def generate(self, model, problems):
-        """What the checkpoint runtime lends: one greedy completion per problem."""
-        return [answers[0] for answers in self._completions(model, self._rows(problems), 1, self._round, False)]
+        def generate(model, _problems):
+            # One greedy completion per problem; the round is this call's own, not the Lab's.
+            return [answers[0] for answers in self._completions(model, rows, 1, round_number, False)]
+
+        return self.run_runtime({'model': arguments['model']}, problems, arguments,
+                                context={'generate': generate, 'simulated': self.simulated})
 
     def result_data(self, records, ref, arguments):
         return {'request': arguments, 'model': arguments['model'], 'training_performed': False}
