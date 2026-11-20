@@ -72,14 +72,13 @@ the receipt fields it reads. See [Compose a system](compose.md#pair-a-registered
 
 | Lab | What it evaluates | How it gets its inputs |
 | --- | --- | --- |
-| [`coding`](../src/rsisys/labs/scenes/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | A task manifest with named splits and file hashes |
-| [`evaluation`](#connect-a-question-answer-benchmark) | A fixed actor with a supplied instruction on any question-answer benchmark; reports answer accuracy, overall and per group | A task manifest of hashed JSONL splits, each with its own verifier |
-| [`math`](../src/rsisys/labs/scenes/math/README.md) | The `evaluation` Lab with math defaults | The same manifest, with an optional 70-question competition preset |
-| [`self_reflection`](../src/rsisys/labs/scenes/self_reflection/lab.py) | Candidate Controllers in budgeted child runs. The current Controller decides whether to adopt the candidate. | Scoped parent evidence and the child run's Lab configuration |
+| [`coding`](../src/rsisys/labs/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | A task manifest with named splits and file hashes |
+| [`math`](../src/rsisys/labs/math/README.md) | A fixed actor with a supplied instruction on numeric or symbolic question-answer splits; reports answer accuracy, overall and per benchmark | A manifest of hashed JSONL splits, each with its own verifier, with an optional 70-question competition preset |
+| [`self_reflection`](../src/rsisys/labs/self_reflection/lab.py) | Candidate Controllers in budgeted child runs. The current Controller decides whether to adopt the candidate. | Scoped parent evidence and the child run's Lab configuration |
 
-Coding, Evaluation and Math expose `inspect`, `evaluate`, and `read_trace`.
-Coding's request schema and grader are specific to coding agents; Evaluation
-and Math share one implementation and differ only in defaults.
+Coding and Math are domain Labs. Both expose `inspect`, `evaluate`, and
+`read_trace`; each keeps its own task format, benchmarks and grading in its own
+package.
 Self-Reflection is a framework Lab that can be paired with domain Labs. It
 does not define its own domain benchmark.
 
@@ -99,19 +98,9 @@ name and scorer. Metric names do not have to match across Labs.
 
 ### Connect a question-answer benchmark
 
-The `evaluation` Lab ([`labs/evaluation.py`](../src/rsisys/labs/evaluation.py))
-is assembled from three parts, each chosen in configuration: task splits from a
-manifest ([`labs/tasks.py`](../src/rsisys/labs/tasks.py)), a
-[verifier](#verifiers) per split, and the run's `actor` model. A benchmark whose
-rows hold a question and a gold answer needs no code:
-
-```json
-"labs": {"qa": {"name": "evaluation", "config": {
-  "manifest": "/data/gsm8k/manifest.json",
-  "split_roles": {"dev": "dev", "test": "sealed"},
-  "max_output_tokens": 4096
-}}}
-```
+A benchmark whose rows hold a question and a numeric or symbolic gold answer
+needs no code: bind it to the `math` Lab with a dataset manifest, choose each
+split's verifier, and rename row keys with `fields`:
 
 ```json
 {"schema_version": 1, "splits": {
@@ -122,17 +111,9 @@ rows hold a question and a gold answer needs no code:
 }}
 ```
 
-Rows have `id`, `prompt`, `answer` and an optional `group`, which adds
-`<group>_accuracy` metrics. `fields` maps those names to the keys your files
-use. The Lab asks the actor for the verifier's answer format after the
-Controller's instruction, so any Controller that calls
-`evaluate(split, instruction)` can search instructions on the benchmark. Paths
-in the manifest resolve relative to it; the Lab checks each file's hash and
-count and rejects repeated IDs or prompts across splits.
-
-A scene subclasses `EvaluationLab` to change its defaults, add a manifest entry
-form, or build requests differently; the [math scene](../src/rsisys/labs/scenes/math/lab.py)
-is such a subclass.
+Any Controller that calls `evaluate(split, instruction)` can then search
+instructions on it. See [Connect the datasets](../src/rsisys/labs/math/README.md#connect-the-datasets).
+Other answer formats belong in their own Lab, with their own verifiers.
 
 To write a Lab, start with [`template_math`](../src/rsisys/labs/_template/README.md),
 a plugin that binds training and development data and runs `evaluate`
@@ -162,34 +143,13 @@ Other implementations are importable from `rsisys.api` without registration:
 
 ## Verifiers
 
-A verifier checks a model answer against the reference answer. All verifiers
-share one interface, [`AnswerVerifier`](../src/rsisys/labs/verifiers.py), so a
-Lab selects one by name in its config instead of importing a class:
-
-```json
-"verifier": "math_verify"
-"verifier": {"name": "competition_integer", "maximum": 999}
-```
-
-| Name | Class | Answer format | Example benchmarks |
-| --- | --- | --- | --- |
-| `strict_numeric` | `StrictNumericVerifier` | A final `####` number or numeric box | GSM8K |
-| `marked_numeric` | `MarkedNumericVerifier` | The last marked number (`####`, box, or "the answer is") | GSM8K (GEPA, STaR) |
-| `competition_integer` | `CompetitionIntegerVerifier` | A terminal boxed integer up to `maximum` (999 or 99999) | AIME, AIMO3 Reference |
-| `math_verify` | `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
-
-The math scene (per split, in its manifest), ReST^EM, FT-Agent and the harness-search Labs
-accept a `verifier` option. A Lab calls `parse(text)` and
-`is_correct(completion, answer)`, or `check(completion, answer)` when it also
-records whether the answer parsed. `answer_format` is the instruction text that
-asks a model for the format the verifier reads.
-
-For a new answer format, subclass `AnswerVerifier` from `rsisys.api`, set
-`name` (a versioned identity that becomes the primary metric's scorer), and
-implement `parse`. Override `parse_reference` when gold labels use a different
-format from completions, and set `isolated = True` if grading must run on a
-process main thread. Pass the instance to a Lab factory that accepts
-`verifier=`, as the ReST^EM, TTRL and harness Labs do.
+A verifier checks a model answer against the reference answer. Each Lab defines
+the verifiers for its own answer format. The math Lab's verifiers
+(`strict_numeric`, `marked_numeric`, `competition_integer`, `math_verify`) share
+one interface and are selected by name; methods that score math answers in their
+own Labs import them from `rsisys.api`. See
+[Math Lab: answer verifiers](../src/rsisys/labs/math/README.md#answer-verifiers).
+The Coding Lab grades with each benchmark task's own tests.
 
 ## Lab profiles
 

@@ -82,7 +82,7 @@ rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_te
 | Harness 搜索 | [RRSI](https://arxiv.org/abs/2609.24972) · Meta-Agent · [Coding Meta-Agent](src/rsisys/algorithms/coding_meta_agent/README.md) | 模型提出 harness 修改 | agent 用候选 harness 解题 | Agent harness |
 | 反思 | [Reflexion](https://arxiv.org/abs/2303.11366) | 决定何时重试 | 同一个 agent 写代码、跑测试并反思失败 | 自身的反思（统一） |
 | 研究型 agent | [AIDE](https://github.com/WecoAI/aideml) · [FT-Agent](https://github.com/microsoft/RD-Agent) | 上游 agent 起草、调试并选择方案 | 运行候选程序和微调任务 | 解决方案与微调模型 |
-| 自我反思 | [Self-Reflection Lab](src/rsisys/labs/scenes/self_reflection/lab.py)（是一个 Lab，需搭配 Controller 使用） | 当前 Controller | 候选 Controller 在嵌套实验中运行 | Controller 自身 |
+| 自我反思 | [Self-Reflection Lab](src/rsisys/labs/self_reflection/lab.py)（是一个 Lab，需搭配 Controller 使用） | 当前 Controller | 候选 Controller 在嵌套实验中运行 | Controller 自身 |
 
 运行 `rsisys catalog` 查看已注册的方法。各方法的预设配置、硬件和依赖见 [Components](docs/components.md#methods)。目前只有 ReST^EM、GEPA 和 Coding Meta-Agent 有使用指南，其他方法只有预设配置。预设配置只是起点，不代表已经复现论文结果。
 

@@ -3,7 +3,7 @@
 This method optimizes the instruction of a fixed coding agent. Its controller
 chooses proposals and final selection. Its private `CodingSearchLab` owns the
 candidate registry, proposal budget and sealed heldout policy, delegating task
-execution to the reusable [CodingLab environment](../../labs/scenes/coding/README.md).
+execution to the reusable [CodingLab environment](../../labs/coding/README.md).
 It is an adaptation of Meta-Agent harness search, not a weight-training algorithm
 or a reproduction of RRSI. Other RSI methods can use the environment independently.
 

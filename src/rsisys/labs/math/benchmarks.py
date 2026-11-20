@@ -1,11 +1,11 @@
-"""Read frozen, answer-bearing math benchmarks from local JSONL."""
+"""The official competition bundle: AIME 2024, AIME 2025 and AIMO3 Reference, from local JSONL."""
 from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
 
-from rsisys.labs.verifiers import CompetitionIntegerVerifier
+from .verifiers import CompetitionIntegerVerifier
 
 
 @dataclass(frozen=True)
@@ -71,3 +71,22 @@ def load_benchmark(manifest_path, name, *, manifest=None):
             or len({p.prompt.strip() for p in problems}) != len(problems)):
         raise ValueError(f'{name} has missing or duplicate problems')
     return MathBenchmark(name, digest, tuple(problems))
+
+
+def official_problems(root, entry):
+    """All three benchmarks together, as one sealed split's problems."""
+    from .tasks import Problem, checked_bytes, manifest_path
+
+    if set(entry) != {'benchmarks_manifest', 'sha256'}:
+        raise ValueError('The official math preset requires benchmarks_manifest and sha256')
+    path = manifest_path(root, entry['benchmarks_manifest'])
+    manifest = json.loads(checked_bytes(path, entry['sha256']))
+    if (not isinstance(manifest, dict) or not isinstance(manifest.get('benchmarks'), dict)
+            or set(manifest['benchmarks']) != set(BENCHMARKS)):
+        raise ValueError('Official evaluation requires AIME 2024, AIME 2025 and AIMO3 Reference together')
+    rows = []
+    for name, spec in BENCHMARKS.items():
+        verifier = CompetitionIntegerVerifier(spec.maximum)
+        rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier, str(row.answer))
+                    for row in load_benchmark(path, name, manifest=manifest).problems)
+    return tuple(rows), path

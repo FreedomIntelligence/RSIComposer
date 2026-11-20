@@ -45,7 +45,7 @@ class HarborTrialRunner:
             name, command = pending
         else:
             name = f"000-{re.sub('[^a-zA-Z0-9_-]', '-', task['id'])[:65]}-{uuid4().hex[:8]}"
-            command = [self.config['python'], '-m', 'rsisys.labs.scenes.coding.harbor_runner',
+            command = [self.config['python'], '-m', 'rsisys.labs.coding.harbor_runner',
                        '--task', task['path'], '--artifact', artifact.path,
                        '--agent-spec', str(self.agent_spec), '--endpoint', endpoint,
                        '--output', str(root / 'trials'), '--trial-name', name,

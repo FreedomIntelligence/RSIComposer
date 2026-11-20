@@ -52,6 +52,6 @@ dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 "rsisys.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
 
 "rsisys.runtime.orchestration" = ["monitor_contract.json"]
-"rsisys.labs.scenes.coding" = ["README.md"]
-"rsisys.labs.scenes.math" = ["README.md"]
+"rsisys.labs.coding" = ["README.md"]
+"rsisys.labs.math" = ["README.md"]
 "rsisys.labs._template" = ["README.md", "configs/*.json", "data/*.jsonl"]

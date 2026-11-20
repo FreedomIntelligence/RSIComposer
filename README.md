@@ -80,7 +80,7 @@ The [Quickstart](docs/quickstart.md) explains how to read the results, watch run
 | Harness search | [RRSI](https://arxiv.org/abs/2609.24972) · Meta-Agent · [Coding Meta-Agent](src/rsisys/algorithms/coding_meta_agent/README.md) | A model proposes harness changes | An agent solves tasks with the candidate harness | Agent harness |
 | Reflection | [Reflexion](https://arxiv.org/abs/2303.11366) | Decides when to retry | The same agent writes code, runs tests and reflects on failures | Its own reflections (unified) |
 | Research agents | [AIDE](https://github.com/WecoAI/aideml) · [FT-Agent](https://github.com/microsoft/RD-Agent) | The upstream agent drafts, debugs and selects solutions | Candidate programs and fine-tuning jobs run | Solutions and fine-tuned models |
-| Self-reflection | [Self-Reflection Lab](src/rsisys/labs/scenes/self_reflection/lab.py) (a Lab, paired with a Controller) | The current Controller | Candidate Controllers run in nested experiments | The Controller itself |
+| Self-reflection | [Self-Reflection Lab](src/rsisys/labs/self_reflection/lab.py) (a Lab, paired with a Controller) | The current Controller | Candidate Controllers run in nested experiments | The Controller itself |
 
 Run `rsisys catalog` to list the registered methods. [Components](docs/components.md#methods) lists each method's presets, hardware, and dependencies. Guides exist for ReST^EM, GEPA, and Coding Meta-Agent; the other methods have presets but no guide yet. A preset is a starting point, not a verified reproduction of the paper.
 

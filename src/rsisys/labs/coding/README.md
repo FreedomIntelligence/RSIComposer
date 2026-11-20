@@ -18,7 +18,7 @@ flowchart LR
     L -->|scores + usage + traces + receipts| M
 ```
 
-The bundled [coding_meta_agent](../../../algorithms/coding_meta_agent/README.md)
+The bundled [coding_meta_agent](../../algorithms/coding_meta_agent/README.md)
 composes this environment with its own instruction-search and sealed-selection
 policy. It is one client; another method does not need its candidate registry,
 minimum round count or finalization protocol.
@@ -58,7 +58,7 @@ Include only the benchmarks you want to run. Splits with the same name are
 merged, in benchmark name order with task order preserved within each manifest.
 Assign roles with `split_roles` (for example, `{"development": "dev", "final":
 "sealed"}`). For an existing combined manifest, use `manifest` instead of
-`benchmarks`. See the [complete method config](../../../algorithms/coding_meta_agent/configs/coding.toml)
+`benchmarks`. See the [complete method config](../../algorithms/coding_meta_agent/configs/coding.toml)
 for model, method, and Lab settings together.
 
 The manifest uses this shape:
@@ -90,7 +90,7 @@ full leaderboard scores.
 
 This scene takes task manifests for evaluation and has no training dataset
 operation. A method that trains weights should bind training inputs to its
-training Lab. See the [Lab template](../../_template/README.md) for a minimal
+training Lab. See the [Lab template](../_template/README.md) for a minimal
 example that binds training and development inputs separately.
 
 Required config: `experiment_dir`, one of `benchmarks` or `manifest`, `python`

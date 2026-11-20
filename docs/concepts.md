@@ -63,7 +63,7 @@ a small one. They can also use the same model, which gives the usual
 single-agent self-improvement loop. Both cases use the same interfaces.
 
 The Controller is also replaceable at run time. The
-[Self-Reflection Lab](../src/rsisys/labs/scenes/self_reflection/lab.py) builds
+[Self-Reflection Lab](../src/rsisys/labs/self_reflection/lab.py) builds
 candidate Controllers and tests them in nested runs. The current Controller then
 decides whether to adopt one.
 

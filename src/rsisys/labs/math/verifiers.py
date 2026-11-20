@@ -1,4 +1,4 @@
-"""Answer verifiers: one interface, selected by name in a Lab's config.
+"""Math answer verifiers: one interface, selected by name in the Lab's config.
 
 A verifier compares a model completion with a reference answer. Labs depend on
 the AnswerVerifier interface, never on a concrete class, so the same Lab can
@@ -234,7 +234,7 @@ class MathVerifyVerifier(AnswerVerifier):
         # its total lifetime, including imports.
         try:
             result = subprocess.run(
-                [sys.executable, '-m', 'rsisys.labs._verify_worker'],
+                [sys.executable, '-m', 'rsisys.labs.math._verify_worker'],
                 input=json.dumps([actual, expected]), capture_output=True, text=True, check=True,
                 timeout=10,
             )

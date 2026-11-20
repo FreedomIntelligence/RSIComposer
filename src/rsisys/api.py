@@ -122,31 +122,25 @@ _EXPORTS = {
     'report_samples': ('rsisys.runtime.observation', 'report_samples'),
     'report_training_log': ('rsisys.runtime.observation', 'report_training_log'),
     'trigger_probe': ('rsisys.runtime.observation', 'trigger_probe'),
-    # Answer verifiers selected by name in Lab configs (Math-Verify is optional).
-    'AnswerCheck': ('rsisys.labs.verifiers', 'AnswerCheck'),
-    'AnswerVerifier': ('rsisys.labs.verifiers', 'AnswerVerifier'),
-    'CompetitionIntegerVerifier': ('rsisys.labs.verifiers', 'CompetitionIntegerVerifier'),
-    'MarkedNumericVerifier': ('rsisys.labs.verifiers', 'MarkedNumericVerifier'),
-    'MathVerifyVerifier': ('rsisys.labs.verifiers', 'MathVerifyVerifier'),
-    'StrictNumericVerifier': ('rsisys.labs.verifiers', 'StrictNumericVerifier'),
-    'build_verifier': ('rsisys.labs.verifiers', 'build_verifier'),
-    'final_boxed': ('rsisys.labs.verifiers', 'final_boxed'),
-    'marked_number': ('rsisys.labs.verifiers', 'marked_number'),
-    'numeric_answer': ('rsisys.labs.verifiers', 'numeric_answer'),
-    'parse_reference': ('rsisys.labs.verifiers', 'parse_reference'),
-    'score_record': ('rsisys.labs.verifiers', 'score_record'),
-    'validate_verifier': ('rsisys.labs.verifiers', 'validate_verifier'),
-    # Question-answer evaluation assembled from task splits and verifiers.
-    'EvaluationLab': ('rsisys.labs.evaluation', 'EvaluationLab'),
-    'TaskItem': ('rsisys.labs.tasks', 'TaskItem'),
-    'TaskSplits': ('rsisys.labs.tasks', 'TaskSplits'),
-    'jsonl_tasks': ('rsisys.labs.tasks', 'jsonl_tasks'),
-    'load_task_manifest': ('rsisys.labs.tasks', 'load_task_manifest'),
+    # The math Lab's answer verifiers, shared by math methods (Math-Verify is optional).
+    'AnswerCheck': ('rsisys.labs.math.verifiers', 'AnswerCheck'),
+    'AnswerVerifier': ('rsisys.labs.math.verifiers', 'AnswerVerifier'),
+    'CompetitionIntegerVerifier': ('rsisys.labs.math.verifiers', 'CompetitionIntegerVerifier'),
+    'MarkedNumericVerifier': ('rsisys.labs.math.verifiers', 'MarkedNumericVerifier'),
+    'MathVerifyVerifier': ('rsisys.labs.math.verifiers', 'MathVerifyVerifier'),
+    'StrictNumericVerifier': ('rsisys.labs.math.verifiers', 'StrictNumericVerifier'),
+    'build_verifier': ('rsisys.labs.math.verifiers', 'build_verifier'),
+    'final_boxed': ('rsisys.labs.math.verifiers', 'final_boxed'),
+    'marked_number': ('rsisys.labs.math.verifiers', 'marked_number'),
+    'numeric_answer': ('rsisys.labs.math.verifiers', 'numeric_answer'),
+    'parse_reference': ('rsisys.labs.math.verifiers', 'parse_reference'),
+    'score_record': ('rsisys.labs.math.verifiers', 'score_record'),
+    'validate_verifier': ('rsisys.labs.math.verifiers', 'validate_verifier'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
-    'MathLab': ('rsisys.labs.scenes.math.lab', 'MathLab'),
-    'CodingLab': ('rsisys.labs.scenes.coding.lab', 'CodingLab'),
-    'CodingArtifact': ('rsisys.labs.scenes.coding.artifacts', 'CodingArtifact'),
-    'HarborCodingAgent': ('rsisys.labs.scenes.coding.agents', 'HarborCodingAgent'),
+    'MathLab': ('rsisys.labs.math.lab', 'MathLab'),
+    'CodingLab': ('rsisys.labs.coding.lab', 'CodingLab'),
+    'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
+    'HarborCodingAgent': ('rsisys.labs.coding.agents', 'HarborCodingAgent'),
     # Optional serving and training implementations.
     'ChatPool': ('rsisys.backends.serving.chat', 'ChatPool'),
     'LoRAEngine': ('rsisys.backends.training.lora.engine', 'LoRAEngine'),
@@ -239,17 +233,10 @@ if _TYPE_CHECKING:
     from rsisys.runtime.execution.budget import HostBudget as HostBudget
     from rsisys.runtime.execution.budget import BudgetExhausted as BudgetExhausted
 
-    from rsisys.labs.evaluation import EvaluationLab as EvaluationLab
-    from rsisys.labs.scenes.math.lab import MathLab as MathLab
-    from rsisys.labs.tasks import (
-        TaskItem as TaskItem,
-        TaskSplits as TaskSplits,
-        jsonl_tasks as jsonl_tasks,
-        load_task_manifest as load_task_manifest,
-    )
-    from rsisys.labs.scenes.coding.lab import CodingLab as CodingLab
-    from rsisys.labs.scenes.coding.artifacts import CodingArtifact as CodingArtifact
-    from rsisys.labs.scenes.coding.agents import HarborCodingAgent as HarborCodingAgent
+    from rsisys.labs.math.lab import MathLab as MathLab
+    from rsisys.labs.coding.lab import CodingLab as CodingLab
+    from rsisys.labs.coding.artifacts import CodingArtifact as CodingArtifact
+    from rsisys.labs.coding.agents import HarborCodingAgent as HarborCodingAgent
     from rsisys.application import Application as Application, ApplicationConfig as ApplicationConfig
     from rsisys.assembly import (
         AssemblyContext as AssemblyContext,
@@ -283,7 +270,7 @@ if _TYPE_CHECKING:
         sandbox_step as sandbox_step,
         validate_source as validate_source,
     )
-    from rsisys.labs.verifiers import (
+    from rsisys.labs.math.verifiers import (
         AnswerCheck as AnswerCheck,
         AnswerVerifier as AnswerVerifier,
         CompetitionIntegerVerifier as CompetitionIntegerVerifier,

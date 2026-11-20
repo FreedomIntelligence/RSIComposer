@@ -10,7 +10,7 @@ internal and may change between releases.
 | --- | --- | --- |
 | [`api.py`](api.py) | The public interface | Writing a Controller, Lab, or plugin |
 | [`algorithms/`](algorithms/) | One package per built-in method, each with `configs/` presets. [`_template/`](algorithms/_template/README.md) is the method template; `shared/` holds code reused by several methods. | Running or adapting a method |
-| [`labs/`](labs/) | [Reusable Lab catalog](../../docs/components.md#labs), the Lab building blocks ([`verifiers.py`](labs/verifiers.py), [`tasks.py`](labs/tasks.py), [`evaluation.py`](labs/evaluation.py)), and the [Lab template](labs/_template/README.md). Method-owned Lab adapters live under `algorithms/`. | Choosing a Lab, binding data, or writing a Lab |
+| [`labs/`](labs/) | [Reusable Lab catalog](../../docs/components.md#labs), one package per Lab ([`coding`](labs/coding/README.md), [`math`](labs/math/README.md) with its answer verifiers, [`self_reflection`](labs/self_reflection/lab.py)) next to the [Lab template](labs/_template/README.md). Method-owned Lab adapters live under `algorithms/`. | Choosing a Lab, binding data, or writing a Lab |
 | [`loops/contracts/`](loops/contracts/) | The contracts: decisions and operations, receipts, splits and metrics, Lab profiles, Harness, Memory, data bindings, model service | Checking exactly what an interface requires |
 | [`harnesses/`](harnesses/) | Model-driven decision policies, Memory implementations, and the `python_step` program harness | Building a model-driven Controller |
 | [`backends/`](backends/) | Model serving and weight-training engines (vLLM, Chat Completions pools, LoRA) | Methods that serve or train models |

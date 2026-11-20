@@ -21,7 +21,7 @@ class HarborCodingAgent:
     artifact. Harbor imports that Python on the worker host, outside the task
     sandbox. Set this only for source artifacts trusted to execute there.
     """
-    import_path: str = 'rsisys.labs.scenes.coding.agent:CodingAgent'
+    import_path: str = 'rsisys.labs.coding.agent:CodingAgent'
     version: str = '1'
     kwargs: dict = field(default_factory=dict)
     bindings: dict = field(default_factory=lambda: {

@@ -1,4 +1,4 @@
-"""Math scene: EvaluationLab defaults for math plus the official AIME/AIMO3 bundle."""
+"""Math Lab: task splits, answer verifiers and the official competition bundle."""
 
 
 def register_components(registry):

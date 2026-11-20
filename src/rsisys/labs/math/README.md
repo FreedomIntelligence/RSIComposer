@@ -1,15 +1,11 @@
 # Math task environment
 
-`MathLab` is a reusable scene registered as `math`. It is the
-[`evaluation` Lab](../../../../docs/components.md#connect-a-question-answer-benchmark)
-with math defaults: rows group by `benchmark`, the default verifier is
-`competition_integer`, the output budget is 32,768 tokens, and a sealed split
-can use the official competition bundle. It loads frozen math
+`MathLab` is a reusable Lab registered as `math`. It loads frozen math
 problems, calls the target model bound to the `actor` role, verifies answers,
 and records scores, token usage, and evidence. The method supplies the solver
 instruction. Its Controller and Harness own proposal generation, search,
-training, selection, and stopping. A method can compose this scene with its own
-training Lab, as described in the [Lab template](../../_template/README.md).
+training, selection, and stopping. A method can compose this Lab with its own
+training Lab, as described in the [Lab template](../_template/README.md).
 The division of responsibilities follows the [Coding Lab](../coding/README.md).
 
 ## Runtime requirements
@@ -17,33 +13,33 @@ The division of responsibilities follows the [Coding Lab](../coding/README.md).
 Use Python 3.12 or later and a configured actor backend. For a deployed
 OpenAI-compatible actor, set `json_mode: false` so the model can return LaTeX
 text. Configure the model, revision, server context window, timeout, and GPU
-allocation at deployment. The scene requests up to 32,768 output tokens per
+allocation at deployment. The Lab requests up to 32,768 output tokens per
 question by default, using one generation and temperature zero. The server
 context window must accommodate the entire input plus the output budget.
 Setting the Lab budget does not change the deployed server's limits.
 
 The competition sets and integer-labeled development data use only Python's
 standard library. Install `pip install -e '.[math]'` to use the existing
-Math-Verify scorer on symbolic answers. The scene gives symbolic grading a
+Math-Verify scorer on symbolic answers. The Lab gives symbolic grading a
 separate, time-bounded Python process when the Lab runs on a host thread.
 
 ## Connect the datasets
 
-Configure the Lab with a scene manifest and explicit roles. The example below
+Configure the Lab with a dataset manifest and explicit roles. The example below
 shows the entry for the `framework.labs.math` alias of a run config.
 
 ```json
 {
   "name": "math",
   "config": {
-    "manifest": "/data/experiments/math-scene.json",
+    "manifest": "/data/experiments/math-datasets.json",
     "split_roles": {"development": "dev", "official": "sealed"},
     "max_output_tokens": 32768
   }
 }
 ```
 
-Use a separate JSON object for the scene manifest.
+Use a separate JSON object for the dataset manifest.
 
 ```json
 {
@@ -62,22 +58,23 @@ Use a separate JSON object for the scene manifest.
 }
 ```
 
-Use an absolute path for the scene manifest, or make it relative to the
-working directory. Entries inside the scene manifest resolve relative to that
+Use an absolute path for the dataset manifest, or make it relative to the
+working directory. Entries inside the dataset manifest resolve relative to that
 manifest. Hash the exact file bytes, for example with
-`shasum -a 256 /path/to/file`. The scene checks the hashes and counts at
+`shasum -a 256 /path/to/file`. The Lab checks the hashes and counts at
 startup. It rejects repeated IDs or normalized question text within or across
 the bound splits and checks the data, model and scoring bindings during resume.
-The scene declares each split as a host dataset binding. The host retains a
+The Lab declares each split as a host dataset binding. The host retains a
 fingerprint for the sealed split without exposing its row IDs or source.
 
 A split can bind a JSONL file using `file`, `sha256`, and `count`, whether its
 role is `dev` or `sealed`. Each row has `id`, `prompt`, `answer`, and optionally
-`benchmark` (defaults to `math`); `fields` renames them as in the `evaluation`
-Lab. The default verifier accepts nonnegative integer labels through 99,999.
-Set `"verifier"` in the split entry to any [shared verifier](../../../../docs/components.md#verifiers);
-for symbolic labels use `"math_verify"` and supply bare LaTeX answers or boxed
-references. The training
+`benchmark` (defaults to `math`), which groups per-benchmark metrics. If your
+files use other keys, rename them with `fields`, for example
+`"fields": {"prompt": "question"}` for GSM8K. Each split selects a
+[verifier](#answer-verifiers); the default accepts nonnegative integer labels
+through 99,999. For symbolic labels use `"math_verify"` and supply bare LaTeX
+answers or boxed references. The training
 and rollout data stay in the method's own Lab or preparation pipeline. Keep that
 data, the development inputs, and the sealed assessment disjoint.
 
@@ -93,6 +90,39 @@ hashes. Use the JSONL form to bind a different sealed benchmark.
 | AIMO3 Reference | 10 | Terminal boxed integer from 0 to 99,999 |
 
 Use the prepared benchmark manifest and the three JSONL files from the deployment.
+
+## Answer verifiers
+
+A verifier checks a model answer against the reference answer. The verifiers
+in [`verifiers.py`](verifiers.py) share one interface, `AnswerVerifier`, so a
+split selects one by name instead of importing a class:
+
+```json
+"verifier": "math_verify"
+"verifier": {"name": "competition_integer", "maximum": 999}
+```
+
+| Name | Class | Answer format | Example benchmarks |
+| --- | --- | --- | --- |
+| `strict_numeric` | `StrictNumericVerifier` | A final `####` number or numeric box | GSM8K |
+| `marked_numeric` | `MarkedNumericVerifier` | The last marked number (`####`, box, or "the answer is") | GSM8K (GEPA, STaR) |
+| `competition_integer` | `CompetitionIntegerVerifier` | A terminal boxed integer up to `maximum` (999 or 99999) | AIME, AIMO3 Reference |
+| `math_verify` | `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
+
+Methods that score math answers in their own Labs (ReST^EM, STaR, TTRL,
+FT-Agent, AIDE, GEPA and the harness-search Labs) import these verifiers from
+`rsisys.api`; ReST^EM, FT-Agent and the harness Labs accept the same `verifier`
+option. A Lab calls `parse(text)` and
+`is_correct(completion, answer)`, or `check(completion, answer)` when it also
+records whether the answer parsed. `answer_format` is the instruction text that
+asks a model for the format the verifier reads.
+
+For a new answer format, subclass `AnswerVerifier` from `rsisys.api`, set
+`name` (a versioned identity that becomes the primary metric's scorer), and
+implement `parse`. Override `parse_reference` when gold labels use a different
+format from completions, and set `isolated = True` if grading must run on a
+process main thread. Pass the instance to a Lab factory that accepts
+`verifier=`, as the ReST^EM, TTRL and harness Labs do.
 
 ## Public operations
 
@@ -122,7 +152,7 @@ call = OperationCall('math.evaluate', {
 
 For formal evaluation, the method's Lab adapter exposes
 `final_evaluations()` after saving its selected instruction, following
-[Coding Meta-Agent's adapter](../../../algorithms/coding_meta_agent/lab.py).
+[Coding Meta-Agent's adapter](../../algorithms/coding_meta_agent/lab.py).
 It returns one local `OperationCall('evaluate', {'split': 'official',
 'instruction': selected_instruction})`. The RSISys host executes the full
 sealed split after the Controller finishes and withholds per-question data
