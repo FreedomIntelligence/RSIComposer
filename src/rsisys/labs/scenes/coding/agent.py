@@ -46,6 +46,12 @@ class CodingAgent(BaseAgent):
                  command_timeout=120, seed=73, thinking=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.candidate = json.loads(Path(candidate_path).read_text())
+        harness = self.candidate.get('harness', {})
+        if not isinstance(harness, dict) or harness.keys() - {'stdout_tail_chars'}:
+            raise ValueError('harness supports only stdout_tail_chars')
+        self.stdout_tail_chars = harness.get('stdout_tail_chars', 20000)
+        if type(self.stdout_tail_chars) is not int or not 2000 <= self.stdout_tail_chars <= 20000:
+            raise ValueError('stdout_tail_chars must be an integer between 2000 and 20000')
         self.endpoint = endpoint
         self.max_steps, self.max_output_tokens = int(max_steps), int(max_output_tokens)
         self.total_output_tokens = int(total_output_tokens)
@@ -57,7 +63,7 @@ class CodingAgent(BaseAgent):
         return 'rsisys-coding'
 
     def version(self):
-        return '5'
+        return '6'
 
     async def setup(self, environment):
         pass
@@ -117,7 +123,7 @@ class CodingAgent(BaseAgent):
                         command_timeouts += 1
                         record['command_budget_exceeded'] = True
                     observation = json.dumps({'return_code': result.return_code,
-                                              'stdout': (result.stdout or '')[-20000:],
+                                              'stdout': (result.stdout or '')[-self.stdout_tail_chars:],
                                               'stderr': (result.stderr or '')[-6000:]}, ensure_ascii=False)
                     record['observation'] = observation
                 with trace.open('a') as f:

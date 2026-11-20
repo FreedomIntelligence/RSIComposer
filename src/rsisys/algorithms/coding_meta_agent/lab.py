@@ -13,6 +13,7 @@ from rsisys.api import (CodingLab, CodingArtifact, DEV, SEALED, Invariant, Metri
 
 BASELINE = 'Inspect the project, implement a correct minimal fix, and run relevant tests before finishing.'
 POLICY_OPTIONS = {'min_candidates', 'max_candidates'}
+POLICY_VERSION = 'coding-meta-agent/v4'
 
 
 def digest(value):
@@ -25,6 +26,12 @@ def atomic_json(path, data):
 
 def validate_config(config):
     CodingLab.validate_config({k: v for k, v in config.items() if k not in POLICY_OPTIONS})
+    roles = config.get('split_roles', {})
+    expected_roles = {'search': 'dev', 'heldout': 'sealed'}
+    if not isinstance(roles, dict) or any(
+            split not in expected_roles or role != expected_roles[split]
+            for split, role in roles.items()):
+        raise ValueError('coding_meta_agent requires search=dev and heldout=sealed')
     for key in POLICY_OPTIONS:
         if key in config and (type(config[key]) is not int or config[key] < 1):
             raise ValueError('Positive integer required: ' + key)
@@ -43,7 +50,7 @@ class CodingSearchLab:
         self.selected = None
         self.root = Path(config['experiment_dir']).resolve()
         prior = self.root / 'binding.json'
-        if prior.exists() and json.loads(prior.read_text()).get('policy') != 'coding-meta-agent/v3':
+        if prior.exists() and json.loads(prior.read_text()).get('policy') != POLICY_VERSION:
             raise ValueError('Experiment binding changed; use a new experiment_dir')
         env_config = {k: v for k, v in config.items() if k not in POLICY_OPTIONS}
         env_config['experiment_dir'] = str(self.root / 'environment')
@@ -55,7 +62,7 @@ class CodingSearchLab:
         self.candidates = self.root / 'candidates'
         self.evaluations = self.root / 'evaluations'
         with self._lock():
-            binding = {'policy': 'coding-meta-agent/v3', 'config': self.config,
+            binding = {'policy': POLICY_VERSION, 'config': self.config,
                        'environment': self.fingerprint,
                        'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
             path = self.root / 'binding.json'
@@ -111,6 +118,9 @@ class CodingSearchLab:
 
     def split_roles(self):
         return {'search': DEV, 'heldout': SEALED}
+
+    def data_bindings(self):
+        return self.environment.data_bindings()
 
     def invariants(self):
         return (Invariant.baseline_before('select'), Invariant.measured_selection(),
@@ -208,7 +218,10 @@ class CodingSearchLab:
         candidate, path = self._candidate(args['candidate_id'])
         if call.name == 'inspect':
             return self._result('Persisted coding experiment', {'candidate': candidate,
-                'state': json.loads(self.runtime_context()), 'budgets': self.config,
+                'state': json.loads(self.runtime_context()),
+                'budgets': {key: value for key, value in self.config.items()
+                            if key in POLICY_OPTIONS or key in ('max_steps', 'max_tokens', 'total_tokens',
+                                                                'agent_timeout', 'verifier_timeout')},
                 'protocol_fingerprint': self.fingerprint})
         if call.name == 'read_trace':
             index, offset = args['task_index'], args['offset']
@@ -272,6 +285,8 @@ class CodingSearchLab:
             d = self._cached(p.stem, 'search')
             states[p.stem] = {'search_score': d['score'] if d else None}
         return json.dumps({'candidates': states, 'selected': self.selected,
+                           'min_candidates': self.config.get('min_candidates', 3),
+                           'max_candidates': self.config.get('max_candidates', 6),
                            'sealed_evaluation': 'host_after_finish'})
 
     def close(self):

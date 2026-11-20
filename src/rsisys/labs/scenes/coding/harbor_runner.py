@@ -1,4 +1,4 @@
-"""Run one real Harbor trial. The parent Lab owns scheduling and recovery."""
+"""Worker entry point: run one Harbor trial and record its official grade."""
 import argparse
 import asyncio
 import json

@@ -18,8 +18,8 @@ class HarborCodingAgent:
     """Construct in a trusted method/Lab factory, not from candidate JSON.
 
     artifact_python_paths are relative directories inside an immutable source
-    artifact. This lets code-evolution methods run their own Harbor-compatible
-    harness without modifying the Coding Lab or benchmark provider.
+    artifact. Harbor imports that Python on the worker host, outside the task
+    sandbox. Set this only for source artifacts trusted to execute there.
     """
     import_path: str = 'rsisys.labs.scenes.coding.agent:CodingAgent'
     version: str = '1'

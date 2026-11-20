@@ -4,7 +4,7 @@ recursive-include src/rsisys/labs/scenes README.md
 recursive-include src/rsisys/labs/_template *.json *.jsonl README.md
 include assets/rsisys-overview.png
 include src/rsisys/runtime/orchestration/monitor_contract.json
-recursive-include src/rsisys/algorithms *.json *.jsonl *.txt README.md
+recursive-include src/rsisys/algorithms *.json *.jsonl *.toml *.txt README.md
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js *.json LICENSE
 recursive-include requirements *.txt
 prune recipes

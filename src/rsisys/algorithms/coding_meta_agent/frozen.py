@@ -73,6 +73,11 @@ def primary_selection(app):
     return lab.config, selection
 
 
+def tranche_config(config, root, manifest):
+    options = {key: value for key, value in config.items() if key != 'benchmarks'}
+    return dict(options, experiment_dir=str(root.resolve()), manifest=str(manifest.resolve()))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run-dir', required=True, type=Path)
@@ -105,7 +110,7 @@ def main():
         if manifest_path.exists() and json.loads(manifest_path.read_text()) != manifest:
             raise ValueError('Frozen tranche changed')
         atomic_json(manifest_path, manifest)
-        lab_config = dict(config, experiment_dir=str(root.resolve()), manifest=str(manifest_path.resolve()))
+        lab_config = tranche_config(config, root, manifest_path)
         lab = CodingSearchLab(SimpleNamespace(artifacts=None), lab_config)
         with lab._lock():
             for ident in dict.fromkeys(('baseline', selected)):

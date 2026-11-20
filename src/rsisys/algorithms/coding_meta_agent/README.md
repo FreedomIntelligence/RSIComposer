@@ -26,8 +26,10 @@ Benchmark graders and reference solutions are never sent to the coding model.
 
 ## Experiment inputs
 
-A host-prepared JSON manifest freezes independent `search` and `heldout` lists.
-Each row contains:
+Set `framework.method.name` to `coding_meta_agent`. Put Controller settings in
+`framework.method.config.controller` and select benchmarks in
+`framework.method.config.labs.coding.benchmarks`. The Lab combines the selected
+manifests into disjoint `search` and `heldout` splits. Each manifest row contains:
 
 ```json
 {
@@ -58,8 +60,9 @@ as a new task variant before freezing the experiment; do not change tests, bypas
 TLS verification, remove failures after seeing scores, or send reference solutions
 to either model. Keep calibration rewards separate from model measurements.
 
-The method requires `experiment_dir`, `manifest`, `python` (the absolute virtualenv
-interpreter path), `endpoints` and explicit `model`. Optional settings are `workers`,
+The coding Lab config requires `experiment_dir`, `benchmarks` (or `manifest` for one
+combined input), `python` (the absolute virtualenv interpreter path), `endpoints`
+and explicit `model`. Optional settings are `workers`,
 `min_candidates` (default 3), `max_candidates` (6), `max_steps` (48), `max_tokens`
 (4096 per call), `total_tokens` (98304 output tokens per task), `agent_timeout`
 (1800 seconds), `verifier_timeout` (1800-second cap), `seed` (73), and `thinking`
@@ -80,12 +83,12 @@ Use the real virtualenv interpreter path; resolving its symlink with
 ## Running the method
 
 Start the configured controller model service and worker model services first. Use the
-[configuration template](configs/coding.json),
-replace its absolute paths and model identifiers, then run:
+[TOML configuration template](configs/coding.toml). Keep only the benchmarks you want,
+replace the absolute paths and model identifiers, then run:
 
 ```bash
 PYTHONPATH=src .venv-coding/bin/python -m rsisys run \
-  --config /absolute/path/to/coding.json \
+  --config /absolute/path/to/coding.toml \
   --data-dir /absolute/path/to/new-controller-attempt
 ```
 

@@ -1,7 +1,10 @@
 # Run configuration
 
-`rsisys run --config run.json` reads one JSON object. The method presets under
-`src/rsisys/algorithms/*/configs/` are complete examples.
+`rsisys run --config run.toml` and `rsisys run --config run.json` accept the same
+fields. See the [Coding Meta-Agent TOML preset](../src/rsisys/algorithms/coding_meta_agent/configs/coding.toml)
+or the JSON example below. In TOML, quote dates used as revision strings and
+keys that contain a dot (for example, `"terminal-bench-2.1"`). Benchmark
+manifests and saved run state still use JSON.
 
 ```json
 {
@@ -81,7 +84,7 @@ or from the Lab's `data_root`; see the Lab's guide.
 
 | Command | Option | Meaning |
 | --- | --- | --- |
-| `rsisys run` | `--config` | Run config file |
+| `rsisys run` | `--config` | TOML or JSON run config file |
 | | `--data-dir` | Output directory; overrides `data_dir` |
 | | `--plugin` | Load a trusted registration file or package; repeatable |
 | | `--durable` | Save a checkpoint after every step so `rsisys resume` can continue the run |

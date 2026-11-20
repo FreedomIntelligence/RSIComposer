@@ -3,6 +3,7 @@ from dataclasses import asdict, replace
 import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import tomllib
 
 from rsisys.application import Application, ApplicationConfig
 from rsisys.snapshot.local import LocalSnapshotCapture, restore_snapshot, load_manifest
@@ -10,6 +11,25 @@ from rsisys.registry import Registry
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 from rsisys.runtime.orchestration.monitor_snapshot import run_monitored
+
+
+def _read_run_config(path: Path) -> dict:
+    suffix = path.suffix.lower()
+    if suffix == '.json':
+        config = json.loads(path.read_text(encoding='utf-8'))
+    elif suffix == '.toml':
+        with path.open('rb') as stream:
+            config = tomllib.load(stream)
+        try:
+            json.dumps(config, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('TOML run config requires JSON-compatible values; '
+                             'quote dates and times and use finite numbers') from exc
+    else:
+        raise ValueError('Run config must have a .toml or .json extension')
+    if not isinstance(config, dict):
+        raise ValueError('Run config must be an object')
+    return config
 
 
 def main() -> None:
@@ -24,7 +44,7 @@ def main() -> None:
     catalog.add_argument('--plugin', type=Path, action='append', default=[],
                          help='Explicitly trust a registration file or method package directory; repeatable')
     run = commands.add_parser('run', help='Start a new persistent run')
-    run.add_argument('--config', type=Path, required=True)
+    run.add_argument('--config', type=Path, required=True, help='Run configuration (.toml or .json)')
     run.add_argument('--data-dir', type=Path)
     run.add_argument('--experiment-name', help='Name shown in RSIMonitor')
     run.add_argument('--parent-run-id', help='Declare ancestry only; does not restore model or memory state')
@@ -63,13 +83,11 @@ def main() -> None:
             if args.max_decision_steps is not None and args.max_decision_steps < 1:
                 raise ValueError('max-decision-steps must be positive')
             if args.command == 'run':
-                raw = json.loads(args.config.read_text())
+                raw = _read_run_config(args.config)
                 selection = raw.pop('framework', None)
                 if selection is None:
-                    raise ValueError('run config requires framework; use '
-                                     '\"framework\": {\"method\": {\"name\": \"rest_em\", \"config\": {}}} '
-                                     'or \"framework\": {\"controller\": {\"name\": \"...\"}, '
-                                     '\"labs\": {\"lab\": {\"name\": \"...\"}}}')
+                    raise ValueError('run config requires framework; set framework.method.name '
+                                     'or configure both framework.controller and framework.labs')
                 registry = Registry()
                 for path in args.plugin:
                     registry.load_plugin(path)

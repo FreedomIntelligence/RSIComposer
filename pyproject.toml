@@ -49,7 +49,7 @@ dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 "rsisys.harnesses.decision.feedback" = ["prompts/*.txt"]
 "rsisys.harnesses.decision.policy" = ["prompts/*.txt"]
 
-"rsisys.algorithms" = ["*/configs/*.json", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
+"rsisys.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
 
 "rsisys.runtime.orchestration" = ["monitor_contract.json"]
 "rsisys.labs.scenes.coding" = ["README.md"]

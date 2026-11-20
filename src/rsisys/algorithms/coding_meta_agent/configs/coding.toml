@@ -1,0 +1,54 @@
+objective = "Improve the fixed coding agent on the configured benchmarks. Measure the baseline, evaluate general coding strategies, and choose a candidate using search evidence. The host evaluates baseline and selected on disjoint heldout tasks with equal budgets."
+data_dir = "/absolute/path/to/new-controller-attempt"
+max_decision_steps = 48
+
+[framework.method]
+name = "coding_meta_agent"
+
+[framework.method.config.controller]
+memory = true
+harness = "default"
+backend = "vllm"
+max_output_tokens = 4096
+max_model_calls = 256
+context_window = 32768
+
+[framework.method.config.labs.coding]
+experiment_dir = "/absolute/path/to/coding-experiment"
+python = "/absolute/path/to/.venv-coding/bin/python"
+model = "Qwen3.5-9B"
+endpoints = [
+  "http://127.0.0.1:18501/v1",
+  "http://127.0.0.1:18502/v1",
+  "http://127.0.0.1:18503/v1",
+  "http://127.0.0.1:18504/v1",
+  "http://127.0.0.1:18505/v1",
+  "http://127.0.0.1:18506/v1",
+  "http://127.0.0.1:18507/v1",
+]
+workers = 14
+max_candidates = 5
+min_candidates = 3
+max_steps = 48
+max_tokens = 4096
+total_tokens = 98304
+agent_timeout = 1800
+verifier_timeout = 1800
+seed = 73
+thinking = false
+
+# Keep only the benchmark entries you want. Each JSON manifest supplies search and heldout tasks.
+[framework.method.config.labs.coding.benchmarks]
+swebench-verified = { manifest = "/absolute/path/to/swebench-verified.json" }
+"terminal-bench-2.1" = { manifest = "/absolute/path/to/terminal-bench-2.1.json" }
+
+[backends.local]
+kind = "chat_completions"
+endpoint = "http://127.0.0.1:18500/v1"
+timeout_seconds = 600
+json_mode = true
+
+[roles.decision_maker]
+backend_id = "local"
+model_id = "Qwen3.8-27B"
+revision = "record-your-frozen-model-revision"
