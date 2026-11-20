@@ -10,7 +10,7 @@ internal and may change between releases.
 | --- | --- | --- |
 | [`api.py`](api.py) | The public interface | Writing a Controller, Lab, or plugin |
 | [`algorithms/`](algorithms/) | One package per built-in method, each with `configs/` presets. [`_template/`](algorithms/_template/README.md) is the method template; `shared/` holds code reused by several methods. | Running or adapting a method |
-| [`labs/`](labs/) | Reusable Labs: [`scenes/coding`](labs/scenes/coding/README.md), [`scenes/math`](labs/scenes/math/README.md) (with answer verifiers), and [`scenes/self_reflection`](labs/scenes/self_reflection/lab.py). [`_template/`](labs/_template/README.md) is the Lab template. | Reusing a Lab or writing one |
+| [`labs/`](labs/) | [Reusable Lab catalog](../../docs/components.md#labs) and [Lab template](labs/_template/README.md). Method-owned Lab adapters live under `algorithms/`. | Choosing a Lab, binding data, or writing a Lab |
 | [`loops/contracts/`](loops/contracts/) | The contracts: decisions and operations, receipts, splits and metrics, Lab profiles, Harness, Memory, data bindings, model service | Checking exactly what an interface requires |
 | [`harnesses/`](harnesses/) | Model-driven decision policies, Memory implementations, and the `python_step` program harness | Building a model-driven Controller |
 | [`backends/`](backends/) | Model serving and weight-training engines (vLLM, Chat Completions pools, LoRA) | Methods that serve or train models |

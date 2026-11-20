@@ -46,15 +46,11 @@ class Registry:
             from .algorithms import register_builtins
             from .backends import register_components as register_backends
             from .harnesses import register_components as register_harnesses
-            from .labs.scenes.math import register_components as register_math
+            from .labs import register_builtins as register_labs
             register_builtins(self)
             register_backends(self)
             register_harnesses(self)
-            register_math(self)
-            from .labs.scenes.coding import register_components as register_coding
-            register_coding(self)
-            from .labs.scenes.self_reflection import register as register_self_reflection
-            register_self_reflection(self)
+            register_labs(self)
 
     @staticmethod
     def _register(catalog, name, factory, version, validate_config):

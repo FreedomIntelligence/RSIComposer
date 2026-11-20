@@ -33,9 +33,8 @@ require; check the preset before running it.
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
 | `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs | — |
 
-¹ ReST^EM and STaR still use their own method-private Labs. Moving them onto the
-shared [math Lab](../src/rsisys/labs/scenes/math/README.md) is separate work: the
-scene scores a fixed model and does not run training or generation loops.
+¹ ReST^EM and STaR provide their own Labs for sampling, training, and evaluation.
+The [reusable Math Lab](#labs) evaluates a fixed actor and does not train it.
 
 A preset is a starting configuration, not a verified reproduction. Datasets are
 not included; prepare the files that each preset names. A dash in the Guide
@@ -66,19 +65,39 @@ methods.
 
 ## Labs
 
-Registered Labs are either domain scenes, which hold one task domain's data and
-scoring, or framework Labs, which serve any domain.
+Select a reusable Lab by its registered name under `framework.labs.<alias>.name`.
+The alias is what the Controller uses to call it. Before swapping Labs, check that
+the new Lab accepts the operations and arguments the Controller sends and returns
+the receipt fields it reads. See [Compose a system](compose.md#pair-a-registered-controller-with-a-lab).
 
-| Name | Kind | What it runs | Notes |
-| --- | --- | --- | --- |
-| `coding` | Scene | Evaluates an agent artifact on frozen coding tasks in Harbor containers | [Coding Lab guide](../src/rsisys/labs/scenes/coding/README.md) |
-| `math` | Scene | Scores an actor on development questions and a sealed 70-question benchmark | [Math Lab guide](../src/rsisys/labs/scenes/math/README.md) |
-| `self_reflection` | Framework | Builds candidate Controllers and tests them in nested runs | [Source](../src/rsisys/labs/scenes/self_reflection/lab.py) |
+| Lab | What it evaluates | How it gets its inputs |
+| --- | --- | --- |
+| [`coding`](../src/rsisys/labs/scenes/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | A task manifest with named splits and file hashes |
+| [`math`](../src/rsisys/labs/scenes/math/README.md) | A fixed actor with a supplied instruction; reports answer accuracy | A manifest of hashed JSONL splits, with an optional 70-question competition preset |
+| [`self_reflection`](../src/rsisys/labs/scenes/self_reflection/lab.py) | Candidate Controllers in budgeted child runs. The current Controller decides whether to adopt the candidate. | Scoped parent evidence and the child run's Lab configuration |
 
-The [Lab template](../src/rsisys/labs/_template/README.md) registers
-`template_math` when loaded as a plugin. It is the Lab prototype: an arithmetic
-Lab whose `evaluate` operation runs either synchronously or as a background job. The Labs of
-the built-in methods are private to their methods.
+Coding and Math are domain Labs. Both expose `inspect`, `evaluate`, and
+`read_trace`, but their request schemas and scorers are domain specific.
+Self-Reflection is a framework Lab that can be paired with domain Labs. It
+does not define its own domain benchmark.
+
+A method can wrap a shared Lab to add operations specific to its algorithm.
+For example, [`coding_meta_agent`](../src/rsisys/algorithms/coding_meta_agent/README.md)
+uses Coding Lab for task execution and grading, and adds candidate registration
+and selection in its own adapter. A method can also provide its own Lab when it
+needs a different operation contract, as ReST^EM does for weight training.
+
+To connect data to a Lab, configure its inputs and declare the split roles.
+[`DatasetBinding`](../src/rsisys/loops/contracts/data.py) gives the host a common
+way to record the role, format, provenance, and content fingerprint of each
+split. The task format stays with the Lab: coding tasks are directories; math
+problems are rows. Keep training and development separate from sealed final
+evaluation. When a profile requires a primary metric, the Lab declares its
+name and scorer. Metric names do not have to match across Labs.
+
+To write a Lab, start with [`template_math`](../src/rsisys/labs/_template/README.md),
+a plugin that binds training and development data and runs `evaluate`
+synchronously or as a background job.
 
 ## Reusable components
 
@@ -127,6 +146,8 @@ A Controller that requires a profile works with any Lab that implements it.
 | Profile | For |
 | --- | --- |
 | `WEIGHT_TRAINING` | Labs that train and evaluate model weights |
+| `ROUND_WEIGHT_TRAINING` | Weight training with an explicit round in each call |
+| `REFERENCE_WEIGHT_TRAINING` | Round-based weight training that also receives a reference model |
 | `ARTIFACT_SEARCH` | Labs that evaluate candidate prompts, harnesses, or other artifacts |
 | `PROGRAM_EXECUTION` | Labs that run and score programs |
 | `CODING_TASK` | Labs that run coding agents on benchmark tasks |
