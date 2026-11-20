@@ -44,13 +44,17 @@ from copy import deepcopy
 from pathlib import Path
 
 from rsisys.api import (
-    DEV, TRAIN, DatasetBinding, GenerationRequest, JobOutcome, JobProgress, JobRef, JobStatus,
+    DEV, TRAIN, DatasetBinding, ExecutionStatus, GenerationRequest, JobOutcome, JobProgress, JobRef, JobStatus,
     MetricSpec, ModelResponseError, ModelTransportError, OperationResult, OperationSpec,
 )
 
 
 SPLITS = {'train': TRAIN, 'dev': DEV}
 BATCH_SIZE = 2  # Rows scored per poll_job() call for background evaluations.
+
+
+def _model_error_message(error):
+    return str(error).strip() or type(error).__name__
 
 
 def validate_config(config):
@@ -134,8 +138,13 @@ class ArithmeticLab:
                 or type(args.get('background', False)) is not bool):
             raise ValueError('Expected evaluate(split=dev, instruction, few_shot[, background])')
         if not args.get('background', False):
-            # Synchronous: do all the work now and return the receipt.
-            return self._receipt(args, self._score(args, self.rows['dev']))
+            # Synchronous: do all the work now and return a terminal receipt.
+            try:
+                records = self._score(args, self.rows['dev'])
+            except (ModelTransportError, ModelResponseError) as error:
+                return OperationResult('Lab evaluation failed', (), False,
+                                       status=ExecutionStatus.FAILED, error=_model_error_message(error))
+            return self._receipt(args, records)
         # Asynchronous: record the work and return a JobRef. The host polls it.
         job = JobRef('evaluate-' + call.call_id, 'template-math')
         self.jobs[job.job_id] = {'arguments': dict(args), 'records': [], 'status': JobStatus.RUNNING.value}
@@ -150,7 +159,7 @@ class ArithmeticLab:
             try:
                 records = self._score(work['arguments'], self.rows['dev'][done:done + BATCH_SIZE])
             except (ModelTransportError, ModelResponseError) as error:
-                work.update(status=JobStatus.FAILED.value, error=str(error).strip() or type(error).__name__)
+                work.update(status=JobStatus.FAILED.value, error=_model_error_message(error))
             else:
                 work['records'].extend(records)
                 if len(work['records']) == len(self.rows['dev']):

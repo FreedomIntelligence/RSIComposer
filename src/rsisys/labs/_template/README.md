@@ -46,10 +46,13 @@ The template's `evaluate` accepts `"background": true` to run as a job, and each
 `poll_job()` call scores one batch. While a job runs, its call ID is in the
 Controller's `window.pending`; the template Controller returns
 `Decision('wait')`. An asynchronous Lab also implements `cancel_job(job)` and,
-for durable runs, `reattach_job(job)` and job state in `state()`. When model
-inference fails in a background batch, the template saves a terminal
-`JobStatus.FAILED` with an error. The host delivers that error in the receipt,
-and a durable resume does not repeat the failed batch.
+for durable runs, `reattach_job(job)` and job state in `state()`.
+
+If the model endpoint fails, a synchronous evaluation returns a failed
+`OperationResult`. A background evaluation saves `JobStatus.FAILED` with an
+error and returns a terminal `JobOutcome`. In both cases the Controller gets a
+failed receipt. Once that receipt is stored, durable resume does not repeat the
+failed model call.
 
 Use a job for work that outlives one call, such as training or a long
 evaluation. In a real Lab, `execute()` usually starts a process or cluster job

@@ -9,6 +9,7 @@ https://github.com/PRIME-RL/TTRL/tree/5806e119789132fcb43552beaf2532d7d0447213
 import math
 from collections import Counter
 from statistics import mean, stdev
+from threading import current_thread, main_thread
 
 from rsisys.algorithms.shared.weight_lab import WeightTrainingLab
 from rsisys.api import MathVerifyVerifier, MetricSpec, final_boxed, validate_engine
@@ -20,8 +21,19 @@ def math_prompt(question):
 
 def majority_rewards(completions, verifier):
     """Stable plurality, invalid-answer zero reward; no reference-answer input."""
-    if len(completions) < 2:
+    return _majority_rewards_many([completions], verifier)[0]
+
+
+def _majority_rewards_many(groups, verifier):
+    if any(len(group) < 2 for group in groups):
         raise ValueError('A GRPO group requires multiple responses')
+    if groups and type(verifier) is MathVerifyVerifier and current_thread() is not main_thread():
+        from ._reward_worker import score_groups
+        return score_groups(groups)
+    return [_majority_reward(group, verifier) for group in groups]
+
+
+def _majority_reward(completions, verifier):
     official = getattr(verifier, 'rewards', None)
     if callable(official):
         pseudo, ratio, rewards = official(completions)
@@ -142,8 +154,8 @@ class TTRLLab(WeightTrainingLab):
         rows = self.preceding(args['dataset'], 'generate', args['round'])
         rewarded = []
         group_stats = []
-        for group in rows:
-            result = majority_rewards([r['completion'] for r in group['responses']], self.verifier)
+        completions = [[response['completion'] for response in group['responses']] for group in rows]
+        for group, result in zip(rows, _majority_rewards_many(completions, self.verifier), strict=True):
             group_stats.append({'id': group['id'], **result})
             for response, reward, advantage in zip(group['responses'], result['rewards'], result['advantages'], strict=True):
                 rewarded.append({'prompt': group['prompt'], 'completion': response['completion'],

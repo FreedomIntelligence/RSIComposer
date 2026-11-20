@@ -101,8 +101,12 @@ rsisys run --durable --config path/to/run.json --data-dir runs/my-run
 rsisys resume --data-dir runs/my-run
 ```
 
-Not every method supports durable runs. `result.json` reports
-`snapshot_supported`.
+Durable runs require the selected components to support checkpoint recovery.
+The CLI rejects `--durable` at startup if the assembly does not supply that
+recovery contract. `snapshot_supported` in `result.json` is a separate check:
+it reports whether the current components support portable snapshots. If a
+snapshot was saved, `snapshot` gives its path. Restore it into a new directory
+with `rsisys resume --snapshot <snapshot-dir> --data-dir <new-run-dir>`.
 
 ## Next steps
 
