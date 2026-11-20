@@ -49,6 +49,7 @@ def validate_config(config):
 
 
 class FixedModelHarnessLab(MathSearchLab):
+    source_budgets = False  # Generation is set by this Lab, not by a benchmark.
     search_splits = ('search',)
     sealed_split = 'heldout'
     receipt_kind = 'harness'

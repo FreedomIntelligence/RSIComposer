@@ -72,8 +72,8 @@ the receipt fields it reads. See [Compose a system](compose.md#pair-a-registered
 
 | Lab | What it evaluates | How it gets its inputs |
 | --- | --- | --- |
-| [`coding`](../src/rsisys/labs/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | A task manifest with named splits and file hashes |
-| [`math`](../src/rsisys/labs/math/README.md) | A fixed actor with a supplied instruction on numeric or symbolic question-answer splits; reports answer accuracy, overall and per benchmark | A manifest of hashed JSONL splits, each with its own verifier, with an optional 70-question competition preset |
+| [`coding`](../src/rsisys/labs/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | Benchmarks, each with its own task manifest, splits, file hashes and budgets |
+| [`math`](../src/rsisys/labs/math/README.md) | A fixed actor with a supplied instruction on numeric or symbolic question-answer splits; reports answer accuracy, overall and per benchmark | A manifest of hashed JSONL sources, each a benchmark with its own verifier and budget, with an optional competition bundle |
 | [`self_reflection`](../src/rsisys/labs/self_reflection/lab.py) | Candidate Controllers in budgeted child runs. The current Controller decides whether to adopt the candidate. | Scoped parent evidence and the child run's Lab configuration |
 
 Coding and Math are domain Labs. Both expose `inspect`, `evaluate`, and
@@ -95,6 +95,36 @@ split. The task format stays with the Lab: coding tasks are directories; math
 problems are rows. Keep training and development separate from sealed final
 evaluation. When a profile requires a primary metric, the Lab declares its
 name and scorer. Metric names do not have to match across Labs.
+
+### Mount benchmarks on a Lab
+
+A benchmark owns its evaluation protocol: its tasks, verifier and budgets. A Lab
+mounts benchmarks and does not own, merge or override that protocol, so how a
+benchmark is scored never depends on how it is assembled. Each benchmark's protocol
+is hashed into a `protocol_id` that appears in receipts and data bindings: the same
+benchmark entry has the same `protocol_id` on one Lab that mounts both SWE-bench
+Verified and Terminal-Bench 2.1, on a Lab that mounts one, and on two Lab instances
+that mount one each. A budget set on the Lab instead of on a benchmark is rejected.
+
+```toml
+[labs.coding]
+primary_metric = { aggregate = "benchmark-mean" }   # required when several benchmarks are mounted
+
+[labs.coding.benchmarks.swebench-verified]
+manifest = "/data/swebench-verified.json"
+
+[labs.coding.benchmarks."terminal-bench-2.1"]
+manifest = "/data/terminal-bench-2.1.json"
+max_steps = 96
+agent_timeout = 3600
+```
+
+Results report each benchmark separately. A Lab forms no cross-benchmark total on
+its own: with more than one benchmark, `primary_metric` names one benchmark or a
+named aggregate, and assembly fails without it. See the
+[Coding](../src/rsisys/labs/coding/README.md#connect-a-benchmark) and
+[Math](../src/rsisys/labs/math/README.md#benchmarks) Labs. The contract is in
+[`loops/contracts/benchmark.py`](../src/rsisys/loops/contracts/benchmark.py).
 
 ### Connect a question-answer benchmark
 

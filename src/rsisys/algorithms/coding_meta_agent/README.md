@@ -29,7 +29,11 @@ Benchmark graders and reference solutions are never sent to the coding model.
 Set `framework.method.name` to `coding_meta_agent`. Put Controller settings in
 `framework.method.config.controller` and select benchmarks in
 `framework.method.config.labs.coding.benchmarks`. The Lab combines the selected
-manifests into disjoint `search` and `heldout` splits. Each manifest row contains:
+manifests into disjoint `search` and `heldout` splits. Each benchmark carries its own
+budgets (`max_steps`, `max_tokens`, `total_tokens`, `agent_timeout`, `verifier_timeout`,
+`thinking`) next to its `manifest`; the Lab sets none, so a benchmark is measured under the
+same protocol however it is mounted. Mounting several requires `primary_metric`:
+`{ benchmark = "<name>" }` or `{ aggregate = "benchmark-mean" }`. Each manifest row contains:
 
 ```json
 {
@@ -60,13 +64,12 @@ as a new task variant before freezing the experiment; do not change tests, bypas
 TLS verification, remove failures after seeing scores, or send reference solutions
 to either model. Keep calibration rewards separate from model measurements.
 
-The coding Lab config requires `experiment_dir`, `benchmarks` (or `manifest` for one
-combined input), `python` (the absolute virtualenv interpreter path), `endpoints`
-and explicit `model`. Optional settings are `workers`,
-`min_candidates` (default 3), `max_candidates` (6), `max_steps` (48), `max_tokens`
-(4096 per call), `total_tokens` (98304 output tokens per task), `agent_timeout`
-(1800 seconds), `verifier_timeout` (1800-second cap), `seed` (73), and `thinking`
-(false). Worker budgets cannot be changed by a candidate. The worker uses constrained JSON
+The coding Lab config requires `experiment_dir`, `benchmarks`, `python` (the absolute
+virtualenv interpreter path), `endpoints` and explicit `model`. Optional Lab settings are
+`workers`, `seed` (73), `primary_metric`, `min_candidates` (default 3) and `max_candidates` (6).
+Each benchmark entry takes `max_steps` (48), `max_tokens` (4096 per call), `total_tokens`
+(98304 output tokens per task), `agent_timeout` (1800 seconds), `verifier_timeout`
+(1800-second cap) and `thinking` (false). Worker budgets cannot be changed by a candidate. The worker uses constrained JSON
 responses. Each command runs under a container-side 120-second `timeout`, with
 a five-second kill grace period. A command timeout returns exit code 124 as
 feedback so the agent can revise its approach; it does not abort the entire trial.
@@ -153,10 +156,11 @@ run evidence, not in the reusable library defaults.
 ## Environment separation and migration
 
 `register`, `select`, the candidate budget and the equal-family search objective
-belong to this method. Its `artifact-search/v1` declaration uses `benchmark_reward`
-with scorer `harbor-official-reward/family-mean/v1`. Baseline, measured selection,
-minimum candidates and split access are host invariants. The environment declares
-`coding-task/v1` with task-mean `task_reward`; it measures immutable artifacts,
+belong to this method. Its `artifact-search/v1` declaration is the environment's primary
+metric: `<benchmark>/task_reward` for one benchmark, or `benchmark_reward` with scorer
+`harbor-official-reward/benchmark-mean/v1` when the config declares that aggregate. Baseline,
+measured selection, minimum candidates and split access are host invariants. The environment
+declares `coding-task/v1` with per-benchmark task-mean rewards; it measures immutable artifacts,
 named task subsets and repeat trials. It does not choose candidates.
 
 The modular implementation uses a new policy/environment binding. Start a new

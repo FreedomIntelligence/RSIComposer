@@ -84,6 +84,8 @@ def validate_config(config):
 
 
 class RestEMLab(MathLab):
+    source_budgets = False  # Generation is set by this Lab, not by a benchmark.
+
     def __init__(self, context, config, *, engine=None, input_root=None):
         validate_config(config)
         self.config = dict(config)

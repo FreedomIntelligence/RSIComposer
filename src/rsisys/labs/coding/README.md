@@ -49,16 +49,30 @@ Version any task repairs before freezing a new experiment.
    benchmark name used in its rows and in `by_benchmark`:
 
 ```toml
-[framework.method.config.labs.coding.benchmarks]
-swebench-verified = { manifest = "/data/benchmarks/swebench-verified.json" }
-"terminal-bench-2.1" = { manifest = "/data/benchmarks/terminal-bench-2.1.json" }
+[framework.method.config.labs.coding.benchmarks.swebench-verified]
+manifest = "/data/benchmarks/swebench-verified.json"
+
+[framework.method.config.labs.coding.benchmarks."terminal-bench-2.1"]
+manifest = "/data/benchmarks/terminal-bench-2.1.json"
+max_steps = 96
+agent_timeout = 3600
 ```
 
 Include only the benchmarks you want to run. Splits with the same name are
 merged, in benchmark name order with task order preserved within each manifest.
+A benchmark owns its evaluation protocol, so assembling benchmarks never changes how
+one is scored: the budgets above belong to the benchmark entry, the Lab has none, and
+the protocol is recorded with a `protocol_id` hash on every trial, summary and data
+binding. The same entry gives the same `protocol_id` on one Lab with both benchmarks,
+on a Lab with one, or on two Lab instances. A setting the Lab does not know, or a
+Lab-level budget, is rejected rather than ignored. Results report one reward per
+benchmark (`quality_metrics["<benchmark>/task_reward"]`) and never a total; with
+several benchmarks, set `primary_metric = { benchmark = "<name>" }` or
+`{ aggregate = "benchmark-mean" }` (the unweighted mean of the benchmarks, reported as
+`benchmark_reward`).
 Assign roles with `split_roles` (for example, `{"development": "dev", "final":
-"sealed"}`). For an existing combined manifest, use `manifest` instead of
-`benchmarks`. See the [complete method config](../../algorithms/coding_meta_agent/configs/coding.toml)
+"sealed"}`). A manifest may hold several benchmarks' tasks (rows say which); each benchmark
+keeps its own rows. See the [complete method config](../../algorithms/coding_meta_agent/configs/coding.toml)
 for model, method, and Lab settings together.
 
 The manifest uses this shape:
@@ -93,11 +107,11 @@ operation. A method that trains weights should bind training inputs to its
 training Lab. See the [Lab template](../_template/README.md) for a minimal
 example that binds training and development inputs separately.
 
-Required config: `experiment_dir`, one of `benchmarks` or `manifest`, `python`
+Required config: `experiment_dir`, `benchmarks`, `python`
 (absolute virtualenv interpreter), `endpoints` (nonempty URL list), and explicit `model`. Optional:
-`workers=14`, `max_steps=48`, `max_tokens=4096`, `total_tokens=98304`,
-`agent_timeout=1800`, `verifier_timeout=1800`, `seed=73`, `thinking=false`.
-Candidate data cannot change host budgets. The adapter must honor the budgets
+`workers=14`, `seed=73`, `primary_metric`. Each benchmark entry optionally sets `max_steps=48`,
+`max_tokens=4096`, `total_tokens=98304`, `agent_timeout=1800`, `verifier_timeout=1800`,
+`thinking=false`. Candidate data cannot change host budgets. The adapter must honor the budgets
 bound to its arguments; Harbor enforces the agent/verifier timeouts. Use the
 virtualenv interpreter path directly: resolving its symlink can select the system
 Python. Model services and GPU allocation belong to deployment configuration.
@@ -112,8 +126,8 @@ fingerprint. `coding_meta_agent` forwards these bindings and uses `search=dev`
 and `heldout=sealed`.
 
 The manifest must list every file in each task directory. The Lab rejects
-unlisted files, symlinks, and special files. The `coding-environment/v7`
-binding records the selected manifests, their checksums and the merged task list.
+unlisted files, symlinks, and special files. The `coding-environment/v8`
+binding records the selected benchmarks with their protocols, manifests, checksums and the merged task list.
 Use a new `experiment_dir` for earlier runs or a different benchmark selection.
 
 ## Public interface
@@ -141,9 +155,9 @@ trial seeds. Identical requests reuse summaries. Expanding a subset or increasin
 trials reuses completed individual trials and schedules only missing ones.
 Use a new seed binding for a new independent experiment.
 
-The Lab declares `coding-task/v1` and `MetricSpec(task_reward, maximize,
-harbor-official-reward/task-mean/v1)`; results carry the value in
-`quality_metrics.task_reward`. Configure `split_roles` using named profile roles;
+The Lab declares `coding-task/v1` and, for a single benchmark, `MetricSpec(<benchmark>/task_reward,
+maximize, harbor-official-reward/task-mean/<protocol_id>)`; results carry each benchmark's value in
+`quality_metrics["<benchmark>/task_reward"]`. Configure `split_roles` using named profile roles;
 test/heldout/sealed default to sealed and other splits to dev. The host restricts
 sealed operations until finish, hides their task IDs in inspect, and checks the
 trace's actual split against every requested trace split.
@@ -189,7 +203,7 @@ For example, the installed agent supports a bounded observation setting:
 }
 ```
 
-Compare `quality_metrics.task_reward` in the search method. `stdout_tail_chars`
+Compare `quality_metrics["<benchmark>/task_reward"]` in the search method. `stdout_tail_chars`
 accepts integers from 2000 to 20000 and defaults to 20000. It changes the amount
 of command output sent back to the model; the sandbox, verifier and execution
 budgets come from the same host config as instruction search.

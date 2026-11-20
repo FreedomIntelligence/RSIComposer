@@ -74,8 +74,13 @@ def primary_selection(app):
 
 
 def tranche_config(config, root, manifest):
-    options = {key: value for key, value in config.items() if key != 'benchmarks'}
-    return dict(options, experiment_dir=str(root.resolve()), manifest=str(manifest.resolve()))
+    """The Lab config that re-mounts the original benchmarks over one tranche's tasks.
+
+    Every benchmark keeps its own protocol; only where its tasks are read from changes. A tranche
+    manifest holds tasks of all mounted benchmarks, so each benchmark reads it and keeps its rows.
+    """
+    benchmarks = {name: dict(entry, manifest=str(manifest.resolve())) for name, entry in config['benchmarks'].items()}
+    return dict(config, experiment_dir=str(root.resolve()), benchmarks=benchmarks)
 
 
 def main():

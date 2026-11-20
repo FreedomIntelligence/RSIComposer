@@ -82,17 +82,44 @@ and rollout data stay in the method's own Lab or preparation pipeline. Keep that
 data, the development inputs, and the sealed assessment disjoint.
 
 A run can omit the sealed split for development-only work. To run the official
-70-question preset, use `benchmarks_manifest` on the sealed split. This form
-requires all three frozen datasets and checks their individual counts and
-hashes. Use the JSONL form to bind a different sealed benchmark.
+competition benchmarks, use `benchmarks_manifest` on the sealed split. The bundle
+holds three frozen benchmarks, each checked for its count and hash, and the entry's
+optional `benchmarks` list mounts any of them (default: all three). Use the JSONL
+form to bind a different sealed benchmark.
 
 | Benchmark | Count | Scoring |
 | --- | ---: | --- |
-| AIME 2024 I and II | 30 | Terminal boxed integer from 0 to 999 |
-| AIME 2025 I and II | 30 | Terminal boxed integer from 0 to 999 |
-| AIMO3 Reference | 10 | Terminal boxed integer from 0 to 99,999 |
+| `aime2024` (AIME 2024 I and II) | 30 | Terminal boxed integer from 0 to 999 |
+| `aime2025` (AIME 2025 I and II) | 30 | Terminal boxed integer from 0 to 999 |
+| `aimo3_reference` (AIMO3 Reference) | 10 | Terminal boxed integer from 0 to 99,999 |
 
 Use the prepared benchmark manifest and the three JSONL files from the deployment.
+
+## Benchmarks
+
+A source in the manifest mounts one benchmark: a named problem set together with
+its evaluation protocol, the answer verifier and the generation budget
+(`max_output_tokens`, default 32,768, for Labs whose actor answers each problem).
+Name it with `"benchmark": "<name>"` (default `math`). The protocol is hashed into
+a `protocol_id` that every receipt reports, so a benchmark is scored the same way
+however it is mounted: alone on one Lab, together with others, or on several Lab
+instances. The Lab sets no protocol of its own, and a split may list several sources:
+
+```json
+"development": [
+  {"file": "a.jsonl", "sha256": "...", "count": 50, "benchmark": "a", "verifier": "marked_numeric"},
+  {"file": "b.jsonl", "sha256": "...", "count": 30, "benchmark": "b", "verifier": "math_verify",
+   "max_output_tokens": 8192}]
+```
+
+Metrics are reported per benchmark (`<name>_accuracy`, `<name>_correct`,
+`<name>_count`). `accuracy`, the primary metric, is the one benchmark's accuracy when
+an evaluation covers one benchmark. When it covers several, the Lab config must
+declare what `accuracy` means with `primary_metric`: `{"benchmark": "<name>"}` or
+`{"aggregate": "pooled-accuracy"}` (correct answers over all problems) or
+`{"aggregate": "benchmark-mean"}` (the unweighted mean of the benchmarks'
+accuracies). A Lab never forms a cross-benchmark total on its own, and a benchmark
+cannot be mounted twice with different protocols.
 
 ## Answer verifiers
 

@@ -22,15 +22,17 @@ from rsisys.loops.contracts.profiles import MetricSpec, SPLIT_ROLES
 from rsisys.loops.contracts.execution import LabToolError
 from .agents import HarborCodingAgent
 from .artifacts import digest, snapshot
+from rsisys.loops.contracts.benchmark import choose_primary_metric
 from .benchmarks import load_task_manifests, validate_benchmark_config
 from .harbor_runner import atomic_json
 from .trial_runner import HarborTrialRunner, infrastructure_failure
 
 
-OPTIONS = {'experiment_dir', 'manifest', 'benchmarks', 'python', 'endpoints', 'model', 'workers',
-           'max_steps', 'max_tokens', 'total_tokens', 'agent_timeout', 'verifier_timeout',
-           'seed', 'thinking', 'split_roles'}
-PROTOCOL_VERSION = 'coding-environment/v7'
+OPTIONS = {'experiment_dir', 'benchmarks', 'primary_metric', 'python', 'endpoints', 'model', 'workers',
+           'seed', 'split_roles'}
+PROTOCOL_VERSION = 'coding-environment/v8'
+# Reported only as named; there is no implicit cross-benchmark total.
+AGGREGATES = {'benchmark-mean': 'harbor-official-reward/benchmark-mean/v1'}
 
 
 def validate_config(config):
@@ -39,16 +41,14 @@ def validate_config(config):
     for key in ('experiment_dir', 'python', 'model'):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError('Coding Lab requires ' + key)
-    validate_benchmark_config(config)
+    benchmarks = validate_benchmark_config(config)
+    choose_primary_metric(config.get('primary_metric'), benchmarks, aggregates=AGGREGATES)
     endpoints = config.get('endpoints')
     if not isinstance(endpoints, list) or not endpoints or any(
             not isinstance(e, str) or not e.startswith(('http://', 'https://')) for e in endpoints):
         raise ValueError('Coding Lab requires explicit inference endpoints')
-    for key in ('workers', 'max_steps', 'max_tokens', 'total_tokens', 'agent_timeout', 'verifier_timeout'):
-        if key in config and (type(config[key]) is not int or config[key] < 1):
-            raise ValueError('Positive integer required: ' + key)
-    if 'thinking' in config and type(config['thinking']) is not bool:
-        raise ValueError('thinking must be boolean')
+    if 'workers' in config and (type(config['workers']) is not int or config['workers'] < 1):
+        raise ValueError('Positive integer required: workers')
     if 'seed' in config and (type(config['seed']) is not int or not 0 <= config['seed'] < 2**32):
         raise ValueError('seed must be a nonnegative 32-bit integer')
 
@@ -68,7 +68,8 @@ class CodingLab:
         self.root = Path(config['experiment_dir']).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         execution_context = context if context is not None else SimpleNamespace(data_dir=self.root)
-        self.manifest, self.datasets = load_task_manifests(self.config)
+        self.manifest, self.datasets, self.benchmarks = load_task_manifests(self.config)
+        self.protocols = {benchmark.name: benchmark for benchmark in self.benchmarks}
         self.validate_tasks()
         roles = self.config.get('split_roles', {})
         if (not isinstance(roles, dict) or set(roles) - set(self.datasets)
@@ -169,7 +170,15 @@ class CodingLab:
         return ('coding-task/v1',)
 
     def primary_metric(self):
-        return MetricSpec('task_reward', 'maximize', 'harbor-official-reward/task-mean/v1')
+        kind, value = choose_primary_metric(self.config.get('primary_metric'), self.benchmarks, aggregates=AGGREGATES)
+        if kind == 'benchmark':
+            return MetricSpec(self.metric_name(value), 'maximize',
+                              f'harbor-official-reward/task-mean/{self.protocols[value].protocol_id}')
+        return MetricSpec('benchmark_reward', 'maximize', AGGREGATES[value])
+
+    @staticmethod
+    def metric_name(benchmark):
+        return f'{benchmark}/task_reward'
 
     def split_roles(self):
         return {name: SPLIT_ROLES[self._split_role_name(name)] for name in self.datasets}
@@ -189,12 +198,9 @@ class CodingLab:
             role = self._split_role_name(split)
             benchmarks = sorted({row['benchmark'] for row in rows})
             provenance = {'benchmarks': benchmarks, 'task_count': len(rows)}
-            if 'benchmarks' in self.config:
-                source = str(self.root / 'binding.json')
-                provenance['manifests'] = {name: self.manifest['benchmarks'][name]['manifest']
-                                           for name in benchmarks}
-            else:
-                source = str(Path(self.config['manifest']).resolve())
+            source = str(self.root / 'binding.json')
+            provenance['manifests'] = {name: self.manifest['benchmarks'][name]['manifest'] for name in benchmarks}
+            provenance['protocols'] = {name: self.protocols[name].protocol_id for name in benchmarks}
             cohort = [{
                 'id': row['id'],
                 'benchmark': row['benchmark'],
@@ -269,7 +275,8 @@ class CodingLab:
             rows = [r for r in rows if r['id'] in wanted]
         pinned = snapshot(artifact, self.artifacts)
         request = {'artifact_sha256': pinned.sha256, 'split': split, 'trials': trials,
-                   'tasks': rows, 'protocol_fingerprint': self.fingerprint}
+                   'tasks': rows, 'protocol_fingerprint': self.fingerprint,
+                   'protocols': {name: self.protocols[name].protocol_id for name in sorted({r['benchmark'] for r in rows})}}
         return pinned, request
 
     def evaluate(self, artifact, split, trials=1, task_ids=None):
@@ -295,22 +302,26 @@ class CodingLab:
             started = time.monotonic()
             def work(item):
                 row, trial = item
-                original_index = self.datasets[split].index(row)
-                seed = (self.config.get('seed', 73) + original_index * 10000 + trial * 1000) % 2**32
+                # Seed and endpoint follow the task's own identity, never its position in the merged
+                # split, so a benchmark runs the same way whatever else the Lab mounts.
+                slot = int(digest({'benchmark': row['benchmark'], 'task': row['id']})[:12], 16)
+                seed = (self.config.get('seed', 73) + slot % 100000 * 10000 + trial * 1000) % 2**32
+                protocol = self.protocols[row['benchmark']]
                 identity = {'artifact_sha256': pinned.sha256, 'task': row, 'seed': seed,
-                            'protocol_fingerprint': self.fingerprint}
+                            'protocol_fingerprint': self.fingerprint, 'protocol_id': protocol.protocol_id}
                 root = self.measurements / digest(identity)
                 root.mkdir(exist_ok=True)
                 atomic_json(root / 'identity.json', identity)
                 receipt = root / 'task-000.json'
-                endpoint = self.config['endpoints'][(original_index + trial) % len(self.config['endpoints'])]
+                endpoint = self.config['endpoints'][(slot + trial) % len(self.config['endpoints'])]
                 def completed(data):
                     if data.get('task') != row['path']:
                         raise infrastructure_failure('Cached receipt task identity mismatch: ' + str(receipt))
                     if type(data.get('score')) not in (int, float) or not 0 <= data['score'] <= 1:
                         raise infrastructure_failure('Invalid bounded score in receipt: ' + str(receipt))
                     data.update(task_id=row['id'], benchmark=row['benchmark'], endpoint=endpoint,
-                                trial=trial, seed=seed, artifact_sha256=pinned.sha256)
+                                trial=trial, seed=seed, artifact_sha256=pinned.sha256,
+                                protocol_id=protocol.protocol_id)
                     atomic_json(receipt, data)
                     return data
                 if receipt.exists():
@@ -319,7 +330,7 @@ class CodingLab:
                         self._runner.reconcile(root)
                         return completed(data)
                 for _ in range(2):
-                    code, trial_name = self._runner.run(root, row, pinned, endpoint, seed)
+                    code, trial_name = self._runner.run(root, row, pinned, endpoint, seed, protocol.protocol)
                     if code == 0 and receipt.exists():
                         data = json.loads(receipt.read_text())
                         if data.get('measured') is True:
@@ -338,16 +349,24 @@ class CodingLab:
         for family in sorted({r['benchmark'] for r in rows}):
             subset = [r for r in rows if r['benchmark'] == family]
             by_benchmark[family] = {'score': sum(r['score'] for r in subset) / len(subset),
-                                   'samples': len(subset), 'solved': sum(r['score'] == 1 for r in subset)}
+                                   'samples': len(subset), 'solved': sum(r['score'] == 1 for r in subset),
+                                   'protocol_id': self.protocols[family].protocol_id}
         usages = [(r.get('agent_result') or {}) for r in rows]
         cost = {key: sum(u.get('n_' + key, 0) or 0 for u in usages)
                 for key in ('input_tokens', 'output_tokens', 'cache_tokens')}
         cost['total_tokens'] = cost['input_tokens'] + cost['output_tokens']
-        # Scores are measurements, not an objective imposed on the search method.
-        score = sum(r['score'] for r in rows) / len(rows)
+        # Each benchmark's reward is reported on its own; scores are measurements, not an objective
+        # imposed on the search method, and no cross-benchmark total is formed here.
+        metrics = {self.metric_name(name): value['score'] for name, value in by_benchmark.items()}
+        kind, declared = choose_primary_metric(self.config.get('primary_metric'), self.benchmarks, aggregates=AGGREGATES)
+        if kind == 'aggregate':
+            # Declared in the Lab's config: the unweighted mean of the mounted benchmarks' rewards.
+            names = sorted(self.protocols)
+            if set(by_benchmark) == set(names):
+                metrics['benchmark_reward'] = sum(by_benchmark[n]['score'] for n in names) / len(names)
         data = {'evaluation_id': key, 'request': request, 'split': request['split'],
-                'artifact_sha256': request['artifact_sha256'], 'score': score,
-                'quality_metrics': {'task_reward': score}, 'by_benchmark': by_benchmark, 'samples': len(rows), 'cost': cost,
+                'artifact_sha256': request['artifact_sha256'],
+                'quality_metrics': metrics, 'by_benchmark': by_benchmark, 'samples': len(rows), 'cost': cost,
                 'timing': {'elapsed_seconds': seconds}, 'tasks': rows,
                 'dataset_sha256': digest(request['tasks']), 'protocol_fingerprint': self.fingerprint}
         atomic_json(root / 'summary.json', data)

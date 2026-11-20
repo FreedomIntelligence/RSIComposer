@@ -29,18 +29,22 @@ endpoints = [
 workers = 14
 max_candidates = 5
 min_candidates = 3
-max_steps = 48
-max_tokens = 4096
-total_tokens = 98304
-agent_timeout = 1800
-verifier_timeout = 1800
 seed = 73
-thinking = false
+
+# Several benchmarks need a declared primary metric: one benchmark, or the named aggregate.
+primary_metric = { aggregate = "benchmark-mean" }
 
 # Keep only the benchmark entries you want. Each JSON manifest supplies search and heldout tasks.
-[framework.method.config.labs.coding.benchmarks]
-swebench-verified = { manifest = "/absolute/path/to/swebench-verified.json" }
-"terminal-bench-2.1" = { manifest = "/absolute/path/to/terminal-bench-2.1.json" }
+# A benchmark owns its protocol: step, token and time budgets (and thinking) are set here, per
+# benchmark, and default to max_steps 48, max_tokens 4096, total_tokens 98304, agent_timeout 1800,
+# verifier_timeout 1800, thinking false. The Lab has no budget of its own.
+[framework.method.config.labs.coding.benchmarks.swebench-verified]
+manifest = "/absolute/path/to/swebench-verified.json"
+
+[framework.method.config.labs.coding.benchmarks."terminal-bench-2.1"]
+manifest = "/absolute/path/to/terminal-bench-2.1.json"
+max_steps = 96
+agent_timeout = 3600
 
 [backends.local]
 kind = "chat_completions"

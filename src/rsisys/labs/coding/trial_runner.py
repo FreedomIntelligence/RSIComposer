@@ -39,7 +39,7 @@ class HarborTrialRunner:
         from rsisys.runtime.execution.resources import ResourceRequest
         return {'evaluator': ResourceRequest(timeout=7200)}
 
-    def run(self, root, task, artifact, endpoint, seed):
+    def run(self, root, task, artifact, endpoint, seed, protocol):
         pending = self._pending(root)
         if pending is not None:
             name, command = pending
@@ -50,11 +50,10 @@ class HarborTrialRunner:
                        '--agent-spec', str(self.agent_spec), '--endpoint', endpoint,
                        '--output', str(root / 'trials'), '--trial-name', name,
                        '--receipt', str(root / 'task-000.json'), '--model', self.config['model']]
-            for option, default in [('max_steps', 48), ('max_tokens', 4096), ('total_tokens', 98304),
-                                    ('agent_timeout', 1800), ('verifier_timeout', 1800)]:
-                command.extend(['--' + option.replace('_', '-'), str(self.config.get(option, default))])
+            for option in ('max_steps', 'max_tokens', 'total_tokens', 'agent_timeout', 'verifier_timeout'):
+                command.extend(['--' + option.replace('_', '-'), str(protocol[option])])
             command.extend(['--seed', str(seed)])
-            if self.config.get('thinking', False):
+            if protocol['thinking']:
                 command.append('--thinking')
         return self._run_process(command, root, name), name
 

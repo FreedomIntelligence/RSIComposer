@@ -52,6 +52,8 @@ def filter_overlength(source, destination, base_model):
 
 
 class StarLab(MathLab):
+    source_budgets = False  # Generation is set by this Lab, not by a benchmark.
+
     def __init__(self, context, config, *, engine=None):
         if 'max_seconds' in config:
             raise ValueError('Configure host budget.seconds instead of STaR max_seconds')

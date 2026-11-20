@@ -114,7 +114,8 @@ class CodingSearchLab:
         return ('artifact-search/v1',)
 
     def primary_metric(self):
-        return MetricSpec('benchmark_reward', 'maximize', 'harbor-official-reward/family-mean/v1')
+        # The environment's declaration: one benchmark, or the aggregate the config names.
+        return self.environment.primary_metric()
 
     def split_roles(self):
         return {'search': DEV, 'heldout': SEALED}
@@ -219,9 +220,9 @@ class CodingSearchLab:
         if call.name == 'inspect':
             return self._result('Persisted coding experiment', {'candidate': candidate,
                 'state': json.loads(self.runtime_context()),
-                'budgets': {key: value for key, value in self.config.items()
-                            if key in POLICY_OPTIONS or key in ('max_steps', 'max_tokens', 'total_tokens',
-                                                                'agent_timeout', 'verifier_timeout')},
+                'budgets': {**{key: self.config[key] for key in POLICY_OPTIONS if key in self.config},
+                            'protocols': {name: benchmark.protocol
+                                          for name, benchmark in self.environment.protocols.items()}},
                 'protocol_fingerprint': self.fingerprint})
         if call.name == 'read_trace':
             index, offset = args['task_index'], args['offset']
@@ -271,10 +272,9 @@ class CodingSearchLab:
         measurement = self.environment.evaluate(CodingArtifact.from_path(candidate_path), split,
             task_ids=None if indices is None else [rows[i]['id'] for i in indices])
         data = dict(measurement, candidate=candidate['id'], harness_sha256=candidate['sha256'])
-        # This method uses equal benchmark-family weighting as its search objective.
-        families = measurement['by_benchmark'].values()
-        data['score'] = sum(v['score'] for v in families) / len(measurement['by_benchmark'])
-        data['quality_metrics'] = {self.primary_metric().name: data['score']}
+        # The search objective is the primary metric the Lab config declares; every benchmark's own
+        # reward stays in quality_metrics beside it.
+        data['score'] = measurement['quality_metrics'][self.primary_metric().name]
         part = split if indices is None else split + '-indices-' + digest(indices)
         atomic_json(self.evaluations / candidate['id'] / part / 'summary.json', data)
         return data

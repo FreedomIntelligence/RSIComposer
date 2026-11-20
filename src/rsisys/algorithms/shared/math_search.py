@@ -97,6 +97,7 @@ class PromptSearchLab(MathSearchLab):
     Config: {"manifest": ..., "seed": 17, "max_model_calls": 256,
              "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}}
     """
+    source_budgets = False  # Generation is set by this Lab, not by a benchmark.
 
     def __init__(self, context, config):
         self.calls = ModelCalls(context, config['max_model_calls'])

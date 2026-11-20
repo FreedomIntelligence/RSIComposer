@@ -73,20 +73,38 @@ def load_benchmark(manifest_path, name, *, manifest=None):
     return MathBenchmark(name, digest, tuple(problems))
 
 
-def official_problems(root, entry):
-    """All three benchmarks together, as one sealed split's problems."""
-    from .tasks import Problem, checked_bytes, manifest_path
+def official_problems(root, entry, *, budgets=True, max_output_tokens=32768):
+    """Selected benchmarks of the official bundle, as one sealed split's problems.
 
-    if set(entry) != {'benchmarks_manifest', 'sha256'}:
+    entry may list `benchmarks` (default: all three) and a `max_output_tokens`. Each
+    benchmark's verifier is part of its protocol and is fixed here, not by the Lab.
+    Returns (problems, path, benchmarks by name).
+    """
+    from .tasks import Problem, checked_bytes, manifest_path, math_benchmark
+
+    if not {'benchmarks_manifest', 'sha256'} <= set(entry) or set(entry) - {
+            'benchmarks_manifest', 'sha256', 'benchmarks', 'max_output_tokens'}:
         raise ValueError('The official math preset requires benchmarks_manifest and sha256')
+    selected = entry.get('benchmarks', list(BENCHMARKS))
+    if (not isinstance(selected, list) or not selected or len(set(selected)) != len(selected)
+            or set(selected) - set(BENCHMARKS)):
+        raise ValueError(f'benchmarks must be a nonempty list of: {sorted(BENCHMARKS)}')
+    if not budgets and 'max_output_tokens' in entry:
+        raise ValueError('This Lab generates with its own budget; remove max_output_tokens from the source')
+    tokens = None if not budgets else entry.get('max_output_tokens', max_output_tokens)
+    if budgets and (type(tokens) is not int or tokens < 1):
+        raise ValueError('max_output_tokens must be a positive integer')
     path = manifest_path(root, entry['benchmarks_manifest'])
     manifest = json.loads(checked_bytes(path, entry['sha256']))
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('benchmarks'), dict)
             or set(manifest['benchmarks']) != set(BENCHMARKS)):
-        raise ValueError('Official evaluation requires AIME 2024, AIME 2025 and AIMO3 Reference together')
-    rows = []
-    for name, spec in BENCHMARKS.items():
+        raise ValueError('The official bundle manifest must describe AIME 2024, AIME 2025 and AIMO3 Reference')
+    rows, benchmarks = [], {}
+    for name in sorted(selected):
+        spec = BENCHMARKS[name]
         verifier = CompetitionIntegerVerifier(spec.maximum)
-        rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier, str(row.answer))
+        rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier, str(row.answer), tokens)
                     for row in load_benchmark(path, name, manifest=manifest).problems)
-    return tuple(rows), path
+        benchmarks[name] = math_benchmark(name, {'name': 'competition_integer', 'maximum': spec.maximum},
+                                          verifier, tokens, {'bundle': str(path), 'sha256': entry['sha256']})
+    return tuple(rows), path, benchmarks

@@ -26,6 +26,13 @@ subclass that keeps more state extends state() and checks binding() on restore.
 A subclass also extends describe()/execute() with its own operations, overrides
 evaluate_schema() for different evaluate arguments, and adds answer formats to
 the verifiers catalog that dataset manifests select from.
+
+Each source in the dataset manifest mounts one benchmark (tasks.py) that owns its
+protocol: its verifier and, for Labs whose actor answers each problem, its
+generation budget. Metrics are reported per benchmark. A single evaluation never
+forms a cross-benchmark total on its own: when one evaluates several benchmarks
+together, the config declares primary_metric, either {"benchmark": name} or
+{"aggregate": "pooled-accuracy" | "benchmark-mean"}, and `accuracy` is that value.
 """
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -35,6 +42,7 @@ from time import monotonic
 
 # Lab code imports its layers directly; rsisys.api is the composition layer.
 from rsisys.loops.contracts.artifacts import ArtifactRef
+from rsisys.loops.contracts.benchmark import choose_primary_metric
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
@@ -49,6 +57,8 @@ from .verifiers import VERIFIERS
 _TRACE_KIND = 'math-evaluation'
 _TRACE_PAGE_CHARS = 4000
 _SPLIT_ROLES = {'train': TRAIN, 'dev': DEV, 'sealed': SEALED}
+AGGREGATES = {'pooled-accuracy': 'math-answer-exact-match/pooled/v1',
+              'benchmark-mean': 'math-answer-exact-match/benchmark-mean/v1'}
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,8 @@ def _check_isolated(verifier, completion, answer):
 class MathLab:
     # Verifier names a dataset manifest may select; subclasses add their own formats.
     verifiers = VERIFIERS
+    # False for a subclass whose own engine or config sets generation: its sources then take no budget.
+    source_budgets = True
 
     def __init__(self, context, config):
         self.validate_config(config)
@@ -85,10 +97,16 @@ class MathLab:
         self.artifacts = context.artifacts
         self.role_names = dict(config['split_roles'])
         self.roles = {name: _SPLIT_ROLES[role] for name, role in self.role_names.items()}
-        self.datasets, self.bindings, self.manifest_sha256 = load_splits(
-            config['manifest'], self.roles, verifiers=self.verifiers, role_names=self.role_names)
         self.max_output_tokens = config.get('max_output_tokens', 32768)
+        self.datasets, self.bindings, self.manifest_sha256, self.benchmarks = load_splits(
+            config['manifest'], self.roles, verifiers=self.verifiers, role_names=self.role_names,
+            budgets=self.source_budgets, max_output_tokens=self.max_output_tokens)
         self.grading_workers = config.get('grading_workers', 1)
+        self.declared_metric = config.get('primary_metric')
+        for split, rows in self.datasets.items():
+            if len({row.benchmark for row in rows}) > 1 or self.declared_metric is not None:
+                choose_primary_metric(self.declared_metric, [self.benchmarks[n] for n in sorted(
+                    {row.benchmark for row in rows})], aggregates=AGGREGATES)
 
     def bind_actor(self, context, config):
         """The ModelRef of the model being measured."""
@@ -100,7 +118,8 @@ class MathLab:
     @staticmethod
     def validate_config(config):
         required = {'manifest', 'split_roles'}
-        if not required <= config.keys() or config.keys() - required - {'max_output_tokens', 'grading_workers'}:
+        if not required <= config.keys() or config.keys() - required - {
+                'max_output_tokens', 'grading_workers', 'primary_metric'}:
             raise ValueError('Math Lab requires manifest and split_roles')
         manifest, roles = config['manifest'], config['split_roles']
         if not isinstance(manifest, str) or not manifest.strip():
@@ -136,12 +155,18 @@ class MathLab:
         return self.bindings
 
     def primary_metric(self):
-        return MetricSpec('accuracy', 'maximize', 'math-answer-exact-match/v1')
+        if self.declared_metric is None:
+            return MetricSpec('accuracy', 'maximize', 'math-answer-exact-match/v1')
+        kind, value = next(iter(self.declared_metric.items()))
+        scorer = AGGREGATES[value] if kind == 'aggregate' else f'math-answer-exact-match/{self.benchmarks[value].protocol_id}'
+        return MetricSpec('accuracy', 'maximize', scorer)
 
     def binding(self):
         """The data, actor and verifier identity every trace records."""
         return {'manifest_sha256': self.manifest_sha256, 'actor': asdict(self.actor),
                 'max_output_tokens': self.max_output_tokens,
+                'benchmarks': {name: benchmark.protocol_id for name, benchmark in self.benchmarks.items()},
+                'primary_metric': self.declared_metric,
                 'split_roles': dict(self.role_names),
                 'verifiers': {name: sorted({row.verifier.name for row in rows})
                               for name, rows in self.datasets.items()}}
@@ -190,6 +215,7 @@ class MathLab:
                 'splits': {name: [{'id': row.id, 'benchmark': row.benchmark} for row in rows]
                            for name, rows in self.datasets.items() if self.roles[name].inputs_visible},
                 'actor': asdict(self.actor), 'max_output_tokens': self.max_output_tokens,
+                'benchmarks': {name: benchmark.identity for name, benchmark in self.benchmarks.items()},
             }, call_id=call.call_id)
         if call.name == 'evaluate':
             schema = self.evaluate_schema()
@@ -244,7 +270,7 @@ class MathLab:
         """One temperature-zero actor answer; the system text ends with the answer format."""
         request = GenerationRequest('actor', self.actor, problem.prompt,
             system=system + '\n\n' + problem.verifier.answer_format,
-            temperature=0.0, max_output_tokens=self.max_output_tokens)
+            temperature=0.0, max_output_tokens=problem.max_output_tokens or self.max_output_tokens)
         return self.attempt(request)
 
     def attempt(self, request, generate=None):
@@ -311,12 +337,13 @@ class MathLab:
                    for problem, attempt, check in zip(problems, attempts, checks, strict=True)]
         simulated = any(attempt.simulated for attempt in attempts)
         correct = sum(row['correct'] for row in records)
-        quality = {'accuracy': correct / len(records), 'correct': correct}
+        quality = {}
         for name in sorted({row['benchmark'] for row in records}):
             group = [row for row in records if row['benchmark'] == name]
             count = sum(row['correct'] for row in group)
             quality.update({f'{name}_accuracy': count / len(group),
                             f'{name}_correct': count, f'{name}_count': len(group)})
+        quality.update(self.headline(records, quality))
         execution = {
             'elapsed_seconds': round(elapsed_seconds, 6),
             'grading_seconds': round(grading_seconds, 6),
@@ -343,8 +370,24 @@ class MathLab:
         return OperationResult('Math evaluation completed', (ref,), simulated, data={
             'split': split, 'model': self.actor.model_id, 'scored': True, 'count': len(records),
             'quality_metrics': quality, 'execution_metrics': execution, 'evidence_refs': [asdict(ref)],
+            'benchmarks': {name: self.benchmarks[name].protocol_id for name in sorted({row['benchmark'] for row in records})},
             **self.result_data(records, ref, arguments),
         }, call_id=call_id)
+
+    def headline(self, records, quality):
+        """The `accuracy` of an evaluation: its one benchmark's, or what primary_metric declares."""
+        names = sorted({row['benchmark'] for row in records})
+        correct = sum(row['correct'] for row in records)
+        if self.declared_metric is None or len(names) == 1 and self.declared_metric.get('benchmark') in (None, names[0]):
+            if len(names) == 1:
+                return {'accuracy': quality[f'{names[0]}_accuracy'], 'correct': correct}
+        kind, value = next(iter(self.declared_metric.items()))
+        if kind == 'benchmark':
+            # Only this benchmark's evaluations carry the declared metric.
+            return {'correct': correct, **({'accuracy': quality[f'{value}_accuracy']} if value in names else {})}
+        if value == 'benchmark-mean':
+            return {'accuracy': sum(quality[f'{n}_accuracy'] for n in names) / len(names), 'correct': correct}
+        return {'accuracy': correct / len(records), 'correct': correct}
 
     def result_data(self, records, ref, arguments):
         """Extra result fields a subclass's Controller reads; records and ref are this evaluation's."""

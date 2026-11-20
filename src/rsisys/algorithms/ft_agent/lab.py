@@ -173,6 +173,7 @@ def bounded_train_config(raw, config, directory, *, world_size=1):
 
 
 class LLMFinetuneLab(MathLab):
+    source_budgets = False  # Generation is set by this Lab, not by a benchmark.
     verifiers = {**MATH_VERIFIERS, 'math_verify_gsm8k': GSM8KMathVerify}
 
     def __init__(self, context, config, *, engine=None):
