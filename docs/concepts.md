@@ -62,6 +62,14 @@ can use different models, for example a strong model directing the training of
 a small one. They can also use the same model, which gives the usual
 single-agent self-improvement loop. Both cases use the same interfaces.
 
+The split follows the model roles. Work done by the `decision_maker` model,
+such as writing a new prompt, reflecting on a failed minibatch, or sampling new
+programs, is research and belongs to the Controller: GEPA, OPRO and FunSearch
+generate their candidates there. Work done by the `actor`, or by whatever is
+being improved, is exploration and belongs to the Lab, together with the data
+and the scoring. A Lab never proposes candidates, so any Controller that speaks
+its profile can drive it.
+
 The Controller is also replaceable at run time. The
 [Self-Reflection Lab](../src/rsisys/labs/self_reflection/lab.py) builds
 candidate Controllers and tests them in nested runs. The current Controller then

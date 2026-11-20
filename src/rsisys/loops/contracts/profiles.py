@@ -220,7 +220,7 @@ REFERENCE_WEIGHT_TRAINING = replace(ROUND_WEIGHT_TRAINING, name='reference-weigh
 ARTIFACT_SEARCH = LabProfile('artifact-search', 1, (
     _op('register', candidate='object'),
     _op('evaluate', candidate_id='string', split='string', indices=['array', 'null']),
-), tuple(_op(name) for name in ('propose', 'task_spec', 'exemplars')), {
+), tuple(_op(name) for name in ('task_spec', 'exemplars')), {
     'register': {'candidate_id': 'string'},
     'evaluate': {'valid': 'boolean', 'scored': 'boolean', 'scores': 'array',
                  'trace_refs': 'array', 'feedback': 'array', 'quality_metrics': 'object'},

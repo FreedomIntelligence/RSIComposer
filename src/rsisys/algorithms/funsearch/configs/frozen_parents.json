@@ -31,16 +31,15 @@
           "source_dir": "external/funsearch",
           "condition": "frozen_parents",
           "samplers": 2,
-          "evaluators": 2
+          "evaluators": 2,
+          "max_output_tokens": 256,
+          "temperature": 0.9
         },
         "labs": {
           "funsearch": {
             "development_count": 40,
             "heldout_count": 200,
-            "temperature": 0.9,
-            "max_output_tokens": 256,
             "seed": 17,
-            "max_model_calls": 192,
             "max_concurrent": 4
           }
         }

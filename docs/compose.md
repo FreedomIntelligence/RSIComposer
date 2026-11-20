@@ -136,6 +136,14 @@ Things to know when writing a Controller:
   it as the Policy's own decision model and requires a `ModelRef`.
 - **For durable runs**, add `state()` and `restore(state)`; see the
   [method template](../src/rsisys/algorithms/_template/controller.py).
+- **Call the `decision_maker` model yourself** when the Controller writes
+  candidates, using `context.models` and the `decision_maker` role. A call made
+  inside `decide()` is repeated with the same seed if the run stops before the
+  decision is checkpointed. To keep sampling while Lab operations run, run the
+  calls on your own threads and add `inference_ready()`: the host then calls
+  `decide()` as soon as it returns `True`, without waiting for a Lab receipt.
+  [FunSearch's Controller](../src/rsisys/algorithms/funsearch/controller.py)
+  does this with its samplers.
 
 ## Package a method
 

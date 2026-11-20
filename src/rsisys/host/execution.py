@@ -199,6 +199,12 @@ class HostExecution:
             'run_control': self.state.run_control, 'pending': tuple(self.state.operation_tasks),
             'decision_graph': self.decision_graph(), 'decision_model': self.current_model()})
 
+    def _inference_ready(self):
+        """True when the Controller's own background inference finished and it should decide
+        without waiting for outstanding Lab operations (optional policy inference_ready())."""
+        ready = optional_method(self.policy, 'inference_ready')
+        return ready is not None and bool(ready())
+
     def _context(self, objective, action_space):
         return SimpleNamespace(objective=objective, operations=action_space.describe(),
                                decision_model=self.current_model())
@@ -408,8 +414,9 @@ class HostExecution:
             return self.poll_research()
         if (self.state.operation_tasks and self.state.pending_decision is None
                 and self.state.decision_feedback_cursor == len(self.state.operation_results)
-                and not any(task.get('checkpoint') is not None for task in self.state.operation_tasks.values())):
-            return self.operation_scheduler.advance(action_space)
+                and not any(task.get('checkpoint') is not None for task in self.state.operation_tasks.values())
+                and not self._inference_ready()):
+            return self.operation_scheduler.advance(action_space, interrupt=self._inference_ready)
         ready = optional_method(self.policy, 'can_decide')
         if self.state.pending_decision is None and ready is not None and ready() is False:
             drain = optional_method(self.policy, 'drain_usage')
@@ -442,7 +449,8 @@ class HostExecution:
         try:
             if decision.kind == "invoke":
                 self.operation_scheduler.submit(decision, action_space)
-                return replace(self.operation_scheduler.advance(action_space), decision_steps=1)
+                return replace(self.operation_scheduler.advance(action_space, interrupt=self._inference_ready),
+                               decision_steps=1)
             elif decision.kind == 'control':
                 self.operation_scheduler.control(decision.control)
                 row['status'] = 'completed'
@@ -451,7 +459,8 @@ class HostExecution:
                 if self.state.operation_tasks and decision.job is None:
                     row['status'] = 'completed'
                     self.state.pending_decision = None
-                    return replace(self.operation_scheduler.advance(action_space), decision_steps=1)
+                    return replace(self.operation_scheduler.advance(action_space, interrupt=self._inference_ready),
+                                   decision_steps=1)
                 self.state.pending_job = decision.job
                 self.state.pending_operation_decision_id = ident if decision.job else None
                 row['status'] = 'pending' if decision.job else 'completed'
@@ -662,7 +671,8 @@ class OperationScheduler:
         return check is not None and any(task['job'] == job and check(task['call'], job)
                                          for task in self.tasks.values())
 
-    def advance(self, action_space, call_ids=None):
+    def advance(self, action_space, call_ids=None, *, interrupt=None):
+        """Run queued operations until one completes, or until interrupt() reports Controller work."""
         while True:
             progress = self._poll_jobs(call_ids)
             if progress is not None:
@@ -685,6 +695,9 @@ class OperationScheduler:
                 try:
                     ident = self._arrivals.get(timeout=.05)
                 except Empty:
+                    if interrupt is not None and interrupt():
+                        # The Controller decides next; the running operations keep going.
+                        return LoopStepResult('progressed', reason='Controller inference finished', decision_steps=0)
                     continue
                 if ident not in self._futures:
                     continue  # A selective drain already consumed this arrival.

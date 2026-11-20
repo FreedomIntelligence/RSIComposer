@@ -1,4 +1,11 @@
-"""FunSearch policy. Only the Controller can change population and incumbent."""
+"""FunSearch policy. Only the Controller can change population and incumbent.
+
+The Controller samples new priority programs from the decision model with its
+own concurrent samplers (sampler.py) while the Lab evaluates earlier ones.
+inference_ready() lets the host call decide as soon as a sampling request
+finishes, even while Lab evaluations are still running; with no Lab work
+outstanding, decide waits for the first sampling request itself.
+"""
 
 from collections import deque
 from contextlib import contextmanager
@@ -9,11 +16,12 @@ from rsisys.api import Decision, ExecutionStatus, OperationCall
 
 from ..shared.experiment import MethodEvents
 from .packing import BASES
+from .sampler import FunSearchSampler
 from .upstream import Population, REVISION
 
 
 class FunSearchController:
-    def __init__(self, context, config):
+    def __init__(self, context, config, *, sampler=None):
         self.metric = context.lab_catalog.primary_metric('funsearch')
         self.config = config
         self.emit = MethodEvents(context, 'funsearch')
@@ -33,14 +41,16 @@ class FunSearchController:
         self.sequence = 0
         self.issued_proposals = 0
         self.reset_cursor = 0
+        self.sampling = {}  # request_id -> {'request', 'decision_id'} for in-flight sampling requests.
         self.samplers = config.get('samplers', 2)
         self.evaluators = config.get('evaluators', 2)
         for value in (self.samplers, self.evaluators, config['samples_per_prompt'], config['reset_every']):
             if type(value) is not int or value < 1:
                 raise ValueError('FunSearch sampler/evaluator and batch/reset counts must be positive integers')
+        self.sampler = sampler or FunSearchSampler(context, config, workers=self.samplers)
 
     _FIELDS = ('pending', 'stats', 'baselines', 'development', 'best', 'selected', 'sequence',
-               'issued_proposals', 'reset_cursor')
+               'issued_proposals', 'reset_cursor', 'sampling')
 
     def state(self):
         return {**{name: getattr(self, name) for name in self._FIELDS},
@@ -58,16 +68,25 @@ class FunSearchController:
         self.receipts, self.seen = set(state['receipts']), set(state['seen'])
         self.registered = set(state['registered'])
         self.emit.summary = state['summary']
+        # Completed proposals were charged; in-flight requests are asked again with the same seeds.
+        self.sampler.calls.count = self.stats['proposals']
+        for key, row in self.sampling.items():
+            self.sampler.submit(key, row['request'])
 
     def required_operations(self):
-        return ('funsearch.task_spec', 'funsearch.propose', 'funsearch.register',
-                'funsearch.evaluate', 'funsearch.select')
+        return ('funsearch.task_spec', 'funsearch.register', 'funsearch.evaluate', 'funsearch.select')
 
     def required_profiles(self):
         return {'funsearch': 'artifact-search/v1'}
 
     def report(self):
         return self.emit.report()
+
+    def inference_ready(self):
+        return bool(self.sampler.finished())
+
+    def close(self):
+        self.sampler.close()
 
     @contextmanager
     def context_scope(self, compactor, *, recent_limit):
@@ -103,8 +122,6 @@ class FunSearchController:
             self.seen.update(row['version']['digest'] for row in self.baselines.values())
             for label, row in self.baselines.items():
                 self.queue.append(self.score_request(row, 'development', label))
-        elif operation == 'propose':
-            self.consume_generation(call.arguments, data, receipt)
         elif operation == 'register':
             self.registered.add(data['candidate_id'])
             self.queue.appendleft(pending['followup'])
@@ -175,8 +192,22 @@ class FunSearchController:
             if label == 'candidate':
                 self.stats['population_additions'] += 1
 
+    def consume_samples(self, sources, receipts):
+        for key in self.sampler.finished():
+            row, result = self.sampling.pop(key), self.sampler.take(key)
+            receipt = result['receipt_id']
+            if receipt in self.receipts:
+                raise RuntimeError('FunSearch received a duplicate sampling result')
+            self.receipts.add(receipt)
+            self.emit('receipt', {'receipt_id': receipt, 'decision_id': row['decision_id'],
+                                  'request_id': key, 'operation': 'sample',
+                                  'artifacts': [asdict(ref) for ref in result['artifacts']]})
+            self.consume_generation(row['request'], {'proposals': result['proposals']}, receipt)
+            sources.append(row['decision_id'])
+            receipts.append(receipt)
+
     def decide(self, window):
-        sources, receipts = [], []
+        sources, receipts, started = [], [], []
         for feedback in window.feedbacks:
             pending = self.pending.get(feedback.call_id)
             if pending is not None:
@@ -192,57 +223,21 @@ class FunSearchController:
             operations.append(call)
             metadata.append({'call': call, 'followup': followup})
 
-        if not self.baselines:
-            if not self.pending:
-                self.queue.popleft()
-                issue('task_spec', {})
-        else:
-            active_evaluators = sum(row['call'].name.endswith(('.evaluate', '.register'))
-                                    for row in self.pending.values())
-            # Registration occupies an evaluator slot and carries its follow-up;
-            # an evaluate can never race ahead of registration.
-            while self.queue and active_evaluators < self.evaluators:
-                operation, args = self.queue.popleft()
-                if operation != 'evaluate':
-                    raise RuntimeError('Unexpected FunSearch evaluation queue entry')
-                if args['candidate_id'] not in self.registered:
-                    issue('register', {'candidate': {'version': args['version']}}, (operation, args))
-                else:
-                    issue(operation, args)
-                active_evaluators += 1
-            if set(self.development) == set(BASES):
-                completed = self.stats['proposals']
-                if self.config['condition'] == 'evolution':
-                    while (self.reset_cursor + 1) * self.config['reset_every'] <= completed:
-                        self.reset_cursor += 1
-                        boundary = self.reset_cursor * self.config['reset_every']
-                        if self.population.reset(boundary):
-                            self.stats['resets'] += 1
-                            self.emit('reset', {'after_proposals': boundary})
-                active_samplers = sum(row['call'].name.endswith('.propose') for row in self.pending.values())
-                while active_samplers < self.samplers and self.issued_proposals < self.config['proposals']:
-                    # Snapshot the current population once per dispatch. Outstanding
-                    # samplers deliberately keep their older prompt/database view.
-                    prompt, island, parents = self.population.prompt()
-                    count = min(self.config['samples_per_prompt'], self.config['proposals'] - self.issued_proposals)
-                    issue('propose', {'start': self.issued_proposals, 'count': count, 'island': island,
-                                      'prompt': prompt, 'parents': parents})
-                    sources.extend(row['score_decision_id'] for row in parents)
-                    self.issued_proposals += count
-                    active_samplers += 1
-            if (not operations and not self.pending and not self.queue
-                    and self.stats['proposals'] == self.config['proposals'] and not self.selected):
-                self.selected = True
-                self.emit('selection', {'source_split': 'development', **self.best})
-                issue('select', {'candidate_id': self.best['version']['digest']})
-        sources = tuple(dict.fromkeys(sources))
+        while True:
+            self.consume_samples(sources, receipts)
+            self.dispatch(issue, sources, started)
+            if operations or self.pending or not self.sampling:
+                break
+            # Only the Controller's own sampling is outstanding: wait here for it.
+            self.sampler.wait()
+        sources = tuple(dict.fromkeys(ident for ident in sources if ident is not None))
         if operations:
             decision = Decision('invoke', operations=tuple(operations), reason='FunSearch asynchronous dispatch',
                                 source_decision_ids=sources)
             for row in metadata:
                 self.pending[row['call'].call_id] = {**row, 'decision_id': decision.decision_id}
         elif self.pending:
-            decision = Decision('wait', reason='FunSearch awaiting sampler/evaluator receipts', source_decision_ids=sources)
+            decision = Decision('wait', reason='FunSearch awaiting evaluator receipts', source_decision_ids=sources)
         else:
             decision = Decision('finish', reason='FunSearch search complete; host sealed evaluation follows',
                                 source_decision_ids=sources)
@@ -250,7 +245,60 @@ class FunSearchController:
                 'seed': self.config['seed'], 'upstream_revision': REVISION,
                 'proposal_statistics': self.stats, 'development_baselines': self.development,
                 'selected': self.best, 'sealed_evaluation': 'host_after_finish', 'training_submissions': 0})
+        for key in started:
+            if key in self.sampling:
+                self.sampling[key]['decision_id'] = decision.decision_id
         self.emit('decision', {'decision_id': decision.decision_id, 'consumed_receipt_ids': receipts,
             'reason': decision.reason, 'source_decision_ids': list(sources),
-            'operations': [asdict(call) for call in operations]})
+            'operations': [asdict(call) for call in operations], 'sampling': started})
         return decision
+
+    def dispatch(self, issue, sources, started):
+        """Queue evaluations up to the evaluator limit and start samplers up to the sampler limit."""
+        if not self.baselines:
+            if not self.pending:
+                self.queue.popleft()
+                issue('task_spec', {})
+            return
+        active_evaluators = sum(row['call'].name.endswith(('.evaluate', '.register'))
+                                for row in self.pending.values())
+        # Registration occupies an evaluator slot and carries its follow-up;
+        # an evaluate can never race ahead of registration.
+        while self.queue and active_evaluators < self.evaluators:
+            operation, args = self.queue.popleft()
+            if operation != 'evaluate':
+                raise RuntimeError('Unexpected FunSearch evaluation queue entry')
+            if args['candidate_id'] not in self.registered:
+                issue('register', {'candidate': {'version': args['version']}}, (operation, args))
+            else:
+                issue(operation, args)
+            active_evaluators += 1
+        if set(self.development) == set(BASES):
+            completed = self.stats['proposals']
+            if self.config['condition'] == 'evolution':
+                while (self.reset_cursor + 1) * self.config['reset_every'] <= completed:
+                    self.reset_cursor += 1
+                    boundary = self.reset_cursor * self.config['reset_every']
+                    if self.population.reset(boundary):
+                        self.stats['resets'] += 1
+                        self.emit('reset', {'after_proposals': boundary})
+            while len(self.sampling) < self.samplers and self.issued_proposals < self.config['proposals']:
+                # Snapshot the current population once per request. Outstanding
+                # samplers deliberately keep their older prompt/database view.
+                prompt, island, parents = self.population.prompt()
+                count = min(self.config['samples_per_prompt'], self.config['proposals'] - self.issued_proposals)
+                self.sequence += 1
+                key = f'sample-{self.sequence}'
+                request = {'request_id': key, 'start': self.issued_proposals, 'count': count,
+                           'island': island, 'prompt': prompt, 'parents': parents}
+                sources.extend(row['score_decision_id'] for row in parents)
+                self.issued_proposals += count
+                # The launching decision's ID is filled in once the decision exists.
+                self.sampling[key] = {'request': request, 'decision_id': None}
+                self.sampler.submit(key, request)
+                started.append(key)
+        if (not self.pending and not self.sampling and not self.queue and not self.selected
+                and self.stats['proposals'] == self.config['proposals']):
+            self.selected = True
+            self.emit('selection', {'source_split': 'development', **self.best})
+            issue('select', {'candidate_id': self.best['version']['digest']})

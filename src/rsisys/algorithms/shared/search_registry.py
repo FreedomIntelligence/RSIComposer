@@ -37,7 +37,9 @@ class SearchRegistry:
         return ('artifact-search/v1',)
 
     def invariants(self):
-        return (Invariant.baseline_before('propose'),)
+        # Proposals are the Controller's research step; the host still requires a measured
+        # baseline before a candidate can be selected.
+        return (Invariant.baseline_before('select'),)
 
     def split_roles(self):
         return {**dict.fromkeys(self.search_splits, DEV), self.sealed_split: SEALED}

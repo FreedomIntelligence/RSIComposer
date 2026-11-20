@@ -1,30 +1,15 @@
-"""Generate sealed priorities and score them with the trusted packing evaluator."""
+"""Score sealed priority programs with the trusted packing evaluator; sampling belongs to the Controller."""
 
 from dataclasses import asdict
 import json
-import time
 
-from rsisys.api import ArtifactRef, GenerationRequest, MetricSpec, OperationCall, OperationResult
+from rsisys.api import ArtifactRef, MetricSpec, OperationCall, OperationResult
 
-from ..shared.experiment import ModelCalls
 from ..shared.search_registry import SearchRegistry, operation
 from .packing import BASES, InvalidPriority, digest, evaluate, make_cases, normalize
 
-SYSTEM = """Improve the online bin-packing priority function. Each item is immediately
-packed in the feasible bin with maximum priority, with ties going to the first.
-item is the incoming size; bins is a vector of residual capacities in creation
-order. The last feasible bin may be an empty bin of capacity 100. Sizes are
-integers from 1 through 100. Use only item, bins, finite numeric literals,
-arithmetic + - * /, one comparison at a time, and bare calls where(condition,
-yes, no), minimum(a, b), maximum(a, b), clip(x, low, high), abs(x), square(x).
-Aim to minimize total bins. You may account for the size of residual gaps.
-Respond with just one return expression, or one def priority(item, bins) with
-exactly one return statement. Use no imports, indexing, assignments or prose."""
-
-
 class FunSearchLab(SearchRegistry):
-    # The registry uses complete, idempotent updates. Attempted model calls
-    # remain chargeable even when a proposal is interrupted.
+    # The registry uses complete, idempotent updates.
     concurrent_state_safe = True
     search_splits = ('development',)
     sealed_split = 'heldout'
@@ -32,18 +17,15 @@ class FunSearchLab(SearchRegistry):
         self._search_init()
         self.config = config
         self.artifacts = context.artifacts
-        self.session = ModelCalls(context, config['max_model_calls'])
-        self.models = context.roles
         self.cases = {split: make_cases(split, config[split + '_count'])
                       for split in ('development', 'heldout')}
         self.dataset_ids = {split: digest(rows) for split, rows in self.cases.items()}
 
     def state(self):
-        # Cases are regenerated from config; only the model-call budget moves.
-        return {'model_calls': self.session.count, 'search': self._search_state()}
+        # Cases are regenerated from config; only the candidate registry moves.
+        return {'search': self._search_state()}
 
     def restore(self, state):
-        self.session.count = state['model_calls']
         self._restore_search(state['search'])
 
     def primary_metric(self):
@@ -59,12 +41,9 @@ class FunSearchLab(SearchRegistry):
         return ref.digest
 
     def describe(self):
-        return (*self._search_specs(), operation('task_spec'),
-                operation('propose', prompt='string', start='integer', count='integer'))
+        return (*self._search_specs(), operation('task_spec'))
 
     def execute(self, call):
-        if time.monotonic() >= getattr(self.session, 'deadline', float('inf')):
-            raise TimeoutError('FunSearch experiment deadline exhausted')
         request = call.arguments
         if call.name == 'register':
             values, evidence, artifact_refs = self._register(request), {}, ()
@@ -74,8 +53,8 @@ class FunSearchLab(SearchRegistry):
             values, evidence, artifact_refs = self.evaluate({**request, **self._candidate(request)})
             if values['scored']:
                 self._record_baseline(request)
-        elif call.name in ('task_spec', 'propose'):
-            values, evidence, artifact_refs = getattr(self, call.name)(request)
+        elif call.name == 'task_spec':
+            values, evidence, artifact_refs = self.task_spec(request)
         else:
             raise ValueError(f'Unknown FunSearch operation: {call.name}')
         payload = {'operation': call.name, 'request': request, 'evidence': evidence}
@@ -103,26 +82,6 @@ class FunSearchLab(SearchRegistry):
             versions[label] = {'version': version}
             refs.append(ref)
         return {'versions': versions, 'datasets': self.dataset_ids}, {'datasets': self.dataset_ids}, refs
-
-    def propose(self, request):
-        proposals, samples, refs = [], [], []
-        role = 'decision_maker'
-        for index in range(request['start'], request['start'] + request['count']):
-            seed = (self.config['seed'] * 100003 + index) % 2**32
-            response = self.session.text(GenerationRequest(role, self.models[role], request['prompt'],
-                system=SYSTEM, max_output_tokens=self.config['max_output_tokens'],
-                temperature=self.config['temperature'], top_p=1.0, seed=seed))
-            sample = {'index': index, 'seed': seed, 'response': response}
-            try:
-                source, _ = normalize(response)
-                version, ref = self.seal(source)
-                refs.append(ref)
-            except InvalidPriority as exc:
-                version = None
-                sample['rejection'] = str(exc)
-            proposals.append({'index': index, 'version': version})
-            samples.append(sample)
-        return {'proposals': proposals}, {'samples': samples}, refs
 
     def evaluate(self, request):
         ref = ArtifactRef(**request['version'])
