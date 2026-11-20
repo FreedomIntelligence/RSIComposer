@@ -41,20 +41,14 @@
             "search_count": 96,
             "validation_count": 64,
             "test_count": 256
+          },
+          "model": {
+            "optimizer_temperature": 1.0
           }
         },
         "labs": {
           "gepa": {
-            "source_dir": "external/gepa",
             "seed": 17,
-            "parameters": {
-              "rounds": 24,
-              "minibatch_size": 4,
-              "initial_instruction": "Let's solve the problem.",
-              "condition": "score-only",
-              "orchestration": "controller-lab-v1",
-              "optimizer_max_output_tokens": 768
-            },
             "data": {
               "search_count": 96,
               "validation_count": 64,
@@ -62,7 +56,6 @@
             },
             "model": {
               "max_output_tokens": 768,
-              "optimizer_temperature": 1.0,
               "scorer_temperature": 0.0
             },
             "files": {
@@ -70,7 +63,7 @@
               "validation": "data/gepa/validation.jsonl",
               "test": "data/gepa/test.jsonl"
             },
-            "max_model_calls": 2328
+            "max_model_calls": 2304
           }
         }
       }

@@ -1,32 +1,18 @@
-"""GSM8K evaluation and reflection for the native multi-component GEPA method."""
+"""GSM8K evaluation for the native multi-component GEPA method; reflection belongs to the Controller."""
 from dataclasses import replace
 
-from rsisys.api import Invariant, OperationResult
 
-from ..shared.search_registry import operation
 from .lab import GEPAGSM8KLab
 from .merge_controller import candidate_id
 
 
 class GEPAMergeLab(GEPAGSM8KLab):
-    def invariants(self):
-        return (Invariant.baseline_before('reflect'),)
-
     def _candidate_id(self, candidate):
         return candidate_id(candidate)
 
     def describe(self):
-        register, evaluate, select, _ = super().describe()
-        return (register, replace(evaluate, idempotent=False), select,
-                replace(operation('reflect', prompt='string', round='integer'), idempotent=False))
-
-    def execute(self, call):
-        if call.name == 'reflect':
-            request = call.arguments
-            text = self.complete('decision_maker', request['prompt'], round_index=request['round'])
-            artifact = self.artifacts.put(text.encode(), kind='gepa-reflect')
-            return OperationResult('GEPA reflection', (artifact,), False, data={'text': text})
-        return super().execute(call)
+        register, evaluate, select = super().describe()
+        return (register, replace(evaluate, idempotent=False), select)
 
     def evaluate(self, request):
         split = request['split']

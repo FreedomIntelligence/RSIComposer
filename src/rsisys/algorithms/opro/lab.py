@@ -1,5 +1,5 @@
-"""GSM8K operations using the pinned OPRO prompt builder and evaluator."""
-from dataclasses import asdict
+"""GSM8K scoring with the pinned OPRO evaluator; proposing instructions belongs to the Controller."""
+from dataclasses import asdict, replace
 import hashlib
 from rsisys.api import GenerationRequest, MetricSpec, OperationResult, report_samples
 import json
@@ -7,7 +7,7 @@ import json
 
 from ..shared.experiment import ModelCalls
 from ..shared.prompt_data import load_splits
-from .protocol import OPTIMIZER_SYSTEM_V1, SCORER_SYSTEM_V1, upstream, candidate_id
+from .protocol import SCORER_SYSTEM_V1, upstream, candidate_id
 from ..shared.search_registry import SearchRegistry, operation
 
 
@@ -40,7 +40,9 @@ class OPROGSM8KLab(SearchRegistry):
         return candidate_id(candidate['instruction'])
 
     def describe(self):
-        return (*self._search_specs(), operation('propose', history='array', exemplar_indices='array'))
+        exemplars = operation('exemplars', indices='array')
+        return (*self._search_specs(), replace(exemplars, description='Search-split problems shown to the optimizer',
+                                               read_only=True))
 
     def execute(self, call):
         request = call.arguments
@@ -48,8 +50,8 @@ class OPROGSM8KLab(SearchRegistry):
             values, evidence = self._register(request), {}
         elif call.name == 'select':
             values, evidence = self._select(request), {}
-        elif call.name == 'propose':
-            values, evidence = self.propose(request)
+        elif call.name == 'exemplars':
+            values, evidence = self.exemplars(request), {}
         elif call.name == 'evaluate':
             candidate = self._candidate(request)
             values, evidence = self.evaluate({**request, **candidate})
@@ -68,49 +70,21 @@ class OPROGSM8KLab(SearchRegistry):
         return OperationResult(f"OPRO {call.name}", (artifact,), False,
             data={'request': request, 'receipt_id': hashlib.sha256(payload).hexdigest(), **values})
 
-    def complete(self, role, prompt, *, seed):
+    def complete(self, prompt, *, seed):
         model, params = self.config['model'], self.config['parameters']
-        optimizer = role == 'decision_maker'
         adapted = params.get('local_adapter') == 'qwen-instructions-v1'
-        system = OPTIMIZER_SYSTEM_V1 if optimizer else SCORER_SYSTEM_V1
-        cap = model['max_output_tokens']
-        if optimizer:
-            cap = params.get('optimizer_max_output_tokens', cap)
-        temperature = model['optimizer_temperature' if optimizer else 'scorer_temperature']
-        return self.session.text(GenerationRequest(role, self.models[role], prompt,
-            system=system if adapted else '', temperature=temperature, top_p=1,
-            max_output_tokens=cap, seed=seed if adapted else None))
+        return self.session.text(GenerationRequest('actor', self.models['actor'], prompt,
+            system=SCORER_SYSTEM_V1 if adapted else '', temperature=model['scorer_temperature'], top_p=1,
+            max_output_tokens=model['max_output_tokens'], seed=seed if adapted else None))
 
     def dataframe(self, split):
         import pandas as pd
         return pd.DataFrame([(row['question'], row['answer']) for row in self.groups[split]])
 
-    def propose(self, request):
-        params = self.config['parameters']
-        history = [(row['instruction'], row['score'], row['round']) for row in request['history']]
-        prompt = self.opt.gen_meta_prompt(
-            old_instructions_and_scores=history, instruction_pos=params['instruction_pos'],
-            optimizer_llm_name='gpt-4', old_instruction_score_threshold=.3,
-            max_num_instructions=params['history_size'], meta_prompt_type='both_instructions_and_exemplars',
-            few_shot_qa_pairs=True, include_qa=False, data=self.dataframe('search'),
-            few_shot_index_list=request['exemplar_indices'], instructions_before_exemplars=True,
-            num_score_buckets=100, dataset_name='gsm8k', task_name='gsm8k')
-        count = params['candidates_per_round']
-        responses, candidates = [], []
-        for index in range(count):
-            seed = (self.config['seed'] + request['round'] * count + index) % 2**32
-            raw = self.complete('decision_maker', prompt, seed=seed)
-            responses.append(raw)
-            start = raw.find('<INS>')
-            start = start + len('<INS>') if start >= 0 else 0
-            end = raw.find('</INS>')
-            instruction = self.opt.eval_utils.polish_sentence(raw[start:end if end >= 0 else len(raw)].strip())
-            if (instruction and len(instruction) <= 500 and 'INS' not in instruction
-                    and not any(char.isdigit() for char in instruction)):
-                candidates.append(instruction)
-        digest = hashlib.sha256(prompt.encode()).hexdigest()
-        return {'candidates': candidates, 'meta_prompt_sha256': digest}, {
-            'meta_prompt_sha256': digest, 'responses': responses}
+    def exemplars(self, request):
+        rows = self.groups['search']
+        indices = self._indices(request, len(rows))
+        return {'exemplars': [{'question': rows[i]['question'], 'answer': rows[i]['answer']} for i in indices]}
 
     def evaluate(self, request):
         frame = self.dataframe(request['split'])
@@ -118,7 +92,7 @@ class OPROGSM8KLab(SearchRegistry):
 
         def scorer(prompt, **_):
             prompts = [prompt] if isinstance(prompt, str) else prompt
-            return [self.complete('actor', item, seed=self.config['seed']) for item in prompts]
+            return [self.complete(item, seed=self.config['seed']) for item in prompts]
 
         result = self.opt.eval_utils.evaluate_single_instruction(
             data=frame, instruction=request['instruction'], eval_index_all=indices,

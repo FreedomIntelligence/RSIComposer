@@ -30,12 +30,14 @@
             "minibatch_size": 4,
             "use_merge": true,
             "max_merge_invocations": 5,
-            "max_metric_calls": 96
-          }
+            "max_metric_calls": 96,
+            "max_reflection_calls": 28,
+            "optimizer_max_output_tokens": 2048
+          },
+          "model": {"optimizer_temperature": 1.0}
         },
         "labs": {
           "gepa": {
-            "source_dir": "external/gepa",
             "seed": 17,
             "data": {"search_count": 24, "validation_count": 12, "test_count": 32},
             "files": {
@@ -43,9 +45,8 @@
               "validation": "data/gepa-merge-screen/validation.jsonl",
               "test": "data/gepa-merge-screen/test.jsonl"
             },
-            "max_model_calls": 188,
-            "parameters": {"optimizer_max_output_tokens": 2048},
-            "model": {"max_output_tokens": 2048, "optimizer_temperature": 1.0, "scorer_temperature": 0.0}
+            "max_model_calls": 160,
+            "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}
           }
         }
       }

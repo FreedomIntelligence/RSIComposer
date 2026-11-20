@@ -1,4 +1,8 @@
-"""Run the pinned GEPA optimizer behind the Controller/Lab receipt boundary."""
+"""Run the pinned GEPA optimizer behind the Controller/Lab receipt boundary.
+
+Evaluations are Lab operations. Reflection is the Controller's own research
+step: the decision model answers it here and the reply joins the replay journal.
+"""
 from contextlib import contextmanager
 from hashlib import sha256
 import json
@@ -6,6 +10,7 @@ from types import SimpleNamespace
 
 from rsisys.api import Decision, ExecutionStatus, OperationCall, ReplayMismatchError
 
+from .proposer import GEPAProposer
 from .protocol import SOURCE_COMMIT, merge_api
 
 
@@ -69,7 +74,7 @@ class _UpstreamAdapter:
 
 
 class GEPAMergeController:
-    def __init__(self, context, config):
+    def __init__(self, context, config, *, reflector=None):
         self.optimize, self.batch_type = merge_api(config['source_dir'])
         p, data = config['parameters'], config['data']
         initial = p['initial_components']
@@ -82,6 +87,7 @@ class GEPAMergeController:
         if (not self.train or len(self.validation) < 5
                 or any(type(p[key]) is not int or p[key] < 1 for key in
                        ('rounds', 'minibatch_size', 'max_metric_calls', 'max_merge_invocations'))
+                or type(p.get('max_reflection_calls')) is not int or p['max_reflection_calls'] < 1
                 or p['minibatch_size'] > len(self.train) or type(p['use_merge']) is not bool):
             raise ValueError('GEPA requires valid positive budgets, a train batch and at least five validation examples')
         self.options = dict(seed=config['seed'], reflection_minibatch_size=p['minibatch_size'],
@@ -90,12 +96,13 @@ class GEPAMergeController:
         metric = context.lab_catalog.primary_metric('gepa')
         if metric.direction != 'maximize':
             raise ValueError('GEPA requires a metric to maximize')
+        self.reflector = reflector or GEPAProposer(context, config, max_calls=p['max_reflection_calls'])
         self.pending = self.previous = None
         self.registered, self.journal = set(), []
         self.summary = {'method': 'gepa_merge', 'status': 'running'}
 
     def required_operations(self):
-        return ('gepa.register', 'gepa.evaluate', 'gepa.reflect', 'gepa.select')
+        return ('gepa.register', 'gepa.evaluate', 'gepa.select')
 
     def required_profiles(self):
         return {'gepa': 'artifact-search/v1'}
@@ -114,6 +121,7 @@ class GEPAMergeController:
         self.pending, self.previous = state['pending'], state['previous']
         self.registered, self.journal = set(state['registered']), state['journal']
         self.summary = state['summary']
+        self.reflector.calls.count = sum('text' in response for _, response in self.journal)
 
     def report(self):
         return self.summary
@@ -139,24 +147,18 @@ class GEPAMergeController:
             raise RuntimeError('GEPA candidate identity differs from receipt')
         if operation == 'register':
             self.registered.add(expected)
-        elif operation in ('evaluate', 'reflect'):
-            if operation == 'evaluate':
-                count = len(call.arguments['indices'])
-                data = feedback.data
-                if (data.get('count') != count or len(data.get('scores', ())) != count
-                        or any(type(score) is not int or score not in (0, 1) for score in data['scores'])):
-                    raise RuntimeError('Invalid GEPA evaluation receipt')
-                response = {'scores': data['scores']}
-                if call.arguments['capture_traces']:
-                    traces = data.get('trajectories')
-                    if not isinstance(traces, list) or len(traces) != count:
-                        raise RuntimeError('Missing GEPA trajectories')
-                    response['trajectories'] = traces
-            else:
-                text = feedback.data.get('text')
-                if not isinstance(text, str):
-                    raise RuntimeError('Invalid GEPA reflection receipt')
-                response = {'text': text}
+        elif operation == 'evaluate':
+            count = len(call.arguments['indices'])
+            data = feedback.data
+            if (data.get('count') != count or len(data.get('scores', ())) != count
+                    or any(type(score) is not int or score not in (0, 1) for score in data['scores'])):
+                raise RuntimeError('Invalid GEPA evaluation receipt')
+            response = {'scores': data['scores']}
+            if call.arguments['capture_traces']:
+                traces = data.get('trajectories')
+                if not isinstance(traces, list) or len(traces) != count:
+                    raise RuntimeError('Missing GEPA trajectories')
+                response['trajectories'] = traces
             self.journal.append([call.arguments['exchange'], response])
         self.pending, self.previous = None, decision.decision_id
         return operation == 'select'
@@ -183,9 +185,16 @@ class GEPAMergeController:
                 else:
                     reflection_calls += 1
                 return response
+            if operation == 'reflect':
+                # A new reflection: ask the decision model now and journal the reply.
+                response = {'text': self.reflector.reflect(arguments['prompt'], round_index=arguments['round'])}
+                self.journal.append([digest, response])
+                cursor += 1
+                reflection_calls += 1
+                return response
             raise _RequestLab(operation, {**arguments, 'exchange': digest})
 
-        # Only deterministic CPU decisions replay. Every external effect is a host Lab operation.
+        # Only deterministic CPU decisions and journaled reflections replay; evaluations are Lab operations.
         adapter = _UpstreamAdapter(exchange, self.batch_type)
         try:
             result = self.optimize(self.initial, self.train, self.validation, adapter,

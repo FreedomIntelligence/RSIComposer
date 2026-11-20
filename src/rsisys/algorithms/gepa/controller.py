@@ -1,4 +1,4 @@
-"""Choose one GEPA parent and act on one matched Lab receipt per decision."""
+"""Choose one GEPA parent, mutate it with the decision model, and act on one matched Lab receipt per decision."""
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -9,7 +9,8 @@ from rsisys.api import Decision, ExecutionStatus, OperationCall
 
 from ..shared.experiment import MethodEvents, random_state, set_random_state
 
-from .protocol import budget, upstream, valid_instruction
+from .proposer import GEPAProposer
+from .protocol import budget, upstream
 
 
 def candidate_id(instruction):
@@ -26,12 +27,14 @@ class ValidatedCandidate:
 
 
 class GEPAController:
-    def __init__(self, context, config):
+    def __init__(self, context, config, *, proposer=None):
         self.metric = context.lab_catalog.primary_metric('gepa')
         self.parameters = config['parameters']
         self.counts = {name: config['data'][name + '_count'] for name in ('search', 'validation', 'test')}
         self.initial = self.parameters['initial_instruction']
         self.emit = MethodEvents(context, 'gepa')
+        # One mutation per round.
+        self.proposer = proposer or GEPAProposer(context, config, max_calls=self.parameters['rounds'])
         ensure_loader, self.select_parent, sampler_type, _ = upstream(config['source_dir'])
         self.search_indices = ensure_loader(list(range(self.counts['search'])))
         self.sampler = sampler_type(self.parameters['minibatch_size'], Random(config['seed']))
@@ -81,6 +84,7 @@ class GEPAController:
         self.receipts = set(state['receipts'])
         set_random_state(self.parent_rng, state['parent_rng'])
         self.emit.summary = state['summary']
+        self.proposer.calls.count = self.mutation_calls
 
     def next_minibatch(self, round_index):
         indices = list(self.sampler.next_minibatch_ids(self.search_indices, SimpleNamespace(i=round_index)))
@@ -88,7 +92,7 @@ class GEPAController:
         return indices
 
     def required_operations(self):
-        return ('gepa.propose', 'gepa.register', 'gepa.evaluate', 'gepa.select')
+        return ('gepa.register', 'gepa.evaluate', 'gepa.select')
 
     def required_profiles(self):
         return {'gepa': 'artifact-search/v1'}
@@ -147,18 +151,11 @@ class GEPAController:
                     or any(type(value) is not int or value not in (0, 1) for value in scores)):
                 raise RuntimeError('Invalid GEPA score receipt')
             self.actor_calls += count
-        elif decision.operations[0].name == 'gepa.propose':
-            instruction = data.get('candidate')
-            if instruction is not None and not valid_instruction(instruction):
-                raise RuntimeError('Invalid GEPA mutation receipt')
-            self.mutation_calls += 1
         self.receipts.add(receipt_id)
         self.last, self.pending = decision, None
         self.emit('receipt', {'request_id': request['request_id'], 'receipt_id': receipt_id,
                               'decision_id': decision.decision_id,
-                              'artifacts': [asdict(ref) for ref in feedback.artifacts],
-                              **({'meta_prompt_sha256': data['meta_prompt_sha256']}
-                                 if 'meta_prompt_sha256' in data else {})})
+                              'artifacts': [asdict(ref) for ref in feedback.artifacts]})
         if decision.operations[0].name == 'gepa.evaluate':
             self.emit('evaluation', {'candidate_id': request['candidate_id'],
                 'instruction': next(text for text, key in self.registered.items() if key == request['candidate_id']), 'phase': request['label'], 'score': sum(scores) / count,
@@ -188,6 +185,19 @@ class GEPAController:
         return self.score(parent.instruction, 'search', 'parent', indices=self.indices,
                           sources=(parent.decision_id,))
 
+    def mutate(self, parent, request, feedback):
+        """Research step: propose a child of the parent from its minibatch trace, then score it."""
+        records = self.proposer.parent_records(feedback.artifacts[0], feedback.data['receipt_id'], request)
+        proposal = self.proposer.propose(parent, records, round_index=self.iteration)
+        self.mutation_calls += 1
+        self.proposal_valid = proposal.candidate is not None
+        child = proposal.candidate if self.proposal_valid else parent
+        self.emit('candidate', {'candidate_id': candidate_id(child), 'instruction': child,
+            'parent_id': candidate_id(parent), 'round': self.iteration,
+            'valid_mutation': self.proposal_valid, 'meta_prompt_sha256': proposal.meta_prompt_sha256,
+            'proposal': asdict(proposal.evidence)})
+        return self.score(child, 'search', 'child', indices=self.indices)
+
     def admit(self, instruction, data):
         self.candidates.append(ValidatedCandidate(
             instruction, tuple(data['scores']), data['receipt_id'], self.last.decision_id, self.metric.value(data)))
@@ -206,14 +216,6 @@ class GEPAController:
             return self.score(**deferred)
         if self.last.operations[0].name == 'gepa.select':
             return self.finish()
-        if self.last.operations[0].name == 'gepa.propose':
-            proposal = data['candidate']
-            self.proposal_valid = proposal is not None
-            instruction = proposal if self.proposal_valid else request['instruction']
-            self.emit('candidate', {'candidate_id': candidate_id(instruction), 'instruction': instruction,
-                'parent_id': candidate_id(request['instruction']), 'round': self.iteration,
-                'valid_mutation': self.proposal_valid, 'receipt_id': data['receipt_id']})
-            return self.score(instruction, 'search', 'child', indices=self.indices)
         label = request['label']
         instruction = next(text for text, key in self.registered.items() if key == request['candidate_id'])
         if label == 'validation_initial':
@@ -221,9 +223,7 @@ class GEPAController:
             return self.next_parent()
         if label == 'parent':
             self.parent_correct = self.metric.value(data)
-            return self.invoke('propose', {'instruction': instruction, 'parent_receipt_id': data['receipt_id'],
-                                         'parent_artifact': asdict(feedback.artifacts[0]),
-                                         'indices': self.indices})
+            return self.mutate(instruction, request, feedback)
         if label == 'child':
             self.accepted = (self.proposal_valid and self.utility(self.metric.value(data)) > self.utility(self.parent_correct)
                              and all(item.instruction != instruction for item in self.candidates))

@@ -3,10 +3,12 @@
 The `gepa_merge` method runs the pinned upstream GEPA optimizer with two GSM8K
 prompt components, `strategy` and `verification`. Upstream controls parent and
 component selection, reflection, merge scheduling, acceptance, and evaluation
-budget. RSISys executes model calls in the Lab, records receipts, and evaluates
-the seed and selected candidate on the sealed split after the controller finishes.
-The existing `gepa` method serves the paired `reflective` / `score-only`
-experiment. Its candidate shape and fixed spending protocol are unchanged.
+budget. The Controller answers reflection prompts with the `decision_maker`
+model ([`proposer.py`](proposer.py)); the Lab scores candidates with the `actor`
+and records receipts; the host evaluates the seed and selected candidate on the
+sealed split after the controller finishes. The `gepa` method serves the paired
+`reflective` / `score-only` experiment: its Controller mutates the parent from
+the minibatch trace the Lab stored, and its fixed spending protocol is unchanged.
 
 ## Run a small cohort
 
@@ -29,16 +31,19 @@ PYTHONPATH=src python -m rsisys run --durable \
 `max_metric_calls` is GEPA's stop threshold, checked between iterations: the
 last iteration and initial validation may take the count above it. A reflective
 iteration can use up to two minibatches plus full validation; a merge iteration
-can use five validation examples plus full validation. `max_model_calls` is a
-separate hard Lab limit, covering every model call. Include up to one reflection
-per round and two sealed evaluations when sizing it. Report actual spends for
+can use five validation examples plus full validation. The Lab's
+`max_model_calls` is a hard limit on actor calls; include two sealed evaluations
+when sizing it. The Controller's `max_reflection_calls` limits reflections
+(at most one per round). Report actual spends for
 each run, since merge and no-merge runs may stop at different counts.
 
 `rsisys resume --data-dir runs/gepa-merge-screen` reconstructs the upstream
-optimizer from checkpointed exchanges without repeating model calls with
-committed receipts. Replay runs CPU work from the beginning at each exchange;
-measure its cost before increasing the round limit substantially. Because a Lab
-call contacts the model service, an interruption with no committed receipt
+optimizer from checkpointed exchanges without repeating evaluations with
+committed receipts or reflections already in the Controller's journal. Replay
+runs CPU work from the beginning at each exchange; measure its cost before
+increasing the round limit substantially. A reflection interrupted before its
+decision is checkpointed is asked again with the same seed. Because a Lab call
+contacts the model service, an evaluation interrupted with no committed receipt
 requires reconciliation by the host before continuing.
 
 ## Compare runs

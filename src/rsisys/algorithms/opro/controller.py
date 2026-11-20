@@ -1,4 +1,4 @@
-"""OPRO policy over individual, matched Lab receipts."""
+"""OPRO policy over individual, matched Lab receipts; the optimizer step runs in the Controller."""
 from collections import deque
 from dataclasses import asdict
 from contextlib import contextmanager
@@ -8,13 +8,15 @@ from rsisys.api import Decision, ExecutionStatus, OperationCall
 
 from ..shared.experiment import MethodEvents
 
+from .proposer import OPROProposer
 from .protocol import candidate_id
 
 
 class OPROController:
-    def __init__(self, context, config):
+    def __init__(self, context, config, *, proposer=None):
         self.metric = context.lab_catalog.primary_metric('opro')
         self.parameters = config['parameters']
+        self.proposer = proposer or OPROProposer(context, config)
         self.counts = {split: config['data'][split + '_count']
                        for split in ('search', 'validation', 'test')}
         self.emit = MethodEvents(context, 'opro')
@@ -31,6 +33,7 @@ class OPROController:
         self.last_decision_id = None
         self.selected = None
         self.candidate_count = 0
+        self.optimizer_calls = 0
 
     def state(self):
         return {'round': self.round, 'sequence': self.sequence, 'pending': self.pending,
@@ -39,7 +42,8 @@ class OPROController:
                 'scores': {split: dict(rows) for split, rows in self.scores.items()},
                 'queue': [[operation, arguments] for operation, arguments in self.queue],
                 'last_decision_id': self.last_decision_id, 'selected': self.selected,
-                'candidate_count': self.candidate_count, 'summary': self.emit.summary}
+                'candidate_count': self.candidate_count, 'optimizer_calls': self.optimizer_calls,
+                'summary': self.emit.summary}
 
     def restore(self, state):
         self.round, self.sequence, self.pending = state['round'], state['sequence'], state['pending']
@@ -49,9 +53,10 @@ class OPROController:
         self.queue = deque((operation, arguments) for operation, arguments in state['queue'])
         self.last_decision_id, self.selected = state['last_decision_id'], state['selected']
         self.candidate_count, self.emit.summary = state['candidate_count'], state['summary']
+        self.optimizer_calls = self.proposer.calls.count = state['optimizer_calls']
 
     def required_operations(self):
-        return ('opro.propose', 'opro.register', 'opro.evaluate', 'opro.select')
+        return ('opro.exemplars', 'opro.register', 'opro.evaluate', 'opro.select')
 
     def required_profiles(self):
         return {'opro': 'artifact-search/v1'}
@@ -86,16 +91,17 @@ class OPROController:
         self.receipts.add(receipt_id)
         self.emit('receipt', {'request_id': request['request_id'], 'receipt_id': receipt_id,
                               'decision_id': decision.decision_id,
-                              'artifacts': [asdict(ref) for ref in feedback.artifacts],
-                              **({'meta_prompt_sha256': data['meta_prompt_sha256']}
-                                 if 'meta_prompt_sha256' in data else {})})
-        if decision.operations[0].name == 'opro.propose':
-            candidates = data.get('candidates')
-            if (not isinstance(candidates, list)
-                    or len(candidates) > self.parameters['candidates_per_round']
-                    or any(not isinstance(item, str) or not item or len(item) > 500 for item in candidates)):
-                raise RuntimeError('Invalid OPRO candidate receipt')
-            for instruction in candidates:
+                              'artifacts': [asdict(ref) for ref in feedback.artifacts]})
+        if decision.operations[0].name == 'opro.exemplars':
+            exemplars = data.get('exemplars')
+            if not isinstance(exemplars, list) or len(exemplars) != len(request['indices']):
+                raise RuntimeError('Invalid OPRO exemplar receipt')
+            proposal = self.proposer.propose([record for record, _ in self.optimizer_history()], exemplars,
+                                             round_index=self.round)
+            self.optimizer_calls += self.parameters['candidates_per_round']
+            self.emit('proposal', {'round': self.round, 'meta_prompt_sha256': proposal.meta_prompt_sha256,
+                                   'evidence': asdict(proposal.evidence), 'candidates': list(proposal.candidates)})
+            for instruction in proposal.candidates:
                 if instruction in self.seen:
                     continue
                 self.seen.add(instruction)
@@ -125,6 +131,10 @@ class OPROController:
         self.last_decision_id = decision.decision_id
         self.pending = None
 
+    def optimizer_history(self):
+        """Scored search records the optimizer sees, with the decisions that produced them."""
+        return self.history[:1] if self.parameters['condition'] == 'independent_candidates' else self.history
+
     def decide(self, window):
         if self.pending is not None:
             self.consume(window)
@@ -134,12 +144,12 @@ class OPROController:
         elif self.round < self.parameters['rounds']:
             import numpy as np
 
-            history = self.history[:1] if self.parameters['condition'] == 'independent_candidates' else self.history
+            history = self.optimizer_history()
             indices = np.sort(np.random.RandomState(self.round).choice(
                 self.counts['search'], self.parameters['exemplars'], replace=False)).tolist()
-            operation = 'propose'
-            arguments = {'round': self.round, 'history': [record for record, _ in history],
-                         'exemplar_indices': indices}
+            # The Lab returns the exemplar problems; the optimizer step follows in consume().
+            operation = 'exemplars'
+            arguments = {'round': self.round, 'indices': indices}
             dependencies.extend(ident for _, ident in history)
         elif self.initial not in self.scores['validation']:
             operation, arguments = self.score(self.initial, 'validation', -1)

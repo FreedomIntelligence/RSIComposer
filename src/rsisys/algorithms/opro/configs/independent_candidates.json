@@ -44,6 +44,10 @@
             "search_count": 16,
             "validation_count": 16,
             "test_count": 16
+          },
+          "model": {
+            "optimizer_temperature": 1.0,
+            "max_output_tokens": 1024
           }
         },
         "labs": {
@@ -51,15 +55,8 @@
             "source_dir": "external/opro",
             "seed": 17,
             "parameters": {
-              "rounds": 2,
-              "candidates_per_round": 2,
-              "history_size": 20,
-              "exemplars": 3,
-              "initial_instruction": "Let's solve the problem.",
               "instruction_pos": "Q_end",
-              "condition": "independent_candidates",
-              "local_adapter": "qwen-instructions-v1",
-              "optimizer_max_output_tokens": 512
+              "local_adapter": "qwen-instructions-v1"
             },
             "data": {
               "search_count": 16,
@@ -68,7 +65,6 @@
             },
             "model": {
               "max_output_tokens": 1024,
-              "optimizer_temperature": 1.0,
               "scorer_temperature": 0.0
             },
             "files": {
@@ -76,7 +72,7 @@
               "validation": "data/opro/validation.jsonl",
               "test": "data/opro/test.jsonl"
             },
-            "max_model_calls": 256
+            "max_model_calls": 252
           }
         }
       }
