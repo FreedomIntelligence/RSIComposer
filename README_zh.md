@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv 论文：Coming soon">
 </p>
 
-<p align="center"><strong>通用的递归自改进框架：自由组合组件，定制你的 RSI 系统</strong></p>
+<p align="center"><strong>通用的递归自改进框架：自由选择改进对象，用可替换组件构建你的 RSI 系统</strong></p>
 
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
@@ -26,7 +26,7 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 
 ## 亮点
 
-**一个闭环覆盖所有 RSI 方法。** RSISys 用强化学习的交互视角组织自改进：Controller 选择动作，Lab 执行，返回的证据驱动下一次决策。单 agent RSI 是其中的特例：同一个 agent 既决定试什么，也在 Lab 里执行任务。这两个角色也可以分开，由独立的研究 agent 为任务 agent 决定下一步实验。[不同方法](#已适配的方法)可以共用这个闭环，各自保留优化算法。
+**以研究闭环为核心的通用 RSI 框架。** 研究者围绕目标任务设计实验来改进 AI，从每轮反馈中积累研究经验，并据此决定下一步。RSISys 将这个人和 AI 协作的研究闭环自动化：Controller 决定试什么，Lab 运行实验并返回证据，Controller 根据历次实验的证据决定下一步试什么或采纳哪个候选。研究决策和任务执行可以由同一个 agent 承担，也可以交给不同的 agent。这个闭环为[不同 RSI 方法](#已适配的方法)提供统一的运行结构，各方法仍可使用自己的优化算法。
 
 **改进对象由方法决定。** 方法可以改 agent 的提示词、程序、harness 或模型权重，也可以改决定「如何改进」的 RSI 策略。Self-Reflection Lab 可以在嵌套实验中验证候选 Controller，再由当前 Controller 根据证据决定是否采纳。
 

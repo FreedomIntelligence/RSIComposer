@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv paper: Coming soon">
 </p>
 
-<p align="center"><strong>A general framework for recursive self-improvement: build your own RSI system from interchangeable components</strong></p>
+<p align="center"><strong>A general framework for recursive self-improvement: choose what to improve and build your own RSI system from interchangeable components</strong></p>
 
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 
@@ -26,7 +26,7 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 
 ## Highlights
 
-**One loop for every RSI method.** RSISys takes a reinforcement learning view: a Controller chooses an action, a Lab runs it, and the evidence guides the next decision. Single-agent RSI is a special case: the same agent decides what to try and performs the task in the Lab. The same loop also lets a separate research agent direct experiments for a task agent. [Different methods](#adapted-methods) can use this loop with their own optimizers.
+**A general RSI framework built around the research loop.** A researcher designs experiments to improve an AI system on a target task, gathers feedback from each run, and builds up experience that guides the next decision. RSISys automates this human–AI research loop: the Controller decides what to try, Labs run the experiments and return evidence, and the Controller draws on evidence from prior experiments to decide what to try next or what to adopt. A single agent can both direct experiments and perform the task, or separate agents can take on those roles. This loop gives [different RSI methods](#adapted-methods) a common structure while letting each use its own optimization algorithm.
 
 **Choose what to improve.** A method can change an agent's prompts, programs, harness, or model weights. It can also change the RSI policy that decides how to improve. The Self-Reflection Lab can test a candidate Controller in a nested run, and the current Controller decides whether to adopt it based on the evidence.
 
