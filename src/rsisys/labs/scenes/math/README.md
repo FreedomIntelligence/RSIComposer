@@ -20,7 +20,8 @@ Setting the Lab budget does not change the deployed server's limits.
 
 The competition sets and integer-labeled development data use only Python's
 standard library. Install `pip install -e '.[math]'` to use the existing
-Math-Verify scorer on symbolic development answers.
+Math-Verify scorer on symbolic answers. The scene gives symbolic grading a
+separate, time-bounded Python process when the Lab runs on a host thread.
 
 ## Connect the datasets
 
@@ -66,19 +67,18 @@ the bound splits and checks the data, model and scoring bindings during resume.
 The scene declares each split as a host dataset binding. The host retains a
 fingerprint for the sealed split without exposing its row IDs or source.
 
-Development rows are JSONL objects with `id`, `prompt`, `answer`, and
-optionally `benchmark` (defaults to `math`). The default scorer accepts
-nonnegative integer labels through 99,999. For symbolic labels use
-`"verifier": "math_verify"` in the development split entry and supply bare
-LaTeX answers or boxed references. The training and rollout data stay in the
-method's own Lab or preparation pipeline and are never read by this scene.
-To compare methods fairly, keep training, candidate search, and the official
-70 questions disjoint.
+A split can bind a JSONL file using `file`, `sha256`, and `count`, whether its
+role is `dev` or `sealed`. Each row has `id`, `prompt`, `answer`, and optionally
+`benchmark` (defaults to `math`). The default scorer accepts nonnegative integer
+labels through 99,999. For symbolic labels set `"verifier": "math_verify"` in
+the split entry and supply bare LaTeX answers or boxed references. The training
+and rollout data stay in the method's own Lab or preparation pipeline. Keep that
+data, the development inputs, and the sealed assessment disjoint.
 
-The sealed split binds the existing benchmark manifest and its three frozen
-files. A run can omit this split for development-only work. For formal
-evaluation, this is one call over all 70 questions, with each question carrying
-its benchmark ID.
+A run can omit the sealed split for development-only work. To run the official
+70-question preset, use `benchmarks_manifest` on the sealed split. This form
+requires all three frozen datasets and checks their individual counts and
+hashes. Use the JSONL form to bind a different sealed benchmark.
 
 | Benchmark | Count | Scoring |
 | --- | ---: | --- |
@@ -119,8 +119,8 @@ For formal evaluation, the method's Lab adapter exposes
 [Coding Meta-Agent's adapter](../../../algorithms/coding_meta_agent/lab.py).
 It returns one local `OperationCall('evaluate', {'split': 'official',
 'instruction': selected_instruction})`. The RSISys host executes the full
-suite after the Controller finishes and withholds per-question data from the
-Controller. Public Monitor shows the overall and per-benchmark scores. Aggregate
+sealed split after the Controller finishes and withholds per-question data
+from the Controller. Public Monitor shows the overall and per-benchmark scores. Aggregate
 timings and token counts are in the host receipt. Authorized host artifact
 access is required for the detailed official evidence. A direct Python call
 bypasses orchestration, so use the host route for formal comparisons.
@@ -135,5 +135,6 @@ PYTHONPATH=src python -B -m rsisys catalog
 ```
 
 The suite exercises the real RSISys CLI and Monitor snapshot with fixture data
-and controlled Chat Completions responses. It verifies the 30 + 30 + 10 binding,
-development evidence, official score aggregation, and truncation accounting.
+and controlled Chat Completions responses. It verifies the 30 + 30 + 10 binding, custom sealed sets, development evidence,
+score aggregation, and truncation accounting. With the `math` extra it also
+checks symbolic grading through the CLI.

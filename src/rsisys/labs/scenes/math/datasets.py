@@ -35,7 +35,7 @@ def _path(root, value):
 
 def _official(root, entry):
     if set(entry) != {'benchmarks_manifest', 'sha256'}:
-        raise ValueError('A sealed math split requires benchmarks_manifest and sha256')
+        raise ValueError('The official math preset requires benchmarks_manifest and sha256')
     path = _path(root, entry['benchmarks_manifest'])
     manifest = json.loads(checked_bytes(path, entry['sha256']))
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('benchmarks'), dict)
@@ -50,10 +50,10 @@ def _official(root, entry):
     return tuple(rows)
 
 
-def _development(root, entry):
+def _jsonl(root, entry):
     required = {'file', 'sha256', 'count'}
     if not required <= set(entry) or set(entry) - required - {'verifier', 'maximum'}:
-        raise ValueError('A development split requires file, sha256 and count')
+        raise ValueError('A math JSONL split requires file, sha256 and count')
     path = _path(root, entry['file'])
     data = checked_bytes(path, entry['sha256'])
     verifier_name = entry.get('verifier', 'competition_integer')
@@ -62,7 +62,7 @@ def _development(root, entry):
     elif verifier_name == 'math_verify' and 'maximum' not in entry:
         verifier = MathVerifyVerifier()
     else:
-        raise ValueError('Invalid development verifier or maximum')
+        raise ValueError('Invalid math verifier or maximum')
 
     problems = []
     for line, value in enumerate(data.decode('utf-8').splitlines(), 1):
@@ -83,14 +83,14 @@ def _development(root, entry):
                 answer = str(answer)
             if isinstance(answer, str) and answer.strip():
                 answer = final_boxed(answer) or r'\boxed{' + answer + '}'
-                valid = verifier.parse(answer) is not None
+                valid = verifier.accepts_reference(answer)
             else:
                 valid = False
         if not valid:
             raise ValueError(f'{path}:{line}: invalid answer for {verifier_name}')
         problems.append(Problem(ident, prompt, answer, benchmark, verifier))
     if type(entry['count']) is not int or not problems or len(problems) != entry['count']:
-        raise ValueError(f'{path}: nonempty development dataset must match manifest count')
+        raise ValueError(f'{path}: nonempty math dataset must match manifest count')
     return tuple(problems)
 
 
@@ -107,9 +107,15 @@ def load_splits(path, roles):
         if not isinstance(entry, dict):
             raise ValueError(f'{split} must have a math dataset manifest entry')
         sealed = roles[split].after_finish_only
-        loader = _official if sealed else _development
-        problems[split] = rows = loader(path.parent, entry)
-        source = _path(path.parent, entry['benchmarks_manifest' if sealed else 'file'])
+        if 'benchmarks_manifest' in entry:
+            if not sealed:
+                raise ValueError('The official math preset requires a sealed split')
+            rows = _official(path.parent, entry)
+            source = _path(path.parent, entry['benchmarks_manifest'])
+        else:
+            rows = _jsonl(path.parent, entry)
+            source = _path(path.parent, entry['file'])
+        problems[split] = rows
         bindings.append(DatasetBinding(
             name='math', split=split, role='sealed' if sealed else 'dev',
             source=str(source), schema_version='1', content_digest=entry['sha256'],

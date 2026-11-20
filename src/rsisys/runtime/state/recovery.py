@@ -19,6 +19,9 @@ from rsisys.runtime.orchestration.run_policy import (
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
+_CHECKPOINT_SCHEMA = 33
+
+
 class RecoveryRequired(RuntimeError):
     """An interrupted boundary needs evidence-backed reconciliation before execution."""
 
@@ -121,7 +124,7 @@ class DurableRecovery:
             execution = self.app.runner.decision_making
             read = getattr(execution, 'in_flight_operations', None)
             in_flight = read() if callable(read) else []
-        payload = {'schema': 32, 'generation': generation, 'contract_id': self.contract.contract_id,
+        payload = {'schema': _CHECKPOINT_SCHEMA, 'generation': generation, 'contract_id': self.contract.contract_id,
                    'source': code_revision(), 'python': list(sys.version_info[:2]),
                    'run_id': self.app.config.run_id, 'objective': self.app.config.objective,
                    'config': _config_identity(self.app.config), 'saved_at': self.wall_clock(),
@@ -144,7 +147,7 @@ class DurableRecovery:
         if sha256(json_bytes(document['payload'])).hexdigest() != document['sha256']:
             raise ValueError('Recovery checkpoint digest mismatch')
         state = decode(document['payload'])
-        if state['schema'] != 32:
+        if state['schema'] != _CHECKPOINT_SCHEMA:
             raise ValueError('Recovery checkpoint uses an earlier RSISys protocol; start a new run')
         return state
 

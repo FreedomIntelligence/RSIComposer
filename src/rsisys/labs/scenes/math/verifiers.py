@@ -1,9 +1,13 @@
 """Answer verification components; no engine or framework runtime dependency."""
 from fractions import Fraction
-import re
-from typing import Protocol
 from functools import lru_cache
 from importlib.metadata import version
+import json
+import re
+import subprocess
+import sys
+from threading import current_thread, main_thread
+from typing import Protocol
 
 
 class MathVerifier(Protocol):
@@ -96,17 +100,50 @@ class MathVerifyVerifier:
         self._parse, self._verify = parse, verify
         self._extraction = [LatexExtractionConfig(boxed_match_priority=0)]
 
-    @lru_cache(maxsize=4096)
     def parse(self, text):
+        """Return the native parsed expression for callers on the main thread."""
         boxed = final_boxed(text)
-        if boxed is None:
-            return None
-        parsed = self._parse(boxed, extraction_config=self._extraction,
-                             fallback_mode='first_match', extraction_mode='first_match',
-                             parsing_timeout=2)
-        return parsed or None
+        return self._parse_boxed(boxed) if boxed is not None else None
+
+    @lru_cache(maxsize=4096)
+    def _parse_boxed(self, boxed):
+        return self._parse(boxed, extraction_config=self._extraction,
+                           fallback_mode='first_match', extraction_mode='first_match',
+                           parsing_timeout=2) or None
+
+    def _score_boxed(self, actual, expected):
+        parsed = self._parse_boxed(actual)
+        if parsed is None or expected is None:
+            return parsed is not None, False
+        gold = self._parse_boxed(expected)
+        return True, gold is not None and bool(self._verify(gold, parsed, strict=True, timeout_seconds=2))
+
+    def _grade(self, actual, expected):
+        if actual is None:
+            return False, False
+        if current_thread() is main_thread():
+            return self._score_boxed(actual, expected)
+        # Math-Verify uses SIGALRM on the main thread. Keep its scoring limits
+        # in the child and bound its total lifetime, including imports.
+        try:
+            result = subprocess.run(
+                [sys.executable, '-m', 'rsisys.labs.scenes.math._symbolic_worker'],
+                input=json.dumps([actual, expected]), capture_output=True, text=True, check=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError('Math-Verify worker exceeded its 10-second deadline') from error
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f'Math-Verify worker exited with code {error.returncode}') from error
+        parsed, correct = json.loads(result.stdout)
+        return parsed, correct
+
+    def accepts_reference(self, answer):
+        return self._grade(final_boxed(answer), None)[0]
+
+    def score(self, completion, answer):
+        """Return (parsed, correct) from either the main thread or a Lab worker."""
+        return self._grade(final_boxed(completion), final_boxed(answer))
 
     def is_correct(self, completion, answer):
-        expected, actual = self.parse(answer), self.parse(completion)
-        return expected is not None and actual is not None and bool(
-            self._verify(expected, actual, strict=True, timeout_seconds=2))
+        return self.score(completion, answer)[1]

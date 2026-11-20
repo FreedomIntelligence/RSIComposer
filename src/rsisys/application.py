@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
-from rsisys.assembly import AssemblyContext, ModuleAssembly
+from rsisys.assembly import AssemblyContext, ModuleAssembly, read_saved_module_layout
 from rsisys.loops.contracts.model_service import BackendBinding, ModelRef
 from rsisys.loops.decision_making.action_space.access import ActionPermissions
 from rsisys.runtime.evidence.retrieval import BasicEvidenceRepository
@@ -202,11 +202,10 @@ class Application:
             declared = profile_identity() if profile_identity is not None else {}
             if declared:
                 module_layout['lab_profiles'] = declared
-            if _restore and (root / 'module_assembly.json').exists():
-                if json.loads((root / 'module_assembly.json').read_text()) != module_layout:
-                    raise ValueError('Lab profile or primary metric differs from saved method identity')
-            if any(module_layout.values()):
-                atomic_write(root / 'module_assembly.json', json_bytes(module_layout))
+            saved_layout = read_saved_module_layout(root) if _restore else None
+            if saved_layout is not None and saved_layout != module_layout:
+                raise ValueError('Lab profile or primary metric differs from saved method identity')
+            atomic_write(root / 'module_assembly.json', json_bytes(module_layout))
             if self.assembly.lab_execution is not None:
                 atomic_write(root / 'lab_execution.json', json_bytes({'restore': 'requires_explicit_integration'}))
             if not _restore:

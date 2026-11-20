@@ -107,6 +107,7 @@ _EXPORTS = {
     'ModelBackend': ('rsisys.loops.contracts.model_service', 'ModelBackend'),
     'ModelRef': ('rsisys.loops.contracts.model_service', 'ModelRef'),
     'ModelResponseError': ('rsisys.loops.contracts.model_service', 'ModelResponseError'),
+    'ModelTransportError': ('rsisys.loops.contracts.model_service', 'ModelTransportError'),
     'OperationCall': ('rsisys.loops.contracts.decision', 'OperationCall'),
     'OperationResult': ('rsisys.loops.contracts.coordination', 'OperationResult'),
     'OperationSpec': ('rsisys.loops.contracts.decision', 'OperationSpec'),
@@ -291,6 +292,7 @@ if _TYPE_CHECKING:
         ModelBackend as ModelBackend,
         ModelRef as ModelRef,
         ModelResponseError as ModelResponseError,
+        ModelTransportError as ModelTransportError,
         TokenUsage as TokenUsage,
     )
     from rsisys.loops.contracts.rsi import (

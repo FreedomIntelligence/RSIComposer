@@ -1,13 +1,14 @@
 """Regression coverage for the shared math scene and its host split boundary."""
 from contextlib import redirect_stdout
 from hashlib import sha256
+from importlib.util import find_spec
 from io import BytesIO, StringIO
 import json
 from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
-from unittest import TestCase
+from unittest import TestCase, skipUnless
 from unittest.mock import patch
 
 from rsisys.cli import main
@@ -146,9 +147,36 @@ class MathLabTest(TestCase):
         with self.assertRaises(ModelTransportError):
             lab.execute(call)
 
-    def test_cli_run_with_host_finalization_and_provider_truncation(self):
-        self.add_official()
-        self.make_lab()
+    def test_custom_sealed_set_uses_frozen_rows_and_host_aggregation(self):
+        rows = [{'id': 'blind-1', 'prompt': 'Custom sealed problem', 'answer': 1,
+                 'benchmark': 'custom'}]
+        self.splits['official'] = self.write_rows('sealed.jsonl', rows)
+        lab = self.make_lab()
+        profile = ProfileBinding('math', lab, lab.describe())
+        binding = next(item for item in lab.data_bindings() if item.split == 'official')
+        self.assertEqual(binding.role, 'sealed')
+        self.assertEqual(binding.row_ids, ('blind-1',))
+        call = OperationCall('evaluate', {'split': 'official', 'instruction': 'Solve.'})
+        with self.assertRaisesRegex(ValueError, 'only to the host'):
+            profile.check(call)
+        profile.check(call, finishing=True)
+        with self.authority.scope('math', split='official', role=SEALED, finishing=True):
+            with self.assertRaisesRegex(LabToolError, 'entire split'):
+                lab.execute(OperationCall('evaluate', {**call.arguments, 'task_ids': ['blind-1']}))
+            result = profile.validate_result(call, lab.execute(call))
+            aggregate = profile.aggregate(call, result, self.context.artifacts)
+        self.assertEqual(aggregate.data['count'], 1)
+        self.assertEqual(aggregate.data['quality_metrics']['custom_accuracy'], 1.0)
+        self.assertNotIn('blind-1', json.dumps(aggregate.data))
+        with self.assertRaises(PermissionError):
+            self.context.artifacts.read(result.artifacts[0])
+        rows[0]['prompt'] = self.dev[0]['prompt']
+        self.splits['official'] = self.write_rows('sealed.jsonl', rows)
+        with self.assertRaisesRegex(ValueError, 'Duplicate'):
+            self.make_lab()
+
+    def run_cli(self, respond):
+        (self.root / 'scene.json').write_text(json.dumps({'schema_version': 1, 'splits': self.splits}))
         plugin = self.root / 'fixture_method.py'
         plugin.write_text("""
 from rsisys.api import Decision, MathLab, MethodDefinition, OperationCall
@@ -168,7 +196,9 @@ class FixtureController:
 
 class FinalFixtureLab(MathLab):
     def final_evaluations(self):
-        return (OperationCall('evaluate', {'split': 'official', 'instruction': 'Solve.'}),)
+        if 'official' in self.roles:
+            return (OperationCall('evaluate', {'split': 'official', 'instruction': 'Solve.'}),)
+        return ()
 
 def register(registry):
     registry.register_method('fixture_math', MethodDefinition.from_factories(
@@ -184,8 +214,41 @@ def register(registry):
             'roles': {'actor': {'backend_id': 'test', 'model_id': 'actor', 'revision': 'v1'}},
             'framework': {'method': {'name': 'fixture_math', 'config': {'labs': {'math': {
                 'manifest': str(self.root / 'scene.json'),
-                'split_roles': {'development': 'dev', 'official': 'sealed'}}}}}},
+                'split_roles': {split: 'sealed' if split == 'official' else 'dev'
+                                for split in self.splits}}}}}},
         }))
+        output = StringIO()
+        run = self.root / 'run'
+        args = ['rsisys', 'run', '--config', str(config), '--plugin', str(plugin), '--data-dir', str(run)]
+        opener = SimpleNamespace(open=respond)
+        with patch.object(sys, 'argv', args), patch('urllib.request.build_opener', return_value=opener):
+            with redirect_stdout(output):
+                main()
+        return json.loads(output.getvalue()), run
+
+    @skipUnless(find_spec('math_verify'), 'Math-Verify extra is not installed')
+    def test_cli_scores_symbolic_answers_from_the_lab_worker(self):
+        self.splits['development'] = {**self.write_rows('symbolic.jsonl', [
+            {'id': f'symbolic-{i}', 'prompt': str(i), 'answer': r'\frac{1}{2}'} for i in range(3)
+        ]), 'verifier': 'math_verify'}
+        completions = [r'\boxed{\frac{2}{4}}', r'\boxed{\frac{1}{3}}', 'No boxed answer']
+
+        def respond(request, **kwargs):
+            i = int(json.loads(request.data)['messages'][-1]['content'])
+            return BytesIO(json.dumps({'model': 'actor', 'model_revision': 'v1', 'choices': [{
+                'message': {'content': completions[i]}, 'finish_reason': 'stop',
+            }]}).encode())
+
+        result, run = self.run_cli(respond)
+        self.assertIn(result['status'], ('finished', 'completed'))
+        monitor = json.loads((run / 'monitor.json').read_text())
+        self.assertEqual(monitor['evaluations'][0]['metrics']['accuracy'], 1 / 3)
+        samples = {row['id']: (row['parsed'], row['correct']) for row in monitor['samples']}
+        self.assertEqual(samples, {'symbolic-0': (True, True), 'symbolic-1': (True, False),
+                                   'symbolic-2': (False, False)})
+
+    def test_cli_run_with_host_finalization_and_provider_truncation(self):
+        self.add_official()
         requests = []
 
         def respond(request, **kwargs):
@@ -199,14 +262,7 @@ def register(registry):
                 'usage': {'prompt_tokens': 12, 'completion_tokens': 32768 if finish == 'length' else 4},
             }).encode())
 
-        output = StringIO()
-        run = self.root / 'run'
-        args = ['rsisys', 'run', '--config', str(config), '--plugin', str(plugin), '--data-dir', str(run)]
-        opener = SimpleNamespace(open=respond)
-        with patch.object(sys, 'argv', args), patch('urllib.request.build_opener', return_value=opener):
-            with redirect_stdout(output):
-                main()
-        result = json.loads(output.getvalue())
+        result, run = self.run_cli(respond)
         self.assertIn(result['status'], ('finished', 'completed'))
         self.assertEqual(len(requests), 74)
         self.assertTrue(all(r['max_tokens'] == 32768 for r in requests))

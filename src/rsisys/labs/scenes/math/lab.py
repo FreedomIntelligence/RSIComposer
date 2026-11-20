@@ -13,7 +13,7 @@ from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec
 from rsisys.runtime.observation import report_samples
 
 from .datasets import load_splits
-from .verifiers import CompetitionIntegerVerifier
+from .verifiers import CompetitionIntegerVerifier, MathVerifyVerifier
 
 
 _TRACE_KIND = 'math-evaluation'
@@ -121,7 +121,7 @@ class MathLab:
         if task_ids is None:
             return rows
         if self.roles[split].after_finish_only:
-            raise LabToolError('The sealed math evaluation must use all 70 problems')
+            raise LabToolError('The sealed math evaluation must use the entire split')
         if (not isinstance(task_ids, list) or not task_ids
                 or any(not isinstance(ident, str) for ident in task_ids)
                 or len(set(task_ids)) != len(task_ids)):
@@ -155,9 +155,15 @@ class MathLab:
                 response.text, response.simulated, response.usage, response.finish_reason)
             status = 'truncated' if finish == 'length' else 'answered'
         elapsed = monotonic() - started
-        predicted = verifier.parse(completion) if status == 'answered' and isinstance(completion, str) else None
-        parsed = predicted is not None
-        correct = parsed and verifier.is_correct(completion, row.answer)
+        predicted = None
+        parsed = correct = False
+        if status == 'answered' and isinstance(completion, str):
+            if isinstance(verifier, MathVerifyVerifier):
+                parsed, correct = verifier.score(completion, row.answer)
+            else:
+                predicted = verifier.parse(completion)
+                parsed = predicted is not None
+                correct = parsed and predicted == row.answer
         if status == 'answered':
             status = 'correct' if correct else 'incorrect' if parsed else 'invalid_format'
         return {

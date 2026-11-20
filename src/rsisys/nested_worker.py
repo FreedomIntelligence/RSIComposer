@@ -14,6 +14,9 @@ from rsisys.runtime.storage.codec import decode, encode
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
+_MANIFEST_SCHEMA = 2
+
+
 def _factory_manifest(factory):
     if factory is None:
         return None
@@ -61,7 +64,7 @@ def build_nested_manifest(controller, labs, host_config, *, catalog=None, inheri
         raise ValueError('Registered NestedRun needs trusted registry_source from its parent assembly')
     if source is None and labs is None:
         raise ValueError('An explicit Python Controller needs explicit registered Labs')
-    manifest = {'schema': 1, 'version': encode(version), 'source': source, 'labs': labs, 'definition': definition,
+    manifest = {'schema': _MANIFEST_SCHEMA, 'version': encode(version), 'source': source, 'labs': labs, 'definition': definition,
                 'inherited_history': encode(tuple(inherited_history))}
     # Validate in the parent before reserving budget or launching any worker.
     _build_modules(manifest)
@@ -69,6 +72,8 @@ def build_nested_manifest(controller, labs, host_config, *, catalog=None, inheri
 
 
 def _build_modules(manifest):
+    if not isinstance(manifest, dict) or type(manifest.get('schema')) is not int or manifest['schema'] != _MANIFEST_SCHEMA:
+        raise ValueError('Unsupported nested manifest schema')
     from rsisys.methods import ControllerDefinition, MethodDefinition
     from rsisys.registry import Registry
     registry = Registry()

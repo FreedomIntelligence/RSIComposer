@@ -5,7 +5,7 @@ from pathlib import Path
 from rsisys.loops.contracts.model_service import ModelRef
 from rsisys.runtime.state.provenance import code_revision
 from rsisys.runtime.storage.files import atomic_write, file_hash, json_bytes
-from .manifest import SnapshotManifest
+from .manifest import SNAPSHOT_SCHEMA_VERSION, SnapshotManifest
 
 
 class FileSnapshotStore:
@@ -30,11 +30,11 @@ class FileSnapshotStore:
 
 def load_manifest(directory: Path) -> SnapshotManifest:
     raw = json.loads((directory / 'manifest.json').read_text())
+    if not isinstance(raw, dict) or raw.get('schema_version') != SNAPSHOT_SCHEMA_VERSION:
+        raise ValueError('Snapshot uses an earlier RSISys protocol; it cannot be restored')
     raw['role_bindings'] = {key: ModelRef(**value) for key, value in raw['role_bindings'].items()}
     raw['random_state_refs'] = tuple(raw['random_state_refs'])
     manifest = SnapshotManifest(**raw)
-    if manifest.schema_version != 33:
-        raise ValueError('Snapshot uses an earlier RSISys protocol; it cannot be restored')
     if manifest.kind != 'component_quiescent':
         raise ValueError('Unsupported snapshot kind')
     if manifest.code_revision != code_revision():
@@ -86,8 +86,8 @@ def restore_snapshot(directory, target, *, run_id=None, modules=None, run_policy
         raise FileExistsError('Restore target must be a new directory')
     manifest = load_manifest(directory)
     if modules is None:
-        marker = directory / 'module_assembly.json'
-        layout = json.loads(marker.read_text()) if marker.exists() else {}
+        from rsisys.assembly import read_saved_module_layout
+        layout = read_saved_module_layout(directory) or {}
         method = layout.get('method')
         if method is None:
             raise TypeError('Supply the original explicit ModuleAssembly for this snapshot')

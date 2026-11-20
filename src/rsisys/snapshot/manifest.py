@@ -3,6 +3,9 @@ from dataclasses import dataclass, field
 from rsisys.loops.contracts.model_service import ModelRef
 
 
+SNAPSHOT_SCHEMA_VERSION = 34
+
+
 @dataclass(frozen=True)
 class SnapshotManifest:
     """Local quiescent snapshot manifest; external weights and jobs are not captured.
@@ -25,7 +28,7 @@ class SnapshotManifest:
     component_refs: dict[str, str]
     random_state_refs: tuple[str, ...]
     resume_policy: dict[str, str]
-    schema_version: int = 33
+    schema_version: int = SNAPSHOT_SCHEMA_VERSION
     kind: str = "component_quiescent"
     label: str = ""
     file_digests: dict[str, str] = field(default_factory=dict)

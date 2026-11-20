@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+import json
 from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
@@ -21,6 +22,21 @@ from rsisys.runtime.execution.sandbox import SandboxBackend
 from rsisys.runtime.orchestration.run_policy import RunPolicy
 from rsisys.runtime.orchestration.runner import Runner
 from rsisys.runtime.storage.artifacts import ArtifactStore
+
+
+_MODULE_ASSEMBLY_SCHEMA = 1
+
+
+def read_saved_module_layout(directory):
+    """Read the assembly marker only after verifying its format."""
+    marker = Path(directory) / 'module_assembly.json'
+    if not marker.exists():
+        return None
+    layout = json.loads(marker.read_text())
+    if (not isinstance(layout, dict) or type(layout.get('schema_version')) is not int
+            or layout['schema_version'] != _MODULE_ASSEMBLY_SCHEMA):
+        raise ValueError('Unsupported module assembly schema; start a new run')
+    return layout
 
 
 def _factory_identity(value):
@@ -288,11 +304,9 @@ class ModuleAssembly:
                                 cleanup_timeout_seconds=cleanup_timeout_seconds)
 
     def validate_saved(self, directory):
-        """One assembly identity check for resume and both snapshot paths."""
-        import json
-        marker = Path(directory) / 'module_assembly.json'
-        if marker.exists():
-            saved = json.loads(marker.read_text())
+        """One assembly identity check for durable and snapshot restore."""
+        saved = read_saved_module_layout(directory)
+        if saved is not None:
             saved.pop('lab_profiles', None)
             if saved != self.configuration():
                 raise TypeError('Supply the original module assembly when restoring this workspace')
@@ -304,7 +318,8 @@ class ModuleAssembly:
 
     def configuration(self):
         """Stable assembly identity, shared by durable and portable restore."""
-        layout = {role + '_factory': self.has_port(role) for role in ('decision', 'lab')}
+        layout = {'schema_version': _MODULE_ASSEMBLY_SCHEMA,
+                  **{role + '_factory': self.has_port(role) for role in ('decision', 'lab')}}
         layout.update(memory=self.memory is not None, state_factory=self.state_factory is not None)
         if self.components is not None:
             layout['components'] = self.component_configuration()

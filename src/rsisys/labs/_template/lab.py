@@ -45,7 +45,7 @@ from pathlib import Path
 
 from rsisys.api import (
     DEV, TRAIN, DatasetBinding, GenerationRequest, JobOutcome, JobProgress, JobRef, JobStatus,
-    MetricSpec, OperationResult, OperationSpec,
+    MetricSpec, ModelResponseError, ModelTransportError, OperationResult, OperationSpec,
 )
 
 
@@ -147,13 +147,18 @@ class ArithmeticLab:
         work = self.jobs[job.job_id]
         if work['status'] == JobStatus.RUNNING.value:
             done = len(work['records'])
-            work['records'] += self._score(work['arguments'], self.rows['dev'][done:done + BATCH_SIZE])
-            if len(work['records']) == len(self.rows['dev']):
-                work['status'] = JobStatus.SUCCEEDED.value
+            try:
+                records = self._score(work['arguments'], self.rows['dev'][done:done + BATCH_SIZE])
+            except (ModelTransportError, ModelResponseError) as error:
+                work.update(status=JobStatus.FAILED.value, error=str(error).strip() or type(error).__name__)
+            else:
+                work['records'].extend(records)
+                if len(work['records']) == len(self.rows['dev']):
+                    work['status'] = JobStatus.SUCCEEDED.value
         status = JobStatus(work['status'])
         if status == JobStatus.SUCCEEDED:
             return JobOutcome(job, status, result=self._receipt(work['arguments'], work['records']))
-        return JobOutcome(job, status, progress=JobProgress(
+        return JobOutcome(job, status, error=work.get('error'), progress=JobProgress(
             step=len(work['records']), total_steps=len(self.rows['dev'])))
 
     def cancel_job(self, job):
