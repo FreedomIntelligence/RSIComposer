@@ -10,7 +10,6 @@ import random
 import re
 import statistics
 from copy import deepcopy
-from pathlib import Path
 
 from rsisys.api import Decision, ExecutionStatus, OperationCall, file_hash as digest
 
@@ -97,8 +96,6 @@ class RRSIController:
         self,
         *,
         initial_harness,
-        search_data,
-        heldout_data,
         researcher,
         metric,
         lab="harness",
@@ -113,8 +110,6 @@ class RRSIController:
     ):
         options = dict(
             initial_harness=initial_harness,
-            search_data=search_data,
-            heldout_data=heldout_data,
             lab=lab,
             iterations=iterations,
             candidates=candidates,
@@ -167,8 +162,6 @@ class RRSIController:
     def validate_config(config):
         allowed = {
             "initial_harness",
-            "search_data",
-            "heldout_data",
             "lab",
             "iterations",
             "candidates",
@@ -182,14 +175,8 @@ class RRSIController:
         }
         if set(config) - allowed:
             raise ValueError("Unknown rrsi option")
-        for key in ("initial_harness", "search_data", "heldout_data"):
-            if not isinstance(config.get(key), str) or not config[key].strip():
-                raise ValueError(f"{key} must be a nonempty path")
-        if (
-            Path(config["search_data"]).resolve()
-            == Path(config["heldout_data"]).resolve()
-        ):
-            raise ValueError("RRSI requires independent heldout data")
+        if not isinstance(config.get("initial_harness"), str) or not config["initial_harness"].strip():
+            raise ValueError("initial_harness must be a nonempty path")
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", config.get("lab", "harness")):
             raise ValueError("Invalid Lab alias")
         for key, default in (
@@ -219,9 +206,9 @@ class RRSIController:
     def required_profiles(self):
         return {self.options['lab']: 'artifact-search/v1'}
 
-    def _request(self, harness, dataset, split):
+    def _request(self, harness, split):
         if harness not in self.registered:
-            self.deferred = {'harness': harness, 'dataset': dataset, 'split': split}
+            self.deferred = {'harness': harness, 'split': split}
             self.pending = OperationCall(self.options['lab'] + '.register', {'candidate': {'harness': harness}})
         else:
             self.pending = OperationCall(self.options['lab'] + '.evaluate', {
@@ -315,7 +302,7 @@ class RRSIController:
             arguments, self.deferred = self.deferred, None
             return self._request(**arguments)
         if self.stage == "baseline":
-            return self._request(self.harness, self.options["search_data"], "search")
+            return self._request(self.harness, "search")
         if self.stage == "search":
             while self.round < self.options["iterations"]:
                 if not self.proposals:
@@ -341,11 +328,7 @@ class RRSIController:
                     )
                 if self.index < len(self.proposals):
                     self.stage = "candidate"
-                    return self._request(
-                        self.proposals[self.index]["harness"],
-                        self.options["search_data"],
-                        "search",
-                    )
+                    return self._request(self.proposals[self.index]["harness"], "search")
                 self._select()
             self.stage = 'select'
         if self.stage == 'select':

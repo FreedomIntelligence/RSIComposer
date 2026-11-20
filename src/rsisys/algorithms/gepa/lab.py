@@ -4,7 +4,7 @@ Mutation belongs to the Controller. The Lab renders GEPA's scorer prompt and ask
 the actor; the dataset manifest selects the answer verifier (the presets use
 marked_numeric, GEPA's GSM8K grader).
 """
-from ..shared.math_search import MathSearchLab
+from ..shared.math_search import PromptSearchLab
 from .controller import candidate_id
 from .protocol import valid_instruction
 
@@ -12,7 +12,7 @@ from .protocol import valid_instruction
 ACTOR_SYSTEM = ('Solve each math word problem. End with one line containing #### followed by the numeric answer only.')
 
 
-class GEPAGSM8KLab(MathSearchLab):
+class GEPAGSM8KLab(PromptSearchLab):
     receipt_kind = 'gepa'
 
     def _candidate_id(self, candidate):

@@ -11,13 +11,13 @@ from functools import partial
 
 from rsisys.api import MATH_VERIFIERS
 
-from ..shared.math_search import MathSearchLab
+from ..shared.math_search import PromptSearchLab
 from ..shared.search_registry import operation
 from .protocol import SCORER_SYSTEM_V1, candidate_id, upstream
 from .verifier import OPROVerifier
 
 
-class OPROGSM8KLab(MathSearchLab):
+class OPROGSM8KLab(PromptSearchLab):
     receipt_kind = 'opro'
 
     def __init__(self, context, config):

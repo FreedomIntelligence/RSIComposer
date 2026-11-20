@@ -26,8 +26,8 @@ require; check the preset before running it.
 | `gepa_merge` | `gepa/configs/merge-screen` | Model endpoint, pinned GEPA checkout in `external/gepa` | [README](../src/rsisys/algorithms/gepa/README.md) |
 | `promptpg` | `tabmwp` | Model endpoint, TabMWP files | — |
 | `funsearch` | `evolution`, `frozen_parents` | Model endpoint | — |
-| `meta_agent` | `math` | Model endpoint | — |
-| `rrsi` | `math` | Model endpoint and search/held-out files (see preset) | — |
+| `meta_agent` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
+| `rrsi` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
 | `coding_meta_agent` | `coding` | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsisys/algorithms/coding_meta_agent/README.md) |
 | `reflexion` | `control`, `reflection` | Model endpoint, HumanEval files | — |
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |

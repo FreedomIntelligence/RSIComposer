@@ -1,19 +1,20 @@
-"""MathLab over the artifact-search protocol, for prompt optimization on math tasks.
+"""MathLab over the artifact-search protocol, for methods that search for a math artifact.
 
 The data, verifiers, scoring and evidence are MathLab's: the Lab config names a
-MathLab dataset manifest with search and validation (development) and test
-(sealed) splits, and each split selects its verifier there. This layer adds the
-candidate registry (register, evaluate, select), evaluation by integer offsets
-into a split, a model-call budget and the per-example fields artifact-search
-Controllers read: scores, feedback, trace_refs and receipt_id (the digest of the
-stored evaluation trace).
+MathLab dataset manifest with development search splits and one sealed split,
+and each split selects its verifier there. MathSearchLab adds the candidate
+registry (register, evaluate, select), evaluation by integer offsets into a
+split, and the per-example fields artifact-search Controllers read: scores,
+feedback, trace_refs and receipt_id (the digest of the stored evaluation trace).
 
-A method Lab subclasses this, implements solve() with its own prompt (calling
-ask()), and _candidate_id() for its candidate shape. Config:
-
-    {"manifest": "data/manifest.json", "seed": 17, "max_model_calls": 256,
-     "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}}
+A method Lab implements _candidate_id() for its candidate shape and solve() for
+how a candidate answers, and maps its own config to MathLab's in math_config().
+PromptSearchLab is the case where the candidate is prompt text for the actor
+(GEPA, OPRO); the harness Lab runs candidate programs against a model pool.
 """
+from dataclasses import asdict
+import json
+
 from rsisys.api import GenerationRequest, MathLab, MetricSpec, OperationResult
 
 from .experiment import ModelCalls
@@ -27,19 +28,19 @@ class MathSearchLab(SearchRegistry, MathLab):
     def __init__(self, context, config):
         self._search_init()
         self.config = config
-        self.calls = ModelCalls(context, config['max_model_calls'])
-        MathLab.__init__(self, context, {
-            'manifest': config['manifest'],
-            'split_roles': {**dict.fromkeys(self.search_splits, 'dev'), self.sealed_split: 'sealed'},
-            'max_output_tokens': config['model']['max_output_tokens']})
+        MathLab.__init__(self, context, self.math_config(config))
+
+    def math_config(self, config):
+        """The MathLab config this Lab's config describes; split roles follow the search splits."""
+        return {'manifest': config['manifest'],
+                'split_roles': {**dict.fromkeys(self.search_splits, 'dev'), self.sealed_split: 'sealed'}}
 
     def state(self):
-        return {'binding': self.binding(), 'model_calls': self.calls.count, 'search': self._search_state()}
+        return {'binding': self.binding(), 'search': self._search_state()}
 
     def restore(self, state):
         if state['binding'] != self.binding():
             raise ValueError('Math search Lab input binding changed since the checkpoint')
-        self.calls.count = state['model_calls']
         self._restore_search(state['search'])
 
     def primary_metric(self):
@@ -66,8 +67,6 @@ class MathSearchLab(SearchRegistry, MathLab):
 
     def receipt(self, call, values):
         """Store a bookkeeping operation's request and result; its digest is the receipt_id."""
-        import json
-
         payload = {'operation': call.name, 'request': call.arguments, 'result': values}
         ref = self.artifacts.put(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode(),
                                  kind=f'{self.receipt_kind}-{call.name}')
@@ -82,19 +81,39 @@ class MathSearchLab(SearchRegistry, MathLab):
         rows = self.datasets[arguments['split']]
         return [rows[i] for i in self.offsets(arguments['request'], len(rows))]
 
+    def feedback(self, record):
+        return 'Correct answer' if record['correct'] else f"Incorrect answer; reference: {record['expected']}"
+
+    def result_data(self, records, ref, arguments):
+        return {'request': arguments['request'], 'receipt_id': ref.digest, 'valid': True,
+                'scores': [int(row['correct']) for row in records],
+                'trace_refs': [asdict(ref)] * len(records),
+                'feedback': [self.feedback(row) for row in records]}
+
+
+class PromptSearchLab(MathSearchLab):
+    """Prompt candidates answered by the actor role under a model-call budget.
+
+    Config: {"manifest": ..., "seed": 17, "max_model_calls": 256,
+             "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}}
+    """
+
+    def __init__(self, context, config):
+        self.calls = ModelCalls(context, config['max_model_calls'])
+        super().__init__(context, config)
+
+    def math_config(self, config):
+        return {**super().math_config(config), 'max_output_tokens': config['model']['max_output_tokens']}
+
+    def state(self):
+        return {**super().state(), 'model_calls': self.calls.count}
+
+    def restore(self, state):
+        super().restore(state)
+        self.calls.count = state['model_calls']
+
     def ask(self, prompt, system, *, seed):
         """One budgeted actor answer at the configured scorer temperature."""
         return self.attempt(GenerationRequest('actor', self.actor, prompt, system=system,
             temperature=self.config['model']['scorer_temperature'], top_p=1,
             max_output_tokens=self.max_output_tokens, seed=seed), self.calls.generate)
-
-    def feedback(self, record):
-        return 'Correct answer' if record['correct'] else f"Incorrect answer; reference: {record['expected']}"
-
-    def result_data(self, records, ref, arguments):
-        from dataclasses import asdict
-
-        return {'request': arguments['request'], 'receipt_id': ref.digest, 'valid': True,
-                'scores': [int(row['correct']) for row in records],
-                'trace_refs': [asdict(ref)] * len(records),
-                'feedback': [self.feedback(row) for row in records]}

@@ -8,8 +8,6 @@
       "config": {
         "controller": {
           "initial_harness": "src/rsisys/algorithms/rrsi/seed_harness.py",
-          "search_data": "runs/rrsi-data/search.jsonl",
-          "heldout_data": "runs/rrsi-data/heldout.jsonl",
           "lab": "harness",
           "iterations": 3,
           "candidates": 2,
@@ -46,9 +44,7 @@
               "http://127.0.0.1:18406/v1",
               "http://127.0.0.1:18407/v1"
             ],
-            "search_data": "runs/rrsi-data/search.jsonl",
-            "heldout_data": "runs/rrsi-data/heldout.jsonl",
-            "verifier": "math_verify",
+            "manifest": "runs/rrsi-data/manifest.json",
             "max_calls": 3,
             "max_tokens": 2048,
             "workers": 512,

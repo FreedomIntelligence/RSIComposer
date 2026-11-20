@@ -139,6 +139,7 @@ _EXPORTS = {
     'validate_verifier': ('rsisys.labs.math.verifiers', 'validate_verifier'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
     'MathLab': ('rsisys.labs.math.lab', 'MathLab'),
+    'MathAttempt': ('rsisys.labs.math.lab', 'Attempt'),
     'CodingLab': ('rsisys.labs.coding.lab', 'CodingLab'),
     'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
     'HarborCodingAgent': ('rsisys.labs.coding.agents', 'HarborCodingAgent'),
@@ -235,6 +236,7 @@ if _TYPE_CHECKING:
     from rsisys.runtime.execution.budget import BudgetExhausted as BudgetExhausted
 
     from rsisys.labs.math.lab import MathLab as MathLab
+    from rsisys.labs.math.lab import Attempt as MathAttempt
     from rsisys.labs.coding.lab import CodingLab as CodingLab
     from rsisys.labs.coding.artifacts import CodingArtifact as CodingArtifact
     from rsisys.labs.coding.agents import HarborCodingAgent as HarborCodingAgent

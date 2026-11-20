@@ -24,7 +24,9 @@ from rsisys.api import (
 )
 
 
-_OPTIONS = {'initial_harness', 'max_candidates', 'trials', 'final_trials'}
+# Fields of a harness trial record shown to the research model.
+_TRACE_FIELDS = ('question', 'completion', 'correct', 'error')
+_OPTIONS = {'initial_harness', 'max_candidates', 'trials', 'final_trials', 'output_subdir'}
 
 
 def validate_config(config):
@@ -35,6 +37,9 @@ def validate_config(config):
         value = config.get(key, default)
         if type(value) is not int or not 1 <= value <= maximum:
             raise ValueError('Invalid meta_agent ' + key)
+    output = config.get('output_subdir', 'harness-math')
+    if not isinstance(output, str) or Path(output).is_absolute() or '..' in Path(output).parts:
+        raise ValueError('Invalid output_subdir')
 
 
 class HarnessResearchLab:
@@ -46,8 +51,9 @@ class HarnessResearchLab:
         validate_source(source)
         self.config = dict(config)
         self.measurement = (measurement_factory or FixedModelHarnessLab)(context, {k: v for k, v in config.items() if k not in _OPTIONS})
-        self.root = self.measurement.root / 'candidates'
-        self.root.mkdir(exist_ok=bool(getattr(context, 'restoring', False)))
+        # A resumed run rebuilds the Lab over its own existing candidate directory.
+        self.root = Path(context.data_dir) / config.get('output_subdir', 'harness-math') / 'candidates'
+        self.root.mkdir(parents=True, exist_ok=bool(getattr(context, 'restoring', False)))
         path = self.root / 'baseline.py'
         if not path.exists():
             path.write_text(source)
@@ -172,7 +178,7 @@ class HarnessResearchLab:
             except (ValueError, SyntaxError) as exc:
                 raise LabToolError('Invalid candidate source: ' + str(exc)) from exc
             for rows in self.measurement.datasets.values():
-                if any(len(row['prompt']) > 20 and row['prompt'] in source for row in rows):
+                if any(len(row.prompt) > 20 and row.prompt in source for row in rows):
                     raise LabToolError('Question literals cannot be embedded in a harness')
             ident = f'candidate-{len(self.candidates)}'
             path = self.root / (ident + '.py')
@@ -205,14 +211,13 @@ class HarnessResearchLab:
                 return replace(result, data=data)
             self.measured.add(ident)
             trace_ref = ArtifactRef(**data['traces'])
-            trace_text = self.measurement.artifacts.read(trace_ref).decode()
             evaluation = trace_ref.artifact_id
             self.search_traces[evaluation] = trace_ref
             # Aggregate feedback stays complete; large trial tables stay in the archive.
             data['evaluation'] = evaluation
-            row = json.loads(trace_text.splitlines()[0])
+            row = json.loads(self.measurement.artifacts.read(trace_ref))['records'][0]
             data['example_excerpt'] = {k: (row[k][:512] if isinstance(row[k], str) else row[k])
-                                       for k in ('prompt', 'completion', 'correct', 'error')}
+                                       for k in _TRACE_FIELDS}
             data['example_is_excerpt'] = True
             return replace(result, data=data)
         self.selected = ident
@@ -227,11 +232,11 @@ class HarnessResearchLab:
             raise LabToolError('Trace index and offset must be nonnegative integers')
         ref = self.search_traces[evaluation]
         expected = ref.digest
-        lines = self.measurement.artifacts.read(ref).decode().splitlines()
-        if index >= len(lines):
+        records = json.loads(self.measurement.artifacts.read(ref))['records']
+        if index >= len(records):
             raise LabToolError('Trace index is outside this evaluation')
-        row = json.loads(lines[index])
-        text = json.dumps({k: row[k] for k in ('prompt', 'completion', 'correct', 'error')}, ensure_ascii=False)
+        row = records[index]
+        text = json.dumps({k: row[k] for k in _TRACE_FIELDS}, ensure_ascii=False)
         if offset > len(text):
             raise LabToolError('Trace offset is outside this record')
         end = min(len(text), offset + 2000)

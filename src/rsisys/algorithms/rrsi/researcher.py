@@ -152,19 +152,16 @@ class HarnessResearcher:
     ):
         if digest(harness) != measurement["harness_sha256"]:
             raise ValueError("Incumbent harness changed")
-        traces = [
-            json.loads(line)
-            for line in self.artifacts.read(ArtifactRef(**measurement["traces"])).decode().splitlines()
-        ]
+        traces = json.loads(self.artifacts.read(ArtifactRef(**measurement["traces"])))["records"]
         failures = [r for r in traces if not r["correct"]][:4]
         successes = [r for r in traces if r["correct"]][:2]
         evidence = [
             {
                 **{
                     k: r[k]
-                    for k in ("id", "prompt", "correct", "calls", "tokens", "error")
+                    for k in ("id", "question", "correct", "calls", "tokens", "error")
                 },
-                "completion": r["completion"][-2500:],
+                "completion": (r["completion"] or "")[-2500:],
             }
             for r in failures + successes
         ]

@@ -18,16 +18,19 @@ and traces. Two hooks separate what differs between methods from what is shared:
 
 Smaller hooks: problems(arguments) picks the rows to answer, attempt(request,
 generate) turns one model call into an Attempt (a subclass passes its own budgeted
-generate), and result_data(records, ref, arguments) adds fields to the result.
-binding() is the input identity that traces carry; a subclass that keeps more
-state extends state() and checks binding() on restore.
+generate), verify(problems, attempts) grades them, and result_data(records, ref,
+arguments) adds fields to the result. bind_actor() names the model being measured
+(the actor role by default). binding() is the input identity that traces carry; a
+subclass that keeps more state extends state() and checks binding() on restore.
 
 A subclass also extends describe()/execute() with its own operations, overrides
 evaluate_schema() for different evaluate arguments, and adds answer formats to
 the verifiers catalog that dataset manifests select from.
 """
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 import json
+import multiprocessing
 from time import monotonic
 
 # Lab code imports its layers directly; rsisys.api is the composition layer.
@@ -54,6 +57,8 @@ class Attempt:
 
     status is answered, truncated (the provider stopped at its output limit) or
     invalid_format (no usable text); only answered attempts are verified.
+    extra holds a subclass's per-attempt evidence (trial, tool calls, errors),
+    which the record keeps alongside the shared fields.
     """
     completion: str | None
     status: str = 'answered'
@@ -61,6 +66,12 @@ class Attempt:
     usage: dict = field(default_factory=dict)
     simulated: bool = False
     elapsed_seconds: float = 0.0
+    extra: dict = field(default_factory=dict)
+
+
+def _check_isolated(verifier, completion, answer):
+    # Each spawned worker grades on its main thread, so signal-based time limits work.
+    return verifier.check(completion, answer)
 
 
 class MathLab:
@@ -69,20 +80,26 @@ class MathLab:
 
     def __init__(self, context, config):
         self.validate_config(config)
-        self.actor = context.roles.get('actor')
-        if self.actor is None:
-            raise ValueError('Math Lab requires a configured actor model')
+        self.actor = self.bind_actor(context, config)
         self.models = context.models
         self.artifacts = context.artifacts
         self.roles = {name: _SPLIT_ROLES[role] for name, role in config['split_roles'].items()}
         self.datasets, self.bindings, self.manifest_sha256 = load_splits(
             config['manifest'], self.roles, verifiers=self.verifiers)
         self.max_output_tokens = config.get('max_output_tokens', 32768)
+        self.grading_workers = config.get('grading_workers', 1)
+
+    def bind_actor(self, context, config):
+        """The ModelRef of the model being measured."""
+        actor = context.roles.get('actor')
+        if actor is None:
+            raise ValueError('Math Lab requires a configured actor model')
+        return actor
 
     @staticmethod
     def validate_config(config):
         required = {'manifest', 'split_roles'}
-        if not required <= config.keys() or config.keys() - required - {'max_output_tokens'}:
+        if not required <= config.keys() or config.keys() - required - {'max_output_tokens', 'grading_workers'}:
             raise ValueError('Math Lab requires manifest and split_roles')
         manifest, roles = config['manifest'], config['split_roles']
         if not isinstance(manifest, str) or not manifest.strip():
@@ -92,9 +109,10 @@ class MathLab:
                        for name, role in roles.items())
                 or list(roles.values()).count('sealed') > 1):
             raise ValueError('Assign math splits dev or sealed, with at most one combined sealed split')
-        tokens = config.get('max_output_tokens', 32768)
-        if type(tokens) is not int or tokens < 1:
-            raise ValueError('max_output_tokens must be a positive integer')
+        for key, default in (('max_output_tokens', 32768), ('grading_workers', 1)):
+            value = config.get(key, default)
+            if type(value) is not int or value < 1:
+                raise ValueError(f'{key} must be a positive integer')
 
     def split_roles(self):
         return dict(self.roles)
@@ -233,11 +251,32 @@ class MathLab:
                        response.finish_reason, _usage(response.usage), response.simulated,
                        round(monotonic() - started, 6))
 
-    def record(self, problem, attempt):
-        """Verify one attempt; the record is the per-item evidence."""
+    def verify(self, problems, attempts):
+        """One AnswerCheck per answered attempt, None for the rest.
+
+        Verifiers that must grade on a main thread (isolated) run in a pool of
+        grading_workers processes when more than one is configured.
+        """
+        checks = [None] * len(attempts)
+        answered = [i for i, attempt in enumerate(attempts)
+                    if attempt.status == 'answered' and isinstance(attempt.completion, str)]
+        pooled = [i for i in answered if self.grading_workers > 1 and problems[i].verifier.isolated]
+        if pooled:
+            with ProcessPoolExecutor(max_workers=self.grading_workers,
+                                     mp_context=multiprocessing.get_context('spawn')) as pool:
+                futures = {i: pool.submit(_check_isolated, problems[i].verifier,
+                                          attempts[i].completion, problems[i].answer) for i in pooled}
+                for i, future in futures.items():
+                    checks[i] = future.result()
+        for i in answered:
+            if checks[i] is None:
+                checks[i] = problems[i].verifier.check(attempts[i].completion, problems[i].answer)
+        return checks
+
+    def record(self, problem, attempt, check):
+        """The per-item evidence for one attempt and its check."""
         predicted, parsed, correct, status = None, False, False, attempt.status
-        if status == 'answered' and isinstance(attempt.completion, str):
-            check = problem.verifier.check(attempt.completion, problem.answer)
+        if check is not None:
             parsed, correct, predicted = check.parsed, check.correct, check.predicted
         if status == 'answered':
             status = 'correct' if correct else 'incorrect' if parsed else 'invalid_format'
@@ -246,12 +285,16 @@ class MathLab:
             'expected': problem.expected, 'predicted': predicted,
             'completion': attempt.completion, 'correct': correct, 'parsed': parsed, 'status': status,
             'finish_reason': attempt.finish_reason, 'usage': dict(attempt.usage),
-            'elapsed_seconds': attempt.elapsed_seconds,
+            'elapsed_seconds': attempt.elapsed_seconds, **attempt.extra,
         }
 
     def score(self, call_id, split, problems, attempts, arguments, *, elapsed_seconds):
         """Verify attempts, aggregate quality and execution metrics, and store the trace."""
-        records = [self.record(problem, attempt) for problem, attempt in zip(problems, attempts, strict=True)]
+        graded = monotonic()
+        checks = self.verify(problems, attempts)
+        grading_seconds = monotonic() - graded
+        records = [self.record(problem, attempt, check)
+                   for problem, attempt, check in zip(problems, attempts, checks, strict=True)]
         simulated = any(attempt.simulated for attempt in attempts)
         correct = sum(row['correct'] for row in records)
         quality = {'accuracy': correct / len(records), 'correct': correct}
@@ -262,6 +305,7 @@ class MathLab:
                             f'{name}_correct': count, f'{name}_count': len(group)})
         execution = {
             'elapsed_seconds': round(elapsed_seconds, 6),
+            'grading_seconds': round(grading_seconds, 6),
             'num_samples': len(records),
             'invalid_format': sum(row['status'] == 'invalid_format' for row in records),
             'truncated': sum(row['status'] == 'truncated' for row in records),

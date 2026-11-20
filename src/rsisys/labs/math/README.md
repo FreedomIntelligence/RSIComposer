@@ -39,6 +39,9 @@ shows the entry for the `framework.labs.math` alias of a run config.
 }
 ```
 
+`grading_workers` (default 1) grades with verifiers that must run on a main
+thread, such as `math_verify`, in that many worker processes.
+
 Use a separate JSON object for the dataset manifest.
 
 ```json
@@ -134,13 +137,16 @@ only what its candidate is and how it answers:
 | Override | Default | Change it to |
 | --- | --- | --- |
 | `solve(problems, arguments)` | Ask the actor each problem after `arguments['instruction']` (`ask_actor`) | Run a harness program, generate with a trained checkpoint, or render the method's own prompt template |
-| `problems(arguments)` | The split, or the listed development `task_ids` | Select rows another way, such as integer offsets |
+| `problems(arguments)` | The split, or the listed development `task_ids` | Select rows another way, such as integer offsets or one row per trial |
+| `verify(problems, attempts)` | Each answered attempt's verifier, with isolated verifiers in `grading_workers` processes | Grade another way |
+| `bind_actor(context, config)` | The `actor` role | Another model reference, such as a served model pool |
 | `evaluate_schema()` | `split`, `instruction`, optional `task_ids` | The method's candidate arguments, such as `candidate_id` or `model` |
 | `result_data(records, ref, arguments)` | No extra fields | Add the per-example fields the method's Controller reads |
 | `verifiers` | The four shared verifiers | Add the method's own answer format, for example an upstream evaluator |
 | `describe()` / `execute()` | `inspect`, `evaluate`, `read_trace` | Add operations such as `register`, `select`, `generate` or `train` |
 
-`solve` returns one `Attempt` per problem (completion, status, usage);
+`solve` returns one `Attempt` per problem (completion, status, usage, and an
+`extra` dict of method fields that the trace record keeps);
 `attempt(request, generate)` makes one from a model call, so a subclass can pass
 its own budgeted `generate`. `score()` verifies the attempts and returns the
 receipt. Traces record `binding()`, the data, actor and verifier identity; a
@@ -149,12 +155,16 @@ restores. Dataset manifests select a verifier by name from the subclass's
 catalog, so a method can keep its upstream scoring as the default and still let
 a run choose another verifier.
 
-Prompt-optimization methods use `MathSearchLab`
+Prompt-optimization methods use `PromptSearchLab`
 ([`algorithms/shared/math_search.py`](../../algorithms/shared/math_search.py)),
-a MathLab subclass that speaks the artifact-search protocol: `register`,
+a `MathSearchLab` (MathLab speaking the artifact-search protocol) whose candidates are actor prompts: `register`,
 `evaluate` by integer offsets into `search`, `validation` and the sealed `test`
 split, and `select`. GEPA and OPRO subclass it and only render their prompts;
-OPRO adds its author grader to the catalog as `opro_official`.
+OPRO adds its author grader to the catalog as `opro_official`. The harness Lab
+used by RRSI and Meta-Agent ([`harness_lab.py`](../../algorithms/shared/harness_lab.py))
+is another `MathSearchLab`: its candidate is a program, `solve()` runs each
+problem for several trials against a fixed model pool, and the manifest has
+`search` and sealed `heldout` splits.
 
 ## Public operations
 
