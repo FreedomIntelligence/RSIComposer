@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import {notices} from './upstream-notices.js';
+import {notices, noticeSources} from './upstream-notices.js';
 import path from 'node:path';
 export function attributions(){
   return {name:'rsimonitor-third-party-notices',generateBundle(_options,bundle){
@@ -10,7 +10,7 @@ export function attributions(){
       const name=remaining[0].startsWith('@')?remaining.slice(0,2).join('/'):remaining[0];
       roots.add((id.slice(0,index+marker.length)+name).replaceAll('\0',''));
     }
-    let notice='RSIMonitor chart workspace\nAdapted from SwanHubX/SwanLab-Dashboard\nRevision e2a7a84f49dcf18ff09c50846f5516b69093c0b9\nCopyright SwanLab-Dashboard contributors. Apache-2.0.\nModified for RSISys: local data subscriptions, host UI, persistent layouts and axes.\n';
+    let notice='RSIMonitor chart workspace\nAdapted from SwanHubX/SwanLab-Dashboard\nRevision e2a7a84f49dcf18ff09c50846f5516b69093c0b9\nCopyright SwanLab-Dashboard contributors. Apache-2.0.\nUpstream license declaration: https://github.com/SwanHubX/SwanLab-Dashboard/blob/e2a7a84f49dcf18ff09c50846f5516b69093c0b9/pyproject.toml#L9-L13\nModified for RSISys: local data subscriptions, host UI, persistent layouts and axes.\n';
     notice+=fs.readFileSync(path.resolve('../../../LICENSE'),'utf8')+'\n\nBundled dependencies:\n';
     for(const root of [...roots].sort()){
       const metadata=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
@@ -19,11 +19,16 @@ export function attributions(){
       if(!files.length){
         const declared=metadata.license;
         if(!['MIT','ISC'].includes(declared))throw new Error('Unknown bundled license: '+metadata.name);
+        const release=`${metadata.name}@${metadata.version}`;
+        const source=noticeSources[release] || `https://registry.npmjs.org/${metadata.name}/${metadata.version}`;
         notice+='Declared license: '+declared+'\nUpstream author metadata: '+JSON.stringify(metadata.author||metadata.repository)+'\n';
-        const terms=notices[declared];
-        notice+='SPDX terms: '+terms.source+'\n'+terms.text.replace(/^Copyright.*\n/m,'')+'\n';
-        const project=metadata.name.startsWith('@antv/')?'AntV':metadata.name==='@headlessui/vue'?'HeadlessUI':metadata.name==='@vue/devtools-api'?'VueDevtools':null;
-        if(project)notice+=notices[project].source+'\n'+notices[project].text+'\n';
+        const original=release==='@headlessui/vue@1.7.23'?notices.HeadlessUI:metadata.name==='@vue/devtools-api'?notices.VueDevtools:null;
+        if(original){
+          notice+='Upstream license: '+original.source+'\n'+original.text+'\n';
+        }else{
+          const terms=notices[declared];
+          notice+='Upstream license declaration: '+source+'\nSPDX license text: '+terms.source+'\n'+terms.text.replace(/^Copyright.*\n/m,'')+'\n';
+        }
       }
       for(const name of files)notice+=fs.readFileSync(path.join(root,name),'utf8')+'\n';
     }

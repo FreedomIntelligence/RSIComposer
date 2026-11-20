@@ -1,7 +1,8 @@
 """Registered TTRL Lab delegating training to the pinned official verl fork.
 
-External backend (Apache-2.0), installed separately:
-https://github.com/PRIME-RL/TTRL/tree/5806e119789132fcb43552beaf2532d7d0447213
+The separately installed TTRL checkout is MIT at its root. This adapter
+uses the bundled verl backend, which is licensed under Apache-2.0:
+https://github.com/PRIME-RL/TTRL/blob/5806e119789132fcb43552beaf2532d7d0447213/verl/LICENSE
 """
 from copy import deepcopy
 from dataclasses import asdict
