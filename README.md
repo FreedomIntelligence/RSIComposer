@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv paper: Coming soon">
 </p>
 
-<p align="center"><strong>A general framework for recursive self-improvement: research, explore, and improve the whole system</strong></p>
+<p align="center"><strong>A general framework for recursive self-improvement: build your own RSI system from interchangeable components</strong></p>
 
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 

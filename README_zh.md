@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv 论文：Coming soon">
 </p>
 
-<p align="center"><strong>通用的递归自改进框架：研究、探索，并改进整个系统</strong></p>
+<p align="center"><strong>通用的递归自改进框架：自由组合组件，定制你的 RSI 系统</strong></p>
 
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
