@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from .agents import HarborCodingAgent, agent_configuration
+from .agents import HarborAgentRuntime, agent_configuration
 from rsisys.runtime.storage.files import atomic_write, json_bytes
 
 
@@ -25,8 +25,9 @@ def is_measured(rewards, error):
 
 async def run_one(args):
     spec = (json.loads(Path(args.agent_spec).read_text()) if args.agent_spec
-            else HarborCodingAgent().to_json())
-    spec = HarborCodingAgent(**spec).to_json()
+            else HarborAgentRuntime().to_json())
+    spec = {key: spec[key] for key in ('import_path', 'version', 'kwargs', 'bindings',
+                                       'artifact_python_paths', 'skip_model_parsing')}
     artifact = str(Path(args.artifact).resolve(strict=True))
     agent, paths = agent_configuration(spec, {
         'artifact': artifact, 'artifact_dir': str(Path(artifact) if Path(artifact).is_dir() else Path(artifact).parent),

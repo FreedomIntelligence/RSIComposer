@@ -24,7 +24,7 @@ from rsisys.algorithms.rest_em.engine import (
 from rsisys.api import WorkerLostError
 from rsisys.api import (
     ExecutionStatus, Invariant,
-    MathAttempt, MathLab, MetricSpec, ModelRef,
+    CheckpointRuntime, MathAttempt, MathLab, MetricSpec, ModelRef,
     OperationResult,
     OperationSpec,
     file_hash,
@@ -300,9 +300,16 @@ class RestEMLab(MathLab):
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
+    def make_runtime(self, config):
+        return CheckpointRuntime()
+
     def solve(self, problems, arguments):
-        completions = self._completions(arguments['model'], self._rows(problems), 1, arguments['round'], False)
-        return [MathAttempt(answers[0], simulated=self.simulated) for answers in completions]
+        self._round = arguments['round']
+        return self.run_runtime({'model': arguments['model']}, problems)
+
+    def generate(self, model, problems):
+        """What the checkpoint runtime lends: one greedy completion per problem."""
+        return [answers[0] for answers in self._completions(model, self._rows(problems), 1, self._round, False)]
 
     def result_data(self, records, ref, arguments):
         return {'request': arguments, 'model': arguments['model'], 'training_performed': False}

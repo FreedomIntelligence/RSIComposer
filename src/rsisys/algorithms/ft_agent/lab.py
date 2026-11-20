@@ -22,7 +22,7 @@ from pathlib import Path
 from rsisys.algorithms.ft_agent.upstream import LLAMA_FACTORY_REVISION
 from rsisys.api import WorkerLostError
 from rsisys.api import (
-    MATH_VERIFIERS, AnswerCheck, MathAttempt, MathLab, MathVerifyVerifier, MetricSpec, ModelRef, OperationCall,
+    MATH_VERIFIERS, AnswerCheck, CheckpointRuntime, MathLab, MathVerifyVerifier, MetricSpec, ModelRef, OperationCall,
     OperationResult,
     OperationSpec,
     WeightEngine,
@@ -327,12 +327,22 @@ class LLMFinetuneLab(MathLab):
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
+    def make_runtime(self, config):
+        return CheckpointRuntime()
+
+    @property
+    def simulated(self):
+        return False
+
     def solve(self, problems, arguments):
+        return self.run_runtime({'model': arguments['model']}, problems)
+
+    def generate(self, model, problems):
+        """What the checkpoint runtime lends: one greedy completion per problem."""
         prompts = ['<|im_start|>user\n' + problem.prompt +
             '\nPlease reason step by step and put the final answer in \\boxed{}.<|im_end|>\n<|im_start|>assistant\n'
             for problem in problems]
-        outputs = self.engine.generate(arguments['model'], prompts, self._directory, sample=False)
-        return [MathAttempt(output['completion']) for output in outputs]
+        return [output['completion'] for output in self.engine.generate(model, prompts, self._directory, sample=False)]
 
     def result_data(self, records, ref, arguments):
         correct = sum(row['correct'] for row in records)

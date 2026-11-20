@@ -126,6 +126,20 @@ named aggregate, and assembly fails without it. See the
 [Math](../src/rsisys/labs/math/README.md#benchmarks) Labs. The contract is in
 [`loops/contracts/benchmark.py`](../src/rsisys/loops/contracts/benchmark.py).
 
+### Candidates and runtimes
+
+What a Lab measures is a candidate: an instruction, a configuration, a program or an
+agent source tree. A Controller submits it and the Lab pins it by content hash; the Lab
+never proposes, edits or selects it. How a candidate runs on a benchmark's tasks is the
+benchmark's **runtime**, recorded in its `protocol_id` next to the budgets, so a benchmark
+is run the same way wherever it is mounted. A runtime declares what a candidate may set
+(any other field is rejected), how it reaches a model, and a trust level: `data`,
+`sandboxed-code` (bwrap or a task container) or `host-code` (imported on a worker host).
+`host-code` runs only when the Lab config lists `trust = ["host-code"]`. The contract is
+in [`loops/contracts/agent_runtime.py`](../src/rsisys/loops/contracts/agent_runtime.py);
+see the [Coding](../src/rsisys/labs/coding/README.md#plugging-in-a-method-or-coding-agent) and
+[Math](../src/rsisys/labs/math/README.md#runtimes) runtimes.
+
 ### Connect a question-answer benchmark
 
 A benchmark whose rows hold a question and a numeric or symbolic gold answer

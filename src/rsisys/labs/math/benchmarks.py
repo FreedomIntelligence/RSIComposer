@@ -73,7 +73,7 @@ def load_benchmark(manifest_path, name, *, manifest=None):
     return MathBenchmark(name, digest, tuple(problems))
 
 
-def official_problems(root, entry, *, budgets=True, max_output_tokens=32768):
+def official_problems(root, entry, *, budgets=True, max_output_tokens=32768, runtime=None):
     """Selected benchmarks of the official bundle, as one sealed split's problems.
 
     entry may list `benchmarks` (default: all three) and a `max_output_tokens`. Each
@@ -106,5 +106,5 @@ def official_problems(root, entry, *, budgets=True, max_output_tokens=32768):
         rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier, str(row.answer), tokens)
                     for row in load_benchmark(path, name, manifest=manifest).problems)
         benchmarks[name] = math_benchmark(name, {'name': 'competition_integer', 'maximum': spec.maximum},
-                                          verifier, tokens, {'bundle': str(path), 'sha256': entry['sha256']})
+                                          verifier, tokens, {'bundle': str(path), 'sha256': entry['sha256']}, runtime)
     return tuple(rows), path, benchmarks

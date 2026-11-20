@@ -140,9 +140,17 @@ _EXPORTS = {
     # Containerized coding benchmark provider (Harbor is optional at runtime).
     'MathLab': ('rsisys.labs.math.lab', 'MathLab'),
     'MathAttempt': ('rsisys.labs.math.lab', 'Attempt'),
+    'CheckpointRuntime': ('rsisys.labs.math.runtimes', 'CheckpointRuntime'),
+    'InstructionRuntime': ('rsisys.labs.math.runtimes', 'InstructionRuntime'),
+    'StepProgramRuntime': ('rsisys.labs.math.runtimes', 'StepProgramRuntime'),
     'CodingLab': ('rsisys.labs.coding.lab', 'CodingLab'),
     'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
-    'HarborCodingAgent': ('rsisys.labs.coding.agents', 'HarborCodingAgent'),
+    'HarborAgentRuntime': ('rsisys.labs.coding.agents', 'HarborAgentRuntime'),
+    'Benchmark': ('rsisys.loops.contracts.benchmark', 'Benchmark'),
+    'AgentRuntime': ('rsisys.loops.contracts.agent_runtime', 'AgentRuntime'),
+    'Subject': ('rsisys.loops.contracts.agent_runtime', 'Subject'),
+    'CandidateRejected': ('rsisys.loops.contracts.agent_runtime', 'CandidateRejected'),
+    'CandidateSpec': ('rsisys.loops.contracts.agent_runtime', 'CandidateSpec'),
     # Optional serving and training implementations.
     'ChatPool': ('rsisys.backends.serving.chat', 'ChatPool'),
     'LoRAEngine': ('rsisys.backends.training.lora.engine', 'LoRAEngine'),
@@ -237,9 +245,18 @@ if _TYPE_CHECKING:
 
     from rsisys.labs.math.lab import MathLab as MathLab
     from rsisys.labs.math.lab import Attempt as MathAttempt
+    from rsisys.labs.math.runtimes import (
+        CheckpointRuntime as CheckpointRuntime, InstructionRuntime as InstructionRuntime,
+        StepProgramRuntime as StepProgramRuntime,
+    )
     from rsisys.labs.coding.lab import CodingLab as CodingLab
     from rsisys.labs.coding.artifacts import CodingArtifact as CodingArtifact
-    from rsisys.labs.coding.agents import HarborCodingAgent as HarborCodingAgent
+    from rsisys.labs.coding.agents import HarborAgentRuntime as HarborAgentRuntime
+    from rsisys.loops.contracts.benchmark import Benchmark as Benchmark
+    from rsisys.loops.contracts.agent_runtime import (
+        AgentRuntime as AgentRuntime, Subject as Subject, CandidateRejected as CandidateRejected,
+        CandidateSpec as CandidateSpec,
+    )
     from rsisys.application import Application as Application, ApplicationConfig as ApplicationConfig
     from rsisys.assembly import (
         AssemblyContext as AssemblyContext,

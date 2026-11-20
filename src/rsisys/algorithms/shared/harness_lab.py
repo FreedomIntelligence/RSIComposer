@@ -1,9 +1,11 @@
 """Fixed-model math harness measurement, with no search policy: a MathLab whose candidates are programs.
 
 A candidate is a sandboxed harness program, step(problem, history), that asks a
-fixed model pool for messages until it returns an answer. The Lab's solve() runs
-each selected problem for `trials` independent trials; MathLab verifies the
-answers, aggregates metrics and stores the trace. The dataset manifest has a
+fixed model pool for messages until it returns an answer. The Lab runs it with the
+step-program runtime (labs/math/runtimes.py) for `trials` independent trials per
+problem; MathLab verifies the answers, aggregates metrics and stores the trace.
+This Lab keeps the pool, the sandbox executor, the call budget and the candidate
+checks (source validity, no embedded problems, no edits after measuring). The dataset manifest has a
 development `search` split and a sealed `heldout` split and selects the answer
 verifier (math_verify in the presets); grading_workers grades isolated
 verifiers in parallel processes.
@@ -11,18 +13,14 @@ verifiers in parallel processes.
 Config: {"manifest", "endpoints", "model", "max_calls", "max_tokens", "workers",
 "grading_workers", "sandbox_workers", "seed", "temperature", "timeout", "trials"}.
 """
-from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
 from dataclasses import asdict
 from pathlib import Path
-import subprocess
 import threading
-import time
 
 from rsisys.api import (
     HarnessExecutionError,
-    MathAttempt as Attempt,
     ModelRef,
+    StepProgramRuntime,
     file_hash as digest,
     sandbox_step,
     validate_source,
@@ -62,11 +60,30 @@ class FixedModelHarnessLab(MathSearchLab):
         self._sandbox_slots = threading.BoundedSemaphore(config.get('sandbox_workers', 32))
         # Harness paths measured so far, with their hashes; a measured file must not change.
         self._harnesses = {}
+        self.seed = config.get('seed', 73)
+        self.workers = config.get('workers', 32)
         super().__init__(context, config)
 
     def math_config(self, config):
         return {**super().math_config(config), 'max_output_tokens': config.get('max_tokens', 2048),
                 'grading_workers': config.get('grading_workers', 1)}
+
+    def make_runtime(self, config):
+        return StepProgramRuntime(max_calls=config.get('max_calls', 3))
+
+    def runtime_options(self, config):
+        return {'max_calls': self.runtime.max_calls}
+
+    # Errors that mean the candidate program failed on a task: observed failed trials, not Lab failures.
+    candidate_errors = (HarnessExecutionError,)
+
+    @property
+    def sandbox_slots(self):
+        return self._sandbox_slots
+
+    @property
+    def trials_per_problem(self):
+        return self._trials
 
     def bind_actor(self, context, config):
         # The measured model is the pool serving this Lab's model from its endpoints.
@@ -116,42 +133,11 @@ class FixedModelHarnessLab(MathSearchLab):
             raise ValueError('Previously measured harness changed')
         if any(len(problem.prompt) > 20 and problem.prompt in source for problem in problems):
             raise ValueError('Task-specific problem in harness source')
-        trials = self.trials(request)
-        with ThreadPoolExecutor(max_workers=self.config.get('workers', 32)) as pool:
-            attempts = list(pool.map(lambda item: copy_context().run(self._trial, *item, harness),
-                                     [(k // trials, k % trials, problem) for k, problem in enumerate(problems)]))
+        self._trials = self.trials(request)
+        attempts = self.run_runtime({'harness': harness}, problems)
         if digest(harness) != harness_hash:
             raise ValueError('Harness changed during evaluation')
         return attempts
-
-    def _trial(self, index, trial, problem, harness):
-        history, actions, covered = [], [], set()
-        error, answer = None, ''
-        started = time.monotonic()
-        max_calls = self.config.get('max_calls', 3)
-        try:
-            for step in range(max_calls + 1):
-                with self._sandbox_slots:
-                    result = self.executor(harness, problem.prompt, history)
-                covered.update(result['covered_lines'])
-                action = result['action']
-                actions.append(action)
-                if 'answer' in action:
-                    answer = action['answer']
-                    break
-                if step == max_calls:
-                    answer = history[-1]['content'] if history else ''
-                    break
-                history.append(self.pool.complete(action['messages'],
-                    seed=self.config.get('seed', 73) + index * 100 + trial * 10 + step))
-        except (HarnessExecutionError, subprocess.TimeoutExpired) as exc:
-            # A candidate crash is an observed failed trial; transport and verifier failures propagate.
-            error, answer = str(exc), ''
-        usage = {name: sum(reply[key] for reply in history)
-                 for name, key in (('input_tokens', 'prompt_tokens'), ('output_tokens', 'completion_tokens'))}
-        return Attempt(answer, usage=usage, elapsed_seconds=round(time.monotonic() - started, 6), extra={
-            'trial': trial, 'tokens': sum(reply['tokens'] for reply in history), 'calls': len(history),
-            'actions': actions, 'history': history, 'covered_lines': sorted(covered), 'error': error})
 
     def feedback(self, record):
         return 'Correct' if record['correct'] else 'Incorrect'

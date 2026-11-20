@@ -1,10 +1,11 @@
 """Coding benchmarks a CodingLab mounts: each lists its Harbor tasks and owns its budgets.
 
 A benchmark entry names the manifest of its frozen tasks and may set the
-protocol: step, token and time budgets and thinking. Unset budgets take the
-defaults below and are recorded with the benchmark, so protocol_id (see
-rsisys.loops.contracts.benchmark) identifies exactly how its tasks are scored.
-The Lab never applies a budget of its own to a benchmark.
+protocol: step, token and time budgets, thinking and the agent runtime that runs
+candidates on its tasks (agents.py). Unset settings take the defaults below and are
+recorded with the benchmark, so protocol_id (see rsisys.loops.contracts.benchmark)
+identifies exactly how its tasks are scored. The Lab never applies a budget or an
+agent of its own to a benchmark.
 
     [labs.coding.benchmarks.swebench-verified]
     manifest = "/data/swebench-verified.json"
@@ -13,6 +14,9 @@ The Lab never applies a budget of its own to a benchmark.
     manifest = "/data/terminal-bench-2.1.json"
     max_steps = 96
     agent_timeout = 3600
+    [labs.coding.benchmarks."terminal-bench-2.1".runtime]
+    name = "harbor-agent-tree"
+    options = { import_path = "my_pkg.agent:MyAgent", python_paths = ["src"] }
 
 Splits with the same name are merged in benchmark name order; each task row
 keeps its benchmark, whose protocol it is run under.
@@ -23,6 +27,8 @@ from pathlib import Path
 
 from rsisys.loops.contracts.benchmark import mount_benchmarks
 
+from .agents import DEFAULT_RUNTIME, RUNTIMES
+
 KIND = 'coding-task'
 PROTOCOL_DEFAULTS = {'max_steps': 48, 'max_tokens': 4096, 'total_tokens': 98304,
                      'agent_timeout': 1800, 'verifier_timeout': 1800, 'thinking': False}
@@ -30,7 +36,8 @@ PROTOCOL_DEFAULTS = {'max_steps': 48, 'max_tokens': 4096, 'total_tokens': 98304,
 
 def validate_benchmark_config(config):
     benchmarks = mount_benchmarks(config.get('benchmarks'), kind=KIND, source_keys=('manifest',),
-                                  protocol_defaults=PROTOCOL_DEFAULTS)
+                                  protocol_defaults=PROTOCOL_DEFAULTS, runtimes=RUNTIMES,
+                                  default_runtime=DEFAULT_RUNTIME)
     for benchmark in benchmarks:
         for key, default in PROTOCOL_DEFAULTS.items():
             value = benchmark.protocol[key]

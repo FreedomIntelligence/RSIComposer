@@ -121,6 +121,24 @@ declare what `accuracy` means with `primary_metric`: `{"benchmark": "<name>"}` o
 accuracies). A Lab never forms a cross-benchmark total on its own, and a benchmark
 cannot be mounted twice with different protocols.
 
+## Runtimes
+
+A runtime is how a candidate answers a batch of problems. It is part of each
+benchmark's protocol (name, version, options, accepted candidate shape and how it
+reaches a model), and the candidate's content hash is on each receipt. The Lab picks
+its runtime; a candidate cannot, and a runtime rejects a candidate that sets fields it
+does not accept.
+
+| Runtime | Candidate | Trust | Used by |
+| --- | --- | --- | --- |
+| `instruction` | An instruction; one actor call per problem | `data` | `MathLab` |
+| `step-program` | A `step(problem, history)` program run in a bwrap sandbox, with the Lab calling a fixed model pool for it (`max_calls` option) | `sandboxed-code` | the RRSI and Meta-Agent harness Lab |
+| `checkpoint` | A checkpoint reference; an engine the Lab owns generates | `data` | ReST^EM, STaR, FT-Agent |
+
+`MathLab.solve()` runs the Lab's runtime (`make_runtime()`), after checking the candidate
+with `run_runtime()`. GEPA and OPRO keep their own `solve()` to stay identical to the
+pinned upstream prompts, so their protocol records the default `instruction` runtime.
+
 ## Answer verifiers
 
 A verifier checks a model answer against the reference answer. The verifiers

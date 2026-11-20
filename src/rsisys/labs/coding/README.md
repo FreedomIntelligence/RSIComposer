@@ -11,7 +11,7 @@ access to sealed tasks.
 ```mermaid
 flowchart LR
     M[RSI method: propose / select / iterate] -->|artifact + split + task subset + trials| L[CodingLab]
-    L --> A[Harbor runner + installed agent adapter]
+    L --> A[Harbor runner + the benchmark's agent runtime]
     A --> S[Task sandbox: SWE-bench / Terminal-Bench]
     S --> V[Official verifier]
     V --> L
@@ -29,8 +29,8 @@ Use Linux, working Docker/Compose and BuildKit/Buildx, benchmark task assets,
 enough image storage, and a deployed inference endpoint. Install the optional
 worker dependencies with `pip install -e '.[coding]'`. Core imports and registry
 inspection do not import Harbor or OpenAI. Only executing a trial requires them.
-The default adapter uses an OpenAI-compatible endpoint supporting JSON responses;
-other adapters may use their own model protocol.
+The default runtime uses an OpenAI-compatible endpoint supporting JSON responses;
+other runtimes may use their own model protocol.
 
 Prepare tasks using their benchmark's official Harbor integration. The Lab does
 not download datasets, launch model servers or repair benchmark images. A model
@@ -126,7 +126,7 @@ fingerprint. `coding_meta_agent` forwards these bindings and uses `search=dev`
 and `heldout=sealed`.
 
 The manifest must list every file in each task directory. The Lab rejects
-unlisted files, symlinks, and special files. The `coding-environment/v8`
+unlisted files, symlinks, and special files. The `coding-environment/v9`
 binding records the selected benchmarks with their protocols, manifests, checksums and the merged task list.
 Use a new `experiment_dir` for earlier runs or a different benchmark selection.
 
@@ -209,29 +209,46 @@ of command output sent back to the model; the sandbox, verifier and execution
 budgets come from the same host config as instruction search.
 
 Artifacts can be files (instructions, agent configs, model references) or source
-directories. The host selects an agent runtime once in its trusted factory:
+directories. Which agent runs them is part of each benchmark's protocol: a benchmark
+entry names its `runtime`, so SWE-bench and Terminal-Bench can run different
+scaffolds in one Lab, and the choice is recorded in the benchmark's `protocol_id`.
 
-```python
-from rsisys.api import CodingLab, HarborCodingAgent
+```toml
+# The default: the bundled agent. It accepts a small JSON artifact and reads it as data.
+[framework.method.config.labs.coding.benchmarks.swebench-verified]
+manifest = "/data/swebench-verified.json"
 
-def build_coding_lab(context, config):
-    return CodingLab(context, config, agent=HarborCodingAgent(
-        import_path='my_harness:Agent', version='pinned-harness-revision',
-        bindings={'config_path': 'artifact', 'base_url': 'endpoint',
-                  'max_steps': 'max_steps', 'seed': 'seed'},
-        kwargs={'temperature': 0},
-    ))
+# Your own Harbor agent, imported from the artifact itself.
+[framework.method.config.labs.coding.benchmarks."terminal-bench-2.1"]
+manifest = "/data/terminal-bench-2.1.json"
+[framework.method.config.labs.coding.benchmarks."terminal-bench-2.1".runtime]
+name = "harbor-agent-tree"
+options = { import_path = "my_harness:Agent", version = "pinned-revision", python_paths = ["src"],
+            kwargs = { temperature = 0 }, bindings = { config_path = "artifact" } }
+
+[framework.method.config.labs.coding]
+trust = ["host-code"]    # required for harbor-agent-tree
 ```
 
-Here `my_harness` is installed on the worker host and implements Harbor's agent
-interface. Set `bindings` and `kwargs` explicitly for
-that agent's constructor. Allowed bindings: `artifact`, `artifact_dir`, `endpoint`,
-`model`, `max_steps`, `max_output_tokens`, `total_output_tokens`, `seed`, `thinking`.
-A host-installed adapter's version must pin its external implementation and
-dependencies. Candidate JSON cannot select imports or override the adapter.
-Harbor imports custom agents on the worker host. If a trusted factory uses
-`artifact_python_paths`, the imported source must also be trusted to run on the
-host. Submit generated harness settings as data, as in the example above.
+| Runtime | Accepts | Trust |
+| --- | --- | --- |
+| `harbor-instruction` (default) | A JSON file: `instruction` (up to 12,000 characters), optional `hypothesis`, `id`, `sha256` and a `harness` object limited to `stdout_tail_chars`. Any other key is rejected. | `data` |
+| `harbor-agent-tree` | A source directory, imported by Harbor on the worker host | `host-code` |
+
+Each runtime declares what an artifact may set, and the Lab checks it before any trial
+runs, for every benchmark in the request: an artifact one benchmark's runtime rejects
+fails the whole evaluation up front. `coding_meta_agent` checks at assembly that every
+mounted runtime accepts the instruction candidates it registers. `bindings` map the
+agent's constructor arguments to `artifact`, `artifact_dir`, `endpoint`, `model`,
+`max_steps`, `max_output_tokens`, `total_output_tokens`, `seed` and `thinking`; budgets
+come from the benchmark. Candidate data cannot select imports or override a runtime.
+
+`host-code` means the artifact's Python executes on the worker host, outside the task
+sandbox, so only enable it for sources you trust to run there. The Lab refuses to
+assemble a `host-code` runtime unless its config lists `trust = ["host-code"]`; `data`
+and `sandboxed-code` are always allowed. Every trial receipt records the
+`candidate_sha256` and the runtime name and version. The candidate is the subject under
+test, so it is not part of any `protocol_id`.
 
 ## Evidence and recovery
 

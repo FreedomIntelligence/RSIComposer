@@ -14,7 +14,7 @@ import sys
 from time import sleep
 
 from rsisys.api import (
-    Invariant, MathAttempt, MathLab, OperationResult, MetricSpec, ModelRef, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
+    CheckpointRuntime, Invariant, MathLab, OperationResult, MetricSpec, ModelRef, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
 )
 
 from .protocol import MAX_LENGTH, keep_reasoning, render_prompt, write_records
@@ -261,10 +261,16 @@ class StarLab(MathLab):
     def problems(self, arguments):
         return self.datasets[arguments['split']]
 
+    def make_runtime(self, config):
+        return CheckpointRuntime()
+
     def solve(self, problems, arguments):
-        directory = self.root / f"evaluation-{self._call_id}"
-        outputs = self._sample(self._items(problems), self._model(arguments['model']), directory)
-        return [MathAttempt(outputs[row.id][0], simulated=self.simulated) for row in problems]
+        return self.run_runtime({'model': self._model(arguments['model'])}, problems)
+
+    def generate(self, model, problems):
+        """What the checkpoint runtime lends: one greedy completion per problem."""
+        outputs = self._sample(self._items(problems), model, self.root / f"evaluation-{self._call_id}")
+        return [outputs[row.id][0] for row in problems]
 
     def result_data(self, records, ref, arguments):
         return {'protocol': f'GSM8K STaR {self._call_id}', 'request': arguments,

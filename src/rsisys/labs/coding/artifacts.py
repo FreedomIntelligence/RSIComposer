@@ -6,6 +6,8 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
+from rsisys.loops.contracts.agent_runtime import path_digest
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
@@ -13,29 +15,18 @@ def digest(value):
 
 
 def _entries(path):
+    """The files of a tree with their hashes, or None for a single file (see path_digest)."""
+    path = Path(path)
     if path.is_symlink():
         raise ValueError('Coding artifacts must not contain symlinks')
     if path.is_file():
         return None
     if not path.is_dir():
         raise ValueError('Coding artifact must be a file or directory')
-    entries = {}
-    for p in sorted(path.rglob('*')):
-        relative = p.relative_to(path)
-        if any(part in {'.git', '__pycache__'} for part in relative.parts) or p.suffix == '.pyc':
-            continue
-        if p.is_symlink():
-            raise ValueError('Coding artifacts must not contain symlinks: ' + str(relative))
-        if p.is_file():
-            entries[relative.as_posix()] = {
-                'sha256': hashlib.sha256(p.read_bytes()).hexdigest(),
-                'executable': bool(p.stat().st_mode & 0o111),
-            }
-        elif not p.is_dir():
-            raise ValueError('Unsupported artifact entry: ' + str(relative))
-    if not entries:
-        raise ValueError('Coding artifact directory is empty')
-    return entries
+    path_digest(path)   # Validates the whole tree with the contract's rules.
+    return {p.relative_to(path).as_posix(): None for p in sorted(path.rglob('*'))
+            if p.is_file() and not any(part in {'.git', '__pycache__'} for part in p.relative_to(path).parts)
+            and p.suffix != '.pyc'}
 
 
 @dataclass(frozen=True)
@@ -48,7 +39,7 @@ class CodingArtifact:
     def from_path(cls, path):
         path = Path(path).absolute()
         entries = _entries(path)
-        sha = hashlib.sha256(path.read_bytes()).hexdigest() if entries is None else digest(entries)
+        sha = path_digest(path)
         return cls(str(path), sha)
 
     def to_json(self):

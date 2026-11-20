@@ -20,17 +20,19 @@ from rsisys.loops.contracts.data import DatasetBinding
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.profiles import MetricSpec, SPLIT_ROLES
 from rsisys.loops.contracts.execution import LabToolError
-from .agents import HarborCodingAgent
+from .agents import RUNTIMES
 from .artifacts import digest, snapshot
 from rsisys.loops.contracts.benchmark import choose_primary_metric
+from rsisys.loops.contracts.agent_runtime import (
+    CandidateRejected, Subject, allowed_trust, read_subject_data, require_trust)
 from .benchmarks import load_task_manifests, validate_benchmark_config
 from .harbor_runner import atomic_json
 from .trial_runner import HarborTrialRunner, infrastructure_failure
 
 
 OPTIONS = {'experiment_dir', 'benchmarks', 'primary_metric', 'python', 'endpoints', 'model', 'workers',
-           'seed', 'split_roles'}
-PROTOCOL_VERSION = 'coding-environment/v8'
+           'seed', 'split_roles', 'trust'}
+PROTOCOL_VERSION = 'coding-environment/v9'
 # Reported only as named; there is no implicit cross-benchmark total.
 AGGREGATES = {'benchmark-mean': 'harbor-official-reward/benchmark-mean/v1'}
 
@@ -42,6 +44,10 @@ def validate_config(config):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError('Coding Lab requires ' + key)
     benchmarks = validate_benchmark_config(config)
+    allowed = allowed_trust(config)
+    for benchmark in benchmarks:
+        runtime = RUNTIMES[benchmark.protocol['runtime']['name']](benchmark.protocol['runtime']['options'])
+        require_trust(runtime.accepts, allowed, where=f'Benchmark {benchmark.name!r} runtime {runtime.name!r}')
     choose_primary_metric(config.get('primary_metric'), benchmarks, aggregates=AGGREGATES)
     endpoints = config.get('endpoints')
     if not isinstance(endpoints, list) or not endpoints or any(
@@ -62,7 +68,7 @@ class CodingLab:
     """
     validate_config = staticmethod(validate_config)
 
-    def __init__(self, context, config, *, agent=None):
+    def __init__(self, context, config):
         validate_config(config)
         self.config = deepcopy(config)
         self.root = Path(config['experiment_dir']).resolve()
@@ -75,9 +81,11 @@ class CodingLab:
         if (not isinstance(roles, dict) or set(roles) - set(self.datasets)
                 or any(not isinstance(role, str) or role not in SPLIT_ROLES for role in roles.values())):
             raise ValueError('split_roles must map installed splits to named profile roles')
-        self.agent = (agent or HarborCodingAgent()).to_json()
-        agent_spec = self.root / 'agent.json'
-        self._runner = HarborTrialRunner(execution_context, self.config, agent_spec)
+        # One runtime per benchmark: the agent a benchmark's tasks run under is part of its protocol.
+        self.runtimes = {b.name: RUNTIMES[b.protocol['runtime']['name']](b.protocol['runtime']['options'])
+                         for b in self.benchmarks}
+        self.agent = {name: runtime.to_json() for name, runtime in self.runtimes.items()}
+        self._runner = HarborTrialRunner(execution_context, self.config, self.root / 'agents')
         package = Path(__file__).parent
         self.protocol = {name: hashlib.sha256((package / name).read_bytes()).hexdigest()
                          for name in ('agent.py', 'agents.py', 'artifacts.py', 'benchmarks.py', 'lab.py',
@@ -93,7 +101,9 @@ class CodingLab:
             if binding.exists() and json.loads(binding.read_text()) != self.binding:
                 raise ValueError('Experiment binding changed; use a new experiment_dir')
             atomic_json(binding, self.binding)
-            atomic_json(agent_spec, self.agent)
+            (self.root / 'agents').mkdir(exist_ok=True)
+            for name, spec in self.agent.items():
+                atomic_json(self.root / 'agents' / (name + '.json'), spec)
             self.evaluations.mkdir(exist_ok=True)
             self.artifacts.mkdir(exist_ok=True)
             self.measurements.mkdir(exist_ok=True)
@@ -274,10 +284,26 @@ class CodingLab:
             wanted = set(task_ids)
             rows = [r for r in rows if r['id'] in wanted]
         pinned = snapshot(artifact, self.artifacts)
+        self.check_candidate(pinned, rows)
         request = {'artifact_sha256': pinned.sha256, 'split': split, 'trials': trials,
                    'tasks': rows, 'protocol_fingerprint': self.fingerprint,
                    'protocols': {name: self.protocols[name].protocol_id for name in sorted({r['benchmark'] for r in rows})}}
         return pinned, request
+
+    def check_candidate(self, pinned, rows):
+        """Every benchmark in the request must accept this candidate's shape; reject before any trial runs."""
+        for name in sorted({row['benchmark'] for row in rows}):
+            spec = self.runtimes[name].accepts
+            subject = Subject.from_path(spec.kind, pinned.path)
+            try:
+                if spec.kind == 'agent-tree':
+                    if not Path(pinned.path).is_dir():
+                        raise CandidateRejected('An agent-tree candidate must be a directory')
+                else:
+                    spec.check(read_subject_data(subject))
+            except CandidateRejected as error:
+                raise LabToolError(f'Benchmark {name!r} runtime {self.runtimes[name].name!r} rejects the '
+                                   f'candidate: {error}') from error
 
     def evaluate(self, artifact, split, trials=1, task_ids=None):
         """Public method-neutral measurement entry point; safe to reattach/repeat.
@@ -321,7 +347,9 @@ class CodingLab:
                         raise infrastructure_failure('Invalid bounded score in receipt: ' + str(receipt))
                     data.update(task_id=row['id'], benchmark=row['benchmark'], endpoint=endpoint,
                                 trial=trial, seed=seed, artifact_sha256=pinned.sha256,
-                                protocol_id=protocol.protocol_id)
+                                candidate_sha256=pinned.sha256, protocol_id=protocol.protocol_id,
+                                runtime={'name': self.runtimes[row['benchmark']].name,
+                                         'version': self.runtimes[row['benchmark']].version})
                     atomic_json(receipt, data)
                     return data
                 if receipt.exists():
@@ -330,7 +358,7 @@ class CodingLab:
                         self._runner.reconcile(root)
                         return completed(data)
                 for _ in range(2):
-                    code, trial_name = self._runner.run(root, row, pinned, endpoint, seed, protocol.protocol)
+                    code, trial_name = self._runner.run(root, row, pinned, endpoint, seed, protocol.protocol, row['benchmark'])
                     if code == 0 and receipt.exists():
                         data = json.loads(receipt.read_text())
                         if data.get('measured') is True:

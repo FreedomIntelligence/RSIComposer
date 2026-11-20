@@ -43,6 +43,7 @@ from time import monotonic
 # Lab code imports its layers directly; rsisys.api is the composition layer.
 from rsisys.loops.contracts.artifacts import ArtifactRef
 from rsisys.loops.contracts.benchmark import choose_primary_metric
+from rsisys.loops.contracts.agent_runtime import CandidateRejected, runtime_identity
 from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
@@ -89,6 +90,9 @@ class MathLab:
     verifiers = VERIFIERS
     # False for a subclass whose own engine or config sets generation: its sources then take no budget.
     source_budgets = True
+    # The runtime that answers problems; its identity is recorded in every benchmark's protocol.
+    # A subclass sets a different one, and a Lab that overrides solve() entirely keeps this default.
+    runtime_factory = staticmethod(lambda: __import__('rsisys.labs.math.runtimes', fromlist=['x']).InstructionRuntime())
 
     def __init__(self, context, config):
         self.validate_config(config)
@@ -98,15 +102,25 @@ class MathLab:
         self.role_names = dict(config['split_roles'])
         self.roles = {name: _SPLIT_ROLES[role] for name, role in self.role_names.items()}
         self.max_output_tokens = config.get('max_output_tokens', 32768)
+        self.runtime = self.make_runtime(config)
         self.datasets, self.bindings, self.manifest_sha256, self.benchmarks = load_splits(
             config['manifest'], self.roles, verifiers=self.verifiers, role_names=self.role_names,
-            budgets=self.source_budgets, max_output_tokens=self.max_output_tokens)
+            budgets=self.source_budgets, max_output_tokens=self.max_output_tokens,
+            runtime=runtime_identity(self.runtime, self.runtime_options(config)))
         self.grading_workers = config.get('grading_workers', 1)
         self.declared_metric = config.get('primary_metric')
         for split, rows in self.datasets.items():
             if len({row.benchmark for row in rows}) > 1 or self.declared_metric is not None:
                 choose_primary_metric(self.declared_metric, [self.benchmarks[n] for n in sorted(
                     {row.benchmark for row in rows})], aggregates=AGGREGATES)
+
+    def make_runtime(self, config):
+        """The AgentRuntime that answers this Lab's problems."""
+        return self.runtime_factory()
+
+    def runtime_options(self, config):
+        """The runtime options recorded in each benchmark's protocol."""
+        return {}
 
     def bind_actor(self, context, config):
         """The ModelRef of the model being measured."""
@@ -166,6 +180,7 @@ class MathLab:
         return {'manifest_sha256': self.manifest_sha256, 'actor': asdict(self.actor),
                 'max_output_tokens': self.max_output_tokens,
                 'benchmarks': {name: benchmark.protocol_id for name, benchmark in self.benchmarks.items()},
+                'runtime': runtime_identity(self.runtime, self.runtime_options({})),
                 'primary_metric': self.declared_metric,
                 'split_roles': dict(self.role_names),
                 'verifiers': {name: sorted({row.verifier.name for row in rows})
@@ -261,10 +276,15 @@ class MathLab:
 
     def solve(self, problems, arguments):
         """Ask the actor each problem after the instruction and the verifier's answer format."""
-        instruction = arguments.get('instruction')
-        if not isinstance(instruction, str) or not instruction.strip():
-            raise LabToolError('instruction must be nonempty text')
-        return [self.ask_actor(problem, instruction) for problem in problems]
+        return self.run_runtime({'instruction': arguments.get('instruction')}, problems)
+
+    def run_runtime(self, candidate, problems):
+        """Run the Lab's runtime on a batch after checking the candidate against what it accepts."""
+        try:
+            self.runtime.accepts.check(candidate)
+        except CandidateRejected as error:
+            raise LabToolError(f'Runtime {self.runtime.name!r} rejects the candidate: {error}') from error
+        return self.runtime.run(candidate, problems, self)
 
     def ask_actor(self, problem, system):
         """One temperature-zero actor answer; the system text ends with the answer format."""
@@ -371,6 +391,7 @@ class MathLab:
             'split': split, 'model': self.actor.model_id, 'scored': True, 'count': len(records),
             'quality_metrics': quality, 'execution_metrics': execution, 'evidence_refs': [asdict(ref)],
             'benchmarks': {name: self.benchmarks[name].protocol_id for name in sorted({row['benchmark'] for row in records})},
+            'runtime': {'name': self.runtime.name, 'version': self.runtime.version},
             **self.result_data(records, ref, arguments),
         }, call_id=call_id)
 

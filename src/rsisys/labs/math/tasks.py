@@ -93,14 +93,16 @@ def _budget(entry, budgets, default):
     return value
 
 
-def math_benchmark(name, spec, verifier, tokens, source):
-    """The Benchmark a source mounts: its protocol is the verifier selection and budget."""
+def math_benchmark(name, spec, verifier, tokens, source, runtime=None):
+    """The Benchmark a source mounts: its protocol is the verifier selection, budget and runtime."""
     return Benchmark(name, KIND, {'verifier': {'name': spec} if isinstance(spec, str) else spec,
                                   'verifier_name': verifier.name,
-                                  **({} if tokens is None else {'max_output_tokens': tokens})}, source)
+                                  **({} if tokens is None else {'max_output_tokens': tokens}),
+                                  **({} if runtime is None else {'runtime': runtime})}, source)
 
 
-def jsonl_problems(root, entry, verifiers=VERIFIERS, *, budgets=True, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS):
+def jsonl_problems(root, entry, verifiers=VERIFIERS, *, budgets=True, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                   runtime=None):
     """Read one hashed JSONL source; every answer must be valid for its verifier.
 
     Returns (problems, path, benchmark).
@@ -137,18 +139,19 @@ def jsonl_problems(root, entry, verifiers=VERIFIERS, *, budgets=True, max_output
         problems.append(Problem(ident, prompt, answer, name, verifier, str(expected), tokens))
     if type(entry['count']) is not int or not problems or len(problems) != entry['count']:
         raise ValueError(f'{path}: nonempty math dataset must match manifest count')
-    return tuple(problems), path, math_benchmark(name, spec, verifier, tokens, {'file': str(path), 'sha256': entry['sha256']})
+    return tuple(problems), path, math_benchmark(name, spec, verifier, tokens, {'file': str(path), 'sha256': entry['sha256']}, runtime)
 
 
 def load_splits(path, roles, *, verifiers=VERIFIERS, role_names=None, budgets=True,
-                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS):
+                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, runtime=None):
     """Bind each split in roles to its manifest entry.
 
     Returns (problems by split, bindings, manifest digest, benchmarks by name).
     verifiers is the catalog (name -> factory) that sources select from; role_names
     names each split's role (train, dev or sealed) for its binding. budgets is
     False for Labs that generate with their own budget; otherwise a source that
-    sets no max_output_tokens takes max_output_tokens.
+    sets no max_output_tokens takes max_output_tokens. runtime is the identity of the
+    runtime the Lab answers problems with (runtimes.py); it is recorded in every benchmark's protocol.
     """
     from .benchmarks import official_problems
 
@@ -171,10 +174,10 @@ def load_splits(path, roles, *, verifiers=VERIFIERS, role_names=None, budgets=Tr
                 if not sealed:
                     raise ValueError('The official math preset requires a sealed split')
                 found, source, official = official_problems(path.parent, item, budgets=budgets,
-                                                            max_output_tokens=max_output_tokens)
+                                                            max_output_tokens=max_output_tokens, runtime=runtime)
             else:
                 found, source, benchmark = jsonl_problems(path.parent, item, verifiers, budgets=budgets,
-                                                          max_output_tokens=max_output_tokens)
+                                                          max_output_tokens=max_output_tokens, runtime=runtime)
                 official = {benchmark.name: benchmark}
             rows.extend(found)
             digests.append(item['sha256'])

@@ -8,12 +8,16 @@ import json
 from pathlib import Path
 import time
 
-from rsisys.api import (CodingLab, CodingArtifact, DEV, SEALED, Invariant, MetricSpec, OperationCall, OperationResult, OperationSpec,
-                        LabToolError, atomic_write, json_bytes)
+from rsisys.api import (CandidateRejected, CandidateSpec, CodingLab, CodingArtifact, DEV, SEALED, Invariant, MetricSpec,
+                        OperationCall, OperationResult, OperationSpec, LabToolError, atomic_write, json_bytes)
 
 BASELINE = 'Inspect the project, implement a correct minimal fix, and run relevant tests before finishing.'
 POLICY_OPTIONS = {'min_candidates', 'max_candidates'}
-POLICY_VERSION = 'coding-meta-agent/v4'
+POLICY_VERSION = 'coding-meta-agent/v5'
+# What this method registers: the shape every mounted benchmark's runtime must also accept.
+REGISTERED = CandidateSpec('instruction', {
+    'instruction': {'type': 'string', 'min_length': 20, 'max_length': 12000, 'required': True},
+    'hypothesis': {'type': 'string', 'required': True}}, 'data')
 
 
 def digest(value):
@@ -59,6 +63,11 @@ class CodingSearchLab:
         if set(self.manifest) != {'search', 'heldout'}:
             raise ValueError('coding_meta_agent requires search and heldout splits')
         self.fingerprint = self.environment.fingerprint
+        # Assembly-time check: each mounted benchmark's runtime must accept what this method registers.
+        for name, runtime in self.environment.runtimes.items():
+            if runtime.accepts.kind != REGISTERED.kind or set(REGISTERED.fields) - set(runtime.accepts.fields):
+                raise ValueError(f'Benchmark {name!r} runtime {runtime.name!r} does not accept the instruction '
+                                 'candidates this method registers')
         self.candidates = self.root / 'candidates'
         self.evaluations = self.root / 'evaluations'
         with self._lock():
@@ -194,13 +203,11 @@ class CodingSearchLab:
             raise LabToolError('Use exactly the documented operation arguments')
         if call.name == 'register':
             candidate = args['candidate']
-            if not isinstance(candidate, dict) or set(candidate) != {'instruction', 'hypothesis'}:
-                raise LabToolError('Candidate requires instruction and hypothesis')
+            try:
+                REGISTERED.check(candidate)
+            except CandidateRejected as error:
+                raise LabToolError('Candidate requires instruction (20–12000 characters) and hypothesis: ' + str(error)) from error
             instruction, hypothesis = candidate['instruction'], candidate['hypothesis']
-            if not isinstance(instruction, str) or not 20 <= len(instruction) <= 12000:
-                raise LabToolError('Instruction must contain 20–12000 characters')
-            if not isinstance(hypothesis, str) or not hypothesis.strip():
-                raise LabToolError('A hypothesis is required')
             # Meta-agent cannot smuggle benchmark task names or copied questions.
             for rows in (self.manifest['search'], self.manifest['heldout']):
                 for row in rows:

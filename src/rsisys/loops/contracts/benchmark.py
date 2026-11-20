@@ -8,6 +8,11 @@ override their protocol. A setting a benchmark cannot take is rejected, not
 ignored, and mounting order never matters, so the same benchmark has the same
 protocol_id on any Lab, in any combination, on one Lab instance or several.
 
+A benchmark also names its runtime (rsisys.loops.contracts.agent_runtime): how a
+submitted candidate is run on its tasks. The runtime's name, version, options and
+accepted candidate shape are part of the protocol, so a benchmark is scored by the
+same runtime wherever it is mounted.
+
 Mounting several benchmarks reports each one's metrics separately. A Lab never
 forms a cross-benchmark total on its own: when more than one benchmark is
 mounted, the configuration declares the primary metric with `primary_metric`,
@@ -62,13 +67,17 @@ class Benchmark:
         return {'name': self.name, 'kind': self.kind, 'protocol_id': self.protocol_id}
 
 
-def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults):
+def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults, runtimes=None, default_runtime=None):
     """Benchmarks from a Lab's `benchmarks` mapping, sorted by name.
 
     Each entry gives its source (source_keys) and may set any protocol field of
     protocol_defaults; unset fields take the default and are recorded. Anything
     else is an error, so a setting cannot silently mean something different on
     another Lab.
+
+    runtimes maps the installed runtime names to factories (name -> callable(options)
+    returning an AgentRuntime). An entry may set `runtime` = {"name", "options"}, else
+    default_runtime applies; the runtime's identity is recorded in the protocol.
     """
     if not isinstance(entries, Mapping) or not entries:
         raise ValueError('benchmarks must be a nonempty mapping of names to benchmark entries')
@@ -78,7 +87,7 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults):
             raise ValueError(f'Invalid benchmark name: {name!r}')
         if not isinstance(entry, Mapping):
             raise ValueError(f'Benchmark {name!r} must be an object')
-        unknown = set(entry) - set(source_keys) - set(protocol_defaults)
+        unknown = set(entry) - set(source_keys) - set(protocol_defaults) - ({'runtime'} if runtimes else set())
         if unknown:
             raise ValueError(f'Benchmark {name!r} has unknown settings: {sorted(unknown)}')
         if set(source_keys) - set(entry):
@@ -87,6 +96,11 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults):
             if not isinstance(entry[key], str) or not entry[key].strip():
                 raise ValueError(f'Benchmark {name!r} {key} must be a path')
         protocol = {key: entry.get(key, default) for key, default in protocol_defaults.items()}
+        if runtimes:
+            from .agent_runtime import runtime_identity, validate_runtime_config
+            chosen = entry.get('runtime', default_runtime)
+            rname, options = validate_runtime_config(chosen, known=runtimes)
+            protocol['runtime'] = runtime_identity(runtimes[rname](options), options)
         mounted.append(Benchmark(name, kind, protocol, {key: entry[key] for key in source_keys}))
     return tuple(mounted)
 
