@@ -15,7 +15,8 @@ dist/
 # Local run databases, artifacts and snapshots
 runs/
 
-# Local verification evidence and optional runtime tooling
+# Local tests, verification evidence and optional runtime tooling
+/tests/
 .local/
 
 # Generated run state (source contracts remain under src/rsisys/)

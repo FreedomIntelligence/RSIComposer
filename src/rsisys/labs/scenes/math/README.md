@@ -125,16 +125,10 @@ timings and token counts are in the host receipt. Authorized host artifact
 access is required for the detailed official evidence. A direct Python call
 bypasses orchestration, so use the host route for formal comparisons.
 
-## Local verification
+## Check the Lab registration
 
-From the repository root, run the CPU regression suite and check the registry.
+To confirm that the `math` Lab appears in the catalog, run this from the repository root:
 
 ```sh
-PYTHONPATH=src python -B -m unittest discover -s tests -v
 PYTHONPATH=src python -B -m rsisys catalog
 ```
-
-The suite exercises the real RSISys CLI and Monitor snapshot with fixture data
-and controlled Chat Completions responses. It verifies the 30 + 30 + 10 binding, custom sealed sets, development evidence,
-score aggregation, and truncation accounting. With the `math` extra it also
-checks symbolic grading through the CLI.
