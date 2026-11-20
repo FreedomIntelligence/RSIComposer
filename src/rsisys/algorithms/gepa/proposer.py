@@ -58,7 +58,7 @@ class GEPAProposer:
         for row in records:
             example = {'Inputs': row['question']}
             if reflective:
-                observed = row['response']
+                observed = row['completion'] or ''
                 if len(observed) > 2400:
                     observed = observed[:1600] + '\n[middle excerpt omitted]\n' + observed[-800:]
                 example['Generated Outputs'] = observed
@@ -75,12 +75,12 @@ class GEPAProposer:
     def parent_records(self, trace, receipt_id, request):
         """Records of the parent's minibatch evaluation, checked against its receipt."""
         raw = self.artifacts.read(trace)
-        if trace.kind != 'gepa-evaluate' or sha256(raw).hexdigest() != receipt_id:
+        if trace.kind != 'math-evaluation' or sha256(raw).hexdigest() != receipt_id:
             raise ValueError('GEPA mutation requires a matching immutable parent score receipt')
         parent = json.loads(raw)
-        if parent['operation'] != 'evaluate' or parent['request'] != request:
+        if parent['request'] != request:
             raise ValueError('GEPA mutation receipt does not match the chosen parent minibatch')
-        return parent['evidence']['records']
+        return parent['records']
 
     def complete(self, prompt, *, round_index):
         return self.calls.text(GenerationRequest('decision_maker', self.model, prompt, system=MUTATOR_SYSTEM,

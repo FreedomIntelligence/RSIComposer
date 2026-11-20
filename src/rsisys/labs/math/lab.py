@@ -16,6 +16,12 @@ and traces. Two hooks separate what differs between methods from what is shared:
   score(call_id, split, problems, attempts, arguments) -> OperationResult
                                             Verify, aggregate metrics, store the trace.
 
+Smaller hooks: problems(arguments) picks the rows to answer, attempt(request,
+generate) turns one model call into an Attempt (a subclass passes its own budgeted
+generate), and result_data(records, ref, arguments) adds fields to the result.
+binding() is the input identity that traces carry; a subclass that keeps more
+state extends state() and checks binding() on restore.
+
 A subclass also extends describe()/execute() with its own operations, overrides
 evaluate_schema() for different evaluate arguments, and adds answer formats to
 the verifiers catalog that dataset manifests select from.
@@ -99,7 +105,8 @@ class MathLab:
     def primary_metric(self):
         return MetricSpec('accuracy', 'maximize', 'math-answer-exact-match/v1')
 
-    def state(self):
+    def binding(self):
+        """The data, actor and verifier identity every trace records."""
         return {'manifest_sha256': self.manifest_sha256, 'actor': asdict(self.actor),
                 'max_output_tokens': self.max_output_tokens,
                 'split_roles': {name: 'sealed' if role.after_finish_only else 'dev'
@@ -107,8 +114,11 @@ class MathLab:
                 'verifiers': {name: sorted({row.verifier.name for row in rows})
                               for name, rows in self.datasets.items()}}
 
+    def state(self):
+        return self.binding()
+
     def restore(self, state):
-        if state != self.state():
+        if state != self.binding():
             raise ValueError('Math Lab input binding changed since the checkpoint')
 
     def describe(self):
@@ -179,13 +189,17 @@ class MathLab:
     def evaluate(self, call_id, arguments):
         """Answer the selected problems with solve() and score them."""
         split = arguments['split']
-        problems = self._select_rows(split, arguments.get('task_ids'))
+        problems = self.problems(arguments)
         started = monotonic()
         attempts = self.solve(problems, arguments)
         if len(attempts) != len(problems):
             raise RuntimeError('solve() must return one attempt per problem')
         return self.score(call_id, split, problems, attempts, arguments,
                           elapsed_seconds=monotonic() - started)
+
+    def problems(self, arguments):
+        """The rows evaluate() answers: the split, or the listed development task_ids."""
+        return self._select_rows(arguments['split'], arguments.get('task_ids'))
 
     def solve(self, problems, arguments):
         """Ask the actor each problem after the instruction and the verifier's answer format."""
@@ -199,9 +213,13 @@ class MathLab:
         request = GenerationRequest('actor', self.actor, problem.prompt,
             system=system + '\n\n' + problem.verifier.answer_format,
             temperature=0.0, max_output_tokens=self.max_output_tokens)
+        return self.attempt(request)
+
+    def attempt(self, request, generate=None):
+        """One model call as an Attempt; truncated or empty replies are recorded, not raised."""
         started = monotonic()
         try:
-            response = self.models.generate(request)
+            response = (generate or self.models.generate)(request)
         except ModelResponseError as error:
             if error.finish_reason == 'length':
                 status = 'truncated'
@@ -258,7 +276,7 @@ class MathLab:
         sealed = self.roles[split].after_finish_only
         candidate = {key: value for key, value in arguments.items() if key not in ('split', 'task_ids')}
         # A distinct kind keeps standalone sealed artifacts restricted too.
-        evidence = {'binding': self.state(), 'split': split, **candidate, 'records': records}
+        evidence = {'binding': self.binding(), 'split': split, **candidate, 'records': records}
         ref = self.artifacts.put(json.dumps(evidence, ensure_ascii=False, allow_nan=False).encode(),
                                  kind='sealed-evaluation' if sealed else _TRACE_KIND)
         if not sealed:
@@ -267,7 +285,12 @@ class MathLab:
         return OperationResult('Math evaluation completed', (ref,), simulated, data={
             'split': split, 'model': self.actor.model_id, 'scored': True, 'count': len(records),
             'quality_metrics': quality, 'execution_metrics': execution, 'evidence_refs': [asdict(ref)],
+            **self.result_data(records, ref, arguments),
         }, call_id=call_id)
+
+    def result_data(self, records, ref, arguments):
+        """Extra result fields a subclass's Controller reads; records and ref are this evaluation's."""
+        return {}
 
     def _read_trace(self, split, evaluation, index, offset=0):
         if not isinstance(split, str) or self.roles.get(split) != DEV:
@@ -284,7 +307,7 @@ class MathLab:
             document = json.loads(self.artifacts.read(ref))
         except (KeyError, FileNotFoundError, ValueError) as error:
             raise LabToolError('Development trace could not be located with that reference') from error
-        if document.get('split') != split or document.get('binding') != self.state():
+        if document.get('split') != split or document.get('binding') != self.binding():
             raise LabToolError('Trace does not belong to this development binding')
         records = document['records']
         if index >= len(records):

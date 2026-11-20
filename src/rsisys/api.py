@@ -124,6 +124,7 @@ _EXPORTS = {
     'trigger_probe': ('rsisys.runtime.observation', 'trigger_probe'),
     # The math Lab's answer verifiers, shared by math methods (Math-Verify is optional).
     'AnswerCheck': ('rsisys.labs.math.verifiers', 'AnswerCheck'),
+    'MATH_VERIFIERS': ('rsisys.labs.math.verifiers', 'VERIFIERS'),
     'AnswerVerifier': ('rsisys.labs.math.verifiers', 'AnswerVerifier'),
     'CompetitionIntegerVerifier': ('rsisys.labs.math.verifiers', 'CompetitionIntegerVerifier'),
     'MarkedNumericVerifier': ('rsisys.labs.math.verifiers', 'MarkedNumericVerifier'),
@@ -272,6 +273,7 @@ if _TYPE_CHECKING:
     )
     from rsisys.labs.math.verifiers import (
         AnswerCheck as AnswerCheck,
+        VERIFIERS as MATH_VERIFIERS,
         AnswerVerifier as AnswerVerifier,
         CompetitionIntegerVerifier as CompetitionIntegerVerifier,
         MarkedNumericVerifier as MarkedNumericVerifier,

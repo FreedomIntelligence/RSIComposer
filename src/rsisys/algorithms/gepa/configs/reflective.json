@@ -49,20 +49,11 @@
         "labs": {
           "gepa": {
             "seed": 17,
-            "data": {
-              "search_count": 96,
-              "validation_count": 64,
-              "test_count": 256
-            },
             "model": {
               "max_output_tokens": 768,
               "scorer_temperature": 0.0
             },
-            "files": {
-              "search": "data/gepa/search.jsonl",
-              "validation": "data/gepa/validation.jsonl",
-              "test": "data/gepa/test.jsonl"
-            },
+            "manifest": "data/gepa/manifest.json",
             "max_model_calls": 2304
           }
         }

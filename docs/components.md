@@ -21,8 +21,8 @@ require; check the preset before running it.
 | `ttrl` | `8gpu` | 8 GPUs, local base model | — |
 | `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
-| `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files | — |
-| `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files | [README](../src/rsisys/algorithms/gepa/README.md) |
+| `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | — |
+| `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | [README](../src/rsisys/algorithms/gepa/README.md) |
 | `gepa_merge` | `gepa/configs/merge-screen` | Model endpoint, pinned GEPA checkout in `external/gepa` | [README](../src/rsisys/algorithms/gepa/README.md) |
 | `promptpg` | `tabmwp` | Model endpoint, TabMWP files | — |
 | `funsearch` | `evolution`, `frozen_parents` | Model endpoint | — |

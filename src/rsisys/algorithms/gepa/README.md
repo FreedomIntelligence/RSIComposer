@@ -22,6 +22,25 @@ Use disjoint questions and IDs across all splits. Sample search and validation
 from the training set and reserve the test set for final measurement. Keep the
 same splits and seed when comparing `use_merge: true` with `use_merge: false`.
 
+The Lab is a [MathLab](../../labs/math/README.md), so it reads the splits from a
+dataset manifest, `data/gepa-merge-screen/manifest.json`, that binds each file's
+hash and row count and selects its answer verifier:
+
+```json
+{"schema_version": 1, "splits": {
+  "search":     {"file": "search.jsonl", "sha256": "<sha256sum of the file>", "count": 24,
+                 "verifier": "marked_numeric", "fields": {"prompt": "question"}},
+  "validation": {"file": "validation.jsonl", "sha256": "...", "count": 12,
+                 "verifier": "marked_numeric", "fields": {"prompt": "question"}},
+  "test":       {"file": "test.jsonl", "sha256": "...", "count": 32,
+                 "verifier": "marked_numeric", "fields": {"prompt": "question"}}}}
+```
+
+`marked_numeric` is GEPA's GSM8K grader; any verifier in the MathLab catalog can
+replace it. The `reflective` and `score-only` presets read `data/gepa/manifest.json`
+in the same form. The OPRO presets read `data/opro/manifest.json` and select
+`opro_official`, the pinned author grader.
+
 ```sh
 PYTHONPATH=src python -m rsisys run --durable \
   --config src/rsisys/algorithms/gepa/configs/merge-screen.json \

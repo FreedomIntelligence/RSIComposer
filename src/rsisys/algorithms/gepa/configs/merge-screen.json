@@ -39,12 +39,7 @@
         "labs": {
           "gepa": {
             "seed": 17,
-            "data": {"search_count": 24, "validation_count": 12, "test_count": 32},
-            "files": {
-              "search": "data/gepa-merge-screen/search.jsonl",
-              "validation": "data/gepa-merge-screen/validation.jsonl",
-              "test": "data/gepa-merge-screen/test.jsonl"
-            },
+            "manifest": "data/gepa-merge-screen/manifest.json",
             "max_model_calls": 160,
             "model": {"max_output_tokens": 2048, "scorer_temperature": 0.0}
           }

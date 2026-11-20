@@ -58,20 +58,11 @@
               "instruction_pos": "Q_end",
               "local_adapter": "qwen-instructions-v1"
             },
-            "data": {
-              "search_count": 16,
-              "validation_count": 16,
-              "test_count": 16
-            },
             "model": {
               "max_output_tokens": 1024,
               "scorer_temperature": 0.0
             },
-            "files": {
-              "search": "data/opro/search.jsonl",
-              "validation": "data/opro/validation.jsonl",
-              "test": "data/opro/test.jsonl"
-            },
+            "manifest": "data/opro/manifest.json",
             "max_model_calls": 252
           }
         }
