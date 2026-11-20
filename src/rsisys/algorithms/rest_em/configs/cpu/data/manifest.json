@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "splits": {
+    "train": {
+      "file": "train.jsonl",
+      "sha256": "36a09ff74e293eb85c3c073ef06f32c9bf03e6dfbb2b1645896fc7bcc473dd3d",
+      "count": 2,
+      "verifier": "strict_numeric"
+    },
+    "dev": {
+      "file": "eval.jsonl",
+      "sha256": "2be85ab93b65d8b68121bc3f55aaaccc36f3857c52cd7861cf1c7d5d1fef4afd",
+      "count": 1,
+      "verifier": "strict_numeric"
+    }
+  }
+}

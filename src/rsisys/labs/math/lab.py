@@ -39,7 +39,7 @@ from rsisys.loops.contracts.coordination import OperationResult
 from rsisys.loops.contracts.decision import OperationSpec
 from rsisys.loops.contracts.execution import LabToolError
 from rsisys.loops.contracts.model_service import GenerationRequest, ModelResponseError
-from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec
+from rsisys.loops.contracts.profiles import DEV, SEALED, TRAIN, MetricSpec
 from rsisys.runtime.observation import report_samples
 
 from .tasks import load_splits
@@ -48,7 +48,7 @@ from .verifiers import VERIFIERS
 
 _TRACE_KIND = 'math-evaluation'
 _TRACE_PAGE_CHARS = 4000
-_SPLIT_ROLES = {'dev': DEV, 'sealed': SEALED}
+_SPLIT_ROLES = {'train': TRAIN, 'dev': DEV, 'sealed': SEALED}
 
 
 @dataclass(frozen=True)
@@ -83,9 +83,10 @@ class MathLab:
         self.actor = self.bind_actor(context, config)
         self.models = context.models
         self.artifacts = context.artifacts
-        self.roles = {name: _SPLIT_ROLES[role] for name, role in config['split_roles'].items()}
+        self.role_names = dict(config['split_roles'])
+        self.roles = {name: _SPLIT_ROLES[role] for name, role in self.role_names.items()}
         self.datasets, self.bindings, self.manifest_sha256 = load_splits(
-            config['manifest'], self.roles, verifiers=self.verifiers)
+            config['manifest'], self.roles, verifiers=self.verifiers, role_names=self.role_names)
         self.max_output_tokens = config.get('max_output_tokens', 32768)
         self.grading_workers = config.get('grading_workers', 1)
 
@@ -108,7 +109,7 @@ class MathLab:
                 or any(not isinstance(name, str) or not name.strip() or role not in _SPLIT_ROLES
                        for name, role in roles.items())
                 or list(roles.values()).count('sealed') > 1):
-            raise ValueError('Assign math splits dev or sealed, with at most one combined sealed split')
+            raise ValueError('Assign math splits train, dev or sealed, with at most one combined sealed split')
         for key, default in (('max_output_tokens', 32768), ('grading_workers', 1)):
             value = config.get(key, default)
             if type(value) is not int or value < 1:
@@ -127,8 +128,7 @@ class MathLab:
         """The data, actor and verifier identity every trace records."""
         return {'manifest_sha256': self.manifest_sha256, 'actor': asdict(self.actor),
                 'max_output_tokens': self.max_output_tokens,
-                'split_roles': {name: 'sealed' if role.after_finish_only else 'dev'
-                                for name, role in self.roles.items()},
+                'split_roles': dict(self.role_names),
                 'verifiers': {name: sorted({row.verifier.name for row in rows})
                               for name, rows in self.datasets.items()}}
 

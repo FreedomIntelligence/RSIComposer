@@ -1,4 +1,4 @@
-"""Register ReST^EM. Its Lab is method-private until the shared math Lab is implemented."""
+"""Register ReST^EM; its Lab is a MathLab subclass."""
 from rsisys.algorithms.rest_em.controller import RestEMController
 from rsisys.api import MethodDefinition
 

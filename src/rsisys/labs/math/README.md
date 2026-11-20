@@ -166,6 +166,13 @@ is another `MathSearchLab`: its candidate is a program, `solve()` runs each
 problem for several trials against a fixed model pool, and the manifest has
 `search` and sealed `heldout` splits.
 
+Weight-training methods split a manifest into `train` and `dev` splits
+(`split_roles` accepts `train`, `dev` and `sealed`). ReST^EM's Lab
+([`algorithms/rest_em/lab.py`](../../algorithms/rest_em/lab.py)) samples from the
+`train` split with its engine, filters with `verify()`, trains, and measures
+checkpoints on `dev` with MathLab's `evaluate()`: `bind_actor()` records the
+engine as the measured model, and `solve()` asks the engine instead of the actor.
+
 ## Public operations
 
 | Operation | Arguments and result |

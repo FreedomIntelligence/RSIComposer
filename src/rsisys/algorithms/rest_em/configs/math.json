@@ -8,8 +8,8 @@
       "config": {
         "controller": {
           "initial_model": "models/Qwen2.5-7B-d1497293",
-          "train_data": "runs/math-data/train.jsonl",
-          "eval_data": "runs/math-data/dev.jsonl",
+          "train_data": "train",
+          "eval_data": "dev",
           "iterations": 2,
           "samples_per_prompt": 8,
           "max_accepted_per_prompt": 4
@@ -20,7 +20,6 @@
             "model_kind": "causal_lm",
             "prompt_format": "completion",
             "answer_format": "latex",
-            "verifier": "math_verify",
             "few_shot_data": "runs/math-data/few-shot.jsonl",
             "device": "cuda",
             "epochs": 1,
@@ -30,7 +29,8 @@
             "seed": 73,
             "generation_batch_size": 32,
             "train_batch_size": 2,
-            "gradient_accumulation_steps": 4
+            "gradient_accumulation_steps": 4,
+            "manifest": "runs/math-data/manifest.json"
           }
         }
       }

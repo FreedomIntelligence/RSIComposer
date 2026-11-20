@@ -102,10 +102,11 @@ def jsonl_problems(root, entry, verifiers=VERIFIERS):
     return tuple(problems), path
 
 
-def load_splits(path, roles, *, verifiers=VERIFIERS):
+def load_splits(path, roles, *, verifiers=VERIFIERS, role_names=None):
     """Bind each split in roles to its manifest entry: (problems by split, bindings, manifest digest).
 
-    verifiers is the catalog (name -> factory) that split entries select from.
+    verifiers is the catalog (name -> factory) that split entries select from;
+    role_names names each split's role (train, dev or sealed) for its binding.
     """
     from .benchmarks import official_problems
 
@@ -129,7 +130,7 @@ def load_splits(path, roles, *, verifiers=VERIFIERS):
             rows, source = jsonl_problems(path.parent, entry, verifiers)
         problems[split] = rows
         bindings.append(DatasetBinding(
-            name='math', split=split, role='sealed' if sealed else 'dev',
+            name='math', split=split, role=(role_names or {}).get(split, 'sealed' if sealed else 'dev'),
             source=str(source), schema_version='1', content_digest=entry['sha256'],
             row_ids=tuple(row.id for row in rows),
         ))

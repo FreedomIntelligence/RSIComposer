@@ -8,8 +8,8 @@
       "config": {
         "controller": {
           "initial_model": "fixture-initial",
-          "train_data": "train.jsonl",
-          "eval_data": "eval.jsonl",
+          "train_data": "train",
+          "eval_data": "dev",
           "iterations": 2,
           "samples_per_prompt": 4,
           "max_accepted_per_prompt": 1
@@ -17,7 +17,7 @@
         "labs": {
           "math": {
             "engine": "fixture",
-            "data_root": "src/rsisys/algorithms/rest_em/configs/cpu/data"
+            "manifest": "src/rsisys/algorithms/rest_em/configs/cpu/data/manifest.json"
           }
         }
       }
