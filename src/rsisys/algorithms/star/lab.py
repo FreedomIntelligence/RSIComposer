@@ -9,11 +9,11 @@ from time import sleep
 
 from rsisys.api import (
     DEV, SEALED, Invariant, OperationResult, MetricSpec, OperationCall, OperationSpec, atomic_write, file_hash, json_bytes, report_training_log, ResourceRequest, WorkerSpec, execution_capabilities, worker_environment,
+    score_record,
 )
 
-from ..shared.numeric_answers import extract_answer, score_math
 from ..shared.prompt_data import load_splits
-from .protocol import MAX_LENGTH, keep_reasoning, render_prompt, write_records
+from .protocol import VERIFIER, MAX_LENGTH, keep_reasoning, render_prompt, write_records
 from .records import GLOBAL_BATCH, training_example
 
 
@@ -78,7 +78,7 @@ class StarLab:
         atomic_json(cohort_file, cohorts)
         development = []
         for row in groups["dev"]:
-            answer = extract_answer(row["answer"], require_marker=False)
+            answer = VERIFIER.parse_reference(row["answer"])
             if answer is None:
                 raise ValueError(f"Invalid GSM8K reference for {row['id']}")
             development.append({"id": row["id"], "prompt": row["question"],
@@ -119,7 +119,7 @@ class StarLab:
         return ('round-weight-training/v1',)
 
     def primary_metric(self):
-        return MetricSpec('accuracy', 'maximize', 'gsm8k-numeric-answer/v1')
+        return MetricSpec('accuracy', 'maximize', VERIFIER.name)
 
     def split_roles(self):
         return {'dev': DEV, 'test': SEALED}
@@ -259,7 +259,7 @@ class StarLab:
         directory = self.root / f"evaluation-{label}"
         outputs = self._sample(items, model, directory)
         rows = [{"id": row["id"], "text": outputs[row["id"]][0],
-                 **score_math(outputs[row["id"]][0], row["answer"])} for row in items]
+                 **score_record(VERIFIER, outputs[row["id"]][0], row["answer"])} for row in items]
         write_records(directory / "scores.jsonl", rows)
         metrics = {"correct": sum(row["correct"] for row in rows), "total": len(rows),
                    "parsed": sum(row["parsed"] for row in rows)}

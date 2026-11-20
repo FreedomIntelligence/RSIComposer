@@ -12,14 +12,12 @@ from .records import ACCUMULATION, GLOBAL_BATCH, WORLD_SIZE, load_records, train
 
 
 def verifier_for(name):
-    from rsisys.api import MathVerifyVerifier, StrictNumericVerifier
+    from rsisys.api import build_verifier
 
-    if name == 'numeric':
-        return StrictNumericVerifier()
     try:
-        return MathVerifyVerifier()
+        return build_verifier(name)
     except ImportError as exc:
-        raise RuntimeError('math_verify requires Math-Verify in the training environment') from exc
+        raise RuntimeError(f'{name} requires its optional dependency in the training environment') from exc
 
 
 def build_datasets(args, tokenizer, verifier, *, context_limit):
@@ -44,7 +42,7 @@ def build_datasets(args, tokenizer, verifier, *, context_limit):
             raise ValueError(f'Training record {index}: {exc}') from exc
     dev_examples = []
     for index, (prompt, answer) in enumerate(dev, 1):
-        if verifier.parse(answer) is None:
+        if verifier.parse_reference(answer) is None:
             raise ValueError(f'Validation record {index}: answer is invalid for {verifier.name}')
         ids = tokenizer.encode(render(prompt), add_special_tokens=False)
         if not ids or len(ids) + args.validation_max_new_tokens > context_limit:

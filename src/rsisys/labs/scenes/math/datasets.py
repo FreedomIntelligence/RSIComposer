@@ -8,7 +8,7 @@ from unicodedata import normalize
 from rsisys.loops.contracts.data import DatasetBinding
 
 from .benchmarks import BENCHMARKS, load_benchmark
-from .verifiers import CompetitionIntegerVerifier, MathVerifyVerifier, final_boxed
+from rsisys.labs.verifiers import CompetitionIntegerVerifier, build_verifier
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,7 @@ class Problem:
     answer: int | str
     benchmark: str
     verifier: object
+    expected: str  # The reference as the verifier normalizes it, for records.
 
 
 def checked_bytes(path, digest):
@@ -45,7 +46,7 @@ def _official(root, entry):
     for name, spec in BENCHMARKS.items():
         benchmark = load_benchmark(path, name, manifest=manifest)
         verifier = CompetitionIntegerVerifier(spec.maximum)
-        rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier)
+        rows.extend(Problem(row.id, row.prompt, row.answer, name, verifier, str(row.answer))
                     for row in benchmark.problems)
     return tuple(rows)
 
@@ -57,12 +58,9 @@ def _jsonl(root, entry):
     path = _path(root, entry['file'])
     data = checked_bytes(path, entry['sha256'])
     verifier_name = entry.get('verifier', 'competition_integer')
-    if verifier_name == 'competition_integer':
-        verifier = CompetitionIntegerVerifier(entry.get('maximum', 99999))
-    elif verifier_name == 'math_verify' and 'maximum' not in entry:
-        verifier = MathVerifyVerifier()
-    else:
-        raise ValueError('Invalid math verifier or maximum')
+    # Any shared verifier; maximum is the competition_integer option.
+    verifier = build_verifier({'name': verifier_name,
+                               **({'maximum': entry['maximum']} if 'maximum' in entry else {})})
 
     problems = []
     for line, value in enumerate(data.decode('utf-8').splitlines(), 1):
@@ -75,20 +73,10 @@ def _jsonl(root, entry):
         answer, benchmark = row.get('answer'), row.get('benchmark', 'math')
         if not all(isinstance(text, str) and text.strip() for text in (ident, prompt, benchmark)):
             raise ValueError(f'{path}:{line}: expected nonempty id, prompt and benchmark')
-        if verifier_name == 'competition_integer':
-            answer = verifier.parse_gold(answer)
-            valid = answer is not None
-        else:
-            if type(answer) is int:
-                answer = str(answer)
-            if isinstance(answer, str) and answer.strip():
-                answer = final_boxed(answer) or r'\boxed{' + answer + '}'
-                valid = verifier.accepts_reference(answer)
-            else:
-                valid = False
-        if not valid:
+        expected = verifier.parse_reference(answer)
+        if expected is None:
             raise ValueError(f'{path}:{line}: invalid answer for {verifier_name}')
-        problems.append(Problem(ident, prompt, answer, benchmark, verifier))
+        problems.append(Problem(ident, prompt, answer, benchmark, verifier, str(expected)))
     if type(entry['count']) is not int or not problems or len(problems) != entry['count']:
         raise ValueError(f'{path}: nonempty math dataset must match manifest count')
     return tuple(problems)

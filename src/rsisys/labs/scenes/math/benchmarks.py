@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
-from .verifiers import CompetitionIntegerVerifier
+from rsisys.labs.verifiers import CompetitionIntegerVerifier
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def load_benchmark(manifest_path, name, *, manifest=None):
         row = json.loads(line)
         if row['benchmark'] != name:
             raise ValueError(f'Unexpected benchmark on row {len(problems) + 1}')
-        answer = verifier.parse_gold(row['answer'])
+        answer = verifier.parse_reference(row['answer'])
         if (answer is None or not isinstance(row['id'], str) or not row['id'].strip()
                 or not isinstance(row['prompt'], str) or not row['prompt'].strip()
                 or not isinstance(row['group'], str) or type(row['number']) is not int):

@@ -15,10 +15,10 @@ from pathlib import Path
 from rsisys.api import (
     ExecutionStatus,
     HarnessExecutionError,
-    MathVerifyVerifier,
     OperationResult,
     MetricSpec,
-    StrictNumericVerifier,
+    build_verifier,
+    validate_verifier,
     file_hash as digest,
     sandbox_step,
     validate_source,
@@ -28,13 +28,13 @@ from .search_registry import SearchRegistry
 
 
 @lru_cache(maxsize=1)
-def _worker_verifier():
-    return MathVerifyVerifier()
+def _worker_verifier(spec):
+    return build_verifier(json.loads(spec))
 
 
-def _score_math(pair):
+def _score_isolated(spec, pair):
     # Each spawned worker scores on its main thread, preserving signal timeouts.
-    return _worker_verifier().is_correct(*pair)
+    return _worker_verifier(spec).is_correct(*pair)
 
 
 def validate_config(config):
@@ -70,8 +70,7 @@ def validate_config(config):
     ):
         if key in config and (type(config[key]) is not int or config[key] < 1):
             raise ValueError("Invalid " + key)
-    if config.get("verifier", "math_verify") not in ("math_verify", "strict_numeric"):
-        raise ValueError("Invalid verifier")
+    validate_verifier(config.get("verifier", "math_verify"))
     output = config.get("output_subdir", "harness-math")
     if (
         not isinstance(output, str)
@@ -102,11 +101,7 @@ class FixedModelHarnessLab(SearchRegistry):
         self._sandbox_slots = threading.BoundedSemaphore(
             config.get("sandbox_workers", 32)
         )
-        self.verifier = verifier or (
-            MathVerifyVerifier()
-            if config.get("verifier", "math_verify") == "math_verify"
-            else StrictNumericVerifier()
-        )
+        self.verifier = verifier or build_verifier(config.get("verifier", "math_verify"))
         self._counter = 0
         self._harnesses = {}
         self.datasets = {
@@ -247,9 +242,10 @@ class FixedModelHarnessLab(SearchRegistry):
         traces = [None] * len(items)
         grading_workers = (
             self.config.get("grading_workers", 1)
-            if type(self.verifier) is MathVerifyVerifier
+            if getattr(self.verifier, "isolated", False)
             else 1
         )
+        spec = json.dumps(self.verifier.spec, sort_keys=True) if grading_workers > 1 else None
         with ExitStack() as stack:
             grader = (
                 stack.enter_context(
@@ -276,7 +272,7 @@ class FixedModelHarnessLab(SearchRegistry):
                 if grader is None:
                     trace["correct"] = self.verifier.is_correct(*pair)
                 else:
-                    scoring[grader.submit(_score_math, pair)] = index
+                    scoring[grader.submit(_score_isolated, spec, pair)] = index
             dispatched = time.monotonic()
             for future in as_completed(scoring):
                 traces[scoring[future]]["correct"] = future.result()

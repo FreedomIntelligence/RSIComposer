@@ -123,20 +123,34 @@ Other implementations are importable from `rsisys.api` without registration:
 
 ## Verifiers
 
-A verifier checks a model answer against the reference answer. It is part of a
-Lab's scoring and lives in the scene whose answer format it handles, so it is
-not a registry component. The math scene provides these in
-[`labs/scenes/math/verifiers.py`](../src/rsisys/labs/scenes/math/verifiers.py):
+A verifier checks a model answer against the reference answer. All verifiers
+share one interface, [`AnswerVerifier`](../src/rsisys/labs/verifiers.py), so a
+Lab selects one by name in its config instead of importing a class:
 
-| Verifier | Answer format | Example benchmarks |
-| --- | --- | --- |
-| `CompetitionIntegerVerifier` | A terminal boxed integer in the benchmark range | AIME, AIMO3 Reference |
-| `StrictNumericVerifier` | A single number | GSM8K |
-| `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
+```json
+"verifier": "math_verify"
+"verifier": {"name": "competition_integer", "maximum": 999}
+```
 
-A Lab picks one in its own config; for example, ReST^EM's Lab accepts
-`"verifier": "numeric"` or `"math_verify"`. A new Lab imports a verifier from
-`rsisys.api`, or implements its own scoring for a new answer format.
+| Name | Class | Answer format | Example benchmarks |
+| --- | --- | --- | --- |
+| `strict_numeric` | `StrictNumericVerifier` | A final `####` number or numeric box | GSM8K |
+| `marked_numeric` | `MarkedNumericVerifier` | The last marked number (`####`, box, or "the answer is") | GSM8K (GEPA, STaR) |
+| `competition_integer` | `CompetitionIntegerVerifier` | A terminal boxed integer up to `maximum` (999 or 99999) | AIME, AIMO3 Reference |
+| `math_verify` | `MathVerifyVerifier` | LaTeX or symbolic expressions; needs `.[math]` | MATH, MATH-500 |
+
+The math scene (per split, in its manifest), ReST^EM, FT-Agent and the harness-search Labs
+accept a `verifier` option. A Lab calls `parse(text)` and
+`is_correct(completion, answer)`, or `check(completion, answer)` when it also
+records whether the answer parsed. `answer_format` is the instruction text that
+asks a model for the format the verifier reads.
+
+For a new answer format, subclass `AnswerVerifier` from `rsisys.api`, set
+`name` (a versioned identity that becomes the primary metric's scorer), and
+implement `parse`. Override `parse_reference` when gold labels use a different
+format from completions, and set `isolated = True` if grading must run on a
+process main thread. Pass the instance to a Lab factory that accepts
+`verifier=`, as the ReST^EM, TTRL and harness Labs do.
 
 ## Lab profiles
 

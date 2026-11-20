@@ -27,9 +27,9 @@ def majority_rewards(completions, verifier):
 def _majority_rewards_many(groups, verifier):
     if any(len(group) < 2 for group in groups):
         raise ValueError('A GRPO group requires multiple responses')
-    if groups and type(verifier) is MathVerifyVerifier and current_thread() is not main_thread():
+    if groups and getattr(verifier, 'isolated', False) and current_thread() is not main_thread():
         from ._reward_worker import score_groups
-        return score_groups(groups)
+        return score_groups(groups, verifier.spec)
     return [_majority_reward(group, verifier) for group in groups]
 
 

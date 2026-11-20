@@ -61,7 +61,7 @@ def main():
     parser.add_argument("--warmup-steps", type=int, required=True)
     parser.add_argument("--dropped-overlength", type=int, required=True)
     parser.set_defaults(max_length=MAX_LENGTH, validation_max_new_tokens=MAX_NEW_TOKENS,
-                        verifier="numeric", qwen_math_chat=True)
+                        verifier="strict_numeric", qwen_math_chat=True)
     args = parser.parse_args()
     if args.warmup_steps < 1:
         parser.error('warmup steps must be positive')

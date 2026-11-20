@@ -3,11 +3,12 @@
 import json
 import re
 
-from ..shared.numeric_answers import score_math
+from rsisys.api import MarkedNumericVerifier
 
 
 MAX_LENGTH, MAX_NEW_TOKENS = 1024, 768
 LEARNING_RATE = 1e-6
+VERIFIER = MarkedNumericVerifier()
 ANSWER_MARKER = re.compile(r'####|\\boxed\{|(?:final answer|the answer is|答案是)', re.I)
 
 
@@ -17,8 +18,7 @@ def curriculum(rounds, plain_rounds):
 
 
 def keep_reasoning(item, answer):
-    report = score_math(answer, item["answer"])
-    if not report["correct"]:
+    if not VERIFIER.is_correct(answer, item["answer"]):
         return None
     marker = list(ANSWER_MARKER.finditer(answer))[-1]
     rationale = re.sub(r'(?:final answer|the answer is|答案是)\s*[:：]?\s*$', '',
@@ -26,7 +26,7 @@ def keep_reasoning(item, answer):
     if not any(ch.isalpha() for ch in rationale):
         return None
     return {"id": item["id"], "prompt": item["question"],
-            "completion": rationale + "\n\\boxed{" + report["expected"] + "}"}
+            "completion": rationale + "\n\\boxed{" + str(VERIFIER.parse_reference(item["answer"])) + "}"}
 
 
 def write_records(path, rows):

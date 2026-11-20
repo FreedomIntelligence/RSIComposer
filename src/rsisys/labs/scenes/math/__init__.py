@@ -1,4 +1,4 @@
-"""Math scene. Answer verifiers live in verifiers.py; a Lab imports the one matching its answer format."""
+"""Math scene. Answer verifiers are shared components in rsisys.labs.verifiers."""
 
 
 def register_components(registry):

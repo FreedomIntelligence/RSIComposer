@@ -7,12 +7,13 @@ from rsisys.api import (
     ArtifactRef,
     GenerationRequest,
     OperationResult,
+    MarkedNumericVerifier,
     MetricSpec,
     report_samples,
+    score_record,
 )
 
 from ..shared.experiment import ModelCalls
-from ..shared.numeric_answers import score_math
 from ..shared.prompt_data import load_splits
 from .protocol import upstream, valid_instruction
 from .controller import candidate_id
@@ -41,6 +42,7 @@ Provide the new instructions within ``` blocks."""
 class GEPAGSM8KLab(SearchRegistry):
     def __init__(self, context, config):
         self._search_init()
+        self.verifier = MarkedNumericVerifier()
         self.config = config
         self.session = ModelCalls(context, config['max_model_calls'])
         self.models = context.roles
@@ -58,7 +60,7 @@ class GEPAGSM8KLab(SearchRegistry):
         self._restore_search(state['search'])
 
     def primary_metric(self):
-        return MetricSpec('accuracy', 'maximize', 'gsm8k-explicit-final-exact-fraction/v2')
+        return MetricSpec('accuracy', 'maximize', self.verifier.name)
 
     def _candidate_id(self, candidate):
         if not isinstance(candidate, dict) or set(candidate) != {'instruction'} or not valid_instruction(candidate['instruction']):
@@ -116,7 +118,7 @@ class GEPAGSM8KLab(SearchRegistry):
         records = []
         for row in rows:
             response = self.complete('actor', render(row), round_index=request['round'])
-            result = score_math(response, row['answer'])
+            result = score_record(self.verifier, response, row['answer'])
             records.append({'id': row['id'], 'question': row['question'], 'response': response, **result})
         scores = [int(record['correct']) for record in records]
         return {'scores': scores, 'count': len(records),

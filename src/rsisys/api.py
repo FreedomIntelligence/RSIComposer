@@ -122,6 +122,20 @@ _EXPORTS = {
     'report_samples': ('rsisys.runtime.observation', 'report_samples'),
     'report_training_log': ('rsisys.runtime.observation', 'report_training_log'),
     'trigger_probe': ('rsisys.runtime.observation', 'trigger_probe'),
+    # Answer verifiers selected by name in Lab configs (Math-Verify is optional).
+    'AnswerCheck': ('rsisys.labs.verifiers', 'AnswerCheck'),
+    'AnswerVerifier': ('rsisys.labs.verifiers', 'AnswerVerifier'),
+    'CompetitionIntegerVerifier': ('rsisys.labs.verifiers', 'CompetitionIntegerVerifier'),
+    'MarkedNumericVerifier': ('rsisys.labs.verifiers', 'MarkedNumericVerifier'),
+    'MathVerifyVerifier': ('rsisys.labs.verifiers', 'MathVerifyVerifier'),
+    'StrictNumericVerifier': ('rsisys.labs.verifiers', 'StrictNumericVerifier'),
+    'build_verifier': ('rsisys.labs.verifiers', 'build_verifier'),
+    'final_boxed': ('rsisys.labs.verifiers', 'final_boxed'),
+    'marked_number': ('rsisys.labs.verifiers', 'marked_number'),
+    'numeric_answer': ('rsisys.labs.verifiers', 'numeric_answer'),
+    'parse_reference': ('rsisys.labs.verifiers', 'parse_reference'),
+    'score_record': ('rsisys.labs.verifiers', 'score_record'),
+    'validate_verifier': ('rsisys.labs.verifiers', 'validate_verifier'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
     'MathLab': ('rsisys.labs.scenes.math.lab', 'MathLab'),
     'CodingLab': ('rsisys.labs.scenes.coding.lab', 'CodingLab'),
@@ -138,17 +152,13 @@ _EXPORTS = {
     'tensor_batch': ('rsisys.backends.training.worker', 'tensor_batch'),
     'validate_engine': ('rsisys.backends.training.engine', 'validate_engine'),
     'weights_digest': ('rsisys.backends.training.worker', 'weights_digest'),
-    # Optional harnesses and verifiers.
+    # Optional harnesses.
     'BasicContextCompactor': ('rsisys.harnesses.decision.context', 'BasicContextCompactor'),
     'DSHConfig': ('rsisys.harnesses.decision.dsh', 'DSHConfig'),
     'DecisionPrompts': ('rsisys.harnesses.decision.policy.prompts', 'DecisionPrompts'),
     'HarnessExecutionError': ('rsisys.harnesses.python_step', 'HarnessExecutionError'),
-    'MathVerifyVerifier': ('rsisys.labs.scenes.math.verifiers', 'MathVerifyVerifier'),
     'ModelDecisionPolicy': ('rsisys.harnesses.decision.policy', 'ModelDecisionPolicy'),
-    'StrictNumericVerifier': ('rsisys.labs.scenes.math.verifiers', 'StrictNumericVerifier'),
     'dsh_decision_factory': ('rsisys.harnesses.decision.dsh', 'dsh_decision_factory'),
-    'final_boxed': ('rsisys.labs.scenes.math.verifiers', 'final_boxed'),
-    'numeric_answer': ('rsisys.labs.scenes.math.verifiers', 'numeric_answer'),
     'sandbox_step': ('rsisys.harnesses.python_step', 'sandbox_step'),
     'validate_source': ('rsisys.harnesses.python_step', 'validate_source'),
     # Execution and configuration helpers.
@@ -260,11 +270,20 @@ if _TYPE_CHECKING:
         sandbox_step as sandbox_step,
         validate_source as validate_source,
     )
-    from rsisys.labs.scenes.math.verifiers import (
+    from rsisys.labs.verifiers import (
+        AnswerCheck as AnswerCheck,
+        AnswerVerifier as AnswerVerifier,
+        CompetitionIntegerVerifier as CompetitionIntegerVerifier,
+        MarkedNumericVerifier as MarkedNumericVerifier,
         MathVerifyVerifier as MathVerifyVerifier,
         StrictNumericVerifier as StrictNumericVerifier,
+        build_verifier as build_verifier,
         final_boxed as final_boxed,
+        marked_number as marked_number,
         numeric_answer as numeric_answer,
+        parse_reference as parse_reference,
+        score_record as score_record,
+        validate_verifier as validate_verifier,
     )
     from rsisys.loops.contracts.artifacts import ArtifactRef as ArtifactRef
     from rsisys.loops.contracts.coordination import OperationResult as OperationResult

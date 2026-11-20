@@ -70,8 +70,8 @@ def validate_config(config):
                          ('max_batch_size', 8), ('max_cutoff_len', 1024), ('data_timeout', 120)):
         if type(config.get(key, default)) is not int or config.get(key, default) < 1:
             raise ValueError(key + ' must be a positive integer')
-    if config.get('verifier', 'math_verify') not in ('math_verify', 'strict_numeric'):
-        raise ValueError('Invalid mathematical verifier')
+    from rsisys.api import validate_verifier
+    validate_verifier(config.get('verifier', 'math_verify'))
 
 
 def bounded_train_config(raw, config, directory, *, world_size=1):
@@ -160,7 +160,7 @@ class LLMFinetuneLab:
         from rsisys.api import execution_capabilities
         self.resources, self.executor = execution_capabilities(context)
         self.resources.declare(self.resource_roles())
-        from rsisys.api import MathVerifyVerifier, StrictNumericVerifier
+        from rsisys.api import build_verifier, parse_reference
         self.config = deepcopy(config)
         self.root = Path(context.data_dir).resolve() / config.get('output_subdir', 'llm-finetune')
         # A resumed run rebuilds the Lab over its own existing output directory.
@@ -169,9 +169,9 @@ class LLMFinetuneLab:
         bind = getattr(self.engine, 'bind_execution', None)
         if callable(bind):
             bind(context)
-        self.verifier = StrictNumericVerifier() if config.get('verifier') == 'strict_numeric' else MathVerifyVerifier()
+        self.verifier = build_verifier(config.get('verifier', 'math_verify'))
         self.data = {name: self._read(config[name + '_data']) for name in ('train', 'dev', 'test')}
-        if any(self.verifier.parse(evaluation_answer(row['answer'])) is None
+        if any(parse_reference(self.verifier, evaluation_answer(row['answer'])) is None
                for rows in self.data.values() for row in rows):
             raise ValueError('FT-Agent gold answer does not match the configured verifier')
         self.input_hashes = {config[name + '_data']: file_hash(config[name + '_data']) for name in self.data}

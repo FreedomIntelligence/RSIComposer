@@ -7,7 +7,7 @@ from .verifiers import MathVerifyVerifier
 
 def main():
     actual, expected = json.load(sys.stdin)
-    json.dump(MathVerifyVerifier()._score_boxed(actual, expected), sys.stdout)
+    json.dump(MathVerifyVerifier().grade_boxed(actual, expected), sys.stdout)
 
 
 if __name__ == '__main__':

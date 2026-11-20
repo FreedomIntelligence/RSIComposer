@@ -17,11 +17,12 @@ from rsisys.algorithms.rest_em.engine import (
 from rsisys.api import WorkerLostError
 from rsisys.api import (
     ExecutionStatus, DEV, Invariant, MetricSpec,
-    MathVerifyVerifier,
     OperationResult,
     OperationSpec,
-    StrictNumericVerifier,
+    build_verifier,
     file_hash,
+    parse_reference,
+    validate_verifier,
 )
 
 
@@ -59,8 +60,7 @@ def validate_config(config):
         raise ValueError('prompt_format must be chat or completion')
     if config.get('answer_format', 'numeric') not in ('numeric', 'latex'):
         raise ValueError('answer_format must be numeric or latex')
-    if config.get('verifier', 'numeric') not in ('numeric', 'math_verify'):
-        raise ValueError('verifier must be numeric or math_verify')
+    validate_verifier(config.get('verifier', 'strict_numeric'))
     if 'few_shot_data' in config:
         if config.get('prompt_format', 'chat') != 'completion':
             raise ValueError('few_shot_data requires completion prompt format')
@@ -92,8 +92,7 @@ class RestEMLab:
         bind = getattr(self.engine, 'bind_execution', None)
         if callable(bind):
             bind(context)
-        self.verifier = verifier if verifier is not None else (
-            MathVerifyVerifier() if config.get('verifier') == 'math_verify' else StrictNumericVerifier())
+        self.verifier = verifier if verifier is not None else build_verifier(config.get('verifier', 'strict_numeric'))
         for component, methods in ((self.engine, ('generate', 'train')), (self.verifier, ('parse', 'is_correct'))):
             if not isinstance(getattr(component, 'name', None), str) or not component.name.strip():
                 raise TypeError('Math components must declare a nonempty name/version')
@@ -176,7 +175,7 @@ class RestEMLab:
         rows = self._read(ref)
         if not rows or any(not isinstance(row, dict) or any(
                 not isinstance(row.get(k), str) or not row[k].strip() for k in ('id', 'prompt', 'answer'))
-                or self.verifier.parse(row['answer']) is None for row in rows):
+                or parse_reference(self.verifier, row['answer']) is None for row in rows):
             raise ValueError('Expected nonempty JSONL: unique id, prompt and answer parseable by the selected verifier')
         if len({r['id'] for r in rows}) != len(rows):
             raise ValueError('Duplicate problem IDs')

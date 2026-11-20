@@ -13,7 +13,6 @@ from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec
 from rsisys.runtime.observation import report_samples
 
 from .datasets import load_splits
-from .verifiers import CompetitionIntegerVerifier, MathVerifyVerifier
 
 
 _TRACE_KIND = 'math-evaluation'
@@ -133,11 +132,8 @@ class MathLab:
 
     def _sample(self, row, instruction):
         verifier = row.verifier
-        constraint = (f'Put the final integer from 0 through {verifier.maximum} in one terminal '
-                      if isinstance(verifier, CompetitionIntegerVerifier)
-                      else 'Put the final mathematical answer in one ')
         request = GenerationRequest('actor', self.actor, row.prompt,
-            system=instruction + '\n\n' + constraint + r'\boxed{...}.',
+            system=instruction + '\n\n' + verifier.answer_format,
             temperature=0.0, max_output_tokens=self.max_output_tokens)
         started = monotonic()
         try:
@@ -158,17 +154,13 @@ class MathLab:
         predicted = None
         parsed = correct = False
         if status == 'answered' and isinstance(completion, str):
-            if isinstance(verifier, MathVerifyVerifier):
-                parsed, correct = verifier.score(completion, row.answer)
-            else:
-                predicted = verifier.parse(completion)
-                parsed = predicted is not None
-                correct = parsed and predicted == row.answer
+            check = verifier.check(completion, row.answer)
+            parsed, correct, predicted = check.parsed, check.correct, check.predicted
         if status == 'answered':
             status = 'correct' if correct else 'incorrect' if parsed else 'invalid_format'
         return {
-            'id': row.id, 'benchmark': row.benchmark, 'question': row.prompt, 'expected': str(row.answer),
-            'predicted': str(predicted) if type(predicted) is int else None,
+            'id': row.id, 'benchmark': row.benchmark, 'question': row.prompt, 'expected': row.expected,
+            'predicted': predicted,
             'completion': completion, 'correct': correct, 'parsed': parsed, 'status': status,
             'finish_reason': finish, 'usage': asdict(usage) if usage is not None else {},
             'elapsed_seconds': round(elapsed, 6),
