@@ -136,6 +136,12 @@ _EXPORTS = {
     'parse_reference': ('rsisys.labs.verifiers', 'parse_reference'),
     'score_record': ('rsisys.labs.verifiers', 'score_record'),
     'validate_verifier': ('rsisys.labs.verifiers', 'validate_verifier'),
+    # Question-answer evaluation assembled from task splits and verifiers.
+    'EvaluationLab': ('rsisys.labs.evaluation', 'EvaluationLab'),
+    'TaskItem': ('rsisys.labs.tasks', 'TaskItem'),
+    'TaskSplits': ('rsisys.labs.tasks', 'TaskSplits'),
+    'jsonl_tasks': ('rsisys.labs.tasks', 'jsonl_tasks'),
+    'load_task_manifest': ('rsisys.labs.tasks', 'load_task_manifest'),
     # Containerized coding benchmark provider (Harbor is optional at runtime).
     'MathLab': ('rsisys.labs.scenes.math.lab', 'MathLab'),
     'CodingLab': ('rsisys.labs.scenes.coding.lab', 'CodingLab'),
@@ -233,7 +239,14 @@ if _TYPE_CHECKING:
     from rsisys.runtime.execution.budget import HostBudget as HostBudget
     from rsisys.runtime.execution.budget import BudgetExhausted as BudgetExhausted
 
+    from rsisys.labs.evaluation import EvaluationLab as EvaluationLab
     from rsisys.labs.scenes.math.lab import MathLab as MathLab
+    from rsisys.labs.tasks import (
+        TaskItem as TaskItem,
+        TaskSplits as TaskSplits,
+        jsonl_tasks as jsonl_tasks,
+        load_task_manifest as load_task_manifest,
+    )
     from rsisys.labs.scenes.coding.lab import CodingLab as CodingLab
     from rsisys.labs.scenes.coding.artifacts import CodingArtifact as CodingArtifact
     from rsisys.labs.scenes.coding.agents import HarborCodingAgent as HarborCodingAgent

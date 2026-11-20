@@ -5,10 +5,12 @@ from rsisys.loops.contracts.execution import ExecutionLifecycle, LabExecution, L
 
 
 def register_builtins(registry):
+    from .evaluation import EvaluationLab
     from .scenes.coding import register_components as register_coding
     from .scenes.math import register_components as register_math
     from .scenes.self_reflection import register as register_self_reflection
 
+    registry.register_lab('evaluation', EvaluationLab, version='1', validate_config=EvaluationLab.validate_config)
     register_math(registry)
     register_coding(registry)
     register_self_reflection(registry)

@@ -1,6 +1,10 @@
 # Math task environment
 
-`MathLab` is a reusable scene registered as `math`. It loads frozen math
+`MathLab` is a reusable scene registered as `math`. It is the
+[`evaluation` Lab](../../../../docs/components.md#connect-a-question-answer-benchmark)
+with math defaults: rows group by `benchmark`, the default verifier is
+`competition_integer`, the output budget is 32,768 tokens, and a sealed split
+can use the official competition bundle. It loads frozen math
 problems, calls the target model bound to the `actor` role, verifies answers,
 and records scores, token usage, and evidence. The method supplies the solver
 instruction. Its Controller and Harness own proposal generation, search,
@@ -69,9 +73,11 @@ fingerprint for the sealed split without exposing its row IDs or source.
 
 A split can bind a JSONL file using `file`, `sha256`, and `count`, whether its
 role is `dev` or `sealed`. Each row has `id`, `prompt`, `answer`, and optionally
-`benchmark` (defaults to `math`). The default scorer accepts nonnegative integer
-labels through 99,999. For symbolic labels set `"verifier": "math_verify"` in
-the split entry and supply bare LaTeX answers or boxed references. The training
+`benchmark` (defaults to `math`); `fields` renames them as in the `evaluation`
+Lab. The default verifier accepts nonnegative integer labels through 99,999.
+Set `"verifier"` in the split entry to any [shared verifier](../../../../docs/components.md#verifiers);
+for symbolic labels use `"math_verify"` and supply bare LaTeX answers or boxed
+references. The training
 and rollout data stay in the method's own Lab or preparation pipeline. Keep that
 data, the development inputs, and the sealed assessment disjoint.
 

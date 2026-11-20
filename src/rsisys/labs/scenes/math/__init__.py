@@ -1,4 +1,4 @@
-"""Math scene. Answer verifiers are shared components in rsisys.labs.verifiers."""
+"""Math scene: EvaluationLab defaults for math plus the official AIME/AIMO3 bundle."""
 
 
 def register_components(registry):
