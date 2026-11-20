@@ -1,13 +1,26 @@
-"""Math Lab: frozen question-answer splits, actor inference and answer verification.
+"""Math Lab: frozen question-answer splits, answer verification and scored evidence.
 
 The Lab owns its task data (tasks.py, benchmarks.py), answer verification
 (verifiers.py) and the actor call; the Controller supplies the instruction being
 measured. Any numeric or symbolic question-answer benchmark connects by
-configuration: each split in the scene manifest selects its verifier, and
+configuration: each split in the dataset manifest selects its verifier, and
 fields renames row keys. Operations: inspect, evaluate (split, instruction,
 optional development task_ids) and read_trace.
+
+Methods on math tasks subclass MathLab and reuse its data, verifiers, scoring
+and traces. Two hooks separate what differs between methods from what is shared:
+
+  solve(problems, arguments) -> [Attempt]   How the candidate answers. The default
+                                            asks the actor with arguments['instruction'];
+                                            a subclass runs a harness, a checkpoint, etc.
+  score(call_id, split, problems, attempts, arguments) -> OperationResult
+                                            Verify, aggregate metrics, store the trace.
+
+A subclass also extends describe()/execute() with its own operations, overrides
+evaluate_schema() for different evaluate arguments, and adds answer formats to
+the verifiers catalog that dataset manifests select from.
 """
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 import json
 from time import monotonic
 
@@ -21,6 +34,7 @@ from rsisys.loops.contracts.profiles import DEV, SEALED, MetricSpec
 from rsisys.runtime.observation import report_samples
 
 from .tasks import load_splits
+from .verifiers import VERIFIERS
 
 
 _TRACE_KIND = 'math-evaluation'
@@ -28,7 +42,25 @@ _TRACE_PAGE_CHARS = 4000
 _SPLIT_ROLES = {'dev': DEV, 'sealed': SEALED}
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """One model answer to one problem, before verification.
+
+    status is answered, truncated (the provider stopped at its output limit) or
+    invalid_format (no usable text); only answered attempts are verified.
+    """
+    completion: str | None
+    status: str = 'answered'
+    finish_reason: str | None = None
+    usage: dict = field(default_factory=dict)
+    simulated: bool = False
+    elapsed_seconds: float = 0.0
+
+
 class MathLab:
+    # Verifier names a dataset manifest may select; subclasses add their own formats.
+    verifiers = VERIFIERS
+
     def __init__(self, context, config):
         self.validate_config(config)
         self.actor = context.roles.get('actor')
@@ -37,7 +69,8 @@ class MathLab:
         self.models = context.models
         self.artifacts = context.artifacts
         self.roles = {name: _SPLIT_ROLES[role] for name, role in config['split_roles'].items()}
-        self.datasets, self.bindings, self.manifest_sha256 = load_splits(config['manifest'], self.roles)
+        self.datasets, self.bindings, self.manifest_sha256 = load_splits(
+            config['manifest'], self.roles, verifiers=self.verifiers)
         self.max_output_tokens = config.get('max_output_tokens', 32768)
 
     @staticmethod
@@ -89,12 +122,7 @@ class MathLab:
             OperationSpec('inspect', 'Describe the visible evaluation splits and the actor budget.',
                           {'type': 'object', 'properties': {}, 'additionalProperties': False}, read_only=True),
             OperationSpec('evaluate', 'Score the actor using a fixed instruction and a frozen task split.',
-                          {'type': 'object', 'properties': {
-                              'split': {'type': 'string', 'enum': list(self.datasets)},
-                              'instruction': {'type': 'string', 'minLength': 1},
-                              'task_ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1,
-                                           'uniqueItems': True}},
-                           'required': ['split', 'instruction'], 'additionalProperties': False}),
+                          self.evaluate_schema()),
             OperationSpec('read_trace', 'Read a page from one sample in a development evaluation.',
                           {'type': 'object', 'properties': {
                               'split': {'type': 'string'}, 'evaluation': trace_ref,
@@ -103,6 +131,14 @@ class MathLab:
                            'required': ['split', 'evaluation', 'index'], 'additionalProperties': False},
                           read_only=True),
         )
+
+    def evaluate_schema(self):
+        """Input schema of evaluate: split and optional development task_ids, plus the candidate."""
+        return {'type': 'object', 'properties': {
+            'split': {'type': 'string', 'enum': list(self.datasets)},
+            'instruction': {'type': 'string', 'minLength': 1},
+            'task_ids': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'uniqueItems': True}},
+            'required': ['split', 'instruction'], 'additionalProperties': False}
 
     def execute(self, call):
         args = call.arguments
@@ -113,8 +149,10 @@ class MathLab:
                            for name, rows in self.datasets.items() if self.roles[name].inputs_visible},
                 'actor': asdict(self.actor), 'max_output_tokens': self.max_output_tokens,
             }, call_id=call.call_id)
-        if call.name == 'evaluate' and {'split', 'instruction'} <= args.keys() <= {'split', 'instruction', 'task_ids'}:
-            return self._evaluate(call.call_id, **args)
+        if call.name == 'evaluate':
+            schema = self.evaluate_schema()
+            if set(schema['required']) <= args.keys() <= set(schema['properties']):
+                return self.evaluate(call.call_id, args)
         if call.name == 'read_trace' and {'split', 'evaluation', 'index'} <= args.keys() <= {
                 'split', 'evaluation', 'index', 'offset'}:
             return OperationResult('Math trace page', (), False, data=self._read_trace(**args),
@@ -138,10 +176,28 @@ class MathLab:
             raise LabToolError('Unknown math problem ID in task_ids')
         return tuple(by_id[ident] for ident in task_ids)
 
-    def _sample(self, row, instruction):
-        # The verifier names the answer format it reads after the Controller's instruction.
-        request = GenerationRequest('actor', self.actor, row.prompt,
-            system=instruction + '\n\n' + row.verifier.answer_format,
+    def evaluate(self, call_id, arguments):
+        """Answer the selected problems with solve() and score them."""
+        split = arguments['split']
+        problems = self._select_rows(split, arguments.get('task_ids'))
+        started = monotonic()
+        attempts = self.solve(problems, arguments)
+        if len(attempts) != len(problems):
+            raise RuntimeError('solve() must return one attempt per problem')
+        return self.score(call_id, split, problems, attempts, arguments,
+                          elapsed_seconds=monotonic() - started)
+
+    def solve(self, problems, arguments):
+        """Ask the actor each problem after the instruction and the verifier's answer format."""
+        instruction = arguments.get('instruction')
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise LabToolError('instruction must be nonempty text')
+        return [self.ask_actor(problem, instruction) for problem in problems]
+
+    def ask_actor(self, problem, system):
+        """One temperature-zero actor answer; the system text ends with the answer format."""
+        request = GenerationRequest('actor', self.actor, problem.prompt,
+            system=system + '\n\n' + problem.verifier.answer_format,
             temperature=0.0, max_output_tokens=self.max_output_tokens)
         started = monotonic()
         try:
@@ -153,38 +209,32 @@ class MathLab:
                 status = 'invalid_format'
             else:
                 raise
-            completion, simulated, usage, finish = None, False, error.usage, error.finish_reason
-        else:
-            completion, simulated, usage, finish = (
-                response.text, response.simulated, response.usage, response.finish_reason)
-            status = 'truncated' if finish == 'length' else 'answered'
-        elapsed = monotonic() - started
-        predicted = None
-        parsed = correct = False
-        if status == 'answered' and isinstance(completion, str):
-            check = row.verifier.check(completion, row.answer)
+            return Attempt(None, status, error.finish_reason, _usage(error.usage), False,
+                           round(monotonic() - started, 6))
+        return Attempt(response.text, 'truncated' if response.finish_reason == 'length' else 'answered',
+                       response.finish_reason, _usage(response.usage), response.simulated,
+                       round(monotonic() - started, 6))
+
+    def record(self, problem, attempt):
+        """Verify one attempt; the record is the per-item evidence."""
+        predicted, parsed, correct, status = None, False, False, attempt.status
+        if status == 'answered' and isinstance(attempt.completion, str):
+            check = problem.verifier.check(attempt.completion, problem.answer)
             parsed, correct, predicted = check.parsed, check.correct, check.predicted
         if status == 'answered':
             status = 'correct' if correct else 'incorrect' if parsed else 'invalid_format'
         return {
-            'id': row.id, 'benchmark': row.benchmark, 'question': row.prompt, 'expected': row.expected,
-            'predicted': predicted,
-            'completion': completion, 'correct': correct, 'parsed': parsed, 'status': status,
-            'finish_reason': finish, 'usage': asdict(usage) if usage is not None else {},
-            'elapsed_seconds': round(elapsed, 6),
-        }, simulated
+            'id': problem.id, 'benchmark': problem.benchmark, 'question': problem.prompt,
+            'expected': problem.expected, 'predicted': predicted,
+            'completion': attempt.completion, 'correct': correct, 'parsed': parsed, 'status': status,
+            'finish_reason': attempt.finish_reason, 'usage': dict(attempt.usage),
+            'elapsed_seconds': attempt.elapsed_seconds,
+        }
 
-    def _evaluate(self, call_id, split, instruction, task_ids=None):
-        if not isinstance(instruction, str) or not instruction.strip():
-            raise LabToolError('instruction must be nonempty text')
-        rows = self._select_rows(split, task_ids)
-        started = monotonic()
-        records, simulated = [], False
-        for row in rows:
-            record, item_simulated = self._sample(row, instruction)
-            records.append(record)
-            simulated |= item_simulated
-
+    def score(self, call_id, split, problems, attempts, arguments, *, elapsed_seconds):
+        """Verify attempts, aggregate quality and execution metrics, and store the trace."""
+        records = [self.record(problem, attempt) for problem, attempt in zip(problems, attempts, strict=True)]
+        simulated = any(attempt.simulated for attempt in attempts)
         correct = sum(row['correct'] for row in records)
         quality = {'accuracy': correct / len(records), 'correct': correct}
         for name in sorted({row['benchmark'] for row in records}):
@@ -193,7 +243,7 @@ class MathLab:
             quality.update({f'{name}_accuracy': count / len(group),
                             f'{name}_correct': count, f'{name}_count': len(group)})
         execution = {
-            'elapsed_seconds': round(monotonic() - started, 6),
+            'elapsed_seconds': round(elapsed_seconds, 6),
             'num_samples': len(records),
             'invalid_format': sum(row['status'] == 'invalid_format' for row in records),
             'truncated': sum(row['status'] == 'truncated' for row in records),
@@ -206,8 +256,9 @@ class MathLab:
                 execution[key] = sum(known)
 
         sealed = self.roles[split].after_finish_only
+        candidate = {key: value for key, value in arguments.items() if key not in ('split', 'task_ids')}
         # A distinct kind keeps standalone sealed artifacts restricted too.
-        evidence = {'binding': self.state(), 'split': split, 'instruction': instruction, 'records': records}
+        evidence = {'binding': self.state(), 'split': split, **candidate, 'records': records}
         ref = self.artifacts.put(json.dumps(evidence, ensure_ascii=False, allow_nan=False).encode(),
                                  kind='sealed-evaluation' if sealed else _TRACE_KIND)
         if not sealed:
@@ -244,3 +295,7 @@ class MathLab:
         end = offset + _TRACE_PAGE_CHARS
         return {'sample': sample, 'completion': text[offset:end],
                 'next_offset': end if end < len(text) else None}
+
+
+def _usage(usage):
+    return asdict(usage) if usage is not None else {}

@@ -279,32 +279,30 @@ VERIFIERS = {
 }
 
 
-def _options(spec):
+def _options(spec, verifiers):
     if isinstance(spec, str):
         spec = {'name': spec}
-    if not isinstance(spec, dict) or spec.get('name') not in VERIFIERS:
-        raise ValueError('verifier must be one of ' + ', '.join(sorted(VERIFIERS))
+    if not isinstance(spec, dict) or spec.get('name') not in verifiers:
+        raise ValueError('verifier must be one of ' + ', '.join(sorted(verifiers))
                          + ', as a name or an object with name and options')
     options = dict(spec)
     return options.pop('name'), options
 
 
-def validate_verifier(spec, *, allowed=None):
-    """Check a verifier selection without importing optional dependencies."""
-    name, options = _options(spec)
-    if allowed is not None and name not in allowed:
-        raise ValueError('verifier must be one of ' + ', '.join(sorted(allowed)))
-    if name == 'competition_integer':
+def validate_verifier(spec, *, verifiers=VERIFIERS):
+    """Check a selection from a verifier catalog (name -> factory) without importing optional dependencies."""
+    name, options = _options(spec, verifiers)
+    if verifiers[name] is CompetitionIntegerVerifier:
         if set(options) - {'maximum'}:
             raise ValueError('competition_integer accepts only maximum')
         CompetitionIntegerVerifier(**options)
-    elif options:
+    elif verifiers[name] in VERIFIERS.values() and options:
         raise ValueError(f'{name} takes no options')
     return name
 
 
-def build_verifier(spec):
-    """Construct a verifier from a name or {"name": ..., options}."""
-    validate_verifier(spec)
-    name, options = _options(spec)
-    return VERIFIERS[name](**options)
+def build_verifier(spec, *, verifiers=VERIFIERS):
+    """Construct a verifier from a name or {"name": ..., options}; options go to its factory."""
+    validate_verifier(spec, verifiers=verifiers)
+    name, options = _options(spec, verifiers)
+    return verifiers[name](**options)

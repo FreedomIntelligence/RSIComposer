@@ -26,7 +26,7 @@ from unicodedata import normalize
 
 from rsisys.loops.contracts.data import DatasetBinding
 
-from .verifiers import build_verifier
+from .verifiers import VERIFIERS, build_verifier
 
 
 FIELDS = ('id', 'prompt', 'answer', 'benchmark')
@@ -68,7 +68,7 @@ def _fields(entry):
     return keys
 
 
-def jsonl_problems(root, entry):
+def jsonl_problems(root, entry, verifiers=VERIFIERS):
     """Read one hashed JSONL split; every answer must be valid for the split's verifier."""
     required = {'file', 'sha256', 'count'}
     if not required <= set(entry) or set(entry) - required - {'verifier', 'maximum', 'fields'}:
@@ -80,7 +80,7 @@ def jsonl_problems(root, entry):
         if not isinstance(spec, str):
             raise ValueError('Give maximum inside the verifier object')
         spec = {'name': spec, 'maximum': entry['maximum']}
-    verifier = build_verifier(spec)
+    verifier = build_verifier(spec, verifiers=verifiers)
     keys = _fields(entry)
     problems = []
     for line, value in enumerate(data.decode('utf-8').splitlines(), 1):
@@ -102,8 +102,11 @@ def jsonl_problems(root, entry):
     return tuple(problems), path
 
 
-def load_splits(path, roles):
-    """Bind each split in roles to its manifest entry: (problems by split, bindings, manifest digest)."""
+def load_splits(path, roles, *, verifiers=VERIFIERS):
+    """Bind each split in roles to its manifest entry: (problems by split, bindings, manifest digest).
+
+    verifiers is the catalog (name -> factory) that split entries select from.
+    """
     from .benchmarks import official_problems
 
     path = Path(path).resolve()
@@ -123,7 +126,7 @@ def load_splits(path, roles):
                 raise ValueError('The official math preset requires a sealed split')
             rows, source = official_problems(path.parent, entry)
         else:
-            rows, source = jsonl_problems(path.parent, entry)
+            rows, source = jsonl_problems(path.parent, entry, verifiers)
         problems[split] = rows
         bindings.append(DatasetBinding(
             name='math', split=split, role='sealed' if sealed else 'dev',

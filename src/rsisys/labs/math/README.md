@@ -124,6 +124,25 @@ format from completions, and set `isolated = True` if grading must run on a
 process main thread. Pass the instance to a Lab factory that accepts
 `verifier=`, as the ReST^EM, TTRL and harness Labs do.
 
+## Build a method Lab on MathLab
+
+A method that works on math tasks subclasses `MathLab` instead of writing its
+own data loading, verification and traces. The base class keeps the dataset
+manifest, split roles, verifiers, metrics and `read_trace`; the subclass changes
+only what its candidate is and how it answers:
+
+| Override | Default | Change it to |
+| --- | --- | --- |
+| `solve(problems, arguments)` | Ask the actor each problem after `arguments['instruction']` (`ask_actor`) | Run a harness program, generate with a trained checkpoint, or render the method's own prompt template |
+| `evaluate_schema()` | `split`, `instruction`, optional `task_ids` | The method's candidate arguments, such as `candidate_id` or `model` |
+| `verifiers` | The four shared verifiers | Add the method's own answer format, for example an upstream evaluator |
+| `describe()` / `execute()` | `inspect`, `evaluate`, `read_trace` | Add operations such as `register`, `select`, `generate` or `train` |
+
+`solve` returns one `Attempt` per problem (completion, status, usage);
+`score()` verifies them and returns the receipt. Dataset manifests select a
+verifier by name from the subclass's catalog, so a method can keep its upstream
+scoring as the default and still let a run choose another verifier.
+
 ## Public operations
 
 | Operation | Arguments and result |
