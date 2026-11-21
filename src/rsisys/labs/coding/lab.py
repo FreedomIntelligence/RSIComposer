@@ -184,6 +184,11 @@ class CodingLab:
                               f'harbor-official-reward/task-mean/{self.protocols[value].protocol_id}')
         return MetricSpec('benchmark_reward', 'maximize', AGGREGATES[value])
 
+    def primary_metric_benchmarks(self):
+        """The benchmarks an evaluation must cover to produce the primary metric."""
+        kind, value = choose_primary_metric(self.config.get('primary_metric'), self.benchmarks, aggregates=AGGREGATES)
+        return {value} if kind == 'benchmark' else set(self.protocols)
+
     @staticmethod
     def metric_name(benchmark):
         return f'{benchmark}/task_reward'

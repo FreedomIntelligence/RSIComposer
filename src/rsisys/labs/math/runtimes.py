@@ -26,9 +26,11 @@ other. A runtime never reaches the host's artifacts, graders or other splits.
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass, field
+from hashlib import sha256
 import subprocess
 import time
 
+from rsisys.loops.contracts.benchmark import canonical_json
 from rsisys.loops.contracts.domain_agent import DomainAgentRejected, DomainAgentSpec
 from rsisys.loops.contracts.execution import LabToolError
 
@@ -120,7 +122,7 @@ class StepProgramRuntime:
     trials: int = 2                  # Default independent trials per problem; a call may ask for another count.
     sandbox_timeout: int = 5
     name: str = 'step-program'
-    version: str = '2'
+    version: str = '3'
     model_access: str = 'lab-mediated'
     accepts: DomainAgentSpec = DomainAgentSpec('program', {'harness': {'type': 'string', 'required': True}}, 'sandboxed-code')
 
@@ -136,11 +138,11 @@ class StepProgramRuntime:
         with ThreadPoolExecutor(max_workers=run.context['workers']) as pool:
             # Capture a separate copy in the caller for each worker's model calls.
             futures = [pool.submit(copy_context().run, self.trial, run, domain_agent['harness'],
-                                   k // trials, k % trials, problem)
+                                   k % trials, problem)
                        for k, problem in enumerate(problems)]
             return [future.result() for future in futures]
 
-    def trial(self, run, harness, index, trial, problem):
+    def trial(self, run, harness, trial, problem):
         context = run.context
         history, actions, covered = [], [], set()
         error, answer = None, ''
@@ -158,7 +160,9 @@ class StepProgramRuntime:
                 if step == self.max_calls:
                     answer = history[-1]['content'] if history else ''
                     break
-                history.append(context['pool'].complete(action['messages'], seed=self.seed + index * 100 + trial * 10 + step))
+                key = canonical_json([self.seed, problem.benchmark, problem.id, trial, step])
+                seed = int.from_bytes(sha256(key.encode()).digest()[:4], 'big')
+                history.append(context['pool'].complete(action['messages'], seed=seed))
         except (*context['domain_agent_errors'], subprocess.TimeoutExpired) as exc:
             # A domain agent crash is an observed failed trial; transport and verifier failures propagate.
             error, answer = str(exc), ''

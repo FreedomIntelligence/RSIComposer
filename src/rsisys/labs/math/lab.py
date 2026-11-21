@@ -358,7 +358,7 @@ class MathLab:
             count = sum(row['correct'] for row in group)
             quality.update({f'{name}_accuracy': count / len(group),
                             f'{name}_correct': count, f'{name}_count': len(group)})
-        quality.update(self.headline(records, quality))
+        quality.update(self.headline(split, records, quality))
         execution = {
             'elapsed_seconds': round(elapsed_seconds, 6),
             'grading_seconds': round(grading_seconds, 6),
@@ -393,19 +393,23 @@ class MathLab:
             **self.result_data(records, ref, arguments),
         }, call_id=call_id)
 
-    def headline(self, records, quality):
-        """The `accuracy` of an evaluation: its one benchmark's, or what primary_metric declares."""
-        names = sorted({row['benchmark'] for row in records})
+    def headline(self, split, records, quality):
+        """Report the declared `accuracy` only when the evaluated rows cover it."""
+        names = {row['benchmark'] for row in records}
         correct = sum(row['correct'] for row in records)
-        if self.declared_metric is None or len(names) == 1 and self.declared_metric.get('benchmark') in (None, names[0]):
-            if len(names) == 1:
-                return {'accuracy': quality[f'{names[0]}_accuracy'], 'correct': correct}
+        if self.declared_metric is None:
+            if len(names) != 1:
+                return {'correct': correct}
+            name, = names
+            return {'accuracy': quality[f'{name}_accuracy'], 'correct': correct}
         kind, value = next(iter(self.declared_metric.items()))
         if kind == 'benchmark':
             # Only this benchmark's evaluations carry the declared metric.
             return {'correct': correct, **({'accuracy': quality[f'{value}_accuracy']} if value in names else {})}
+        if names != {problem.benchmark for problem in self.datasets[split]}:
+            return {'correct': correct}
         if value == 'benchmark-mean':
-            return {'accuracy': sum(quality[f'{n}_accuracy'] for n in names) / len(names), 'correct': correct}
+            return {'accuracy': sum(quality[f'{n}_accuracy'] for n in sorted(names)) / len(names), 'correct': correct}
         return {'accuracy': correct / len(records), 'correct': correct}
 
     def result_data(self, records, ref, arguments):

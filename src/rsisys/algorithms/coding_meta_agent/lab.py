@@ -266,9 +266,6 @@ class CodingSearchLab:
 
     def _measure(self, candidate, candidate_path, split, indices):
         self._validate_manifest()
-        cached = self._cached(candidate['id'], split, indices)
-        if cached is not None:
-            return cached
         rows = self.manifest.get(split)
         if rows is None:
             raise LabToolError('Unknown coding split')
@@ -276,8 +273,16 @@ class CodingSearchLab:
                 or any(type(i) is not int or not 0 <= i < len(rows) for i in indices)
                 or len(set(indices)) != len(indices)):
             raise LabToolError('indices must be distinct valid task offsets')
+        selected = rows if indices is None else [rows[i] for i in indices]
+        missing = self.environment.primary_metric_benchmarks() - {row['benchmark'] for row in selected}
+        if missing:
+            raise LabToolError('Evaluation must include the benchmarks required by the primary metric; missing: '
+                               + ', '.join(sorted(missing)))
+        cached = self._cached(candidate['id'], split, indices)
+        if cached is not None:
+            return cached
         measurement = self.environment.evaluate(CodingArtifact.from_path(candidate_path), split,
-            task_ids=None if indices is None else [rows[i]['id'] for i in indices])
+            task_ids=None if indices is None else [row['id'] for row in selected])
         data = dict(measurement, candidate=candidate['id'], harness_sha256=candidate['sha256'])
         # The search objective is the primary metric the Lab config declares; every benchmark's own
         # reward stays in quality_metrics beside it.

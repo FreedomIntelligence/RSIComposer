@@ -14,6 +14,7 @@ Config: {"manifest", "endpoints", "model", "max_calls", "max_tokens", "workers",
 "grading_workers", "sandbox_workers", "seed", "temperature", "timeout", "trials"}.
 """
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 import threading
 
@@ -22,6 +23,7 @@ from rsisys.api import (
     ModelRef,
     StepProgramRuntime,
     file_hash as digest,
+    json_bytes,
     sandbox_step,
     validate_source,
 )
@@ -142,13 +144,15 @@ class FixedModelHarnessLab(MathSearchLab):
         trials = self.trials(request)
         groups = [records[i:i + trials] for i in range(0, len(records), trials)]
         rewards = [[int(row['correct']) for row in group] for group in groups]
+        protocols = {name: self.benchmarks[name].protocol_id for name in sorted({row['benchmark'] for row in records})}
+        evaluation_protocol_id = sha256(json_bytes({'benchmarks': protocols, 'trials': trials})).hexdigest()
         return {**super().result_data(records, ref, arguments),
                 'harness': harness, 'candidate_id': request['candidate_id'], 'harness_sha256': digest(harness),
                 'score': sum(map(sum, rewards)) / len(records),
                 'cost': sum(row['tokens'] for row in records) / len(records),
                 'rewards': rewards, 'samples': len(records), 'traces': asdict(ref),
                 'harness_errors': sum(row['error'] is not None for row in records),
-                'training_performed': False, 'trials': trials,
+                'training_performed': False, 'trials': trials, 'evaluation_protocol_id': evaluation_protocol_id,
                 'endpoints_used': sorted({reply['endpoint'] for row in records for reply in row['history']}),
                 # One score per problem: the fraction of its trials that were correct.
                 'scores': [sum(group) / len(group) for group in rewards],
