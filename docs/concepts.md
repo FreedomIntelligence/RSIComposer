@@ -23,7 +23,7 @@ finishes or a budget or step limit is reached.
 
 | Term | Meaning | In code |
 | --- | --- | --- |
-| **Run** | One execution of a run config. All its outputs go to one data directory. | `rsisys run --config … --data-dir …` |
+| **Run** | One execution of a run config. All its outputs go to one data directory. | `rsicomposer run --config … --data-dir …` |
 | **Controller** | Decides what to try next and which domain agent to adopt. It has an RSI policy and may also have a Harness and Memory. | `ControllerDefinition` |
 | **RSI policy** | The researcher: the decision logic that proposes and revises domain agents. It can be plain Python or a model that chooses actions. Called Policy in code. | `DecisionPolicy.decide(DecisionInput) -> Decision` |
 | **Harness** | The Controller's own: builds the RSI policy's input window and provides Controller-local tools. Without one, the default Harness is used. Not the harness of a domain agent. | `ControllerHarness` |
@@ -37,7 +37,7 @@ finishes or a budget or step limit is reached.
 | **Primary metric** | The score a Lab declares and reports in `data['quality_metrics']`. The RSI policy uses it to compare domain agents. | `MetricSpec(name, direction, scorer)` |
 | **Split role** | How much of a data split the Controller can see. | `TRAIN`, `TRAIN_UNLABELED`, `DEV`, `SEALED` |
 | **Method** | A Controller bound to its own Labs and registered under one name. Most built-in algorithms are methods. | `MethodDefinition`, `registry.register_method` |
-| **Registry** | The catalog of methods, Controllers, Labs, and components that a run config can select by name. | `rsisys catalog` |
+| **Registry** | The catalog of methods, Controllers, Labs, and components that a run config can select by name. | `rsicomposer catalog` |
 | **Plugin** | Your own Python file or package with a `register(registry)` function, loaded with `--plugin`. | `Registry.load_plugin` |
 | **Component** | A reusable part, such as a model backend, Memory, or Harness, that a method resolves by name. | `registry.register_component` |
 
@@ -74,7 +74,7 @@ and the scoring. A Lab never proposes candidates, so any Controller that speaks
 its profile can drive it.
 
 The Controller is also replaceable at run time. The
-[Self-Reflection Lab](../src/rsisys/labs/self_reflection/lab.py) builds
+[Self-Reflection Lab](../src/rsicomposer/labs/self_reflection/lab.py) builds
 candidate Controllers and tests them in nested runs. The current Controller then
 decides whether to adopt one.
 
@@ -87,7 +87,7 @@ Each run writes to its data directory. The most useful files are:
 | `result.json` | Final status, stop reason, every step's receipt in `events`, and `controller_report` if the Controller provides one |
 | `lab_receipts/` | One stored receipt per operation call |
 | `artifacts/` and Lab output directories (for example `math-lab/`) | Files that Labs produced, such as generated data, evaluations, and models |
-| `snapshots/` | Snapshots for `rsisys resume --snapshot`, for methods that support them |
+| `snapshots/` | Snapshots for `rsicomposer resume --snapshot`, for methods that support them |
 
 The [Quickstart](quickstart.md#read-the-results) shows how to print the metrics
 from `result.json`.

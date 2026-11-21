@@ -10,7 +10,7 @@ export function attributions(){
       const name=remaining[0].startsWith('@')?remaining.slice(0,2).join('/'):remaining[0];
       roots.add((id.slice(0,index+marker.length)+name).replaceAll('\0',''));
     }
-    let notice='RSIMonitor chart workspace\nAdapted from SwanHubX/SwanLab-Dashboard\nRevision e2a7a84f49dcf18ff09c50846f5516b69093c0b9\nCopyright SwanLab-Dashboard contributors. Apache-2.0.\nUpstream license declaration: https://github.com/SwanHubX/SwanLab-Dashboard/blob/e2a7a84f49dcf18ff09c50846f5516b69093c0b9/pyproject.toml#L9-L13\nModified for RSISys: local data subscriptions, host UI, persistent layouts and axes.\n';
+    let notice='RSIMonitor chart workspace\nAdapted from SwanHubX/SwanLab-Dashboard\nRevision e2a7a84f49dcf18ff09c50846f5516b69093c0b9\nCopyright SwanLab-Dashboard contributors. Apache-2.0.\nUpstream license declaration: https://github.com/SwanHubX/SwanLab-Dashboard/blob/e2a7a84f49dcf18ff09c50846f5516b69093c0b9/pyproject.toml#L9-L13\nModified for RSIComposer: local data subscriptions, host UI, persistent layouts and axes.\n';
     notice+=fs.readFileSync(path.resolve('../../../LICENSE'),'utf8')+'\n\nBundled dependencies:\n';
     for(const root of [...roots].sort()){
       const metadata=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));

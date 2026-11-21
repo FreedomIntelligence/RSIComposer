@@ -1,6 +1,6 @@
 # Components
 
-This page lists what ships with RSIComposer. `rsisys catalog` prints the current
+This page lists what ships with RSIComposer. `rsicomposer catalog` prints the current
 registry; add `--plugin <path>` to include your own registrations.
 
 A run config selects either one **method**, or one **Controller** together with
@@ -16,20 +16,20 @@ require; check the preset before running it.
 
 | Method | Presets | Needs | Guide |
 | --- | --- | --- | --- |
-| `rest_em`¹ | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsisys/algorithms/rest_em/README.md) |
+| `rest_em`¹ | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsicomposer/algorithms/rest_em/README.md) |
 | `star`¹ | `gsm8k` | 4 GPUs, local base model, a math dataset manifest with `train`, `dev` and `test` splits | — |
 | `ttrl` | `8gpu` | 8 GPUs, local base model | — |
 | `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `verl_math_grpo` | [TOML example](config.md#online-grpo-with-verl) | Local weights, Math Lab train/dev manifest, GPU and pinned veRL environment | [Configuration](config.md#online-grpo-with-verl) |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | — |
-| `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | [README](../src/rsisys/algorithms/gepa/README.md) |
-| `gepa_merge` | `gepa/configs/merge-screen` | Model endpoint, pinned GEPA checkout in `external/gepa` | [README](../src/rsisys/algorithms/gepa/README.md) |
+| `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | [README](../src/rsicomposer/algorithms/gepa/README.md) |
+| `gepa_merge` | `gepa/configs/merge-screen` | Model endpoint, pinned GEPA checkout in `external/gepa` | [README](../src/rsicomposer/algorithms/gepa/README.md) |
 | `promptpg` | `tabmwp` | Model endpoint, TabMWP files | — |
 | `funsearch` | `evolution`, `frozen_parents` | Model endpoint | — |
 | `meta_agent` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
 | `rrsi` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
-| `coding_meta_agent` | `coding` | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsisys/algorithms/coding_meta_agent/README.md) |
+| `coding_meta_agent` | `coding` | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsicomposer/algorithms/coding_meta_agent/README.md) |
 | `reflexion` | `control`, `reflection` | Model endpoint, HumanEval files | — |
 | `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
 | `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs, a math dataset manifest with `train`, `dev` and `test` splits | — |
@@ -76,26 +76,26 @@ browser or terminal, can appear in several domains.
 
 | Domain Lab | What the benchmark grades | First benchmark adapters |
 | --- | --- | --- |
-| [CodingLab](../src/rsisys/labs/coding/README.md) | Executable changes in a code workspace or terminal | SWE-bench Verified and Terminal-Bench 2.1 through Harbor |
-| [MathLab](../src/rsisys/labs/math/README.md) | Correctness of mathematical answers | AIME 2024 and 2025 with exact integer verification |
-| [SearchLab](../src/rsisys/labs/search/README.md) | Retrieved answers and tables; sources are recorded as evidence | BrowseComp and WideSearch |
-| [ComputerUseLab](../src/rsisys/labs/computer_use/README.md) | Whether UI actions produced the required application state | WebArena-Infinity real tasks |
-| [ProfessionalWorkLab](../src/rsisys/labs/professional_work/README.md) | Whether a deliverable satisfies the benchmark's rubric | SkillsBench science, office, and finance through Harbor |
+| [CodingLab](../src/rsicomposer/labs/coding/README.md) | Executable changes in a code workspace or terminal | SWE-bench Verified and Terminal-Bench 2.1 through Harbor |
+| [MathLab](../src/rsicomposer/labs/math/README.md) | Correctness of mathematical answers | AIME 2024 and 2025 with exact integer verification |
+| [SearchLab](../src/rsicomposer/labs/search/README.md) | Retrieved answers and tables; sources are recorded as evidence | BrowseComp and WideSearch |
+| [ComputerUseLab](../src/rsicomposer/labs/computer_use/README.md) | Whether UI actions produced the required application state | WebArena-Infinity real tasks |
+| [ProfessionalWorkLab](../src/rsicomposer/labs/professional_work/README.md) | Whether a deliverable satisfies the benchmark's rubric | SkillsBench science, office, and finance through Harbor |
 
 Domain Labs expose `inspect` and `evaluate`. Coding, Math, and Professional Work
 also expose `read_trace`; Search and Computer Use return trace artifacts.
-[`self_reflection`](../src/rsisys/labs/self_reflection/lab.py)
+[`self_reflection`](../src/rsicomposer/labs/self_reflection/lab.py)
 is a framework Lab: it evaluates candidate Controllers in budgeted child runs
 using the configured domain Labs.
 
 A method can wrap a shared Lab to add operations specific to its algorithm.
-For example, [`coding_meta_agent`](../src/rsisys/algorithms/coding_meta_agent/README.md)
+For example, [`coding_meta_agent`](../src/rsicomposer/algorithms/coding_meta_agent/README.md)
 uses Coding Lab for task execution and grading, and adds candidate registration
 and selection in its own adapter. A method can also provide its own Lab when it
 needs a different operation contract, as ReST^EM does for weight training.
 
 To connect data to a Lab, configure its inputs and declare the split roles.
-[`DatasetBinding`](../src/rsisys/loops/contracts/data.py) gives the host a common
+[`DatasetBinding`](../src/rsicomposer/loops/contracts/data.py) gives the host a common
 way to record the role, format, provenance, and content fingerprint of each
 split. The task format stays with the Lab: coding tasks are directories; math
 problems are rows. Keep training and development separate from sealed final
@@ -135,9 +135,9 @@ agent_timeout = 3600
 Results report each benchmark separately. A Lab forms no cross-benchmark total on
 its own: with more than one benchmark, `primary_metric` names one benchmark or a
 named aggregate, and assembly fails without it. See the
-[Coding](../src/rsisys/labs/coding/README.md#connect-a-benchmark) and
-[Math](../src/rsisys/labs/math/README.md#benchmarks) Labs. The contract is in
-[`loops/contracts/benchmark.py`](../src/rsisys/loops/contracts/benchmark.py).
+[Coding](../src/rsicomposer/labs/coding/README.md#connect-a-benchmark) and
+[Math](../src/rsicomposer/labs/math/README.md#benchmarks) Labs. The contract is in
+[`loops/contracts/benchmark.py`](../src/rsicomposer/loops/contracts/benchmark.py).
 
 ### RSI policy and domain agent
 
@@ -163,9 +163,9 @@ domain agent may set (any other field is rejected), how
 it reaches a model, and a trust level: `data`,
 `sandboxed-code` (bwrap or a task container) or `host-code` (imported on a worker host).
 `host-code` runs only when the Lab config lists `trust = ["host-code"]`. The contract is
-in [`loops/contracts/domain_agent.py`](../src/rsisys/loops/contracts/domain_agent.py);
-see the [Coding](../src/rsisys/labs/coding/README.md#plugging-in-a-method-or-coding-agent) and
-[Math](../src/rsisys/labs/math/README.md#runtimes) runtimes.
+in [`loops/contracts/domain_agent.py`](../src/rsicomposer/loops/contracts/domain_agent.py);
+see the [Coding](../src/rsicomposer/labs/coding/README.md#plugging-in-a-method-or-coding-agent) and
+[Math](../src/rsicomposer/labs/math/README.md#runtimes) runtimes.
 
 ### Connect a question-answer benchmark
 
@@ -183,10 +183,10 @@ split's verifier, and rename row keys with `fields`:
 ```
 
 Any Controller that calls `evaluate(split, instruction)` can then search
-instructions on it. See [Connect the datasets](../src/rsisys/labs/math/README.md#connect-the-datasets).
+instructions on it. See [Connect the datasets](../src/rsicomposer/labs/math/README.md#connect-the-datasets).
 Other answer formats belong in their own Lab, with their own verifiers.
 
-To write a Lab, start with [`template_math`](../src/rsisys/labs/_template/README.md),
+To write a Lab, start with [`template_math`](../src/rsicomposer/labs/_template/README.md),
 a plugin that binds training and development data and runs `evaluate`
 synchronously or as a background job.
 
@@ -206,7 +206,7 @@ A method resolves components with
 | `harness` | `python_step` | Runs a domain agent program, `step(problem, history)`, in an isolated Python process. Used by harness-search Labs. This is the domain agent's harness, not the Controller's `ControllerHarness`. |
 | `memory` | `agent_memory` | Default Controller Memory: notes written and retrieved by the decision model |
 
-Other implementations are importable from `rsisys.api` without registration:
+Other implementations are importable from `rsicomposer.api` without registration:
 
 | Part | Classes |
 | --- | --- |
@@ -218,7 +218,7 @@ Other implementations are importable from `rsisys.api` without registration:
 Choose a [model serving binding](config.md#backendsid) in the run config
 to send inference requests to a local server or to an endpoint that speaks
 OpenAI Chat Completions or Anthropic Messages. For training, the method selects
-a registered backend: see [ReST^EM's SFT options](../src/rsisys/algorithms/rest_em/README.md#select-a-trainer)
+a registered backend: see [ReST^EM's SFT options](../src/rsicomposer/algorithms/rest_em/README.md#select-a-trainer)
 or [MathLab GRPO](config.md#online-grpo-with-verl), where the training strategy
 and in-job rollout engine are configured separately.
 
@@ -228,8 +228,8 @@ A verifier checks a model answer against the reference answer. Each Lab defines
 the verifiers for its own answer format. The math Lab's verifiers
 (`strict_numeric`, `marked_numeric`, `competition_integer`, `math_verify`) share
 one interface and are selected by name; methods that score math answers in their
-own Labs import them from `rsisys.api`. See
-[Math Lab: answer verifiers](../src/rsisys/labs/math/README.md#answer-verifiers).
+own Labs import them from `rsicomposer.api`. See
+[Math Lab: answer verifiers](../src/rsicomposer/labs/math/README.md#answer-verifiers).
 The Coding Lab grades with each benchmark task's own tests.
 
 ## Lab profiles
@@ -246,5 +246,5 @@ A Controller that requires a profile works with any Lab that implements it.
 | `PROGRAM_EXECUTION` | Labs that run and score programs |
 | `CODING_TASK` | Labs that run coding agents on benchmark tasks |
 
-See [`loops/contracts/profiles.py`](../src/rsisys/loops/contracts/profiles.py)
+See [`loops/contracts/profiles.py`](../src/rsicomposer/loops/contracts/profiles.py)
 for the operations each profile requires.

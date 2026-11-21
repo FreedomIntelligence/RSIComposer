@@ -9,7 +9,7 @@ third-party dependencies.
 git clone https://github.com/FreedomIntelligence/RSIComposer.git
 cd RSIComposer
 python -m pip install -e .
-rsisys catalog        # lists the registered methods, Controllers, Labs, and components
+rsicomposer catalog        # lists the registered methods, Controllers, Labs, and components
 ```
 
 Most methods need more than the core. Install the
@@ -17,6 +17,11 @@ Most methods need more than the core. Install the
 `pip install -e '.[math]'` or `pip install -e '.[coding]'`. Methods that run an
 upstream project in a separate environment list its packages in
 [`requirements/`](../requirements/).
+
+If you installed the project under its former name (`rsisys`), install this checkout
+in a fresh environment and use `rsicomposer` for commands and `rsicomposer.api` for
+plugin imports. Keep the original checkout and environment for resuming existing
+checkpoints or restoring snapshots made before the rename.
 
 ## Run without a GPU
 
@@ -27,7 +32,7 @@ training happens. Use it to check the installation and to see what a run
 produces.
 
 ```sh
-rsisys run --config src/rsisys/algorithms/rest_em/configs/cpu/rest_em.json \
+rsicomposer run --config src/rsicomposer/algorithms/rest_em/configs/cpu/rest_em.json \
   --data-dir runs/quickstart
 ```
 
@@ -68,12 +73,12 @@ the run directory.
 The method template searches prompt and few-shot settings for a model behind an
 OpenAI-compatible Chat Completions endpoint, such as vLLM.
 
-1. [Start or configure the endpoint](../src/rsisys/labs/_template/README.md#connect-a-gpu-model).
+1. [Start or configure the endpoint](../src/rsicomposer/labs/_template/README.md#connect-a-gpu-model).
 2. Run the template from the repository root:
 
    ```sh
-   rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
-     --config src/rsisys/algorithms/_template/configs/run.json \
+   rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template \
+     --config src/rsicomposer/algorithms/_template/configs/run.json \
      --data-dir runs/gpu-quickstart
    ```
 
@@ -97,8 +102,8 @@ Start the run with `--durable` to save a checkpoint after every step, then
 continue it in the same directory:
 
 ```sh
-rsisys run --durable --config path/to/run.json --data-dir runs/my-run
-rsisys resume --data-dir runs/my-run
+rsicomposer run --durable --config path/to/run.json --data-dir runs/my-run
+rsicomposer resume --data-dir runs/my-run
 ```
 
 Durable runs require the selected components to support checkpoint recovery.
@@ -106,7 +111,7 @@ The CLI rejects `--durable` at startup if the assembly does not supply that
 recovery contract. `snapshot_supported` in `result.json` is a separate check:
 it reports whether the current components support portable snapshots. If a
 snapshot was saved, `snapshot` gives its path. Restore it into a new directory
-with `rsisys resume --snapshot <snapshot-dir> --data-dir <new-run-dir>`.
+with `rsicomposer resume --snapshot <snapshot-dir> --data-dir <new-run-dir>`.
 
 ## Next steps
 

@@ -21,13 +21,13 @@ Controller calls operations as `<alias>.<operation>`, so the alias must match
 the name the Controller expects (`math` in the examples below).
 
 The examples use the template Controller and Lab, so they need the
-`--plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template`
-options and a [Chat Completions endpoint](../src/rsisys/labs/_template/README.md#connect-a-gpu-model).
+`--plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template`
+options and a [Chat Completions endpoint](../src/rsicomposer/labs/_template/README.md#connect-a-gpu-model).
 Run them from the repository root; the dataset paths are relative to it.
 
 ## Pair a registered Controller with a Lab
 
-[`labs/_template/configs/run.json`](../src/rsisys/labs/_template/configs/run.json)
+[`labs/_template/configs/run.json`](../src/rsicomposer/labs/_template/configs/run.json)
 selects the template Controller and the template Lab separately:
 
 ```json
@@ -38,8 +38,8 @@ selects the template Controller and the template Lab separately:
       "name": "template_math",
       "config": {
         "datasets": {
-          "train": "src/rsisys/labs/_template/data/train.jsonl",
-          "dev": "src/rsisys/labs/_template/data/dev.jsonl"
+          "train": "src/rsicomposer/labs/_template/data/train.jsonl",
+          "dev": "src/rsicomposer/labs/_template/data/dev.jsonl"
         }
       }
     }
@@ -48,8 +48,8 @@ selects the template Controller and the template Lab separately:
 ```
 
 ```sh
-rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
-  --config src/rsisys/labs/_template/configs/run.json --data-dir runs/compose
+rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template \
+  --config src/rsicomposer/labs/_template/configs/run.json --data-dir runs/compose
 ```
 
 ## Swap the Controller
@@ -79,7 +79,7 @@ several few-shot counts on the template Lab and reports the best count:
 
 ```python
 """Try each few-shot count with one instruction and keep the best."""
-from rsisys.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import Decision, ExecutionStatus, OperationCall
 
 
 class FewShotSweep:
@@ -122,7 +122,7 @@ Select it in the run config, with the same `labs` section as above:
 ```
 
 ```sh
-rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
+rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template \
   --plugin few_shot_sweep --config few_shot_sweep.json --data-dir runs/few-shot-sweep
 ```
 
@@ -137,14 +137,14 @@ Things to know when writing a Controller:
 - **Keep `model` free.** If a Policy has a `model` attribute, the host treats
   it as the Policy's own decision model and requires a `ModelRef`.
 - **For durable runs**, add `state()` and `restore(state)`; see the
-  [method template](../src/rsisys/algorithms/_template/controller.py).
+  [method template](../src/rsicomposer/algorithms/_template/controller.py).
 - **Call the `decision_maker` model yourself** when the Controller writes
   candidates, using `context.models` and the `decision_maker` role. A call made
   inside `decide()` is repeated with the same seed if the run stops before the
   decision is checkpointed. To keep sampling while Lab operations run, run the
   calls on your own threads and add `inference_ready()`: the host then calls
   `decide()` as soon as it returns `True`, without waiting for a Lab receipt.
-  [FunSearch's Controller](../src/rsisys/algorithms/funsearch/controller.py)
+  [FunSearch's Controller](../src/rsicomposer/algorithms/funsearch/controller.py)
   does this with its samplers.
 
 ## Package a method
@@ -153,7 +153,7 @@ When a Controller and its Labs belong together, register them as one method so
 users can select a single name:
 
 ```python
-from rsisys.api import MethodDefinition
+from rsicomposer.api import MethodDefinition
 
 def register(registry):
     registry.register_method('my_method', MethodDefinition.from_factories(
@@ -165,11 +165,11 @@ def register(registry):
 
 Both factories receive `(context, config)`. The method config passes
 `config['controller']` to the Controller and `config['labs'][<alias>]` to each
-Lab. The [method template](../src/rsisys/algorithms/_template/README.md) is a
+Lab. The [method template](../src/rsicomposer/algorithms/_template/README.md) is a
 complete example. It also registers its Controller on its own, so other Labs can
 use it.
 
-To write a Lab, start from the [Lab template](../src/rsisys/labs/_template/README.md).
+To write a Lab, start from the [Lab template](../src/rsicomposer/labs/_template/README.md).
 
 ## Add Memory or a custom Harness
 
@@ -183,7 +183,7 @@ A Controller is a Policy plus two optional parts, each with its own factory:
 Omit either one to use the default. Pass them to `ControllerDefinition`:
 
 ```python
-from rsisys.api import ControllerDefinition, MemoryAssembly, ResearchAssembly
+from rsicomposer.api import ControllerDefinition, MemoryAssembly, ResearchAssembly
 
 def harness(context, config):
     return MyHarness(context, config)
@@ -194,11 +194,11 @@ def memory(config):
 controller = ControllerDefinition(build_policy, harness=harness, memory=memory)
 ```
 
-`MyMemory` implements [`ControllerMemory`](../src/rsisys/loops/contracts/feedback_context.py);
+`MyMemory` implements [`ControllerMemory`](../src/rsicomposer/loops/contracts/feedback_context.py);
 `LangMemMemory` is a ready-made option (`.[langmem]`). The
-[method template](../src/rsisys/algorithms/_template/README.md) includes a
-working [Harness](../src/rsisys/algorithms/_template/harness.py) and
-[Memory](../src/rsisys/algorithms/_template/memory.py) that both run with it;
+[method template](../src/rsicomposer/algorithms/_template/README.md) includes a
+working [Harness](../src/rsicomposer/algorithms/_template/harness.py) and
+[Memory](../src/rsicomposer/algorithms/_template/memory.py) that both run with it;
 select them with `"harness": "scoreboard"` and `"memory": "best_score"` in the
 Controller config.
 

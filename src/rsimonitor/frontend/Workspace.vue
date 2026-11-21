@@ -16,7 +16,7 @@
     <ChartsDashboard :key="chartKey" :edit-chart="chart=>openEditor(chart.panel)" :groups="groups" :update-chart-status="updateChartStatus"
       :update-namespace-status="updateNamespaceStatus" :media="media" :default-color="colors[0]"
       :get-color="getColor" :subscribe="subscribe" :unsubscribe="unsubscribe" experiment-prefix="?run=" />
-    <p v-if="!metricCount" class="rsi-metrics-empty">还没有指标。在代码里调用 rsisys.log({...}) 就会出现在这里。</p>
+    <p v-if="!metricCount" class="rsi-metrics-empty">还没有指标。在代码里调用 rsicomposer.log({...}) 就会出现在这里。</p>
     <dialog ref="editorDialog" class="rsi-panel-editor" aria-labelledby="panel-editor-title" @cancel.prevent="closeEditor">
       <form v-if="draft" novalidate @submit.prevent="savePanel">
         <header><div><small>图表配置</small><h2 id="panel-editor-title">{{ editingNew ? '添加图表' : '图表设置' }}</h2></div><button type="button" aria-label="关闭图表配置" @click="closeEditor">✕</button></header>

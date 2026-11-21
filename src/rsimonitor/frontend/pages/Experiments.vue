@@ -1,7 +1,7 @@
 <template>
   <header class="page-head"><h1>{{ t('实验') }}</h1>
     <ActionButton v-if="store.compareIds.length > 1" :label="t('对比已选 {p0} 个', {p0: store.compareIds.length})" @click="navigate('compare')" /></header>
-  <p v-if="!store.runs.length" class="empty-state">{{ t('还没有实验。运行 rsisys run 后会出现在这里。') }}</p>
+  <p v-if="!store.runs.length" class="empty-state">{{ t('还没有实验。运行 rsicomposer run 后会出现在这里。') }}</p>
   <section v-for="group in groups" :key="group.id" class="section">
     <SectionTitle v-if="groups.length > 1 || group.id !== 'unassigned'" :title="group.name" :count="group.runs.length" />
     <div class="table-wrap">

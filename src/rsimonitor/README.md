@@ -5,7 +5,7 @@ independent Python distribution with a bundled Vue dashboard and no mandatory
 third-party Python runtime dependencies. A run is produced by RSIComposer; the viewer
 reads its public `monitor.json` and serves a bounded projection to the browser.
 
-See the [RSIComposer package guide](../rsisys/README.md) for method execution and state
+See the [RSIComposer package guide](../rsicomposer/README.md) for method execution and state
 recovery, or the [project overview](../../README.md) ([中文](../../README_zh.md))
 for the architecture diagram and recent updates. The framework guide includes
 the method catalog and adaptation scope.
@@ -24,8 +24,8 @@ rsimonitor --runs-dir runs
 Open `http://127.0.0.1:8765/` and select a run. The dashboard shows the decision
 graph, metrics, samples, logs, and experiment comparisons in English and Chinese.
 Give each experiment a distinct output directory, for example
-`rsisys run --config config.json --data-dir runs/experiment-002 --experiment-name 'Experiment 002'`.
-Point `--runs-dir` at the common parent of these directories. `rsisys run` publishes `monitor.json`;
+`rsicomposer run --config config.json --data-dir runs/experiment-002 --experiment-name 'Experiment 002'`.
+Point `--runs-dir` at the common parent of these directories. `rsicomposer run` publishes `monitor.json`;
 the dashboard follows newly started experiments and displays the observations reported for each run.
 
 It binds to loopback by default and has no authentication or multi-tenant isolation.
@@ -63,9 +63,9 @@ axes omit nonpositive points. **Manage charts** removes panels or restores remov
 automatic panels; these changes only affect the current browser's layout.
 
 ```sh
-rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template \
-  --config src/rsisys/algorithms/_template/configs/run.json \
-  --probe src/rsisys/algorithms/_template/probes.py --data-dir runs/custom-observed
+rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template \
+  --config src/rsicomposer/algorithms/_template/configs/run.json \
+  --probe src/rsicomposer/algorithms/_template/probes.py --data-dir runs/custom-observed
 rsimonitor --runs-dir runs
 ```
 
@@ -80,13 +80,13 @@ def register(observations):
 ```
 
 Any code in a run, including training or inference worker processes, can log like SwanLab:
-`import rsisys; rsisys.log({"train/loss": loss, "note": "text"}, step=step)`. Numbers are charted,
+`import rsicomposer; rsicomposer.log({"train/loss": loss, "note": "text"}, step=step)`. Numbers are charted,
 text appears in the run log, and worker-process records reach the board within about a second.
 Outside a monitored run it is a no-op returning `False`.
 
 Controller/Lab code can also call `observe({"train/loss": measured_loss}, step=optimizer_step)`
 or register a probe with `register_probe(name, callback, on="checkpoint", every=2)`
-and invoke `trigger_probe("checkpoint", payload)`. Import these from `rsisys.api`.
+and invoke `trigger_probe("checkpoint", payload)`. Import these from `rsicomposer.api`.
 Register each name once per run; remove with `current_observations().remove(name)`.
 Host events are `start`, `step`, `feedback` and `finish`. Sampling starts with the
 first event, then every N events. Callbacks receive an event copy and return finite
@@ -94,7 +94,7 @@ numeric metrics or `None`; keys are prefixed with the probe name.
 
 Callbacks execute synchronously at event boundaries. Keep them short; schedule
 expensive evaluation as an explicit Lab operation. Browser refreshes never trigger
-probes or adopt candidates. Host-launched workers can use `rsisys.log()` with the
+probes or adopt candidates. Host-launched workers can use `rsicomposer.log()` with the
 inherited observation environment; other subprocesses return measurements through
 Lab receipts or progress. Observations append to the run's `observations.jsonl`; snapshots retain
 the latest 10,000 points. The default axis is observation order; actual reported
@@ -192,7 +192,7 @@ the same change. Use Node 24 and run `npm ci` followed by `npm run build` in
 Node toolchain and does not rebuild the frontend.
 
 The viewer's package metadata uses this README. Installing `rsimonitor` does not
-install `rsisys`; run production and run inspection can use separate environments.
+install `rsicomposer`; run production and run inspection can use separate environments.
 
 ## Troubleshooting
 

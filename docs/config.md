@@ -1,7 +1,7 @@
 # Run configuration
 
-`rsisys run --config run.toml` and `rsisys run --config run.json` accept the same
-fields. See the [Coding Meta-Agent TOML preset](../src/rsisys/algorithms/coding_meta_agent/configs/coding.toml)
+`rsicomposer run --config run.toml` and `rsicomposer run --config run.json` accept the same
+fields. See the [Coding Meta-Agent TOML preset](../src/rsicomposer/algorithms/coding_meta_agent/configs/coding.toml)
 or the JSON example below. In TOML, quote dates used as revision strings and
 keys that contain a dot (for example, `"terminal-bench-2.1"`). Benchmark
 manifests and saved run state still use JSON.
@@ -31,7 +31,7 @@ manifests and saved run state still use JSON.
 ```
 
 This example runs the method template, so it needs
-`--plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_template`.
+`--plugin src/rsicomposer/labs/_template --plugin src/rsicomposer/algorithms/_template`.
 
 ## Fields
 
@@ -93,7 +93,7 @@ Keep each server in its own pinned environment. The server version check does
 not attest to the loaded weights: deploy an immutable model revision and
 record its tokenizer and chat template with the experiment. Training adapters
 are selected by the method that owns the training operation; see the
-[ReST^EM trainer example](../src/rsisys/algorithms/rest_em/README.md#select-a-trainer).
+[ReST^EM trainer example](../src/rsicomposer/algorithms/rest_em/README.md#select-a-trainer).
 
 To call a hosted provider or a gateway that implements its protocol, select the
 wire format in `backends`. Bind either backend to `actor` or `decision_maker` as
@@ -198,14 +198,14 @@ This adapter currently uses the local RSIComposer executor and a single GPU node
 
 | Command | Option | Meaning |
 | --- | --- | --- |
-| `rsisys run` | `--config` | TOML or JSON run config file |
+| `rsicomposer run` | `--config` | TOML or JSON run config file |
 | | `--data-dir` | Output directory; overrides `data_dir` |
 | | `--plugin` | Load a trusted registration file or package; repeatable |
-| | `--durable` | Save a checkpoint after every step so `rsisys resume` can continue the run |
+| | `--durable` | Save a checkpoint after every step so `rsicomposer resume` can continue the run |
 | | `--experiment-name` | Name shown in RSIMonitor |
 | | `--max-decision-steps`, `--rounds` | Override the config values |
 | | `--probe` | Load an observation plugin for RSIMonitor; repeatable |
-| `rsisys resume` | `--data-dir` | Continue a durable run in this directory |
+| `rsicomposer resume` | `--data-dir` | Continue a durable run in this directory |
 | | `--snapshot` | Restore a snapshot into a new `--data-dir` instead |
-| `rsisys catalog` | `--plugin` | Include plugin registrations in the listing |
-| `rsisys inspect` | `--snapshot` | Validate and describe a snapshot |
+| `rsicomposer catalog` | `--plugin` | Include plugin registrations in the listing |
+| `rsicomposer inspect` | `--snapshot` | Validate and describe a snapshot |

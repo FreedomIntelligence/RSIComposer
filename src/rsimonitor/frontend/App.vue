@@ -33,7 +33,7 @@
       </header>
       <KeepAlive include="Metrics"><component :is="RUN[store.page]" :key="run.run_id + store.page" :run="run" /></KeepAlive>
     </template>
-    <p v-else class="empty-state">{{ t(store.runId ? '这个实验还没有快照' : '还没有实验。运行 rsisys run 后会出现在这里。') }}</p>
+    <p v-else class="empty-state">{{ t(store.runId ? '这个实验还没有快照' : '还没有实验。运行 rsicomposer run 后会出现在这里。') }}</p>
   </main>
   <div v-if="store.toast" class="toast" role="status">{{ t(store.toast) }}</div>
   <dialog ref="dialog" @close="store.modal = null" @click="backdrop">

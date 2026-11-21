@@ -1,0 +1,38 @@
+{
+  "objective": "Compare prompts with real GPU model inference on a small arithmetic dataset",
+  "max_decision_steps": 8,
+  "backends": {
+    "gpu": {
+      "kind": "chat_completions",
+      "endpoint": "http://127.0.0.1:18098/v1",
+      "timeout_seconds": 60,
+      "json_mode": false
+    }
+  },
+  "roles": {
+    "actor": {
+      "backend_id": "gpu",
+      "model_id": "template-model",
+      "revision": "local-snapshot"
+    }
+  },
+  "data_dir": "../../../../../runs/gpu-method-template",
+  "framework": {
+    "method": {
+      "name": "template_prompt_search",
+      "config": {
+        "controller": {
+          "max_evaluations": 3
+        },
+        "labs": {
+          "math": {
+            "datasets": {
+              "train": "src/rsicomposer/labs/_template/data/train.jsonl",
+              "dev": "src/rsicomposer/labs/_template/data/dev.jsonl"
+            }
+          }
+        }
+      }
+    }
+  }
+}

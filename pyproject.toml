@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rsisys"
+name = "rsicomposer"
 version = "0.1.0"
 description = "Modular RSI framework with pluggable controllers and Lab execution environments"
 readme = "README.md"
@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 dependencies = []
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{name = "RSISys contributors"}]
+authors = [{name = "RSIComposer contributors"}]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -25,15 +25,15 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/FreedomIntelligence/RSIComposer"
-Documentation = "https://github.com/FreedomIntelligence/RSIComposer/blob/main/src/rsisys/README.md"
+Documentation = "https://github.com/FreedomIntelligence/RSIComposer/blob/main/src/rsicomposer/README.md"
 Issues = "https://github.com/FreedomIntelligence/RSIComposer/issues"
 
 [project.scripts]
-rsisys = "rsisys.cli:main"
+rsicomposer = "rsicomposer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["rsisys", "rsisys.*"]
+include = ["rsicomposer", "rsicomposer.*"]
 
 [project.optional-dependencies]
 ray = ["ray[default]==2.47.1"]
@@ -49,16 +49,16 @@ dsh = ["deepseek-harness-sdk==0.2.1rc2"]
 dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
 [tool.setuptools.package-data]
-"rsisys.harnesses.decision" = ["dsh.patch.yml"]
-"rsisys.harnesses.decision.feedback" = ["prompts/*.txt"]
-"rsisys.harnesses.decision.policy" = ["prompts/*.txt"]
+"rsicomposer.harnesses.decision" = ["dsh.patch.yml"]
+"rsicomposer.harnesses.decision.feedback" = ["prompts/*.txt"]
+"rsicomposer.harnesses.decision.policy" = ["prompts/*.txt"]
 
-"rsisys.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
+"rsicomposer.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
 
-"rsisys.runtime.orchestration" = ["monitor_contract.json"]
-"rsisys.labs.coding" = ["README.md"]
-"rsisys.labs.math" = ["README.md"]
-"rsisys.labs.computer_use" = ["README.md"]
-"rsisys.labs.professional_work" = ["README.md"]
-"rsisys.labs.search" = ["README.md"]
-"rsisys.labs._template" = ["README.md", "configs/*.json", "data/*.jsonl"]
+"rsicomposer.runtime.orchestration" = ["monitor_contract.json"]
+"rsicomposer.labs.coding" = ["README.md"]
+"rsicomposer.labs.math" = ["README.md"]
+"rsicomposer.labs.computer_use" = ["README.md"]
+"rsicomposer.labs.professional_work" = ["README.md"]
+"rsicomposer.labs.search" = ["README.md"]
+"rsicomposer.labs._template" = ["README.md", "configs/*.json", "data/*.jsonl"]

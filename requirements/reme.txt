@@ -1,4 +1,4 @@
 # Optional upstream runtime, kept outside distribution metadata so the core
 # wheels do not depend on a VCS URL. Used by AgentMemory(retrieval_backend='reme');
-# see src/rsisys/harnesses/decision/reme_memory.py.
+# see src/rsicomposer/harnesses/decision/reme_memory.py.
 reme-ai[as] @ git+https://github.com/agentscope-ai/ReMe.git@e3fade0a781d080a4be7fb83648a3b2e6d477522

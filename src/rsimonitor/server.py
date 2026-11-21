@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency-free, read-only RSISys monitor. Never serves the runs directory."""
+"""Dependency-free, read-only RSIComposer monitor. Never serves the runs directory."""
 from __future__ import annotations
 
 import argparse
@@ -660,7 +660,7 @@ class MonitorServer(ThreadingHTTPServer):
 
 
 class MonitorHandler(BaseHTTPRequestHandler):
-    server_version = "RSISysMonitor/1"
+    server_version = "RSIComposerMonitor/1"
 
     def log_message(self, format, *args):
         # Do not log request paths, query strings, or monitoring contents.
@@ -741,7 +741,7 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     server = MonitorServer((args.host, args.port), args.runs_dir)
-    print(f"RSISys monitor: http://{args.host}:{server.server_port} (read-only)", flush=True)
+    print(f"RSIComposer monitor: http://{args.host}:{server.server_port} (read-only)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -108,7 +108,7 @@ export const english = {
   "运行配置": "Run config",
   "还没有上报任何阶段": "No stages reported yet",
   "还没有上报评测": "No evaluations reported yet",
-  "还没有实验。运行 rsisys run 后会出现在这里。": "No experiments yet. They appear here after rsisys run.",
+  "还没有实验。运行 rsicomposer run 后会出现在这里。": "No experiments yet. They appear here after rsicomposer run.",
   "还没有日志": "No logs yet",
   "这个实验还没有快照": "This experiment has no snapshot yet",
   "这次运行没有上报产物": "This run reported no artifacts",

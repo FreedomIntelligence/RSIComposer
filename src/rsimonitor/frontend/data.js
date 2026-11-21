@@ -1,4 +1,4 @@
-/** RSISys observations -> native chart subscriptions and browser-owned panels. */
+/** RSIComposer observations -> native chart subscriptions and browser-owned panels. */
 import {normalizeSmoothing} from './swanboard/charts/package/smooth.js';
 export const SYSTEM_AXES = ['observation', 'step', 'elapsed_seconds', 'timestamp'];
 export const AGGREGATES = ['both', 'lines', 'mean'];
