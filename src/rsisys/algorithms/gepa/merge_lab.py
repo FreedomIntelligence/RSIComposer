@@ -1,12 +1,13 @@
 """GEPA-Merge's Lab: scores two-component candidates; reflection belongs to the Controller."""
 from dataclasses import replace
 
-from .lab import ACTOR_SYSTEM, GEPAGSM8KLab
+from .lab import GEPAGSM8KLab
 from .merge_controller import candidate_id
 
 
 class GEPAMergeLab(GEPAGSM8KLab):
     template_name = 'gepa-merge-components/v1'
+
     def _candidate_id(self, candidate):
         return candidate_id(candidate)
 
@@ -31,7 +32,7 @@ class GEPAMergeLab(GEPAGSM8KLab):
     def render(self, problem, instruction, request):
         strategy, verification = instruction.split('\x00', 1)
         return (f"Problem:\n{problem.prompt}\n\nStrategy:\n{strategy}"
-                f"\n\nVerification:\n{verification}"), ACTOR_SYSTEM
+                f"\n\nVerification:\n{verification}")
 
     def result_data(self, records, ref, arguments):
         data = super().result_data(records, ref, arguments)

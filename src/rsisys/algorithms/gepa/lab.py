@@ -23,4 +23,4 @@ class GEPAGSM8KLab(PromptSearchLab):
         return candidate_id(candidate['instruction'])
 
     def render(self, problem, instruction, request):
-        return f'Problem:\n{problem.prompt}\n\nInstruction:\n{instruction}', ACTOR_SYSTEM
+        return f'Problem:\n{problem.prompt}\n\nInstruction:\n{instruction}'

@@ -277,13 +277,12 @@ class MathLab:
 
         Default: `text` is an instruction, sent as the system text and followed by the verifier's
         answer format, and the problem is the user prompt. With raw_prompt, `text` is the complete
-        user prompt (a method's own template) and `system` is its system text, plus the answer format.
+        user prompt (a method's own template) and `system` is its exact system text.
         """
-        answer_format = '\n\n' + problem.verifier.answer_format
         if raw_prompt:
-            prompt, system_text = text, (system or '') + answer_format
+            prompt, system_text = text, system
         else:
-            prompt, system_text = problem.prompt, text + answer_format
+            prompt, system_text = problem.prompt, text + '\n\n' + problem.verifier.answer_format
         request = GenerationRequest('actor', self.actor, prompt, system=system_text,
             temperature=temperature, top_p=top_p, seed=seed,
             max_output_tokens=max_output_tokens or problem.max_output_tokens or self.max_output_tokens)

@@ -92,7 +92,7 @@ class PromptTemplateRuntime:
     version: str = '1'
     model_access: str = 'lab-mediated'
     accepts: DomainAgentSpec = DomainAgentSpec('instruction', {'instruction': {'type': 'string', 'required': True}}, 'data')
-    render: object = None             # render(problem, instruction, request) -> (prompt, system); not recorded
+    render: object = None             # render(problem, instruction, request) -> prompt; named by template
 
     @property
     def settings(self):
@@ -103,8 +103,8 @@ class PromptTemplateRuntime:
         instruction = domain_agent['instruction']
         attempts = []
         for problem in problems:
-            prompt, system = self.render(problem, instruction, run.request)
-            attempts.append(run.ask(problem, prompt, system=system, seed=self.seed, temperature=self.temperature,
+            prompt = self.render(problem, instruction, run.request)
+            attempts.append(run.ask(problem, prompt, system=self.system, seed=self.seed, temperature=self.temperature,
                                     top_p=self.top_p, max_output_tokens=self.max_output_tokens, raw_prompt=True))
         return attempts
 
@@ -134,8 +134,11 @@ class StepProgramRuntime:
         """run.context provides pool, executor, sandbox_slots, domain_agent_errors and workers."""
         trials = run.trials
         with ThreadPoolExecutor(max_workers=run.context['workers']) as pool:
-            return list(pool.map(lambda item: copy_context().run(self.trial, run, domain_agent['harness'], *item),
-                                 [(k // trials, k % trials, problem) for k, problem in enumerate(problems)]))
+            # Capture a separate copy in the caller for each worker's model calls.
+            futures = [pool.submit(copy_context().run, self.trial, run, domain_agent['harness'],
+                                   k // trials, k % trials, problem)
+                       for k, problem in enumerate(problems)]
+            return [future.result() for future in futures]
 
     def trial(self, run, harness, index, trial, problem):
         context = run.context

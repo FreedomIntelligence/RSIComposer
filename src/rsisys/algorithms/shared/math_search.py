@@ -96,7 +96,7 @@ class PromptSearchLab(MathSearchLab):
 
     The Lab runs a PromptTemplateRuntime, so the template name, system text, temperature, top_p,
     seed, token limit and call budget that decide a score are all recorded in each benchmark's
-    protocol and are the values that execute. A method supplies template(), the render function
+    protocol and are the values that execute. A method supplies render(), the render function
     that reproduces its pinned upstream prompt exactly.
 
     Config: {"manifest": ..., "seed": 17, "max_model_calls": 256,
@@ -125,7 +125,7 @@ class PromptSearchLab(MathSearchLab):
         return config['seed']
 
     def render(self, problem, instruction, request):
-        """(prompt, system) for one problem under one domain agent; reproduces the pinned upstream prompt."""
+        """User prompt for one problem under one domain agent, matching the pinned upstream prompt."""
         raise NotImplementedError
 
     def solve(self, problems, arguments):

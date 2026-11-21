@@ -65,7 +65,6 @@ class OPROGSM8KLab(PromptSearchLab):
     def render(self, problem, instruction, request):
         import pandas as pd
 
-        prompt = self.opt.eval_utils.gen_prompt(pd.DataFrame([(problem.prompt, problem.answer)]),
+        return self.opt.eval_utils.gen_prompt(pd.DataFrame([(problem.prompt, problem.answer)]),
             instruction=instruction, idx=0, include_qa=False,
             instruction_pos=self.config['parameters']['instruction_pos'], dataset_name='gsm8k')
-        return prompt, self.system_text(self.config)

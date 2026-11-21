@@ -97,13 +97,15 @@ def mount_benchmarks(entries, *, kind, source_keys, protocol_defaults, runtimes=
             if not isinstance(entry[key], str) or not entry[key].strip():
                 raise ValueError(f'Benchmark {name!r} {key} must be a path')
         protocol = {key: entry.get(key, default) for key, default in protocol_defaults.items()}
+        runtime = None
         if runtimes:
             from .domain_agent import runtime_identity, validate_runtime_config
             chosen = entry.get('runtime', default_runtime)
             rname, options = validate_runtime_config(chosen, known=runtimes)
-            protocol['runtime'] = runtime_identity(runtimes[rname](options))
+            runtime = runtimes[rname](options)
+            protocol['runtime'] = runtime_identity(runtime)
         mounted.append(Benchmark(name, kind, protocol, {key: entry[key] for key in source_keys},
-                                 runtimes[rname](options) if runtimes else None))
+                                 runtime=runtime))
     return tuple(mounted)
 
 
