@@ -2,12 +2,12 @@
 
 ## Install
 
-RSISys requires Python 3.12 or 3.13 on Linux or macOS. The core package has no
+RSIComposer requires Python 3.12 or 3.13 on Linux or macOS. The core package has no
 third-party dependencies.
 
 ```sh
-git clone https://github.com/satsuki2486441738/RSISys.git
-cd RSISys
+git clone https://github.com/FreedomIntelligence/RSIComposer.git
+cd RSIComposer
 python -m pip install -e .
 rsisys catalog        # lists the registered methods, Controllers, Labs, and components
 ```
@@ -111,5 +111,5 @@ with `rsisys resume --snapshot <snapshot-dir> --data-dir <new-run-dir>`.
 ## Next steps
 
 - [Concepts](concepts.md): the terms used in the rest of the docs.
-- [Components](components.md): what ships with RSISys.
+- [Components](components.md): what ships with RSIComposer.
 - [Compose a system](compose.md): combine existing parts or load your own.

@@ -192,7 +192,7 @@ job. Keep its Python environment separate from serving and evaluation.
 package in `training_python`. The example's FSDP2 and vLLM stack was exercised
 on one B200. The veRL 0.9.1 SGLang extra and its pinned SGLang 0.5.12 declare
 conflicting Transformers versions, so that combination has not been verified.
-This adapter currently uses the local RSISys executor and a single GPU node.
+This adapter currently uses the local RSIComposer executor and a single GPU node.
 
 ## Command-line options
 

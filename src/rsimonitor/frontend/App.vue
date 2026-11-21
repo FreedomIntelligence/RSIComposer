@@ -1,6 +1,6 @@
 <template>
   <aside class="sidebar" :class="{open: menuOpen}">
-    <a class="wordmark" href="#experiments">RSISys<span>.</span></a>
+    <a class="wordmark" href="#experiments">RSIComposer<span>.</span></a>
     <nav :aria-label="t('导航')">
       <a href="#experiments" :class="{active: store.page === 'experiments'}"><Icon name="layers-2" />{{ t('实验') }}<span class="count">{{ store.runs.length }}</span></a>
       <a href="#compare" :class="{active: store.page === 'compare'}"><Icon name="git-compare-arrows" />{{ t('对比') }}</a>

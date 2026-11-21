@@ -129,7 +129,7 @@ or infrastructure-failed grades are retried twice and remain incomplete if both
 attempts fail; they are not silently dropped from the score denominator. A total
 agent time-budget exhaustion with an official valid reward is a measured result,
 including a genuine zero; it is not retried as infrastructure. The
-controller attempt uses a **new** RSISys data directory. This reattachment is
+controller attempt uses a **new** RSIComposer data directory. This reattachment is
 explicit Lab recovery, not arbitrary controller or framework snapshot recovery.
 A filesystem lock prevents concurrent controllers mutating one experiment.
 

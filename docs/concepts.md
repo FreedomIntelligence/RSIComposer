@@ -1,6 +1,6 @@
 # Concepts
 
-RSISys runs recursive self-improvement as a loop between a **Controller** and
+RSIComposer runs recursive self-improvement as a loop between a **Controller** and
 one or more **Labs**. The **host** sits between them: it routes every call,
 enforces budgets and data-access rules, and stores the results.
 

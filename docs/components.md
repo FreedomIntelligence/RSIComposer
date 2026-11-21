@@ -1,6 +1,6 @@
 # Components
 
-This page lists what ships with RSISys. `rsisys catalog` prints the current
+This page lists what ships with RSIComposer. `rsisys catalog` prints the current
 registry; add `--plugin <path>` to include your own registrations.
 
 A run config selects either one **method**, or one **Controller** together with

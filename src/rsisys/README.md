@@ -1,6 +1,6 @@
 # Source layout
 
-This page maps the `rsisys` package. For how to use RSISys, start with the
+This page maps the `rsisys` package. For how to use RSIComposer, start with the
 [documentation](../../docs/README.md).
 
 Import framework interfaces from [`rsisys.api`](api.py). Other modules are

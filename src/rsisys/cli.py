@@ -33,7 +33,7 @@ def _read_run_config(path: Path) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='RSISys: RSI controllers, Labs and feedback')
+    parser = argparse.ArgumentParser(description='RSIComposer: RSI controllers, Labs and feedback')
     try:
         installed_version = version('rsisys')
     except PackageNotFoundError:

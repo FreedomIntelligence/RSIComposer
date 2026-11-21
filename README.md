@@ -1,8 +1,8 @@
-<h1 align="center">RSISys</h1>
+<h1 align="center">RSIComposer</h1>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="License: Apache 2.0"></a>
-  <a href="https://github.com/satsuki2486441738/RSISys/stargazers"><img src="https://img.shields.io/github/stars/satsuki2486441738/RSISys?logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/FreedomIntelligence/RSIComposer/stargazers"><img src="https://img.shields.io/github/stars/FreedomIntelligence/RSIComposer?logo=github" alt="GitHub stars"></a>
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv paper: Coming soon">
 </p>
 
@@ -12,21 +12,21 @@
 
 <p align="center"><a href="#framework-overview">Overview</a> · <a href="#news">News</a> · <a href="#highlights">Highlights</a> · <a href="#getting-started">Getting started</a> · <a href="#domain-labs-and-benchmarks">Labs</a> · <a href="docs/README.md">Docs</a> · <a href="#adapted-methods">Methods</a> · <a href="#citation">Citation</a></p>
 
-RSISys runs recursive self-improvement (RSI) experiments as a loop. A Controller decides what to try next, Labs run the experiments and return receipts, and the Controller reads the evidence to choose its next step or the candidate to adopt. Prompt search, harness search, supervised fine-tuning and reinforcement learning share this loop, so you can swap a Controller, reuse a Lab, or add a method without changing the core.
+RSIComposer runs recursive self-improvement (RSI) experiments as a loop. A Controller decides what to try next, Labs run the experiments and return receipts, and the Controller reads the evidence to choose its next step or the candidate to adopt. Prompt search, harness search, supervised fine-tuning and reinforcement learning share this loop, so you can swap a Controller, reuse a Lab, or add a method without changing the core.
 
 ## Framework overview
 
-![RSISys architecture, in two panels. (a) The Controller requests operations from Domain Labs, which return trajectories, metrics, and artifacts as evidence. (b) The Self-Reflection Lab constructs a Controller update and can validate it in a nested trial. The current Controller decides whether to adopt the update.](assets/rsisys-overview.png)
+![RSIComposer architecture, in two panels. (a) The Controller requests operations from Domain Labs, which return trajectories, metrics, and artifacts as evidence. (b) The Self-Reflection Lab constructs a Controller update and can validate it in a nested trial. The current Controller decides whether to adopt the update.](assets/rsisys-overview.png)
 
 A **Controller** decides what to try and what to adopt. Its Policy makes decisions, its Harness prepares inputs and tools, and optional Memory provides context. A **Lab** executes operations such as evaluation, sampling, or training against its configured inputs. The host routes calls, enforces budgets and split rules, and preserves receipts for recovery.
 
 ## News
 
-- **[2026-11]** RSISys is open-sourced, with 16 built-in method registrations and support for durable runs.
+- **[2026-11]** RSIComposer is open-sourced, with 16 built-in method registrations and support for durable runs.
 
 ## Highlights
 
-**A general RSI framework built around the research loop.** RSISys automates the human–AI research loop: the Controller chooses what to try, Labs run the experiments, and accumulated evidence guides what to try next or what to adopt. [Different RSI methods](#adapted-methods) use this structure with their own optimization algorithms.
+**A general RSI framework built around the research loop.** RSIComposer automates the human–AI research loop: the Controller chooses what to try, Labs run the experiments, and accumulated evidence guides what to try next or what to adopt. [Different RSI methods](#adapted-methods) use this structure with their own optimization algorithms.
 
 **Choose what to improve.** A method can change an agent's prompts, programs, harness, or model weights. It can also change the RSI policy that decides how to improve. The Self-Reflection Lab can test a candidate Controller in a nested run, and the current Controller decides whether to adopt it based on the evidence.
 
@@ -37,8 +37,8 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 Install with Python 3.12 or 3.13 on Linux or macOS. The core has no third-party dependencies; methods list their [optional extras](docs/components.md#methods).
 
 ```sh
-git clone https://github.com/satsuki2486441738/RSISys.git
-cd RSISys
+git clone https://github.com/FreedomIntelligence/RSIComposer.git
+cd RSIComposer
 python -m pip install -e .
 ```
 
@@ -104,17 +104,17 @@ Start with the [method template](src/rsisys/algorithms/_template/) or the [Lab t
 
 ## Citation
 
-If you find RSISys useful, please cite:
+If you find RSIComposer useful, please cite:
 
 ```bibtex
-@misc{rsisys2026,
-  title        = {RSISys: A Modular Runtime for Recursive Self-Improvement Research},
-  author       = {{RSISys contributors}},
+@misc{rsicomposer2026,
+  title        = {RSIComposer: A Modular Runtime for Recursive Self-Improvement Research},
+  author       = {{RSIComposer contributors}},
   year         = {2026},
-  howpublished = {\url{https://github.com/satsuki2486441738/RSISys}}
+  howpublished = {\url{https://github.com/FreedomIntelligence/RSIComposer}}
 }
 ```
 
 ## License
 
-RSISys is released under the [Apache 2.0 License](LICENSE). Adapted upstream code keeps its attribution next to the implementation.
+RSIComposer is released under the [Apache 2.0 License](LICENSE). Adapted upstream code keeps its attribution next to the implementation.

@@ -1,8 +1,8 @@
-<h1 align="center">RSISys</h1>
+<h1 align="center">RSIComposer</h1>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="许可证：Apache 2.0"></a>
-  <a href="https://github.com/satsuki2486441738/RSISys/stargazers"><img src="https://img.shields.io/github/stars/satsuki2486441738/RSISys?logo=github" alt="GitHub 星标数"></a>
+  <a href="https://github.com/FreedomIntelligence/RSIComposer/stargazers"><img src="https://img.shields.io/github/stars/FreedomIntelligence/RSIComposer?logo=github" alt="GitHub 星标数"></a>
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv 论文：Coming soon">
 </p>
 
@@ -12,21 +12,21 @@
 
 <p align="center"><a href="#框架概览">框架概览</a> · <a href="#最新动态">最新动态</a> · <a href="#亮点">亮点</a> · <a href="#快速开始">快速开始</a> · <a href="#领域-lab-与评测基准">Lab</a> · <a href="docs/README.md">文档</a> · <a href="#已适配的方法">支持的方法</a> · <a href="#引用">引用</a></p>
 
-RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决定下一步做什么，Lab 运行实验并返回回执，Controller 根据证据决定下一步或采纳哪个候选。提示词搜索、harness 搜索、监督微调和强化学习都使用这个闭环，因此可以替换 Controller、复用 Lab，或在不改核心代码的前提下新增方法。
+RSIComposer 把递归自改进（RSI）实验组织成一个闭环：Controller 决定下一步做什么，Lab 运行实验并返回回执，Controller 根据证据决定下一步或采纳哪个候选。提示词搜索、harness 搜索、监督微调和强化学习都使用这个闭环，因此可以替换 Controller、复用 Lab，或在不改核心代码的前提下新增方法。
 
 ## 框架概览
 
-![RSISys 架构分为两部分。（a）Controller 向 Domain Labs 请求操作，Labs 将轨迹、指标和产物作为证据返回。（b）Self-Reflection Lab 构建 Controller 更新，可用嵌套试验验证；当前 Controller 决定是否采纳更新。](assets/rsisys-overview.png)
+![RSIComposer 架构分为两部分。（a）Controller 向 Domain Labs 请求操作，Labs 将轨迹、指标和产物作为证据返回。（b）Self-Reflection Lab 构建 Controller 更新，可用嵌套试验验证；当前 Controller 决定是否采纳更新。](assets/rsisys-overview.png)
 
 **Controller** 决定下一步试什么、采纳什么。Policy 负责决策，Harness 准备输入和工具，可选的 Memory 提供上下文。**Lab** 使用配置好的输入执行评测、采样或训练等操作。宿主负责转发调用、执行预算和数据划分规则，并保存回执以支持恢复。
 
 ## 最新动态
 
-- **[2026 年 11 月]** RSISys 开源，内置 16 个已注册的方法，支持可恢复运行。
+- **[2026 年 11 月]** RSIComposer 开源，内置 16 个已注册的方法，支持可恢复运行。
 
 ## 亮点
 
-**以研究闭环为核心的通用 RSI 框架。** RSISys 将人和 AI 协作的研究闭环自动化：Controller 决定试什么，Lab 运行实验，积累的证据指导下一步试什么或采纳什么。[不同 RSI 方法](#已适配的方法)共用这一结构，同时保留各自的优化算法。
+**以研究闭环为核心的通用 RSI 框架。** RSIComposer 将人和 AI 协作的研究闭环自动化：Controller 决定试什么，Lab 运行实验，积累的证据指导下一步试什么或采纳什么。[不同 RSI 方法](#已适配的方法)共用这一结构，同时保留各自的优化算法。
 
 **改进对象由方法决定。** 方法可以改 agent 的提示词、程序、harness 或模型权重，也可以改决定「如何改进」的 RSI 策略。Self-Reflection Lab 可以在嵌套实验中验证候选 Controller，再由当前 Controller 根据证据决定是否采纳。
 
@@ -37,8 +37,8 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 在 Linux 或 macOS 上用 Python 3.12 或 3.13 安装。核心没有第三方依赖；各方法需要的[可选依赖](docs/components.md#methods)列在组件页里。
 
 ```sh
-git clone https://github.com/satsuki2486441738/RSISys.git
-cd RSISys
+git clone https://github.com/FreedomIntelligence/RSIComposer.git
+cd RSIComposer
 python -m pip install -e .
 ```
 
@@ -106,17 +106,17 @@ rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_te
 
 ## 引用
 
-如果 RSISys 对你的研究有帮助，请引用：
+如果 RSIComposer 对你的研究有帮助，请引用：
 
 ```bibtex
-@misc{rsisys2026,
-  title        = {RSISys: A Modular Runtime for Recursive Self-Improvement Research},
-  author       = {{RSISys contributors}},
+@misc{rsicomposer2026,
+  title        = {RSIComposer: A Modular Runtime for Recursive Self-Improvement Research},
+  author       = {{RSIComposer contributors}},
   year         = {2026},
-  howpublished = {\url{https://github.com/satsuki2486441738/RSISys}}
+  howpublished = {\url{https://github.com/FreedomIntelligence/RSIComposer}}
 }
 ```
 
 ## 许可证
 
-RSISys 以 [Apache 2.0](LICENSE) 许可证发布。改编的上游代码在实现旁保留署名。
+RSIComposer 以 [Apache 2.0](LICENSE) 许可证发布。改编的上游代码在实现旁保留署名。

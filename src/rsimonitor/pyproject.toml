@@ -19,9 +19,9 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/satsuki2486441738/RSISys"
-Documentation = "https://github.com/satsuki2486441738/RSISys/blob/main/src/rsimonitor/README.md"
-Issues = "https://github.com/satsuki2486441738/RSISys/issues"
+Repository = "https://github.com/FreedomIntelligence/RSIComposer"
+Documentation = "https://github.com/FreedomIntelligence/RSIComposer/blob/main/src/rsimonitor/README.md"
+Issues = "https://github.com/FreedomIntelligence/RSIComposer/issues"
 
 [project.scripts]
 rsimonitor = "rsimonitor.server:main"

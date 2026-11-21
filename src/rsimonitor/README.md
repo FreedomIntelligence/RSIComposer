@@ -1,11 +1,11 @@
 # RSIMonitor
 
-RSIMonitor is the optional read-only viewer for RSISys experiments. It is an
+RSIMonitor is the optional read-only viewer for RSIComposer experiments. It is an
 independent Python distribution with a bundled Vue dashboard and no mandatory
-third-party Python runtime dependencies. A run is produced by RSISys; the viewer
+third-party Python runtime dependencies. A run is produced by RSIComposer; the viewer
 reads its public `monitor.json` and serves a bounded projection to the browser.
 
-See the [RSISys package guide](../rsisys/README.md) for method execution and state
+See the [RSIComposer package guide](../rsisys/README.md) for method execution and state
 recovery, or the [project overview](../../README.md) ([中文](../../README_zh.md))
 for the architecture diagram and recent updates. The framework guide includes
 the method catalog and adaptation scope.
@@ -44,7 +44,7 @@ The metrics workspace ports native chart components from
 [SwanLab-Dashboard](https://github.com/SwanHubX/SwanLab-Dashboard). Sources live in
 `src/rsimonitor/frontend/swanboard/`, with revision and license attribution in code.
 Search, namespace groups, pin/hide, smoothing, linked legends, zoom and image export
-run directly inside RSIMonitor. Data subscriptions use RSISys observations. No
+run directly inside RSIMonitor. Data subscriptions use RSIComposer observations. No
 SwanLab account, SDK, separate dashboard service or iframe is required. The data
 adapter currently supports scalar metrics; media observations are not wired yet.
 Layouts are browser-local and do not modify experiment artifacts.

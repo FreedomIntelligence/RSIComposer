@@ -274,7 +274,7 @@ For formal evaluation, the method's Lab adapter exposes
 `final_evaluations()` after saving its selected instruction, following
 [Coding Meta-Agent's adapter](../../algorithms/coding_meta_agent/lab.py).
 It returns one local `OperationCall('evaluate', {'split': 'official',
-'instruction': selected_instruction})`. The RSISys host executes the full
+'instruction': selected_instruction})`. The RSIComposer host executes the full
 sealed split after the Controller finishes and withholds per-question data
 from the Controller. Public Monitor shows the overall and per-benchmark scores. Aggregate
 timings and token counts are in the host receipt. Authorized host artifact
