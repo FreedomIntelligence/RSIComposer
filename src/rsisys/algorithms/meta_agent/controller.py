@@ -43,8 +43,8 @@ def validate_harness_research(config):
         raise ValueError('The harness-research method currently requires harness=default; '
                          'custom assemblies can bind the DSH harness directly')
     backend = config.get('backend', 'configured')
-    if backend not in ('configured', 'vllm'):
-        raise ValueError('backend must be configured or vllm')
+    if backend not in ('configured', 'native', 'vllm'):
+        raise ValueError('backend must be configured, native or vllm')
     window = config.get('context_window', 24576)
     output = config.get('max_output_tokens', 4096)
     if type(window) is not int or window < 8192:
@@ -54,8 +54,8 @@ def validate_harness_research(config):
     calls = config.get('max_model_calls', 128)
     if type(calls) is not int or not 1 <= calls <= 10000:
         raise ValueError('max_model_calls must be between 1 and 10000')
-    if backend != 'vllm' and {'context_window', 'max_model_calls'} & set(config):
-        raise ValueError('context_window and max_model_calls require backend=vllm')
+    if backend == 'configured' and {'context_window', 'max_model_calls'} & set(config):
+        raise ValueError('context_window and max_model_calls require a native backend')
 
 
 def build_harness_research(context, execution, config):
@@ -67,10 +67,17 @@ def build_harness_research(context, execution, config):
     from .policy import HarnessResearchPolicy
     base = endpoint.policy.implementation
     backend = base.backend
-    if config.get('backend') == 'vllm':
-        from rsisys.api import VLLMBackend
-        transport = VLLMBackend(context.backends[base.model.backend_id].binding,
+    native = config.get('backend') in ('native', 'vllm')
+    if native:
+        from rsisys.api import build_serving_backend
+        binding = context.backends[base.model.backend_id].binding
+        if config['backend'] == 'vllm' and binding.kind not in ('vllm', 'chat_completions', 'http'):
+            raise ValueError('Select backend=native for this native model binding')
+        transport = build_serving_backend(binding, native=config['backend'] == 'vllm', gateway=(binding.credential_env or '').startswith(
+            'RSISYS_NESTED_MODEL_TOKEN_'),
             native_schema_mode='portable', generation_options={'chat_template_kwargs': {'enable_thinking': False}})
+        if not getattr(transport, 'supports_response_schema', False) or not callable(getattr(transport, 'count_tokens', None)):
+            raise ValueError('backend=native requires a serving adapter with schema and token count support')
         backend = context.models.metered_backend(transport, name='meta-agent',
             max_calls=config.get('max_model_calls', 128),
             max_input_tokens=config.get('context_window', 24576) - config.get('max_output_tokens', 4096),
@@ -82,7 +89,7 @@ def build_harness_research(context, execution, config):
     policy.max_output_tokens = config.get('max_output_tokens', 4096)
     from rsisys.api import ResearchPolicyAdapter
     endpoint.policy = ResearchPolicyAdapter(policy, endpoint.harness)
-    if config.get('backend') == 'vllm':
+    if native:
         from rsisys.api import BasicContextCompactor
         allowance = config.get('context_window', 24576) - policy.max_output_tokens
         policy.context_compactor = BasicContextCompactor(trigger_tokens=allowance - 1024,

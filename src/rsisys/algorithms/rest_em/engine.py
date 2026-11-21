@@ -30,15 +30,24 @@ class TransformersRestEMEngine:
     simulated = False
     backend_type = None
 
-    def __init__(self, config=None, *, input_root=None):
+    def __init__(self, config=None, *, input_root=None, resolve_trainer=None):
         self.config = dict(config or {})
         self.input_root = Path(input_root or Path.cwd()).resolve()
         from rsisys.api import HostedLoRAEngine
         backend_config = {key: value for key, value in self.config.items() if key not in {
             'few_shot_data', 'answer_format', 'prompt_format', 'verifier', 'data_root',
-            'output_subdir', 'engine', 'mode'}}
+            'output_subdir', 'engine', 'mode', 'trainer'}}
         backend_config['stop_strings'] = ['\nQuestion:'] if self.config.get('prompt_format', 'chat') == 'completion' else []
         self.backend = (self.backend_type or HostedLoRAEngine)(backend_config)
+        selected = self.config.get('trainer')
+        if selected is None:
+            self.trainer = self.backend
+        else:
+            if resolve_trainer is None:
+                raise ValueError('An explicit trainer requires a registered method or a supplied resolver')
+            self.trainer = resolve_trainer(selected['name'], {**backend_config, **selected.get('config', {})})
+            if any(not callable(getattr(self.trainer, method, None)) for method in ('train', 'bind_execution', 'resource_roles')):
+                raise TypeError('A ReST^EM trainer must implement train, bind_execution and resource_roles')
         self.demonstrations = []
         if self.config.get('few_shot_data'):
             from rsisys.api import final_boxed, numeric_answer
@@ -55,9 +64,11 @@ class TransformersRestEMEngine:
 
     def bind_execution(self, context):
         self.backend.bind_execution(context)
+        if self.trainer is not self.backend:
+            self.trainer.bind_execution(context)
 
     def resource_roles(self):
-        return self.backend.resource_roles()
+        return {**self.backend.resource_roles(), **self.trainer.resource_roles()}
 
     def _path(self, ref):
         path = Path(ref)
@@ -86,7 +97,14 @@ class TransformersRestEMEngine:
             raise ValueError('Cannot load fixture output as model weights')
         if train:
             raise ValueError('M-step must load initial weights, not a prior adapter')
-        return self._path(metadata['parent']), selected / 'adapter'
+        adapter = selected / 'adapter'
+        files = metadata.get('training', {}).get('adapter_files')
+        if files is not None:
+            from rsisys.api import file_hash
+            if (set(files) != {'adapter_config.json', 'adapter_model.safetensors'} or
+                    any(file_hash(adapter / name) != digest for name, digest in files.items())):
+                raise ValueError('Published ReST^EM adapter does not match its training receipt')
+        return self._path(metadata['parent']), adapter
 
     def generate(self, ref, rows, count, round_number, sample, *, temperature=0.7):
         base, adapter = self._model(ref)
@@ -96,13 +114,13 @@ class TransformersRestEMEngine:
     def train(self, ref, rows, output, round_number, *, steps=None):
         base, _ = self._model(ref, train=True)
         prepared = [{'prompt': self._prompt(row['prompt']), 'completion': row['completion']} for row in rows]
-        return self.backend.train(base, prepared, output, round_number, steps=steps)
+        return self.trainer.train(base, prepared, output, round_number, steps=steps)
 
 
 class ParallelRestEMEngine(TransformersRestEMEngine):
     name = 'vllm-dp-ddp-lora-v1'
 
-    def __init__(self, config=None, *, input_root=None):
+    def __init__(self, config=None, *, input_root=None, resolve_trainer=None):
         from rsisys.api import ParallelLoRAEngine
         self.backend_type = ParallelLoRAEngine
-        super().__init__(config, input_root=input_root)
+        super().__init__(config, input_root=input_root, resolve_trainer=resolve_trainer)

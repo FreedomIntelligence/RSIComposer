@@ -160,6 +160,8 @@ _EXPORTS = {
     'LoRAEngine': ('rsisys.backends.training.lora.engine', 'LoRAEngine'),
     'ParallelLoRAEngine': ('rsisys.backends.training.lora.parallel', 'ParallelLoRAEngine'),
     'VLLMBackend': ('rsisys.backends.serving.vllm', 'VLLMBackend'),
+    'build_serving_backend': ('rsisys.backends.serving', 'build_serving_backend'),
+    'SGLangBackend': ('rsisys.backends.serving.sglang', 'SGLangBackend'),
     'WeightEngine': ('rsisys.backends.training.engine', 'WeightEngine'),
     'load_model': ('rsisys.backends.training.worker', 'load_model'),
     'merged_change_count': ('rsisys.backends.training.worker', 'merged_change_count'),
@@ -273,6 +275,8 @@ if _TYPE_CHECKING:
     )
     from rsisys.backends.serving.chat import ChatPool as ChatPool
     from rsisys.backends.serving.vllm import VLLMBackend as VLLMBackend
+    from rsisys.backends.serving import build_serving_backend as build_serving_backend
+    from rsisys.backends.serving.sglang import SGLangBackend as SGLangBackend
     from rsisys.backends.training.engine import (
         WeightEngine as WeightEngine,
         validate_engine as validate_engine,

@@ -1,5 +1,5 @@
 """Ephemeral parent model routes that debit one nested run's reserved budget."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 import json
 from uuid import uuid4
@@ -67,6 +67,7 @@ def model_route_key(config):
            'model': config.get('model'), 'native_schema_mode': config.get('native_schema_mode', 'exact'),
            'disable_thinking': config.get('disable_thinking', True),
            'credential_env': config.get('credential_env'), 'timeout': config.get('timeout', 180)}
+    raw.update({key: config[key] for key in ('serving_backend', 'engine_version') if key in config})
     return sha256(json.dumps(raw, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
@@ -78,7 +79,10 @@ class _DelegatedSession(HostModelSession):
     def count_tokens(self, request):
         if request.model not in self.models:
             raise PermissionError('Model is not registered in this delegated session')
-        return _with_active(self._budget, lambda _: self._counters[request.model.backend_id](request))
+        counter = self._counters.get(request.model.backend_id)
+        if counter is None:
+            raise NotImplementedError('This delegated provider has no native token counter')
+        return _with_active(self._budget, lambda _: counter(request))
 
     def derive(self, budget):
         return _DelegatedSession(self.backends, self.models, budget=budget, counters=self._counters)
@@ -200,12 +204,14 @@ def prepare_nested_models(access, child_budget, call_id, host_config, version, l
             account = (session.backends.get(backend_id) if session is not None else None)
             if account is None and isinstance(transport, AccountedModelBackend):
                 account = transport
+            native_binding = (replace(binding, kind='vllm') if binding.kind in ('chat_completions', 'http')
+                              else binding)
             if account is None:
                 # The application's basic Chat transport does not implement
                 # native schemas/tokenization. Nested harnesses may require both;
                 # use the host's full serving adapter for the same pinned binding.
                 wire = (raw if getattr(raw, 'supports_response_schema', False) else
-                        access.transport_factory(binding, models={model: model.model_id for model in selected}))
+                        access.transport_factory(native_binding, models={model: model.model_id for model in selected}))
                 account = component._account('nested-backend:' + backend_id, wire,
                                               max_input_tokens=None, models=selected)
                 raw = wire
@@ -213,11 +219,13 @@ def prepare_nested_models(access, child_budget, call_id, host_config, version, l
                 counter = account.count_tokens
             elif callable(getattr(raw, 'count_tokens', None)):
                 counter = raw.count_tokens
+            elif binding.kind == 'openai_chat_completions':
+                counter = None
             else:
-                counter = access.transport_factory(binding,
+                counter = access.transport_factory(native_binding,
                     models={model: model.model_id for model in selected}).count_tokens
             endpoint = _DelegatedSession({backend_id: account}, selected, budget=allocated_budget,
-                                         counters={backend_id: counter})
+                                         counters={backend_id: counter} if counter is not None else {})
             delegated['backends'][backend_id] = issue(endpoint)
 
         configurations = [host_config, getattr(version, 'config', None), labs]
@@ -232,8 +240,8 @@ def prepare_nested_models(access, child_budget, call_id, host_config, version, l
             view = component.endpoint(config, purpose='nested:' + key)
             original = view._endpoint
             original_session = original._session
-            counters = {backend_id: account.transport.count_tokens
-                        for backend_id, account in original_session.backends.items()}
+            counters = {backend_id: counter for backend_id, account in original_session.backends.items()
+                        if callable(counter := getattr(account.transport, 'count_tokens', None))}
             endpoint = _DelegatedSession(original_session.backends, original_session.models,
                                          budget=allocated_budget, counters=counters)
             delegated['routes'][key] = issue(endpoint)

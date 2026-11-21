@@ -23,11 +23,14 @@ class BackendBinding:
     timeout_seconds: float = 60
     json_mode: bool = True
     max_response_bytes: int = 8 * 1024 * 1024
+    engine_version: str | None = None  # Optional provider version pin, checked by the adapter.
 
     def __post_init__(self):
         import math
         if not self.backend_id or not self.kind:
             raise ValueError("Backend identity and kind are required")
+        if self.engine_version is not None and (not isinstance(self.engine_version, str) or not self.engine_version.strip()):
+            raise ValueError('engine_version must be a nonempty version string')
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("Model timeout must be finite and positive")
         if type(self.max_response_bytes) is not int or self.max_response_bytes < 1:

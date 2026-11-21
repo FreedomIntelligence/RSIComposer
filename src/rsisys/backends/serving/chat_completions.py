@@ -32,35 +32,39 @@ class RemoteModelBackend:
 
     def __init__(self, binding: BackendBinding):
         from urllib.parse import urlsplit
-        if binding.kind not in ("http", "chat_completions"):
-            raise ValueError("RemoteModelBackend requires chat_completions or http kind")
+        if binding.kind not in self.kinds:
+            raise ValueError("Invalid backend kind for this transport")
         parsed = urlsplit(binding.endpoint or "")
         if (parsed.scheme not in ("http", "https") or not parsed.hostname
                 or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError("A plain HTTP(S) model API base URL is required")
         self.binding = binding
 
-    def generate(self, request: GenerationRequest) -> GenerationResponse:
+    kinds = ('http', 'chat_completions', 'openai_chat_completions')
+
+    @property
+    def supports_response_schema(self):
+        return self.binding.kind == 'openai_chat_completions'
+
+    def _validate_request(self, request):
+        if not isinstance(request, GenerationRequest) or request.model.backend_id != self.binding.backend_id:
+            raise ValueError('Generation request does not match this backend')
+
+    def _auth_headers(self, key):
+        return {'Authorization': f'Bearer {key}'} if key else {}
+
+    def _post(self, route, payload):
         import os
         from urllib.error import HTTPError, URLError
         from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
-        if not isinstance(request, GenerationRequest) or request.model.backend_id != self.binding.backend_id:
-            raise ValueError("Generation request does not match this backend")
-        if request.response_schema is not None:
-            raise NotImplementedError('This backend does not implement native response_schema; use a supporting adapter')
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        key = None
         if self.binding.credential_env:
             key = os.environ.get(self.binding.credential_env)
             if not key:
                 raise ValueError(f"Missing model credential environment variable: {self.binding.credential_env}")
-            headers["Authorization"] = f"Bearer {key}"
-        payload = {"model": request.model.model_id, "messages": request.chat_messages(),
-                   "stream": False, "max_tokens": request.max_output_tokens}
-        payload.update(request.sampling_options())
-        if self.binding.json_mode and not request.tools:
-            payload["response_format"] = {"type": "json_object"}
-        payload.update(request.chat_tools())
-        url = self.binding.endpoint.rstrip("/") + "/chat/completions"
+        headers.update(self._auth_headers(key))
+        url = self.binding.endpoint.rstrip('/') + '/' + route
         http_request = Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -80,7 +84,24 @@ class RemoteModelBackend:
         if len(body) > self.binding.max_response_bytes:
             raise ModelResponseError("Model response exceeded the configured size limit")
         try:
-            data = json.loads(body)
+            return json.loads(body)
+        except (UnicodeError, ValueError):
+            raise ModelResponseError('Malformed model service response') from None
+
+    def generate(self, request: GenerationRequest) -> GenerationResponse:
+        self._validate_request(request)
+        if request.response_schema is not None and not self.supports_response_schema:
+            raise NotImplementedError('This backend does not implement native response_schema; use a supporting adapter')
+        limit = 'max_completion_tokens' if self.supports_response_schema else 'max_tokens'
+        payload = {'model': request.model.model_id, 'messages': request.chat_messages(),
+                   'stream': False, limit: request.max_output_tokens, **request.sampling_options(), **request.chat_tools()}
+        if request.response_schema is not None:
+            payload['response_format'] = {'type': 'json_schema', 'json_schema': {
+                'name': 'rsisys_response', 'strict': True, 'schema': request.response_schema}}
+        elif self.binding.json_mode and not request.tools:
+            payload['response_format'] = {'type': 'json_object'}
+        data = self._post('chat/completions', payload)
+        try:
             if data["model"] != request.model.model_id:
                 raise ModelResponseError("Provider model identity differs from the requested model")
             revision = data.get("model_revision")

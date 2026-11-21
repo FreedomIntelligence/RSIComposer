@@ -30,7 +30,7 @@ A **Controller** decides what to try and what to adopt. Its Policy makes decisio
 
 **Choose what to improve.** A method can change an agent's prompts, programs, harness, or model weights. It can also change the RSI policy that decides how to improve. The Self-Reflection Lab can test a candidate Controller in a nested run, and the current Controller decides whether to adopt it based on the evidence.
 
-**Swap and reuse components.** Controllers and Labs compose through public interfaces, and their policies, harnesses, memory, and backends can be replaced independently. Reuse the same Coding Lab with different compatible Controllers, or connect a new dataset or benchmark through a Lab, without changing the core. [See how to compose a system](docs/compose.md).
+**Swap and reuse components, including training and inference.** Controllers, Labs, policies, harnesses, and memory compose through public interfaces. A Lab can reuse its benchmarks with different Controllers, while compatible methods can select training backends such as TRL or veRL and bind inference to vLLM, SGLang, or an OpenAI Chat Completions or Anthropic Messages endpoint. Online RL configures its rollout engine separately from the trainer. [See the available components and backends](docs/components.md#reusable-components).
 
 ## Getting started
 

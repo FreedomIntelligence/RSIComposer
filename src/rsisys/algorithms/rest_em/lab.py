@@ -37,11 +37,18 @@ def validate_config(config):
                'generation_batch_size', 'train_batch_size', 'gradient_accumulation_steps',
                'prompt_format', 'few_shot_data', 'answer_format',
                'inference_python', 'training_python', 'gpu_memory_utilization',
-               'max_num_seqs', 'max_num_batched_tokens', 'train_gradient_checkpointing'}
+               'max_num_seqs', 'max_num_batched_tokens', 'train_gradient_checkpointing', 'trainer'}
     if set(config) - allowed or config.get('engine', config.get('mode', 'fixture')) not in ('fixture', 'transformers', 'vllm'):
         raise ValueError('Unknown math Lab configuration or engine')
     if config.get('engine', config.get('mode')) == 'vllm' and config.get('device', 'cuda') != 'cuda':
         raise ValueError('vllm requires CUDA')
+    if 'trainer' in config:
+        trainer = config['trainer']
+        if (config.get('engine', config.get('mode', 'fixture')) == 'fixture'
+                or not isinstance(trainer, dict) or set(trainer) - {'name', 'config'}
+                or not isinstance(trainer.get('name'), str) or not trainer['name'].strip()
+                or not isinstance(trainer.get('config', {}), dict)):
+            raise ValueError('Choose a registered trainer with a real ReST^EM rollout engine')
     for key in ('inference_python', 'training_python'):
         if key in config and (not isinstance(config[key], str) or not config[key].strip()):
             raise ValueError(f'{key} must be a nonempty executable path')
@@ -86,7 +93,7 @@ def validate_config(config):
 class RestEMLab(MathLab):
     source_budgets = False  # Generation is set by this Lab, not by a benchmark.
 
-    def __init__(self, context, config, *, engine=None, input_root=None):
+    def __init__(self, context, config, *, engine=None, input_root=None, resolve_trainer=None):
         validate_config(config)
         self.config = dict(config)
         # Few-shot demonstrations are the engine's prompt context; relative paths start at the working directory.
@@ -95,7 +102,8 @@ class RestEMLab(MathLab):
         from rsisys.algorithms.rest_em.engine import ParallelRestEMEngine
         self.engine = engine if engine is not None else (
             FixtureRestEMEngine() if selected == 'fixture' else
-            (ParallelRestEMEngine if selected == 'vllm' else TransformersRestEMEngine)(config, input_root=self.input_root))
+            (ParallelRestEMEngine if selected == 'vllm' else TransformersRestEMEngine)(
+                config, input_root=self.input_root, resolve_trainer=resolve_trainer))
         bind = getattr(self.engine, 'bind_execution', None)
         if callable(bind):
             bind(context)
@@ -281,12 +289,14 @@ class RestEMLab(MathLab):
             raise ValueError('Cannot train on an empty accepted dataset')
         output = self.root / f"round-{args['round']}" / 'model'
         output.mkdir(parents=True, exist_ok=False)
-        self.engine.train(args['parent'], rows, output, args['round'], steps=args.get('steps'))
+        training = self.engine.train(args['parent'], rows, output, args['round'], steps=args.get('steps'))
         manifest = {'parent': args['parent'], 'dataset': args['dataset'],
                     'dataset_sha256': file_hash(Path(args['dataset'])),
                     'round': args['round'], 'simulated': self.simulated,
                     'training_performed': not self.simulated, 'recipe': self.config,
                     'engine': self.engine.name, 'verifier': self.datasets['train'][0].verifier.name}
+        if training is not None and 'trainer' in self.config:
+            manifest['training'] = training
         (output / 'rest-em.json').write_text(json.dumps(manifest, indent=2))
         return {'model': str(output.resolve()), 'manifest': manifest}
 

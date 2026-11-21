@@ -20,6 +20,7 @@ require; check the preset before running it.
 | `star`¹ | `gsm8k` | 4 GPUs, local base model, a math dataset manifest with `train`, `dev` and `test` splits | — |
 | `ttrl` | `8gpu` | 8 GPUs, local base model | — |
 | `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
+| `verl_math_grpo` | [TOML example](config.md#online-grpo-with-verl) | Local weights, Math Lab train/dev manifest, GPU and pinned veRL environment | [Configuration](config.md#online-grpo-with-verl) |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | — |
 | `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | [README](../src/rsisys/algorithms/gepa/README.md) |
@@ -199,6 +200,9 @@ A method resolves components with
 | --- | --- | --- |
 | `backend` | `chat_pool` | Pool of Chat Completions clients for batched generation |
 | `backend` | `lora` | LoRA training engine |
+| `backend` | `trl_sft` | Single-device TRL SFT and PEFT LoRA; currently selectable by ReST^EM |
+| `backend` | `verl_sft` | Single-GPU veRL FSDP2 SFT with PEFT LoRA export; selectable by ReST^EM |
+| `backend` | `verl_grpo` | Single-node online GRPO with a Lab-supplied reward and a separate rollout engine; used by `verl_math_grpo` |
 | `harness` | `python_step` | Runs a domain agent program, `step(problem, history)`, in an isolated Python process. Used by harness-search Labs. This is the domain agent's harness, not the Controller's `ControllerHarness`. |
 | `memory` | `agent_memory` | Default Controller Memory: notes written and retrieved by the decision model |
 
@@ -208,8 +212,15 @@ Other implementations are importable from `rsisys.api` without registration:
 | --- | --- |
 | Policies | `ModelDecisionPolicy` (a model chooses the actions), `dsh_decision_factory` (a Controller built on DeepSeek Harness SDK, `.[dsh]`) |
 | Memory | `LangMemMemory` (`.[langmem]`) |
-| Model serving | `VLLMBackend`, `ChatPool` |
+| Model serving | `VLLMBackend`, `SGLangBackend`, `ChatPool` |
 | Weight training | `LoRAEngine`, `ParallelLoRAEngine` |
+
+Choose a [model serving binding](config.md#backendsid) in the run config
+to send inference requests to a local server or to an endpoint that speaks
+OpenAI Chat Completions or Anthropic Messages. For training, the method selects
+a registered backend: see [ReST^EM's SFT options](../src/rsisys/algorithms/rest_em/README.md#select-a-trainer)
+or [MathLab GRPO](config.md#online-grpo-with-verl), where the training strategy
+and in-job rollout engine are configured separately.
 
 ## Verifiers
 

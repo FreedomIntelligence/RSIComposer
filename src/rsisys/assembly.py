@@ -492,8 +492,8 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         context.add_owned_cleanup(context.executor.close)
     from rsisys.runtime.models.component_access import HostModelAccess
     from rsisys.backends.serving.chat import ChatPool
-    from rsisys.backends.serving.vllm import VLLMBackend
-    context._model_access = HostModelAccess(context, pool_factory=ChatPool, transport_factory=VLLMBackend)
+    from rsisys.backends.serving import build_serving_backend
+    context._model_access = HostModelAccess(context, pool_factory=ChatPool, transport_factory=build_serving_backend)
     context.add_owned_cleanup(context._model_access.close)
     from rsisys.host.execution import HostExecution
     if context.host_execution is None:

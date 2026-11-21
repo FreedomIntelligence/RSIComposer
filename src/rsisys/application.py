@@ -60,8 +60,9 @@ class ApplicationConfig:
         validate_resources(self.resources)
         validate_budget(self.budget)
         RunSource(self.run_id, self.parent_run_id)
+        from rsisys.backends.serving import is_serving_kind
         for key, backend in self.backends.items():
-            if key != backend.backend_id or backend.kind not in ('mock', 'http', 'chat_completions'):
+            if key != backend.backend_id or not is_serving_kind(backend.kind):
                 raise ValueError('Invalid backend configuration')
         for model in self.roles.values():
             if model.backend_id not in self.backends:
@@ -92,6 +93,8 @@ class ApplicationConfig:
         raw['mode'] = 'local'
         for backend in raw['backends'].values():
             backend.pop('backend_id')
+            if backend['engine_version'] is None:
+                backend.pop('engine_version')
         return raw
 
 
@@ -134,16 +137,15 @@ class Application:
         root = config.data_dir
         try:
             # Validate transports before touching storage. Keys are read only at call time.
-            from rsisys.backends.serving.chat_completions import (
-                MockModelBackend,
-                RemoteModelBackend,
-            )
+            from rsisys.backends.serving import build_serving_backend, is_native_serving_kind
             self.backends = {}
             for key, binding in config.backends.items():
-                if _delegated_models is not None and key in _delegated_models.get('backends', {}):
-                    route = _delegated_models['backends'][key]
+                route = (_delegated_models or {}).get('backends', {}).get(key)
+                if route is not None:
                     binding = replace(binding, endpoint=route['endpoint'], credential_env=route['credential_env'])
-                backend = MockModelBackend() if binding.kind == 'mock' else RemoteModelBackend(binding)
+                backend = build_serving_backend(binding, gateway=route is not None and (
+                    is_native_serving_kind(binding.kind) or binding.kind in ('anthropic_messages', 'openai_chat_completions')),
+                    models={model: model.model_id for model in config.roles.values() if model.backend_id == key})
                 self.backends[key] = backend
                 if callable(getattr(backend, 'close', None)):
                     self._resources.callback(backend.close)

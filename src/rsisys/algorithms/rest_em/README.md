@@ -41,3 +41,44 @@ Use the configured dev split to compare the baseline and trained candidates.
 This preset does not schedule a sealed test evaluation. To report a final
 benchmark score, measure the selected model on a separately prepared test set
 with the intended evaluation protocol.
+
+## Select a trainer
+
+The Lab's `engine` selects its rollout path and the default trainer. Keep the
+same rollout path and override only training by selecting `trl_sft`:
+
+```toml
+[framework.method.config.labs.math.trainer]
+name = "trl_sft"
+
+[framework.method.config.labs.math.trainer.config]
+trl_version = "1.17.1"
+```
+
+Use this with `engine = "transformers"` or `engine = "vllm"` and set the Lab's
+`training_python` to a separate environment with the pinned TRL release, PyTorch,
+Transformers, Datasets, Accelerate, and PEFT. Allocate one GPU to `math.trainer`.
+The trainer applies loss only to accepted completion tokens and saves a PEFT
+adapter; the next evaluation loads that adapter over the original model. The
+candidate records the actual training package versions. This adapter does not
+support distributed SFT or optimizer-state resume.
+
+To use veRL's FSDP2 SFT trainer instead, set `training_python` under
+`framework.method.config.labs.math` to the interpreter in a separate veRL
+environment. Replace the trainer selection with:
+
+```toml
+[framework.method.config.labs.math.trainer]
+name = "verl_sft"
+
+[framework.method.config.labs.math.trainer.config]
+verl_version = "0.9.1"
+```
+
+Allocate one CUDA GPU to `math.trainer`. Start with `train_batch_size = 1`
+and `gradient_accumulation_steps = 1`: their product must divide the number
+of accepted examples so the trainer cannot silently drop examples. The veRL
+worker verifies the installed version, trains only on completion tokens, and
+exports a PEFT adapter that the existing rollout engine can evaluate. The
+receipt records the installed versions, training settings, and adapter file
+digests. This path does not use veRL's RL trainer or resume optimizer state.

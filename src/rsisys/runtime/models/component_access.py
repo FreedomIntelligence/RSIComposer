@@ -181,12 +181,15 @@ class ComponentModels:
         """Bind provider configuration in the host; return an ephemeral worker capability."""
         endpoints = config.get('endpoints') or [config.get('endpoint')]
         model_name = config['model']
-        identity = json.dumps({'purpose': purpose, 'endpoints': endpoints, 'model': model_name,
+        identity = {
+            'purpose': purpose, 'endpoints': endpoints, 'model': model_name,
             'max_calls': max_calls, 'max_concurrent': max_concurrent, 'max_input_tokens': max_input_tokens,
             'provider_token_counter': provider_token_counter, 'response_attempts': response_attempts,
             'native_schema_mode': config.get('native_schema_mode', 'exact'),
             'disable_thinking': config.get('disable_thinking', True),
-            'credential_env': config.get('credential_env')}, sort_keys=True)
+            'credential_env': config.get('credential_env')}
+        identity.update({key: config[key] for key in ('serving_backend', 'engine_version', 'timeout') if key in config})
+        identity = json.dumps(identity, sort_keys=True)
         with self._lock:
             if identity in self._endpoints:
                 return _EndpointView(self, self._endpoints[identity])
@@ -202,13 +205,21 @@ class ComponentModels:
             if overrides is not None and delegated is None:
                 raise PermissionError('Model route is outside the nested run delegation')
             wire_endpoints = [delegated['endpoint']] if delegated is not None else endpoints
-            transports = [self.owner.transport_factory(BackendBinding(backend_id, 'chat_completions', url,
+            kind = config.get('serving_backend', 'vllm')
+            wire_kind = 'vllm' if delegated is not None else kind
+            version = config.get('engine_version') if delegated is None else None
+            transports = [self.owner.transport_factory(BackendBinding(backend_id, wire_kind, url,
                 credential_env=delegated['credential_env'] if delegated is not None else config.get('credential_env'),
-                timeout_seconds=config.get('timeout', 180), json_mode=False),
+                timeout_seconds=config.get('timeout', 180), json_mode=False, engine_version=version),
                 models={model: model_name}, native_schema_mode=config.get('native_schema_mode', 'exact'),
                 generation_options=({'chat_template_kwargs': {'enable_thinking': not config.get('disable_thinking', True)}}
                     if config.get('disable_thinking', True) is not None else {}))
                 for url in wire_endpoints]
+            if any(not getattr(transport, 'supports_response_schema', False) for transport in transports):
+                raise ValueError('A component model route requires a serving adapter with structured output')
+            counter = getattr(transports[0], 'count_tokens', None) if kind != 'openai_chat_completions' else None
+            if provider_token_counter and not callable(counter):
+                raise ValueError(f'{kind} does not provide input token counting for component model routes')
             class RoundRobin:
                 supports_response_schema = True
                 supports_tool_calling = True
@@ -221,9 +232,10 @@ class ComponentModels:
                         self.index += 1
                     return transport.generate(request)
 
-                def count_tokens(self, request):
-                    return transports[0].count_tokens(request)
-            backend = self._account('route:' + identity, RoundRobin(), max_calls=max_calls,
+            transport = RoundRobin()
+            if callable(counter):
+                transport.count_tokens = counter
+            backend = self._account('route:' + identity, transport, max_calls=max_calls,
                 max_concurrent=max_concurrent, max_input_tokens=max_input_tokens,
                 provider_token_counter=provider_token_counter, response_attempts=response_attempts, models=[model])
             session = (HostModelSession({backend_id: backend}, [model], budget=None) if delegated is not None else

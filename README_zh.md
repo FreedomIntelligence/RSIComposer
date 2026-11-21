@@ -30,7 +30,7 @@ RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决�
 
 **改进对象由方法决定。** 方法可以改 agent 的提示词、程序、harness 或模型权重，也可以改决定「如何改进」的 RSI 策略。Self-Reflection Lab 可以在嵌套实验中验证候选 Controller，再由当前 Controller 根据证据决定是否采纳。
 
-**组件可替换、可复用。** Controller 和 Lab 通过公开接口装配，Policy、Harness、Memory 和后端都可以独立替换。同一个 Coding Lab 可以配合不同的兼容 Controller 使用，也可以通过 Lab 接入新的数据集或 benchmark，无需改动核心。[查看装配方式](docs/compose.md)。
+**组件可替换、可复用，训练和推理也可以单独配置。** Controller、Lab、Policy、Harness 和 Memory 通过公开接口装配。同一个 Lab 可以配合不同的兼容 Controller 复用评测基准；兼容的方法可选 TRL 或 veRL 等训练后端，推理则可接 vLLM、SGLang，或采用 OpenAI Chat Completions、Anthropic Messages 格式的 API。在线强化学习也可单独配置训练策略与 rollout 引擎。[查看组件与可用后端](docs/components.md#reusable-components)。
 
 ## 快速开始
 

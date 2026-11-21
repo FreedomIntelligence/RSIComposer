@@ -10,6 +10,8 @@ from rsisys.runtime.execution.workers import worker_environment
 
 
 class HostedLoRAEngine(LoRAEngine):
+    train_worker = 'rsisys.backends.training.lora.hosted'
+
     def _call(self, mode, ref, rows, round_number, **options):
         with self.resources.acquire('rollout' if mode == 'generate' else 'trainer') as lease:
             with tempfile.TemporaryDirectory(prefix='rsisys-transformers-',
@@ -21,9 +23,10 @@ class HostedLoRAEngine(LoRAEngine):
                 python = self.config.get('inference_python' if mode == 'generate' else 'training_python', sys.executable)
                 with (directory / 'worker.log').open('w') as log:
                     code = self.executor.run(WorkerSpec([python, '-m',
-                        'rsisys.backends.training.lora.hosted', str(request)], worker_environment(), stdout=log), lease)
+                        self.train_worker if mode == 'train' else 'rsisys.backends.training.lora.hosted',
+                        str(request)], worker_environment(), stdout=log), lease)
                 if code:
-                    raise RuntimeError('Transformers worker failed: ' + (directory / 'worker.log').read_text()[-6000:])
+                    raise RuntimeError(f'{self.name} worker failed: ' + (directory / 'worker.log').read_text()[-6000:])
                 return json.loads(output.read_text())
 
     def generate(self, ref, rows, count, round_number, sample, *, adapter=None, temperature=.7):
@@ -34,12 +37,16 @@ class HostedLoRAEngine(LoRAEngine):
         return self._call('train', ref, rows, round_number, output=str(output), steps=steps)
 
 
-if __name__ == '__main__':
+def run_request(engine_type):
     request = json.loads(Path(sys.argv[1]).read_text())
-    engine = LoRAEngine(request['config'])
+    engine = engine_type(request['config'])
     options = request['options']
     if request['mode'] == 'train':
         options['output'] = Path(options['output'])
     result = getattr(engine, request['mode'])(request['ref'], request['rows'],
         round_number=request['round_number'], **options)
     Path(request['output']).write_text(json.dumps(result))
+
+
+if __name__ == '__main__':
+    run_request(LoRAEngine)

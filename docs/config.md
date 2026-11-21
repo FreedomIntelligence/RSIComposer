@@ -53,8 +53,9 @@ This example runs the method template, so it needs
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `kind` | — | `chat_completions` (OpenAI-compatible), `http`, or `mock` |
-| `endpoint` | — | Base URL; for `chat_completions` it ends in `/v1` |
+| `kind` | — | `openai_chat_completions`, `anthropic_messages`, `chat_completions` (generic compatible servers), `vllm`, `sglang`, `http`, or `mock` |
+| `endpoint` | — | API root (normally ending in `/v1`); leave off `/chat/completions` or `/messages` |
+| `engine_version` | — | Required for `sglang`. The adapter checks the exact version reported by the server before serving requests. |
 | `credential_env` | — | Name of the environment variable that holds the API key. Never put the key itself in the config. |
 | `timeout_seconds` | 60 | Request timeout |
 | `json_mode` | true | Request JSON responses |
@@ -68,6 +69,65 @@ This example runs the method template, so it needs
 | `model_id` | The model name the endpoint serves |
 | `revision` | The exact model revision, recorded with the results |
 
+For a separately deployed SGLang service, bind the role without naming the
+engine in a Lab or Controller:
+
+```toml
+[backends.local_actor]
+kind = "sglang"
+endpoint = "http://127.0.0.1:30000/v1"
+engine_version = "0.5.23"
+json_mode = false
+
+[roles.actor]
+backend_id = "local_actor"
+model_id = "your-served-model-name"
+revision = "your-model-revision"
+```
+
+The native adapter supports structured generation and provider token counts;
+tool calling also needs the appropriate tool parser on the server. For Meta-Agent
+harness research, bind `roles.decision_maker` the same way and set the
+Controller's `backend = "native"` for provider token budgeting and compaction.
+Keep each server in its own pinned environment. The server version check does
+not attest to the loaded weights: deploy an immutable model revision and
+record its tokenizer and chat template with the experiment. Training adapters
+are selected by the method that owns the training operation; see the
+[ReST^EM trainer example](../src/rsisys/algorithms/rest_em/README.md#select-a-trainer).
+
+To call a hosted provider or a gateway that implements its protocol, select the
+wire format in `backends`. Bind either backend to `actor` or `decision_maker` as
+required by the chosen method:
+
+```toml
+[backends.openai]
+kind = "openai_chat_completions"
+endpoint = "https://api.openai.com/v1"
+credential_env = "OPENAI_API_KEY"
+json_mode = false
+
+[backends.anthropic]
+kind = "anthropic_messages"
+endpoint = "https://api.anthropic.com/v1"
+credential_env = "ANTHROPIC_API_KEY"
+json_mode = false
+
+[roles.decision_maker]
+backend_id = "anthropic"
+model_id = "your-exact-model-id"
+revision = "your-model-release"
+```
+
+Both adapters support non-streaming text, function calls and JSON Schema when
+the selected model supports them. Set `json_mode = false` for Anthropic and
+let methods request an explicit schema when they need structured output.
+Anthropic supports input token counting before generation. OpenAI Chat
+Completions reports usage after generation; it does not provide the input
+token counter required by methods that use a provider tokenizer for hard
+limits. Use `chat_completions` for compatible endpoints that expect the older
+`max_tokens` option. Credentials are read at runtime, and nested runs use
+temporary host gateway tokens for delegated calls.
+
 ### `framework`
 
 | Form | Shape |
@@ -79,6 +139,60 @@ The options inside each `config` belong to the selected Controller or Lab.
 Each one validates its options at startup and reports unknown keys. Relative
 data paths in a Lab's options are usually resolved from the current directory
 or from the Lab's `data_root`; see the Lab's guide.
+
+### Online GRPO with veRL
+
+`verl_math_grpo` scores a local baseline on the development split, trains on
+the training split with the Math Lab's verifier as the reward, exports a full
+checkpoint, and evaluates it on the same development split. Keep a separate
+test split for reporting final results.
+
+```toml
+objective = "Compare baseline and GRPO checkpoints on the Math Lab dev split"
+data_dir = "runs/math-grpo"
+
+[framework.method]
+name = "verl_math_grpo"
+
+[framework.method.config.labs.math]
+manifest = "/path/to/math/manifest.json"
+initial_model = "/path/to/local/model"
+inference_python = "/path/to/evaluation-env/bin/python"
+
+[framework.method.config.labs.math.backend]
+name = "verl_grpo"
+
+[framework.method.config.labs.math.backend.config]
+training_python = "/path/to/verl-env/bin/python"
+training_strategy = "fsdp2"
+verl_version = "0.9.1"
+rollout_engine = "vllm"
+rollout_version = "0.24.0"
+gpus = 1
+samples_per_prompt = 4
+steps = 2
+
+[resources.pools.gpu]
+nodes = 1
+gpus = [0]
+gpus_per_node = 1
+
+[resources.placement."math.rollout"]
+pool = "gpu"
+gpus = 1
+
+[resources.placement."math.trainer"]
+pool = "gpu"
+gpus = 1
+```
+
+veRL owns the rollout engine and weight synchronization inside the training
+job. Keep its Python environment separate from serving and evaluation.
+`rollout_engine` accepts `vllm` or `sglang`; `rollout_version` must match the
+package in `training_python`. The example's FSDP2 and vLLM stack was exercised
+on one B200. The veRL 0.9.1 SGLang extra and its pinned SGLang 0.5.12 declare
+conflicting Transformers versions, so that combination has not been verified.
+This adapter currently uses the local RSISys executor and a single GPU node.
 
 ## Command-line options
 
