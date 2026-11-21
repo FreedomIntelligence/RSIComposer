@@ -70,17 +70,22 @@ The alias is what the Controller uses to call it. Before swapping Labs, check th
 the new Lab accepts the operations and arguments the Controller sends and returns
 the receipt fields it reads. See [Compose a system](compose.md#pair-a-registered-controller-with-a-lab).
 
-| Lab | What it evaluates | How it gets its inputs |
-| --- | --- | --- |
-| [`coding`](../src/rsisys/labs/coding/README.md) | Agent artifacts on frozen coding tasks, using Harbor and the benchmark's verifier | Benchmarks, each with its own task manifest, splits, file hashes and budgets |
-| [`math`](../src/rsisys/labs/math/README.md) | A fixed actor with a supplied instruction on numeric or symbolic question-answer splits; reports answer accuracy, overall and per benchmark | A manifest of hashed JSONL sources, each a benchmark with its own verifier and budget, with an optional competition bundle |
-| [`self_reflection`](../src/rsisys/labs/self_reflection/lab.py) | Candidate Controllers in budgeted child runs. The current Controller decides whether to adopt the candidate. | Scoped parent evidence and the child run's Lab configuration |
+Choose the domain Lab by what the benchmark grades. The same tool, such as a
+browser or terminal, can appear in several domains.
 
-Coding and Math are domain Labs. Both expose `inspect`, `evaluate`, and
-`read_trace`; each keeps its own task format, benchmarks and grading in its own
-package.
-Self-Reflection is a framework Lab that can be paired with domain Labs. It
-does not define its own domain benchmark.
+| Domain Lab | What the benchmark grades | First benchmark adapters |
+| --- | --- | --- |
+| [CodingLab](../src/rsisys/labs/coding/README.md) | Executable changes in a code workspace or terminal | SWE-bench Verified and Terminal-Bench 2.1 through Harbor |
+| [MathLab](../src/rsisys/labs/math/README.md) | Correctness of mathematical answers | AIME 2024 and 2025 with exact integer verification |
+| [SearchLab](../src/rsisys/labs/search/README.md) | Retrieved answers and tables; sources are recorded as evidence | BrowseComp and WideSearch |
+| [ComputerUseLab](../src/rsisys/labs/computer_use/README.md) | Whether UI actions produced the required application state | WebArena-Infinity real tasks |
+| [ProfessionalWorkLab](../src/rsisys/labs/professional_work/README.md) | Whether a deliverable satisfies the benchmark's rubric | SkillsBench science, office, and finance through Harbor |
+
+Domain Labs expose `inspect` and `evaluate`. Coding, Math, and Professional Work
+also expose `read_trace`; Search and Computer Use return trace artifacts.
+[`self_reflection`](../src/rsisys/labs/self_reflection/lab.py)
+is a framework Lab: it evaluates candidate Controllers in budgeted child runs
+using the configured domain Labs.
 
 A method can wrap a shared Lab to add operations specific to its algorithm.
 For example, [`coding_meta_agent`](../src/rsisys/algorithms/coding_meta_agent/README.md)
@@ -95,6 +100,13 @@ split. The task format stays with the Lab: coding tasks are directories; math
 problems are rows. Keep training and development separate from sealed final
 evaluation. When a profile requires a primary metric, the Lab declares its
 name and scorer. Metric names do not have to match across Labs.
+
+For a new domain, start with one benchmark and its official task loader,
+runtime, and grader. Pin the benchmark revision, task splits, grader and
+evaluation settings; return the declared metric in `quality_metrics` and
+store detailed evidence as artifacts. Verify a complete task with the official
+grader before registering the Lab. A second benchmark can then reuse the Lab's
+execution path without changing the RSI policy or the framework core.
 
 ### Mount benchmarks on a Lab
 

@@ -34,8 +34,8 @@ PROTOCOL_DEFAULTS = {'max_steps': 48, 'max_tokens': 4096, 'total_tokens': 98304,
                      'agent_timeout': 1800, 'verifier_timeout': 1800, 'thinking': False}
 
 
-def validate_benchmark_config(config):
-    benchmarks = mount_benchmarks(config.get('benchmarks'), kind=KIND, source_keys=('manifest',),
+def validate_benchmark_config(config, *, kind=KIND):
+    benchmarks = mount_benchmarks(config.get('benchmarks'), kind=kind, source_keys=('manifest',),
                                   protocol_defaults=PROTOCOL_DEFAULTS, runtimes=RUNTIMES,
                                   default_runtime=DEFAULT_RUNTIME)
     for benchmark in benchmarks:
@@ -59,9 +59,9 @@ def _splits(manifest):
     return manifest.get('splits', {k: manifest[k] for k in ('search', 'heldout') if k in manifest})
 
 
-def load_task_manifests(config):
+def load_task_manifests(config, *, kind=KIND):
     """(combined manifest, merged splits, mounted benchmarks) for a validated config."""
-    benchmarks = validate_benchmark_config(config)
+    benchmarks = validate_benchmark_config(config, kind=kind)
     sources, merged = {}, {}
     for benchmark in benchmarks:
         name, path = benchmark.name, Path(benchmark.source['manifest']).resolve()

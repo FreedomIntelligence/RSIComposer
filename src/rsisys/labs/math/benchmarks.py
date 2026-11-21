@@ -96,9 +96,13 @@ def official_problems(root, entry, *, budgets=True, max_output_tokens=32768, run
         raise ValueError('max_output_tokens must be a positive integer')
     path = manifest_path(root, entry['benchmarks_manifest'])
     manifest = json.loads(checked_bytes(path, entry['sha256']))
-    if (not isinstance(manifest, dict) or not isinstance(manifest.get('benchmarks'), dict)
-            or set(manifest['benchmarks']) != set(BENCHMARKS)):
-        raise ValueError('The official bundle manifest must describe AIME 2024, AIME 2025 and AIMO3 Reference')
+    if (not isinstance(manifest, dict) or manifest.get('schema_version') != 1
+            or not isinstance(manifest.get('benchmarks'), dict)
+            or set(manifest['benchmarks']) - BENCHMARKS.keys()):
+        raise ValueError('Invalid official math benchmark manifest')
+    missing = set(selected) - manifest['benchmarks'].keys()
+    if missing:
+        raise ValueError(f'Official math manifest is missing selected benchmarks: {sorted(missing)}')
     rows, benchmarks = [], {}
     for name in sorted(selected):
         spec = BENCHMARKS[name]

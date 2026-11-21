@@ -10,7 +10,7 @@
 
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 
-<p align="center"><a href="#框架概览">框架概览</a> · <a href="#最新动态">最新动态</a> · <a href="#亮点">亮点</a> · <a href="#快速开始">快速开始</a> · <a href="docs/README.md">文档</a> · <a href="#已适配的方法">支持的方法</a> · <a href="#引用">引用</a></p>
+<p align="center"><a href="#框架概览">框架概览</a> · <a href="#最新动态">最新动态</a> · <a href="#亮点">亮点</a> · <a href="#快速开始">快速开始</a> · <a href="#领域-lab-与评测基准">Lab</a> · <a href="docs/README.md">文档</a> · <a href="#已适配的方法">支持的方法</a> · <a href="#引用">引用</a></p>
 
 RSISys 把递归自改进（RSI）实验组织成一个闭环：Controller 决定下一步做什么，Lab 运行实验并返回回执，Controller 根据证据决定下一步或采纳哪个候选。提示词搜索、harness 搜索、监督微调和强化学习都使用这个闭环，因此可以替换 Controller、复用 Lab，或在不改核心代码的前提下新增方法。
 
@@ -56,6 +56,20 @@ rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_te
 ```
 
 [Quickstart](docs/quickstart.md) 介绍了如何读取结果、用 RSIMonitor 查看运行，以及如何恢复中断的运行。
+
+## 领域 Lab 与评测基准
+
+在运行配置中选择 Lab 和评测基准。各 Lab 的指南列出了所需数据、运行环境和评分配置。
+
+| Lab | 已适配的评测基准 | 验证进度 |
+| --- | --- | --- |
+| [CodingLab](src/rsisys/labs/coding/README.md) | SWE-bench Verified、Terminal-Bench 2.1 | 两个基准各用一道题的官方参考解在 Harbor 中跑通评分 |
+| [MathLab](src/rsisys/labs/math/README.md) | AIME 2024、AIME 2025；也支持 AIMO3 Reference | 两届 AIME 均逐题验证了正确和错误答案的评分 |
+| [SearchLab](src/rsisys/labs/search/README.md) | BrowseComp、WideSearch | 用实际题目和测试裁判验证评分；待接入真实搜索 agent 试跑 |
+| [ComputerUseLab](src/rsisys/labs/computer_use/README.md) | WebArena-Infinity（真实任务） | 已用 Chromium 验证一道样例的浏览器操作与状态评分；待用模型驱动的浏览器 agent 试跑 |
+| [ProfessionalWorkLab](src/rsisys/labs/professional_work/README.md) | SkillsBench v1.0（科学、办公、金融） | 一道金融样例通过官方验证器；完整 Harbor 试验待验证 |
+
+以上是适配验证进度，这批适配尚未完成真实模型和 RSI 方法的全量评测。
 
 ## 文档
 

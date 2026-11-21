@@ -83,9 +83,10 @@ data, the development inputs, and the sealed assessment disjoint.
 
 A run can omit the sealed split for development-only work. To run the official
 competition benchmarks, use `benchmarks_manifest` on the sealed split. The bundle
-holds three frozen benchmarks, each checked for its count and hash, and the entry's
-optional `benchmarks` list mounts any of them (default: all three). Use the JSONL
-form to bind a different sealed benchmark.
+can hold any of the frozen benchmarks below, each checked for its count and hash.
+Set `"benchmarks": ["aime2024", "aime2025"]` to mount just the two AIME years.
+Omitting `benchmarks` selects all three and requires a complete bundle. Use the
+JSONL form to bind a different sealed benchmark.
 
 | Benchmark | Count | Scoring |
 | --- | ---: | --- |
@@ -93,7 +94,7 @@ form to bind a different sealed benchmark.
 | `aime2025` (AIME 2025 I and II) | 30 | Terminal boxed integer from 0 to 999 |
 | `aimo3_reference` (AIMO3 Reference) | 10 | Terminal boxed integer from 0 to 99,999 |
 
-Use the prepared benchmark manifest and the three JSONL files from the deployment.
+Use the prepared benchmark manifest and the JSONL files for the selected benchmarks.
 
 ## Benchmarks
 

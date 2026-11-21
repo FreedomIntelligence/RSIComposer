@@ -70,7 +70,9 @@ fixed number of times; here it measures one prompt setting:
 ## Write a Controller and load it as a plugin
 
 A plugin is a Python file or package with a `register(registry)` function. Load
-it with `--plugin`; RSISys never imports code named in a config.
+it with `--plugin` and select its registered name in the framework configuration.
+Labs that accept an installed runtime with host access require explicit
+`trust = ["host-code"]` in the Lab configuration.
 
 Save this as `few_shot_sweep/__init__.py`. It evaluates one instruction with
 several few-shot counts on the template Lab and reports the best count:

@@ -10,7 +10,7 @@
 
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 
-<p align="center"><a href="#framework-overview">Overview</a> · <a href="#news">News</a> · <a href="#highlights">Highlights</a> · <a href="#getting-started">Getting started</a> · <a href="docs/README.md">Docs</a> · <a href="#adapted-methods">Methods</a> · <a href="#citation">Citation</a></p>
+<p align="center"><a href="#framework-overview">Overview</a> · <a href="#news">News</a> · <a href="#highlights">Highlights</a> · <a href="#getting-started">Getting started</a> · <a href="#domain-labs-and-benchmarks">Labs</a> · <a href="docs/README.md">Docs</a> · <a href="#adapted-methods">Methods</a> · <a href="#citation">Citation</a></p>
 
 RSISys runs recursive self-improvement (RSI) experiments as a loop. A Controller decides what to try next, Labs run the experiments and return receipts, and the Controller reads the evidence to choose its next step or the candidate to adopt. Prompt search, harness search, supervised fine-tuning and reinforcement learning share this loop, so you can swap a Controller, reuse a Lab, or add a method without changing the core.
 
@@ -56,6 +56,20 @@ rsisys run --plugin src/rsisys/labs/_template --plugin src/rsisys/algorithms/_te
 ```
 
 The [Quickstart](docs/quickstart.md) explains how to read the results, watch runs in RSIMonitor, and resume interrupted runs.
+
+## Domain Labs and benchmarks
+
+Choose a Lab and its benchmarks in your run configuration. Each Lab guide lists the required task assets, runner, and scoring setup.
+
+| Lab | Benchmarks | Validation so far |
+| --- | --- | --- |
+| [CodingLab](src/rsisys/labs/coding/README.md) | SWE-bench Verified, Terminal-Bench 2.1 | One official reference solution scored in Harbor per benchmark |
+| [MathLab](src/rsisys/labs/math/README.md) | AIME 2024, AIME 2025; also supports AIMO3 Reference | Correct and incorrect answers checked across both AIME sets |
+| [SearchLab](src/rsisys/labs/search/README.md) | BrowseComp, WideSearch | Scoring checked on benchmark tasks with a test judge; live search agent run pending |
+| [ComputerUseLab](src/rsisys/labs/computer_use/README.md) | WebArena-Infinity (real tasks) | Chromium and state verification checked on a sample task; model-driven browser agent run pending |
+| [ProfessionalWorkLab](src/rsisys/labs/professional_work/README.md) | SkillsBench v1.0 (science, office, finance) | Official verifier passed on one finance task; full Harbor trial pending |
+
+These are integration checks. Full benchmark runs with models and RSI methods are still pending for this set of adapters.
 
 ## Documentation
 

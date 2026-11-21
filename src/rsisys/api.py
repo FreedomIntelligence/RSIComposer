@@ -145,6 +145,9 @@ _EXPORTS = {
     'PromptTemplateRuntime': ('rsisys.labs.math.runtimes', 'PromptTemplateRuntime'),
     'StepProgramRuntime': ('rsisys.labs.math.runtimes', 'StepProgramRuntime'),
     'CodingLab': ('rsisys.labs.coding.lab', 'CodingLab'),
+    'ComputerUseLab': ('rsisys.labs.computer_use.lab', 'ComputerUseLab'),
+    'ProfessionalWorkLab': ('rsisys.labs.professional_work.lab', 'ProfessionalWorkLab'),
+    'SearchLab': ('rsisys.labs.search.lab', 'SearchLab'),
     'CodingArtifact': ('rsisys.labs.coding.artifacts', 'CodingArtifact'),
     'HarborAgentRuntime': ('rsisys.labs.coding.agents', 'HarborAgentRuntime'),
     'Benchmark': ('rsisys.loops.contracts.benchmark', 'Benchmark'),
@@ -252,6 +255,9 @@ if _TYPE_CHECKING:
         StepProgramRuntime as StepProgramRuntime,
     )
     from rsisys.labs.coding.lab import CodingLab as CodingLab
+    from rsisys.labs.computer_use.lab import ComputerUseLab as ComputerUseLab
+    from rsisys.labs.professional_work.lab import ProfessionalWorkLab as ProfessionalWorkLab
+    from rsisys.labs.search.lab import SearchLab as SearchLab
     from rsisys.labs.coding.artifacts import CodingArtifact as CodingArtifact
     from rsisys.labs.coding.agents import HarborAgentRuntime as HarborAgentRuntime
     from rsisys.loops.contracts.benchmark import Benchmark as Benchmark

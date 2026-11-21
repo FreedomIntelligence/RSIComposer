@@ -24,7 +24,7 @@ from .artifacts import digest, snapshot
 from rsisys.loops.contracts.benchmark import choose_primary_metric
 from rsisys.loops.contracts.domain_agent import (
     DomainAgentRejected, DomainAgent, allowed_trust, read_domain_agent_data, require_trust)
-from .benchmarks import load_task_manifests, validate_benchmark_config
+from .benchmarks import KIND, load_task_manifests, validate_benchmark_config
 from .harbor_runner import atomic_json
 from .trial_runner import HarborTrialRunner, infrastructure_failure
 
@@ -36,13 +36,13 @@ PROTOCOL_VERSION = 'coding-environment/v9'
 AGGREGATES = {'benchmark-mean': 'harbor-official-reward/benchmark-mean/v1'}
 
 
-def validate_config(config):
+def validate_config(config, *, kind=KIND):
     if set(config) - OPTIONS:
         raise ValueError('Unknown Coding Lab options: ' + str(set(config) - OPTIONS))
     for key in ('experiment_dir', 'python', 'model'):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError('Coding Lab requires ' + key)
-    benchmarks = validate_benchmark_config(config)
+    benchmarks = validate_benchmark_config(config, kind=kind)
     allowed = allowed_trust(config)
     for benchmark in benchmarks:
         runtime = benchmark.runtime
@@ -65,15 +65,22 @@ class CodingLab:
     agent. The Lab never proposes, mutates, ranks, selects or adopts candidates.
     Split roles are declared per instance and enforced by the host.
     """
-    validate_config = staticmethod(validate_config)
+    domain = 'coding'
+    benchmark_kind = KIND
+    label = 'Coding'
+    protocol_version = PROTOCOL_VERSION
+
+    @classmethod
+    def validate_config(cls, config):
+        validate_config(config, kind=cls.benchmark_kind)
 
     def __init__(self, context, config):
-        validate_config(config)
+        self.validate_config(config)
         self.config = deepcopy(config)
         self.root = Path(config['experiment_dir']).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         execution_context = context if context is not None else SimpleNamespace(data_dir=self.root)
-        self.manifest, self.datasets, self.benchmarks = load_task_manifests(self.config)
+        self.manifest, self.datasets, self.benchmarks = load_task_manifests(self.config, kind=self.benchmark_kind)
         self.protocols = {benchmark.name: benchmark for benchmark in self.benchmarks}
         self.validate_tasks()
         roles = self.config.get('split_roles', {})
@@ -88,7 +95,7 @@ class CodingLab:
         self.protocol = {name: hashlib.sha256((package / name).read_bytes()).hexdigest()
                          for name in ('agent.py', 'agents.py', 'artifacts.py', 'benchmarks.py', 'lab.py',
                                       'harbor_runner.py', 'history.py', 'trial_runner.py')}
-        self.binding = {'protocol_version': PROTOCOL_VERSION, 'manifest': self.manifest,
+        self.binding = {'protocol_version': self.protocol_version, 'manifest': self.manifest,
                         'config': self.config, 'agent': self.agent, 'source': self.protocol}
         self.fingerprint = digest(self.binding)
         binding = self.root / 'binding.json'
@@ -220,7 +227,7 @@ class CodingLab:
                 'files': dict(sorted(row['files'].items())),
             } for row in rows]
             bindings.append(DatasetBinding(
-                name='coding/' + split,
+                name=self.domain + '/' + split,
                 split=split,
                 role=role,
                 source=source,
@@ -236,7 +243,7 @@ class CodingLab:
             'sha256': {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}},
             'required': ['path', 'sha256'], 'additionalProperties': False}
         return (
-            OperationSpec('inspect', 'Describe the installed coding task environment and measured evaluations.',
+            OperationSpec('inspect', f'Describe the {self.label.lower()} task environment and evaluations.',
                           {'type': 'object', 'properties': {}, 'additionalProperties': False}, read_only=True),
             OperationSpec('evaluate', 'Measure an immutable artifact using the installed agent, frozen task '
                           'split and fixed execution budgets. No search or candidate selection is performed.',
@@ -257,17 +264,17 @@ class CodingLab:
     def execute(self, call):
         args = dict(call.arguments)
         if call.name == 'inspect' and not args:
-            return OperationResult('Coding task environment', (), False, data={
-                'protocol': PROTOCOL_VERSION, 'splits': {
+            return OperationResult(f'{self.label} task environment', (), False, data={
+                'protocol': self.protocol_version, 'splits': {
                     key: [{'id': r['id'], 'benchmark': r['benchmark']} for r in rows]
                     for key, rows in self.datasets.items() if self.split_roles()[key].inputs_visible},
                 'agent': self.agent, 'protocol_fingerprint': self.fingerprint,
                 'evaluations': [p.parent.name for p in sorted(self.evaluations.glob('*/summary.json'))],
             })
         if call.name == 'evaluate' and {'artifact', 'split'} <= args.keys() <= {'artifact', 'split', 'trials', 'task_ids'}:
-            return OperationResult('Coding evaluation completed', (), False, data=self.evaluate(**args))
+            return OperationResult(f'{self.label} evaluation completed', (), False, data=self.evaluate(**args))
         if call.name == 'read_trace' and set(args) == {'evaluation', 'split', 'index', 'offset'}:
-            return OperationResult('Coding trace page', (), False, data=self.read_trace(**args))
+            return OperationResult(f'{self.label} trace page', (), False, data=self.read_trace(**args))
         raise LabToolError('Use exactly the documented Coding Lab operation arguments')
 
     def _request(self, artifact, split, trials, task_ids):
