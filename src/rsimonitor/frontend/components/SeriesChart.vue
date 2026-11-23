@@ -29,7 +29,7 @@ function range(data) {
 function draw() {
   const data = rows();
   if (plot) { plot.changeData(data); return; }
-  const axis = {style: {fontSize: 11, fill: '#8a877f'}};
+  const axis = {style: {fontSize: 13, fill: '#656159'}};
   plot = new Line(host.value, {
     data, xField: 'x', yField: 'y', seriesField: 'series', color: COLORS, autoFit: true, animation: false,
     padding: 'auto', legend: props.sets.length > 1 ? {position: 'bottom'} : false, lineStyle: {lineWidth: 1.6},

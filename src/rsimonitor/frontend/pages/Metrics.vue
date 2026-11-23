@@ -1,4 +1,5 @@
 <template>
+  <ObservationEvents :run="run" category="quality" />
   <div class="rsi-metrics-ui"><Workspace :state="state" /></div>
   <details v-if="probes.length" class="technical">
     <summary>{{ t('观测触发器 · {p0}', {p0: probes.length}) }}</summary>
@@ -10,6 +11,7 @@
 import {computed} from 'vue';
 import Workspace from '../Workspace.vue';
 import DataTable from '../components/DataTable.vue';
+import ObservationEvents from '../components/ObservationEvents.vue';
 import {store} from '../app/store.js';
 import {t} from '../app/i18n.js';
 import {rowsOf} from '../app/insight.js';

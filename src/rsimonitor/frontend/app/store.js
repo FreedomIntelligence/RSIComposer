@@ -19,14 +19,12 @@ export const store = reactive({
   evaluationId: '',
   stageLogs: '',
   compareIds: [],
-  toast: '',
-  modal: null,        // {title, eyebrow, kind, payload}
 });
 /** Snapshots are large and replaced wholesale, so they stay out of deep reactivity. */
 export const snapshot = shallowRef(null);
 export const compared = shallowRef(new Map());
 
-let newest = null, revision = 0, controller = null, timer = null, toastTimer = null;
+let newest = null, revision = 0, controller = null, timer = null;
 const cache = new Map();  // url -> {etag, data}; the server answers 304 for unchanged snapshots
 
 async function request(path, signal) {
@@ -92,7 +90,6 @@ export async function refresh() {
     store.error = null;
     if (switched) {
       store.decisionId = store.evaluationId = store.stageLogs = '';
-      store.modal = null;
       if (RUN_PAGES.includes(store.page) && store.page !== 'overview') navigate('overview');
     }
     if (store.page === 'compare') {
@@ -131,7 +128,6 @@ export function toggleCompare(id, enabled) {
 }
 
 export function navigate(page) {
-  store.modal = null;
   if (location.hash !== `#${page}`) location.hash = page;
   else applyHash();
 }
@@ -139,22 +135,6 @@ export function navigate(page) {
 function applyHash() {
   const page = location.hash.slice(1);
   store.page = Object.hasOwn(PAGE_LABELS, page) ? page : 'overview';
-}
-
-export function notify(text) {
-  store.toast = text;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { store.toast = ''; }, 3500);
-}
-
-export function download(name, value) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type: 'application/json'}));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  notify('已导出');
 }
 
 export function start() {

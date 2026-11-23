@@ -2,10 +2,12 @@
   <SectionTitle :title="t('资源')" />
   <dl v-if="rows.length" class="facts wide-facts"><template v-for="[key, value] in rows" :key="key"><dt>{{ key }}</dt><dd class="num">{{ value }}</dd></template></dl>
   <p v-else class="empty-state">{{ t('这次运行没有上报资源用量') }}</p>
+  <ObservationEvents :run="run" category="execution" />
 </template>
 <script setup>
 import {computed} from 'vue';
 import SectionTitle from '../components/SectionTitle.vue';
+import ObservationEvents from '../components/ObservationEvents.vue';
 import {t} from '../app/i18n.js';
 import {scalarFields} from '../app/insight.js';
 const props = defineProps({run: {type: Object, required: true}});

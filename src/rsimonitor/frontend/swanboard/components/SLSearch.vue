@@ -63,23 +63,29 @@ const input = debounce(() => {
 .swan-search {
   @apply relative w-full rounded-lg;
   input {
-    @apply w-full outline-none text-sm text-dimmer border rounded-lg py-1.5 px-3 transition-all;
-    @apply pl-7;
+    @apply block w-full outline-none text-sm text-dimmer border rounded-lg py-1.5 transition-all;
+    padding-inline: 32px 12px;
   }
 
   .swan-icon {
-    @apply w-4 h-4 shrink-0;
-    @apply absolute top-1/2 left-2 transform -translate-y-1/2;
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 10px;
+    width: 16px;
+    height: 16px;
+    margin-block: auto;
+    pointer-events: none;
   }
 }
 
 .icon-reverse {
   input {
-    @apply pl-3 pr-7;
+    padding-inline: 12px 32px;
   }
 
   .swan-icon {
-    @apply right-3 left-auto;
+    inset-inline-start: auto;
+    inset-inline-end: 10px;
   }
 }
 </style>

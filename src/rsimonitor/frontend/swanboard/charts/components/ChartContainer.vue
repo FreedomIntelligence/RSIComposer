@@ -45,7 +45,6 @@ See the repository LICENSE for the complete Apache-2.0 terms.
           <!-- 放大功能 -->
           <PanelButton icon="zoom" :tip="$t('chart.zoom')" @click="zoom" />
           <!-- 更多功能 -->
-          <ExportImage :index="index" :chart="chart" :smoothMethod="smoothMethod" v-model="downloadModal" />
           <SLMenu menu-class="flex-shrink-0" class="right-0 top-4">
             <PanelButton icon="more" :tip="$t('chart.more')" />
             <template #pop>
@@ -55,9 +54,6 @@ See the repository LICENSE for the complete Apache-2.0 terms.
                 </SLMenuItem>
                 <SLMenuItem class="py-1" @click="hide" v-else>
                   {{ $t('chart.hide') }}
-                </SLMenuItem>
-                <SLMenuItem class="py-1" v-if="isLineChart" @click="downloadModal = true">
-                  {{ $t('chart.charts.share.download.button') }}
                 </SLMenuItem>
               </SLMenuItems>
             </template>
@@ -96,7 +92,6 @@ import SLLoading from '@swanlab-vue/components/SLLoading.vue'
 import SLMenu from '@swanlab-vue/components/menu/SLMenu.vue'
 import SLMenuItems from '@swanlab-vue/components/menu/SLMenuItems.vue'
 import SLMenuItem from '@swanlab-vue/components/menu/SLMenuItem.vue'
-import ExportImage from '../components/ExportImage.vue'
 
 const props = defineProps({
   chart: {
@@ -312,15 +307,6 @@ const hide = () => {
 const unhide = () => {
   emit('unhide', props.chart)
 }
-
-// ---------------------------------- 下载折线图 ----------------------------------
-
-const downloadModal = ref(false)
-
-const isLineChart = computed(() => {
-  if (isChartError.value) return false
-  return props.chart?.type === 'default' || props.chart?.type === 'line'
-})
 
 // ---------------------------------- 暴露组件对象 ----------------------------------
 defineExpose({

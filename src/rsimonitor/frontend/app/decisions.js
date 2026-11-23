@@ -86,7 +86,7 @@
     }
   }
 
-  function layout(rows = []) {
+  function layout(rows = [], {mainline = []} = {}) {
     const records = (Array.isArray(rows) ? rows : []).map((row, index) => ({ row, index }))
       .filter(({ row }) => row && typeof row === "object" && !Array.isArray(row));
     const ids = new Map();
@@ -158,12 +158,12 @@
         else if (from < 0 && identifier(id)) issues.push({type:"unresolved", id, to:record.key});
       }
     });
-    return arrange(records, edges, {issues, rootKind:attemptMetadata ? "root" : "sequence",discardCycles:true});
+    return arrange(records, edges, {issues, rootKind:attemptMetadata ? "root" : "sequence",discardCycles:true, mainline});
   }
 
   // Use strongly connected components for geometry, retaining every real edge.
   // This also handles cycles introduced by contracting interleaved attempts.
-  function arrange(records, edges, {issues = [], rootKind = "root",discardCycles=false} = {}) {
+  function arrange(records, edges, {issues = [], rootKind = "root",discardCycles=false, mainline = []} = {}) {
     const rank = new Map(records.map((r,i)=>[r.key,i]));
     const parents = records.map(()=>new Set()), children = records.map(()=>new Set());
     for (const edge of edges) if (edge.kind !== "source") {
@@ -228,6 +228,19 @@
       for (const layer of layers) if (layer) place(layer, i => parents[i].size ? average([...parents[i].keys()].map(p => nodes[p+1].y)) : Y);
       for (let level = layers.length - 1; level > 0; level--) if (layers[level]) {
         place(layers[level], i => children[i].size ? average([...children[i]].map(c => nodes[c+1].y)) : nodes[i+1].y);
+      }
+    }
+    if (mainline.length > 1) {
+      const axis = new Set(mainline);
+      for (const layer of layers) if (layer) {
+        const ordered = layer.map(i => nodes[i + 1]).sort((a, b) => a.y - b.y);
+        const branches = ordered.filter(node => !axis.has(node.key));
+        const upper = Math.floor(branches.length / 2);
+        branches.forEach((node, i) => { node.y = Y + (i - upper + (i >= upper ? 1 : 0)) * LANE; });
+        for (const node of ordered) if (axis.has(node.key)) {
+          node.y = Y;
+          node.onMainline = true;
+        }
       }
     }
     // Root connectors are navigation anchors, never inferred dependencies.
@@ -334,8 +347,8 @@
   }
 
   function render({ rows = [], model: suppliedModel, selected = null, onSelect, label, startLabel = "Start", edgeLabel,
-    view = {}, onIdle, compact = false, height = 420 } = {}) {
-    const original=suppliedModel||layout(rows),model={...original,nodes:original.nodes.map(n=>({...n})),edges:original.edges.map(e=>({...e}))}, HEIGHT = height, document = root.document;
+    view = {}, onIdle, compact = false, height = 420, responsiveHeight = false } = {}) {
+    const original=suppliedModel||layout(rows),model={...original,nodes:original.nodes.map(n=>({...n})),edges:original.edges.map(e=>({...e}))}, document = root.document;
     const finitePoint = p => p && Number.isFinite(p.x) && Number.isFinite(p.y);
     if (!view.positions?.get || !view.positions?.set) view.positions = new Map();
     if (!view.pinned?.has || !view.pinned?.add) view.pinned = new Set();
@@ -345,6 +358,7 @@
     if (view.autoFit === undefined) view.autoFit = !restoredCamera;
     view.interacting = view.animating = false;
     let width = Number.isFinite(view.viewportWidth) && view.viewportWidth > 0 ? view.viewportWidth : 960;
+    let HEIGHT = responsiveHeight && view.viewportHeight > 0 ? view.viewportHeight : height;
     let viewportReady = restoredCamera, disposed = false, frame = null, heat = 0, gesture = null, suppressed = null;
     let observer = null;
     const removers = [], groups = new Map(), lines = [];
@@ -362,7 +376,7 @@
     }
     const svg = element("svg", { class: "decision-map", width: "100%", height: HEIGHT,
       viewBox: `0 0 ${width} ${HEIGHT}`, preserveAspectRatio: "none", role: "group", "aria-label": startLabel });
-    svg.style.width = "100%"; svg.style.height = `${HEIGHT}px`;
+    svg.style.width = "100%"; svg.style.height = responsiveHeight ? "100%" : `${HEIGHT}px`;
     svg.style.touchAction = "none";
     const plane = element("g", { class: "decision-plane" }); svg.append(plane);
     const hash = key => {
@@ -372,11 +386,11 @@
     };
     for (const node of model.nodes) {
       const depth = Math.round((node.x - X) / COLUMN);
-      node.home = { x: node.x, y: node.type === "root" ? Y
+      node.home = { x: node.x, y: node.type === "root" || node.onMainline ? Y
         : Y + (node.y - Y) * (compact ? 1 : 1.8) + (compact ? 0 : depth % 2 ? -64 : 64) + hash(node.key) * 20 - 10 };
       const saved = positions.get(node.key);
       const point = node.type !== "root" && finitePoint(saved) ? saved : node.home;
-      node.x = point.x; node.y = point.y;
+      node.x = point.x; node.y = node.onMainline && !pinned.has(node.key) ? node.home.y : point.y;
       node.anchor = { x: node.x, y: node.y }; node.vx = node.vy = 0;
     }
     const byKey = new Map(model.nodes.map(node => [node.key, node]));
@@ -464,7 +478,7 @@
         grid.get(key).push(n);
       }
       for (const n of model.nodes) {
-        if (n.type === "root" || pinned.has(n.key) || gesture?.node === n) continue;
+        if (n.type === "root" || n.onMainline || pinned.has(n.key) || gesture?.node === n) continue;
         n.vx = (n.vx + n.fx) * 0.72; n.vy = (n.vy + n.fy) * 0.72;
         n.x += Math.max(-10, Math.min(10, n.vx)); n.y += Math.max(-12, Math.min(12, n.vy));
         constrain(n);
@@ -552,7 +566,8 @@
       const fullLabel = String(isRoot ? startLabel : (typeof label === "function"
         ? label(node.row, node.index) : node.row.operation || node.row.action || node.row.mode
           || node.row.kind || node.row.decision_id || `Decision ${node.index + 1}`) ?? "");
-      const group = element("g", { class: isRoot ? "decision-root" : `decision-node flow-choice${active ? " is-selected" : ""}`,
+      const adopted = node.row?.version_adopted === true;
+      const group = element("g", { class: isRoot ? "decision-root" : `decision-node flow-choice${active ? " is-selected" : ""}${adopted ? " is-adopted" : ""}`,
         "data-key": node.key });
       group.append(element("title", {}, fullLabel));
       if (!isRoot) {
@@ -577,7 +592,7 @@
       if (active) group.append(element("circle", { class: "decision-halo", r: 13,
         fill: "var(--orange, #b45b35)", opacity: 0.18, "pointer-events": "none" }));
       group.append(element("circle", { class: "decision-dot", r: active ? 8 : 6,
-        fill: active ? "var(--orange, #b45b35)" : failed ? "var(--red, #9a4d42)" : "var(--muted, #8a7568)" }));
+        fill: active || adopted ? "var(--orange, #b45b35)" : failed ? "var(--red, #9a4d42)" : "var(--muted, #8a7568)" }));
       // Preserve natural glyph proportions; wrap words instead of squeezing text.
       const measure = value => Array.from(value).reduce((sum, char) => sum +
         (char.codePointAt(0) > 255 ? 16 : /[MW@#]/.test(char) ? 14 : /[il.,:;!| ]/.test(char) ? 5 : 9), 0);
@@ -631,7 +646,8 @@
 
     function fitCamera(initial = false) {
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-      for (const n of model.nodes) {
+      const mainline = initial ? model.nodes.filter(node => node.onMainline) : [];
+      for (const n of mainline.length ? mainline : model.nodes) {
         left = Math.min(left, n.x - LABEL_WIDTH / 2 - 16); right = Math.max(right, n.x + LABEL_WIDTH / 2 + 16);
         top = Math.min(top, n.y - 24); bottom = Math.max(bottom, n.y + 64);
       }
@@ -641,14 +657,25 @@
       view.camera.x = initial && (right - left) * scale > width - 64 ? 32 - left * scale : (width - (left + right) * scale) / 2;
       view.camera.y = initial && (bottom - top) * scale > HEIGHT - 64 ? HEIGHT / 2 - Y * scale : (HEIGHT - (top + bottom) * scale) / 2;
     }
-    function resize() {
+    function resize(preserveScale = false) {
       if (disposed) return;
       const measured = svg.getBoundingClientRect?.().width || svg.clientWidth || svg.parentElement?.clientWidth;
+      const measuredHeight = responsiveHeight ? svg.parentElement?.clientHeight : height;
+      if (responsiveHeight && !(measuredHeight > 0 && measured > 0)) { paint(); return; }
+      const beforeWidth = width, beforeHeight = HEIGHT;
       if (Number.isFinite(measured) && measured > 0) width = measured;
-      const changed = Number.isFinite(view.viewportWidth) && view.viewportWidth !== width;
+      HEIGHT = measuredHeight;
+      const changed = (Number.isFinite(view.viewportWidth) && view.viewportWidth !== width)
+        || (Number.isFinite(view.viewportHeight) && view.viewportHeight !== HEIGHT);
       view.viewportWidth = width;
+      view.viewportHeight = HEIGHT;
       svg.setAttribute("viewBox", `0 0 ${width} ${HEIGHT}`);
-      if (view.autoFit && !view.interacting && !view.animating && (!viewportReady || changed)) fitCamera(!view.fitAll);
+      if (preserveScale) {
+        // Keep the same graph point at the centre without changing its scale.
+        view.camera.x += (width - beforeWidth) / 2;
+        view.camera.y += (HEIGHT - beforeHeight) / 2;
+        view.autoFit = false;
+      } else if (view.autoFit && !view.interacting && !view.animating && (!viewportReady || changed)) fitCamera(!view.fitAll);
       viewportReady = true;
       // A caller-requested node waits for the real viewport width, then takes the centre.
       if (view.pendingFocus !== undefined && view.pendingFocus !== null && svg.isConnected !== false) { centreOn(view.pendingFocus); view.pendingFocus = null; }
@@ -671,6 +698,7 @@
       for (const remove of removers.splice(0)) remove();
     };
     svg.fit = () => { if (disposed) return; cancelInteraction(); view.autoFit = true; view.fitAll = true; fitCamera(); paint(); notifyIdle(); };
+    svg.resizePreservingScale = () => resize(true);
     svg.zoomBy = factor => { if (disposed) return; zoom(factor); notifyIdle(); };
     svg.reset = () => {
       if (disposed) return;

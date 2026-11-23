@@ -6,20 +6,19 @@
       </div>
       <span v-if="error" class="rsi-metrics-error" role="status">{{ error }}</span>
       <span class="rsi-toolbar-space"></span>
-      <button class="button" type="button" @click="manageOpen=!manageOpen">管理</button><button class="button" type="button" @click="openEditor()">添加图表</button>
-    </div>
-    <div v-if="manageOpen" class="rsi-chart-manager">
-      <p v-if="!allPanels.length">暂无图表，可从上方添加。</p>
-      <div v-for="panel in allPanels" :key="panel.id"><span>{{ panel.name }}<small>{{ panel.namespace }} · {{ panel.metrics.join(', ') }}</small></span><button class="button" type="button" @click="removePanel(panel)">移除</button></div>
-      <button v-if="preferences.removed?.length" class="button" type="button" @click="restoreAutomatic">恢复已移除的自动图表</button>
+      <button ref="manageTrigger" class="button" type="button" aria-haspopup="dialog" @click="openManager"><Icon name="settings-2" />管理图表</button>
+      <button class="button" type="button" aria-haspopup="dialog" @click="openEditor()"><Icon name="plus" />添加图表</button>
     </div>
     <ChartsDashboard :key="chartKey" :edit-chart="chart=>openEditor(chart.panel)" :groups="groups" :update-chart-status="updateChartStatus"
       :update-namespace-status="updateNamespaceStatus" :media="media" :default-color="colors[0]"
       :get-color="getColor" :subscribe="subscribe" :unsubscribe="unsubscribe" experiment-prefix="?run=" />
     <p v-if="!metricCount" class="rsi-metrics-empty">还没有指标。在代码里调用 rsicomposer.log({...}) 就会出现在这里。</p>
-    <dialog ref="editorDialog" class="rsi-panel-editor" aria-labelledby="panel-editor-title" @cancel.prevent="closeEditor">
+    <dialog ref="chartDialog" class="rsi-chart-dialog" aria-labelledby="chart-dialog-title" @cancel.prevent="closeChartDialog">
+      <header>
+        <h2 ref="dialogTitle" id="chart-dialog-title" tabindex="-1">{{ draft ? (editingNew ? '添加图表' : '图表设置') : '管理图表' }}</h2>
+        <button class="ghost" type="button" aria-label="关闭弹窗" title="关闭" @click="closeChartDialog"><Icon name="x" /></button>
+      </header>
       <form v-if="draft" novalidate @submit.prevent="savePanel">
-        <header><div><small>图表配置</small><h2 id="panel-editor-title">{{ editingNew ? '添加图表' : '图表设置' }}</h2></div><button type="button" aria-label="关闭图表配置" @click="closeEditor">✕</button></header>
         <nav class="rsi-editor-tabs" role="tablist" aria-label="图表设置分类">
           <button v-for="tab in editorTabs" :key="tab.id" :id="'chart-tab-'+tab.id" type="button" role="tab" :aria-selected="editorTab===tab.id" :aria-controls="'chart-panel-'+tab.id" :tabindex="editorTab===tab.id?0:-1" @click="editorTab=tab.id" @keydown="switchTab($event,tab.id)">{{ tab.label }}</button>
         </nav>
@@ -56,18 +55,33 @@
               <label>{{ smoothingMethod.parameter }}<div class="rsi-smoothing-inputs"><input v-model.number="draft.smoothing.value" :aria-label="smoothingMethod.parameter+'滑块'" type="range" :min="smoothingMethod.min" :max="smoothingMethod.max" :step="smoothingMethod.step"><input v-model.number="draft.smoothing.value" :aria-label="smoothingMethod.parameter" type="number" :min="smoothingMethod.min" :max="smoothingMethod.max" :step="smoothingMethod.step" required></div></label>
               <label class="rsi-original-option"><input v-model="draft.smoothing.showOriginal" type="checkbox">同时显示原始曲线</label>
             </template>
-            <p class="rsi-editor-help">仅影响当前图表的展示。原始观测记录保持不变，放大和导出沿用此图的设置。</p>
+            <p class="rsi-editor-help">仅影响当前图表的展示。原始观测记录保持不变，放大时沿用此图的设置。</p>
           </section>
           <p v-if="editorError" class="rsi-editor-error" role="alert">{{ editorError }}</p>
         </div>
-        <footer><span></span><button type="button" class="button" @click="closeEditor">取消</button><button type="submit" class="button primary">{{ editingNew?'添加图表':'应用设置' }}</button></footer>
+        <footer><button type="button" class="button" @click="finishEditor">{{ fromManager ? '返回列表' : '取消' }}</button><button type="submit" class="button primary">{{ editingNew?'添加图表':'应用设置' }}</button></footer>
       </form>
+      <template v-else>
+        <div class="rsi-chart-manager">
+          <p v-if="!allPanels.length" class="rsi-manager-empty">暂无图表</p>
+          <ul v-else class="rsi-chart-list">
+            <li v-for="panel in allPanels" :key="panel.id">
+              <div class="rsi-chart-list-name"><strong>{{ panel.name }}</strong><small>{{ panel.namespace }} · {{ panel.metrics.join(', ') }}</small></div>
+              <button class="ghost" type="button" :aria-label="'设置图表：'+panel.name" title="设置图表" @click="openEditor(panel,true)"><Icon name="settings-2" /></button>
+              <button class="ghost" type="button" :aria-label="'移除图表：'+panel.name" title="移除图表" @click="removePanel(panel)"><Icon name="trash-2" /></button>
+            </li>
+          </ul>
+          <button v-if="preferences.removed?.length" class="button rsi-restore-charts" type="button" @click="restoreAutomatic"><Icon name="rotate-ccw" />恢复自动图表</button>
+        </div>
+        <footer><button class="button" type="button" @click="openEditor(null,true)"><Icon name="plus" />添加图表</button><button class="button primary" type="button" @click="closeChartDialog">完成</button></footer>
+      </template>
     </dialog>
     <SLMessages ref="messages" />
   </div>
 </template>
 <script setup>
-import {computed,ref,watch,onMounted,onBeforeUnmount,shallowRef,nextTick} from 'vue';
+import {computed,ref,watch,onMounted,onBeforeUnmount,onDeactivated,shallowRef,nextTick} from 'vue';
+import Icon from './components/Icon.vue';
 import ChartsDashboard from './swanboard/charts/ChartsDashboard.vue';
 import {SLMessages,installMessage} from './swanboard/components/message';
 import {SMOOTHING_METHODS} from './swanboard/charts/package/smooth.js';
@@ -76,7 +90,7 @@ const props=defineProps({state:{type:Object,required:true}});
 const colors=['#a85739','#4f6850','#63767b','#8b754e','#77668f','#3b8791','#b66b85','#c08a2e','#5b6fa8','#7a8f3c','#a34a6a','#2f7f6b'];
 const messages=ref(null),axis=ref('observation'),selected=ref([]),catalog=ref([]),snapshots=shallowRef([]),error=ref('');
 const preferences=ref({charts:{},opened:{},panels:[],overrides:{},removed:[]}),groups=ref([]),subscriptions=new Map();
-const editorDialog=ref(null),draft=ref(null),editingNew=ref(false),editorError=ref(''),metricQuery=ref(''),manageOpen=ref(false);
+const chartDialog=ref(null),dialogTitle=ref(null),manageTrigger=ref(null),draft=ref(null),editingNew=ref(false),fromManager=ref(false),editorError=ref(''),metricQuery=ref('');
 const editorTabs=[{id:'data',label:'数据'},{id:'axes',label:'坐标轴'},{id:'smoothing',label:'平滑'}],editorTab=ref('data');
 const smoothingMethod=computed(()=>SMOOTHING_METHODS.find(method=>method.id===draft.value?.smoothing.id)||SMOOTHING_METHODS[0]);
 function changeSmoothingMethod(){draft.value.smoothing.value=smoothingMethod.value.defaultValue;}
@@ -84,35 +98,51 @@ function switchTab(event,id){
   if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
   event.preventDefault();const index=editorTabs.findIndex(tab=>tab.id===id);
   const next=event.key==='Home'?0:event.key==='End'?editorTabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+editorTabs.length)%editorTabs.length;
-  editorTab.value=editorTabs[next].id;nextTick(()=>editorDialog.value.querySelector('#chart-tab-'+editorTab.value)?.focus());
+  editorTab.value=editorTabs[next].id;nextTick(()=>chartDialog.value?.querySelector('#chart-tab-'+editorTab.value)?.focus());
 }
 const metricKeys=computed(()=>availableMetrics(snapshots.value));
 const filteredMetricKeys=computed(()=>metricKeys.value.filter(key=>key.toLowerCase().includes(metricQuery.value.toLowerCase())));
 const allPanels=computed(()=>panelDefinitions(snapshots.value,preferences.value,axis.value));
 const xSelection=computed({get:()=>draft.value?.xAxis==='metric'?'metric:'+draft.value.xMetric:draft.value?.xAxis,
   set:value=>{draft.value.xAxis=value.startsWith('metric:')?'metric':value;draft.value.xMetric=value.startsWith('metric:')?value.slice(7):'';}});
-async function openEditor(panel){
-  editingNew.value=!panel;metricQuery.value='';editorError.value='';editorTab.value='data';
+async function showChartDialog(){
+  await nextTick();
+  const dialog=chartDialog.value;
+  if(!dialog?.isConnected)return;
+  if(!dialog.open)dialog.showModal();
+  dialogTitle.value?.focus({preventScroll:true});
+}
+function openManager(){draft.value=null;showChartDialog();}
+function openEditor(panel,viaManager=false){
+  fromManager.value=viaManager;editingNew.value=!panel;metricQuery.value='';editorError.value='';editorTab.value='data';
   draft.value=JSON.parse(JSON.stringify(panel||{id:'custom:'+crypto.randomUUID(),name:'',namespace:'自定义',metrics:metricKeys.value.slice(0,1),xAxis:axis.value,xMetric:'',match:'step',aggregate:'both',xScale:'linear',yScale:'linear',xLabel:'',yLabel:'',smoothing:{id:0,value:0,showOriginal:true}}));
   draft.value.smoothing ||= {id:0,value:0,showOriginal:true};
   draft.value.aggregate ||= 'both';
-  await nextTick();editorDialog.value.showModal();
+  showChartDialog();
 }
-function closeEditor(){editorDialog.value?.close();draft.value=null;}
+function closeChartDialog(){
+  if(chartDialog.value?.open){
+    chartDialog.value.close();
+    nextTick(()=>{if(document.activeElement===document.body)manageTrigger.value?.focus({preventScroll:true});});
+  }
+  draft.value=null;
+}
+function finishEditor(){if(fromManager.value)openManager();else closeChartDialog();}
 function savePanel(){
   try{
     const panel=normalizePanel(draft.value);preferences.value.panels ||= [];preferences.value.overrides ||= {};
     if(panel.id.startsWith('custom:')){const index=preferences.value.panels.findIndex(p=>p.id===panel.id);if(index<0)preferences.value.panels.push(panel);else preferences.value.panels[index]=panel;}
     else preferences.value.overrides[panel.id]=panel;
-    savePreferences();rebuild();closeEditor();
+    savePreferences();rebuild();finishEditor();
   }catch(error){editorError.value=error.message;}
 }
 function removePanel(panel){
   if(panel.id.startsWith('custom:'))preferences.value.panels=(preferences.value.panels||[]).filter(p=>p.id!==panel.id);
   else preferences.value.removed=[...new Set([...(preferences.value.removed||[]),panel.id])];
   delete preferences.value.charts?.[panel.id];savePreferences();rebuild();
+  dialogTitle.value?.focus({preventScroll:true});
 }
-function restoreAutomatic(){preferences.value.removed=[];savePreferences();rebuild();}
+function restoreAutomatic(){preferences.value.removed=[];savePreferences();rebuild();dialogTitle.value?.focus({preventScroll:true});}
 const metricCount=computed(()=>groups.value.reduce((total,group)=>total+group.charts.length,0));
 const chartKey=computed(()=>JSON.stringify([axis.value,selected.value,groups.value.map(g=>[g.id,g.charts.map(c=>[c.id,c.panel,c.source])])]));
 const getColor=(_,index)=>colors[Math.max(0,index)%colors.length];
@@ -153,7 +183,7 @@ async function update(){
   rebuild();await nextTick();for(const [cid,{sources,callback}] of subscriptions)deliver(sources,cid,callback);
 }
 function select(id,enabled){selected.value=enabled?[...selected.value,id]:selected.value.filter(v=>v!==id);update();}
-watch(()=>props.state.run?.run_id,()=>{closeEditor();manageOpen.value=false;loadPreferences();selected.value=[props.state.run.run_id];update();},{immediate:true});
+watch(()=>props.state.run?.run_id,()=>{closeChartDialog();loadPreferences();selected.value=[props.state.run.run_id];update();},{immediate:true});
 watch(()=>props.state.run,update);watch(axis,()=>{preferences.value.axis=axis.value;savePreferences();rebuild();});
-onMounted(()=>installMessage(messages));onBeforeUnmount(()=>{disposed=true;revision++;subscriptions.clear();});
+onMounted(()=>installMessage(messages));onDeactivated(closeChartDialog);onBeforeUnmount(()=>{disposed=true;revision++;subscriptions.clear();});
 </script>

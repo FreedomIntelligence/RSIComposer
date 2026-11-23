@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -11,18 +12,22 @@ from pathlib import Path
 import re
 import stat
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 SHA256 = re.compile(r"[A-Fa-f0-9]{64}\Z")
 CONTRACT = json.loads(Path(__file__).with_name('monitor_contract.json').read_text())
 MAX_BYTES = CONTRACT['max_bytes']
+MAX_VERSION_TEXT = 32_000
 MAX_ROWS = CONTRACT['max_rows']
 MAX_METRIC_HISTORY = CONTRACT['max_metric_history']
 MAX_DASHBOARD_PANELS = CONTRACT['max_dashboard_panels']
 MAX_PANEL_METRICS = CONTRACT['max_panel_metrics']
 MAX_METRIC_DEFINITIONS = CONTRACT['max_metric_definitions']
 MAX_METRIC_POINTS = CONTRACT['max_metric_points']
+MAX_EVENT_BYTES = CONTRACT['max_observation_event_bytes']
+EVENT_ID = re.compile(r'[A-Za-z0-9_.-]{1,200}\Z')
+EVENT_REF = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,199}\Z')
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app/monitor.js": ("app/monitor.js", "text/javascript; charset=utf-8"),
@@ -171,7 +176,7 @@ def evaluations_only(source):
         if not isinstance(row, dict) or row.get("verified") is False:
             continue
         item = reported_text(row, ("evaluation_id", "job_id", "decision_id", "call_id", "candidate_id", "protocol", "role", "evaluation_protocol"))
-        item.update(reported_text(row, ("split", "model", "label", "timestamp"), 200))
+        item.update(reported_text(row, ("split", "model", "label", "timestamp", "benchmark"), 200))
         for key in ("round", "elapsed_seconds"):
             value = row.get(key)
             if type(value) in (int, float) and scalar(value) is not None and value >= 0:
@@ -441,6 +446,86 @@ def board_fields(raw):
     return result
 
 
+def version_history_only(raw):
+    # IDs are opaque public tokens; contents, arbitrary metadata and paths stay private.
+    def ident(value):
+        return isinstance(value, str) and re.fullmatch(r'[\w.-]{1,200}', value) is not None
+
+    def refs(values, limit):
+        if isinstance(values, list) and len(values) <= limit and all(ident(v) for v in values):
+            return list(dict.fromkeys(values))
+
+    versions = {}
+    rows = raw.get('versions')
+    for row in rows[-MAX_ROWS:] if isinstance(rows, list) else ():
+        if not isinstance(row, dict) or not ident(row.get('version_id')):
+            continue
+        key, label = row['version_id'], row.get('label')
+        if not metric_text(label, 100) or '/' in label or '\\' in label:
+            continue
+        item = {'version_id': key, 'label': label}
+        if type(row.get('round')) is int and 0 <= row['round'] <= 2**53:
+            item['round'] = row['round']
+        for name, limit in (('parent_ids', 8), ('evaluation_ids', MAX_ROWS), ('source_decision_ids', 24)):
+            public = refs(row.get(name), limit)
+            if public is not None and (name != 'parent_ids' or key not in public):
+                item[name] = public
+        versions[key] = item
+    if not versions:
+        return {}
+    selections = {}
+    rows = raw.get('version_selections')
+    for row in rows[-MAX_ROWS:] if isinstance(rows, list) else ():
+        if (isinstance(row, dict) and ident(row.get('version_id')) and type(row.get('step')) is int
+                and 0 <= row['step'] <= 2**53):
+            item = {'version_id': row['version_id'], 'step': row['step']}
+            if all(EVENT_ID.fullmatch(row.get(key, '')) if isinstance(row.get(key), str) else False
+                   for key in ('event_id', 'scope')) and row.get('action') in ('kept', 'selected', 'applied'):
+                item.update(event_id=row['event_id'], scope=row['scope'], action=row['action'])
+                identity = (row['scope'], row['event_id'])
+            else:
+                identity = (row['step'], row['version_id'])
+            selections[identity] = item
+    return {'versions': list(versions.values()), 'version_selections': list(selections.values())}
+
+
+def public_event(row, engine_id):
+    def ident(value):
+        return isinstance(value, str) and EVENT_ID.fullmatch(value) is not None
+
+    if (not isinstance(row, dict) or type(row.get('schema_version')) is not int
+            or row['schema_version'] != CONTRACT['observation_event_schema'] or row.get('run_id') != engine_id
+            or not ident(engine_id) or type(row.get('sequence')) is not int or not 0 < row['sequence'] <= 2**53
+            or not all(ident(row.get(key)) for key in ('event_id', 'scope', 'kind'))
+            or row.get('category') not in CONTRACT['observation_categories']
+            or row.get('view') not in CONTRACT['observation_views']):
+        return None
+    item = pick(row, ('sequence', 'event_id', 'scope', 'kind', 'category', 'view', 'timestamp'))
+    for key in ('subject', 'call_id'):
+        if ident(row.get(key)):
+            item[key] = row[key]
+    if row.get('content_available') is True:
+        item['content_available'] = True
+    links = row.get('links')
+    if isinstance(links, dict):
+        item['links'] = {name: ids for name, ids in list(links.items())[:24] if ident(name)
+                         and not PRIVATE_KEY.search(name) and isinstance(ids, list)
+                         and len(ids) <= 128 and all(ident(value) for value in ids)}
+    fields = row.get('fields')
+    if isinstance(fields, dict):
+        values = {}
+        for name, value in list(fields.items())[:24]:
+            if not ident(name) or PRIVATE_KEY.search(name):
+                continue
+            if (isinstance(value, bool) or isinstance(value, str) and EVENT_REF.fullmatch(value)
+                    or type(value) in (int, float) and scalar(value) is not None):
+                values[name] = value
+            elif isinstance(value, dict):
+                values[name] = {key: score for key, score in metrics_only(value).items() if type(score) in (int, float)}
+        item['fields'] = values
+    return item
+
+
 def project_snapshot(raw, run_id):
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise SnapshotError(422, "Unsupported monitor schema; expected schema_version=1.")
@@ -465,6 +550,15 @@ def project_snapshot(raw, run_id):
             result[key] = value
     if isinstance(raw.get("evaluations"), list):
         result["evaluations"] = evaluations_only(raw["evaluations"])
+    result.update(version_history_only(raw))
+    if raw.get('observation_status') == 'degraded':
+        result['observation_status'] = 'degraded'
+    if type(raw.get('observation_dropped')) is int and 0 < raw['observation_dropped'] <= 2**53:
+        result['observation_dropped'] = raw['observation_dropped']
+    events = raw.get('observation_events')
+    if isinstance(events, list):
+        result['observation_events'] = [event for row in events[-CONTRACT['max_observation_events']:]
+                                        if (event := public_event(row, raw.get('engine_run_id'))) is not None]
     interpreted = attempt_interpretations(raw.get("research_attempts"))
     if interpreted is not None:
         result["research_attempts"] = interpreted
@@ -563,7 +657,8 @@ class RunStore:
         except OSError:
             raise SnapshotError(503, "Runs directory is unavailable.") from None
 
-    def read(self, run_id, root_fd=None):
+    @contextmanager
+    def _file(self, run_id, filename, root_fd=None):
         if not RUN_ID.fullmatch(run_id):
             raise SnapshotError(404, "Run not found.")
         owned = root_fd is None
@@ -572,22 +667,13 @@ class RunStore:
         directory_fd = file_fd = None
         try:
             directory_fd = os.open(run_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
-            file_fd = os.open("monitor.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+            file_fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
             info = os.fstat(file_fd)
             if not stat.S_ISREG(info.st_mode):
                 raise SnapshotError(404, "Monitor snapshot not found.")
-            if info.st_size > MAX_BYTES:
-                raise SnapshotError(413, "Monitor snapshot exceeds 4 MiB.")
             with os.fdopen(file_fd, "rb") as stream:
                 file_fd = None
-                data = stream.read(MAX_BYTES + 1)
-            if len(data) > MAX_BYTES:
-                raise SnapshotError(413, "Monitor snapshot exceeds 4 MiB.")
-            try:
-                raw = json.loads(data, parse_constant=lambda _: None)
-            except (ValueError, UnicodeError, RecursionError):
-                raise SnapshotError(503, "Monitor snapshot is being written or is invalid; retry shortly.") from None
-            return project_snapshot(raw, run_id)
+                yield stream, info.st_size
         except FileNotFoundError:
             raise SnapshotError(404, "Monitor snapshot not found.") from None
         except OSError:
@@ -599,6 +685,92 @@ class RunStore:
                 os.close(directory_fd)
             if owned:
                 os.close(root_fd)
+
+    def _read_json(self, run_id, filename, root_fd=None):
+        with self._file(run_id, filename, root_fd) as (stream, size):
+            if size > MAX_BYTES or len(data := stream.read(MAX_BYTES + 1)) > MAX_BYTES:
+                raise SnapshotError(413, "Monitor snapshot exceeds 4 MiB.")
+            try:
+                return json.loads(data, parse_constant=lambda _: None)
+            except (ValueError, UnicodeError, RecursionError):
+                raise SnapshotError(503, "Monitor snapshot is being written or is invalid; retry shortly.") from None
+
+    def read(self, run_id, root_fd=None):
+        return project_snapshot(self._read_json(run_id, 'monitor.json', root_fd), run_id)
+
+    def events(self, run_id, cursor, category):
+        raw = self._read_json(run_id, 'monitor.json')
+        engine_id = raw.get('engine_run_id') if isinstance(raw, dict) else None
+        if not isinstance(engine_id, str) or not EVENT_ID.fullmatch(engine_id) or raw.get('run_id') != run_id:
+            raise SnapshotError(404, 'Event journal not found.')
+        events, next_cursor = [], None
+        try:
+            with self._file(run_id, 'monitor-events.jsonl') as (stream, size):
+                if cursor > size:
+                    raise SnapshotError(400, 'Invalid event cursor.')
+                if cursor:
+                    stream.seek(cursor - 1)
+                    if stream.read(1) != b'\n':
+                        raise SnapshotError(400, 'Invalid event cursor.')
+                while stream.tell() - cursor < 4 * MAX_EVENT_BYTES and len(events) < 50:
+                    line = stream.readline(min(MAX_EVENT_BYTES + 1, size - stream.tell()))
+                    if len(line) > MAX_EVENT_BYTES:
+                        raise SnapshotError(422, 'Event journal record exceeds its byte limit.')
+                    if not line.endswith(b'\n'):
+                        break
+                    try:
+                        event = public_event(json.loads(line, parse_constant=lambda _: None), engine_id)
+                    except (ValueError, RecursionError):
+                        event = None
+                    if event is not None and (category is None or event['category'] == category):
+                        events.append(event)
+                    if stream.tell() >= size:
+                        break
+                else:
+                    if stream.tell() < size:
+                        next_cursor = stream.tell()
+        except SnapshotError as error:
+            if error.status != 404:
+                raise
+        return {'schema_version': CONTRACT['observation_event_schema'], 'events': events, 'next_cursor': next_cursor}
+
+    def version_content(self, run_id, version_id):
+        if not EVENT_ID.fullmatch(version_id):
+            raise SnapshotError(404, 'Version not found.')
+        versions = {row['version_id']: row for row in self.read(run_id).get('versions', ())}
+        legacy = None
+
+        def components(key):
+            nonlocal legacy
+            if not EVENT_ID.fullmatch(key):
+                return {}
+            try:
+                row = self._read_json(run_id, f'monitor-content.{key}.json')
+            except SnapshotError as error:
+                if error.status != 404:
+                    raise
+                if key not in versions:
+                    return {}
+                if legacy is None:
+                    try:
+                        legacy = self._read_json(run_id, 'monitor-version-content.json')
+                    except SnapshotError as legacy_error:
+                        if legacy_error.status != 404:
+                            raise
+                        legacy = {}
+                row = legacy.get(key) if isinstance(legacy, dict) else None
+            if not isinstance(row, dict) or len(row) > 8:
+                return {}
+            return {name: text for name, text in row.items()
+                    if EVENT_ID.fullmatch(name) and isinstance(text, str)
+                    and 0 < len(text) <= MAX_VERSION_TEXT and not re.search(r'[\ud800-\udfff]', text)}
+
+        current = components(version_id)
+        if not current:
+            raise SnapshotError(404, 'No version content has been published.')
+        return {'components': current, 'parents': [
+            {'version_id': key, 'components': components(key)} for key in versions.get(version_id, {}).get('parent_ids', ())
+        ]}
 
     def list(self):
         try:
@@ -683,7 +855,7 @@ class MonitorHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         style = "'self' 'unsafe-inline'" if board else "'self'"
-        self.send_header("Content-Security-Policy", f"default-src 'none'; script-src 'self'; style-src {style}; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+        self.send_header("Content-Security-Policy", f"default-src 'none'; script-src 'self'; worker-src 'self' blob:; style-src {style}; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
         if status == 503:
             self.send_header("Retry-After", "2")
         self.end_headers()
@@ -699,7 +871,8 @@ class MonitorHandler(BaseHTTPRequestHandler):
             allowed = {"localhost", "127.0.0.1", "::1", self.server.server_address[0]}
             if host not in allowed or self.headers.get("Sec-Fetch-Site") == "cross-site":
                 return self.respond(403, {"error": "Local same-origin requests only."})
-            path = unquote(urlsplit(self.path).path, errors="strict")
+            url = urlsplit(self.path)
+            path = unquote(url.path, errors="strict")
             if path in REDIRECTS:
                 self.send_response(302)
                 self.send_header("Location", REDIRECTS[path])
@@ -716,7 +889,22 @@ class MonitorHandler(BaseHTTPRequestHandler):
             if path == "/api/runs":
                 return self.respond(200, {"schema_version": 1, "runs": self.server.store.list()})
             if path.startswith("/api/runs/"):
-                return self.respond(200, self.server.store.read(path[len("/api/runs/"):]))
+                suffix = path[len("/api/runs/"):]
+                parts = suffix.split('/')
+                if len(parts) == 2 and parts[1] == 'events':
+                    query = parse_qs(url.query, strict_parsing=True, max_num_fields=2)
+                    if set(query) - {'cursor', 'category'} or any(len(v) != 1 for v in query.values()):
+                        raise ValueError('Invalid event query')
+                    cursor = query.get('cursor', ['0'])[0]
+                    category = query.get('category', [None])[0]
+                    if not re.fullmatch(r'[0-9]{1,16}', cursor) or category not in (None, *CONTRACT['observation_categories']):
+                        raise ValueError('Invalid event cursor or category')
+                    return self.respond(200, self.server.store.events(parts[0], int(cursor), category))
+                if len(parts) == 3 and parts[1] == 'versions':
+                    if self.server.server_address[0] not in ('127.0.0.1', '::1'):
+                        return self.respond(404, {'error': 'Not found.'})
+                    return self.respond(200, self.server.store.version_content(parts[0], parts[2]))
+                return self.respond(200, self.server.store.read(suffix))
             self.respond(404, {"error": "Not found."})
         except SnapshotError as error:
             self.respond(error.status, {"error": error.message})

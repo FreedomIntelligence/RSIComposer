@@ -5,7 +5,7 @@ export const runLabel = row => row?.experiment_name || row?.run_id || '';
 export const scalarFields = object => Object.entries(object || {})
   .filter(([, value]) => ['number', 'boolean', 'string'].includes(typeof value));
 
-const COUNT_KEY = /(^|[._/])(n|total|examples|count|eval_samples|num_samples|sample_count)$/;
+const COUNT_KEY = /(^|[._/])(n|total|examples|count|questions|instances|eval_samples|num_samples|sample_count)$/;
 const RATIO_KEY = /(^|[._/])(accuracy|macro_f1|f1|exact_match|pass_rate)$/;
 
 /** {medqa: {accuracy: .3}} -> {'medqa.accuracy': .3}; non-numeric leaves are dropped. */
@@ -163,4 +163,158 @@ export function stageResult(run, row, limit = 2) {
 /** The primary metric across evaluations, in order: [{x, y, row}]. */
 export function evaluationTrend(run, key) {
   return evaluationRows(run).filter(row => typeof row.flat[key] === 'number').map((row, index) => ({x: index + 1, y: row.flat[key], row}));
+}
+
+// MathLab reports <benchmark>_<metric> and matching per-benchmark sample counts.
+function benchmarkMetrics(row, metric) {
+  const suffix = `_${metric}`;
+  return Object.keys(row.flat).filter(key => key.endsWith(suffix)).flatMap(key => {
+    const benchmark = key.slice(0, -suffix.length);
+    const count = row.flat[`${benchmark}_count`];
+    return benchmark && Number.isFinite(count)
+      ? [{benchmark, value: row.flat[key], count, correct: row.flat[`${benchmark}_correct`]}] : [];
+  });
+}
+
+const BENCHMARK_LABELS = new Map([['gsm8k', 'GSM8K'], ['swebench-verified', 'SWE-bench Verified'],
+  ['terminal-bench-2.1', 'Terminal-Bench 2.1']]);
+export function benchmarkLabel(name) {
+  const aime = /^aime[_-]?(\d{4})$/i.exec(name);
+  return aime ? `AIME ${aime[1]}` : BENCHMARK_LABELS.get(name) || name;
+}
+
+const isSealed = row => ['heldout', 'test'].includes(row.split) || /^test_(initial|selected)$/.test(row.label || '');
+const armOf = row => row.label === 'test_initial' || (isSealed(row) && row.label === 'initial') ? 'initial'
+  : row.label === 'test_selected' || (isSealed(row) && row.label === 'selected') ? 'selected' : '';
+
+function qualityByEvaluation(run) {
+  const index = new Map();
+  for (const event of rowsOf(run.observation_events)) {
+    if (event.kind !== 'host.evaluated' || !event.call_id) continue;
+    if (!index.has(event.call_id)) index.set(event.call_id, new Map());
+    index.get(event.call_id).set(event.fields?.benchmark || '', event.fields || {});
+  }
+  return row => index.get(row.call_id)?.get(row.benchmark || '') || {};
+}
+
+function evaluationScores(run, row, fact) {
+  const key = [fact.primary_metric, run.primary_metric].find(k => k && Number.isFinite(row.flat[k]))
+    || primaryMetric({...run, evaluations: [row]});
+  if (!key) return [];
+  const named = benchmarkMetrics(row, key).map(score => ({...score, metric: key}));
+  const scoped = Object.entries(row.flat).flatMap(([name, value]) => {
+    const [benchmark, metric, ...rest] = name.split('/');
+    return benchmark && metric && !rest.length && !COUNT_KEY.test(metric) ? [{benchmark, metric, value}] : [];
+  });
+  const scores = named.length ? named : scoped.length ? scoped : [{metric: key, benchmark: row.benchmark || '',
+    value: row.flat[key], count: sampleCount(row), correct: row.flat.correct}];
+  const direction = fact.direction === 'maximize' ? 'higher' : fact.direction === 'minimize' ? 'lower' : undefined;
+  return scores.map(score => ({...score, split: row.split, protocol: row.protocol_sha256 || row.protocol || fact.protocol || '',
+    dataset: typeof row.dataset_sha256 === 'string' ? row.dataset_sha256 : row.dataset_sha256?.[score.benchmark],
+    evaluator: row.evaluator_sha256,
+    scorer: fact.scorer || '', definition: {...metricDefinition(run, score.metric),
+      ...(direction && score.metric === key ? {direction} : {})}}));
+}
+
+const scoreKey = score => JSON.stringify([score.split, score.benchmark, score.metric,
+  score.protocol, score.scorer, score.dataset, score.evaluator, score.count]);
+
+/** Join the selected version to its evaluation references. Other candidate scores do not qualify. */
+export function selectedPerformance(run) {
+  const selection = rowsOf(run.version_selections).filter(row => !row.scope || row.scope === 'run').at(-1);
+  const versions = rowsOf(run.versions);
+  const selected = versions.find(row => row.version_id === selection?.version_id);
+  if (!selected) return [];
+  const baseline = versions.filter(row => row.round === 0 && !row.parent_ids?.length);
+  const evaluations = evaluationRows(run).filter(row => row.verified !== false);
+  const facts = qualityByEvaluation(run);
+  const linked = version => {
+    const refs = new Set(version?.evaluation_ids || []);
+    return evaluations.filter(row => refs.has(row.evaluation_id) || refs.has(row.call_id));
+  };
+  const selectedRows = linked(selected);
+  // Search minibatches and full validation scores do not describe the same sample.
+  const full = selectedRows.some(row => ['dev', 'validation', 'development'].includes(row.split));
+  const scores = rows => new Map(rows.filter(row => !full || row.split !== 'search')
+    .flatMap(row => evaluationScores(run, row, facts(row)).map(score => [scoreKey(score), score])));
+  const initial = baseline.length === 1 && selected !== baseline[0] ? scores(linked(baseline[0])) : new Map();
+  return [...scores(selectedRows)].map(([key, score]) => ({...score, key, action: selection.action,
+    version: selected.label, initial: initial.get(key)}));
+}
+
+/** Only explicit incumbent observations or adoption-tagged evaluations establish current performance. */
+export function incumbentPerformance(run) {
+  const reported = rowsOf(run?.metric_points).filter(point => typeof point.metric === 'string'
+    && /^incumbent\/[^/]+\/.+/.test(point.metric) && Number.isInteger(point.step) && point.step >= 0
+    && Number.isFinite(point.value));
+  const latest = reported.at(-1);
+  if (latest) {
+    const [, split, ...name] = latest.metric.split('/');
+    const metric = name.join('/');
+    const versions = new Map(reported.filter(point => point.metric === latest.metric).map(point => [point.step, point.value]));
+    const points = [...versions].sort(([a], [b]) => a - b).map(([, y], index) => ({x: index + 1, y}));
+    const rows = evaluationRows(run).filter(row => row.split === split);
+    const matching = latest.call_id && rows.find(row => row.call_id === latest.call_id);
+    const names = new Set((matching ? [matching] : rows).flatMap(row => benchmarkMetrics(row, metric).map(r => r.benchmark)));
+    const benchmark = names.size === 1 ? [...names][0] : '';
+    return {split, metric, benchmark, definition: run.metric_definitions?.[latest.metric] || metricDefinition(run, metric),
+      value: points.at(-1).y, baseline: versions.get(0), points};
+  }
+  const adopted = evaluationRows(run).filter(row => row.adopted === true && row.verified !== false
+    && !['heldout', 'test'].includes(row.split) && !['test_initial', 'test_selected'].includes(row.label)).at(-1);
+  if (!adopted) return null;
+  const metric = primaryMetric({...run, evaluations: [adopted]});
+  const named = benchmarkMetrics(adopted, metric);
+  return metric ? {split: adopted.split, metric, benchmark: named.length === 1 ? named[0].benchmark : '', definition: metricDefinition(run, metric),
+    value: adopted.flat[metric], points: []} : null;
+}
+
+/** The host labels the initial and selected versions evaluated after the search. */
+export function sealedPerformance(run) {
+  const rows = evaluationRows(run).filter(row => armOf(row) && row.verified !== false);
+  const facts = qualityByEvaluation(run);
+  const panels = new Map();
+  for (const row of rows) {
+    for (const score of evaluationScores(run, row, facts(row))) {
+      const key = scoreKey(score);
+      if (!panels.has(key)) panels.set(key, {key, benchmark: score.benchmark, split: row.split, definition: score.definition});
+      panels.get(key)[armOf(row)] = score;
+    }
+  }
+  return [...panels.values()];
+}
+
+const validTally = score => Number.isSafeInteger(score?.total) && score.total > 0
+  && Number.isSafeInteger(score.correct) && score.correct >= 0 && score.correct <= score.total;
+
+/** Method result probes declare the meaning of their numbers before they reach the UI. */
+export function methodPerformance(run) {
+  const events = rowsOf(run.observation_events).filter(event => event.category === 'quality');
+  const reflexion = events.findLast(event => event.kind === 'reflexion.summary' && event.scope === 'run');
+  if (validTally(reflexion?.fields)) {
+    const tasks = new Map();
+    for (const event of events) {
+      if (event.kind !== 'reflexion.test' || event.fields?.suite !== 'hidden') continue;
+      const index = /^task-(\d+)$/.exec(event.scope);
+      const {passed, attempt} = event.fields;
+      if (index && typeof passed === 'boolean' && Number.isSafeInteger(attempt) && attempt > 0)
+        tasks.set(Number(index[1]), {passed, attempt});
+    }
+    return {kind: 'reflexion', score: reflexion.fields, tasks: [...tasks].sort(([a], [b]) => a - b)};
+  }
+  const arms = new Map(events.filter(event => event.kind === 'promptpg.heldout' && event.scope === 'run'
+    && validTally(event.fields)).map(event => [event.fields.arm, event.fields]));
+  const comparison = ['trained', 'random', 'nearest'].map(arm => arms.get(arm));
+  if (comparison.every(score => score && score.total === comparison[0].total))
+    return {kind: 'promptpg', comparison};
+  const packing = new Map(evaluationRows(run).filter(row => row.split === 'heldout'
+    && row.verified !== false && Number.isSafeInteger(row.flat.bins) && row.flat.bins > 0
+    && Number.isSafeInteger(row.flat.instances) && row.flat.instances > 0).map(row => [row.label, row.flat]));
+  const strategies = ['first_fit', 'best_fit', 'selected'].map(arm => ({arm, score: packing.get(arm)}));
+  if (strategies.every(({score}) => score && score.instances === strategies[0].score.instances)) {
+    return {kind: 'bin_packing', instances: strategies[0].score.instances, strategies,
+      max: Math.max(...strategies.map(({score}) => score.bins)),
+      delta: strategies[2].score.bins - strategies[1].score.bins};
+  }
+  return null;
 }

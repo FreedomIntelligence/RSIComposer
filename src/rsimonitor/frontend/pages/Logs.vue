@@ -1,7 +1,6 @@
 <template>
   <SectionTitle :title="t('日志')" :count="shown.length">
     <button v-if="store.stageLogs" type="button" class="chip active" @click="store.stageLogs = ''">{{ stageLabel(run, store.stageLogs) }} ✕</button>
-    <ActionButton v-if="shown.length" :label="t('导出')" icon="download" @click="download(`${run.run_id}-logs.json`, shown)" />
   </SectionTitle>
   <div v-if="shown.length" class="table-wrap">
     <table class="log-table">
@@ -17,17 +16,14 @@
   </div>
   <p v-else class="empty-state">{{ t('还没有日志') }}</p>
   <section v-if="config.length" class="section">
-    <SectionTitle :title="t('运行配置')">
-      <ActionButton :label="t('导出')" icon="download" @click="download(`${run.run_id}-config.json`, run.config)" />
-    </SectionTitle>
+    <SectionTitle :title="t('运行配置')" />
     <dl class="facts wide-facts"><template v-for="[key, value] in config" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></template></dl>
   </section>
 </template>
 <script setup>
 import {computed} from 'vue';
 import SectionTitle from '../components/SectionTitle.vue';
-import ActionButton from '../components/ActionButton.vue';
-import {store, download} from '../app/store.js';
+import {store} from '../app/store.js';
 import {t, timeText} from '../app/i18n.js';
 import {rowsOf, scalarFields, stageLabel, stagesOf, logText} from '../app/insight.js';
 const props = defineProps({run: {type: Object, required: true}});

@@ -1,7 +1,5 @@
 <template>
-  <header class="page-head"><h1>{{ t('对比') }}</h1>
-    <ActionButton v-if="runs.length" :label="t('导出')" icon="download"
-      @click="download('comparison.json', runs.map(run => ({run_id: run.run_id, evaluations: run.evaluations})))" /></header>
+  <header class="page-head"><h1>{{ t('对比') }}</h1></header>
   <div class="chips">
     <button v-for="row in store.runs" :key="row.run_id" type="button" class="chip" :class="{active: store.compareIds.includes(row.run_id)}"
       :aria-pressed="store.compareIds.includes(row.run_id)" @click="toggleCompare(row.run_id, !store.compareIds.includes(row.run_id))">{{ runLabel(row) }}</button>
@@ -22,10 +20,9 @@
 </template>
 <script setup>
 import {computed, ref, watchEffect} from 'vue';
-import ActionButton from '../components/ActionButton.vue';
 import DataTable from '../components/DataTable.vue';
 import SeriesChart from '../components/SeriesChart.vue';
-import {store, compared, toggleCompare, download} from '../app/store.js';
+import {store, compared, toggleCompare} from '../app/store.js';
 import {t} from '../app/i18n.js';
 import {runLabel, evaluationRows, evaluationMetricKeys, metricDefinition, formatMetric, primaryMetric, splitsOf, stageLabel,
   UNLABELLED} from '../app/insight.js';

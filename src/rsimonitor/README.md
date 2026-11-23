@@ -30,6 +30,12 @@ the dashboard follows newly started experiments and displays the observations re
 
 It binds to loopback by default and has no authentication or multi-tenant isolation.
 
+The experiment index supports text search, status filters, and comparison of
+selected runs. Overview separates held-out scores from search and validation
+results, comparing the initial and selected versions when both were measured.
+Trajectory separates version lineage, recorded decisions, and execution stages.
+Lineage and event details appear when the run reports them; older snapshots still
+open without this data.
 
 The Monitor exposes its versioned scalar wire limits and enums at `/api/schema`.
 Evaluation records retain reported split, protocol identity and validated protocol/submission digests.
@@ -43,7 +49,7 @@ The bundled decision endpoint also provides `observed_decisions()` as a detached
 The metrics workspace ports native chart components from
 [SwanLab-Dashboard](https://github.com/SwanHubX/SwanLab-Dashboard). Sources live in
 `src/rsimonitor/frontend/swanboard/`, with revision and license attribution in code.
-Search, namespace groups, pin/hide, smoothing, linked legends, zoom and image export
+Search, namespace groups, pin/hide, smoothing, linked legends and zoom
 run directly inside RSIMonitor. Data subscriptions use RSIComposer observations. No
 SwanLab account, SDK, separate dashboard service or iframe is required. The data
 adapter currently supports scalar metrics; media observations are not wired yet.
@@ -54,7 +60,7 @@ reported step, elapsed/record time, or another metric). Each card's **Settings**
 button opens a per-chart settings drawer for data, axes and smoothing: title, group,
 axis labels, linear/log scales, optional bounds, Time Weighted EMA, Running Average
 or Gaussian Smoothing. Smoothing parameters and the raw-curve overlay are saved
-independently for each chart and also apply to zoom/export. The workspace toolbar
+independently for each chart and also apply when zoomed. The workspace toolbar
 manages chart creation/removal; axis and smoothing controls live inside each chart.
 Custom X metrics first match values from the same observation. For separate log
 calls, record X before Y; alignment uses either the same step or the most recent X,
@@ -141,6 +147,8 @@ Continuing a durable run in place preserves the history in its existing
 | `/api/projects` | Project groups and run summaries |
 | `/api/runs` | Run summaries |
 | `/api/runs/<directory-name>` | Projected public run snapshot |
+| `/api/runs/<directory-name>/events?cursor=0&category=decision` | Paged observations, if recorded |
+| `/api/runs/<directory-name>/versions/<version-id>` | Published version text and its parents, available only on a loopback listener |
 
 JSON responses support ETags. Write methods are rejected. The run directory is
 never exposed as a general file server, so artifact files and internal journals
