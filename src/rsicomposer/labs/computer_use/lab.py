@@ -43,7 +43,7 @@ class ComputerUseLab(TaskEvaluationLab):
         server_module = load_module(app / 'server.py')
         # The app serves only public UI assets, so the verifier and task suite
         # are never reachable through the browser's origin.
-        with TemporaryDirectory(prefix='rsisys-webarena-') as work:
+        with TemporaryDirectory(prefix='rsicomposer-webarena-') as work:
             shutil.copyfile(app / 'index.html', Path(work) / 'index.html')
             for directory in ('css', 'js'):
                 shutil.copytree(app / directory, Path(work) / directory)

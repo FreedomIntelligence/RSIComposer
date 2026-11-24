@@ -65,7 +65,7 @@ and `poll_job()` checks it.
 2. Register a Lab name in [`__init__.py`](__init__.py) and select it in
    [`configs/run.json`](configs/run.json) under `framework.labs.math.name`.
    `math` is the run-local alias used by the template Controller. Give the
-   matching scene registration the same name if a method factory will resolve it.
+   matching Lab component registration the same name if a method factory will resolve it.
 3. Set `framework.labs.math.config.datasets.train` and `.dev` to your input
    files. The template resolves relative paths from the current directory.
    To use the copied fixtures, set the paths to `my_lab/data/train.jsonl`

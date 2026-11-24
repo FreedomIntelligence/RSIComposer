@@ -59,7 +59,7 @@ def validate_config(config, *, kind=KIND):
 
 
 class CodingLab:
-    """Task-scene Lab reusable by prompt, code and agent-configuration methods.
+    """Coding domain Lab reusable by prompt, code and agent-configuration methods.
 
     An installed adapter controls how the immutable artifact is passed to the
     agent. The Lab never proposes, mutates, ranks, selects or adopts candidates.

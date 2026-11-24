@@ -634,7 +634,7 @@ class OperationScheduler:
             else:
                 if alias not in self._executors:
                     self._executors[alias] = ThreadPoolExecutor(max_workers=self.capacity(task['call'].name),
-                                                               thread_name_prefix='rsisys-' + alias)
+                                                               thread_name_prefix='rsicomposer-' + alias)
                 future = self._executors[alias].submit(context.run, run)
             self._futures[ident] = future
             future.add_done_callback(lambda future, ident=ident: self._arrivals.put(ident))

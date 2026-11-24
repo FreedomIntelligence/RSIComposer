@@ -47,7 +47,7 @@ class ParallelLoRAEngine(LoRAEngine):
             devices = lease.devices or (None,)
             shards = shard_requests(rows, count, len(devices))
             started = time.monotonic()
-            with tempfile.TemporaryDirectory(prefix='rsisys-inference-',
+            with tempfile.TemporaryDirectory(prefix='rsicomposer-inference-',
                     dir=getattr(getattr(self.executor, 'owner', self.executor), 'root', None)) as temporary:
                 directory = Path(temporary)
                 commands, environments, outputs = [], [], []
@@ -72,7 +72,7 @@ class ParallelLoRAEngine(LoRAEngine):
     def train(self, ref, rows, output, round_number, *, steps=None):
         with self.resources.acquire('trainer') as lease:
             devices = lease.devices or (None,)
-            with tempfile.TemporaryDirectory(prefix='rsisys-train-',
+            with tempfile.TemporaryDirectory(prefix='rsicomposer-train-',
                     dir=getattr(getattr(self.executor, 'owner', self.executor), 'root', None)) as temporary:
                 directory = Path(temporary)
                 request = directory / 'request.json'

@@ -314,13 +314,13 @@ class AgentMemory:
 
     def export_version(self):
         """A Controller version carries the evidence needed to verify its Memory."""
-        return {'format': 'rsisys-agent-memory-version/v1', 'memory': self.export(),
+        return {'format': 'rsicomposer-agent-memory-version/v1', 'memory': self.export(),
                 'history': deepcopy(tuple(self._history()))}
 
     def seed_version(self, state):
         """Import a host-approved version after the host has seeded its history."""
         if (not isinstance(state, dict) or set(state) != {'format', 'memory', 'history'}
-                or state['format'] != 'rsisys-agent-memory-version/v1'):
+                or state['format'] != 'rsicomposer-agent-memory-version/v1'):
             raise ValueError('AgentMemory versions require their explicit evidence envelope')
         expected = deepcopy(tuple(state['history']))
         available = {entry.record_id: entry for entry in self._history()}

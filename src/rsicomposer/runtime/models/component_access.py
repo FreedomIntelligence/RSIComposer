@@ -54,7 +54,7 @@ class ComponentModels:
         self._route_configs = {}
         self._lock, self._active = threading.RLock(), {}
         self._scope_endpoints = {}
-        self._local = ContextVar('rsisys-component-model-scope', default=None)
+        self._local = ContextVar('rsicomposer-component-model-scope', default=None)
         self.backends = {key: _BackendView(self, backend) for key, backend in owner.context.backends.items()}
         self.models = tuple(owner.context.roles.values())
 
@@ -299,7 +299,7 @@ class HostModelAccess:
         if context.data_dir is None:
             from tempfile import TemporaryDirectory
             from pathlib import Path
-            self._temporary = TemporaryDirectory(prefix='rsisys-models-')
+            self._temporary = TemporaryDirectory(prefix='rsicomposer-models-')
             self.root = Path(self._temporary.name)
         else:
             self.root = context.data_dir / 'model_accounts'
@@ -324,7 +324,7 @@ class HostModelAccess:
 
     def _register_nested_environment(self, environment, active):
         """Remember the exact output of successful local or upstream delegation."""
-        if any(not re.fullmatch(r'RSISYS_NESTED_MODEL_TOKEN_[0-9A-F]{32}', name)
+        if any(not re.fullmatch(r'RSICOMPOSER_NESTED_MODEL_TOKEN_[0-9A-F]{32}', name)
                or not isinstance(value, str) or not value for name, value in environment.items()):
             raise ValueError('Invalid host-created nested model environment')
         ident = object()

@@ -67,7 +67,7 @@ def native_settings(request, directory, upstream):
         'custom_reward_function.name': 'reward_func',
         'ttrl.enable': True, 'ttrl.n_votes_per_prompt': request['votes'],
         'ttrl.n_samples_per_prompt': config['samples_per_prompt'],
-        'trainer.logger': ['console'], 'trainer.project_name': 'rsisys-ttrl',
+        'trainer.logger': ['console'], 'trainer.project_name': 'rsicomposer-ttrl',
         'trainer.experiment_name': directory.parent.name,
         'trainer.n_gpus_per_node': request['world_size'], 'trainer.nnodes': 1,
         'trainer.save_freq': config['save_freq'], 'trainer.test_freq': -1, 'trainer.val_before_train': False,
@@ -153,14 +153,14 @@ def fit(request):
         handlers[sig] = signal.signal(sig, cancelled)
     stopped = False
     runtime_env = dict(worker_process_setup_hook='rsicomposer.algorithms.ttrl.progress_hooks.install', env_vars={
-        'RSISYS_TTRL_JOB': str(directory), 'PYTHONPATH': env['PYTHONPATH'],
+        'RSICOMPOSER_TTRL_JOB': str(directory), 'PYTHONPATH': env['PYTHONPATH'],
         'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': env.get('NCCL_DEBUG', 'WARN'),
         'VLLM_LOGGING_LEVEL': 'WARN', 'VLLM_ALLOW_RUNTIME_LORA_UPDATING': 'true'})
     try:
         session = ray.init(address='local', include_dashboard=False,
             runtime_env=runtime_env,
             num_cpus=min(32, os.cpu_count() or 1), num_gpus=request['world_size'],
-            _temp_dir=tempfile.mkdtemp(prefix='rsisys-ray-'))
+            _temp_dir=tempfile.mkdtemp(prefix='rsicomposer-ray-'))
         env['RAY_ADDRESS'] = session.address_info['address']
         atomic_json(directory / 'ray-session.json', json.loads(json.dumps(session.address_info, default=str)))
         atomic_json(directory / 'execution-environment.json', {k: v for k, v in env.items()
@@ -208,7 +208,7 @@ def fit(request):
         unlabeled_parquet_sha256=file_hash(data), checkpoint_selection='controller-stop' if stopped else 'configured-final-step')
     (checkpoint / 'training.json').write_text(json.dumps(result, indent=2))
     atomic_json(request['output'], result)
-    print('RSISYS_WORKER ' + json.dumps(result), flush=True)
+    print('RSICOMPOSER_WORKER ' + json.dumps(result), flush=True)
 
 
 if __name__ == '__main__':

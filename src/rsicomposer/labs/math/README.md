@@ -150,10 +150,11 @@ evaluations in flight cannot see each other. A Lab that needs a different runtim
 `make_runtime()` and calls `run_runtime()` from `solve()`; it never runs one runtime while
 recording another.
 
-GEPA and OPRO supply `render()` to `PromptSearchLab`, which builds a `prompt-template`
-runtime. GEPA uses a local template with strategy and verification fields; OPRO uses
-its upstream prompt format. The protocol records the template name (OPRO's includes
-`instruction_pos`), so changing the prompt format requires changing the template name.
+OPRO supplies `render()` to `PromptSearchLab`, which builds a `prompt-template`
+runtime using OPRO's upstream prompt format (and records `instruction_pos` in the
+protocol). GEPA subclasses `MathSearchLab` with `AIMECotRuntime` to run the pinned
+DSPy CoT predictor over a single instruction field. Changing a prompt format
+requires updating the recorded template or runtime identity.
 
 ## Answer verifiers
 

@@ -73,7 +73,7 @@ def adapt(request):
         result.append({'index': episode['index'], 'baseline': baseline, 'predictions': predictions,
             'steps': steps, 'loss_first': losses[0], 'loss_last': losses[-1],
             'before_sha256': before, 'after_sha256': after, 'weights_changed': before != after})
-        print('RSISYS_WORKER ' + json.dumps({'stage': 'inner_sft', 'index': episode['index'], 'steps': steps}), flush=True)
+        print('RSICOMPOSER_WORKER ' + json.dumps({'stage': 'inner_sft', 'index': episode['index'], 'steps': steps}), flush=True)
     return result
 
 

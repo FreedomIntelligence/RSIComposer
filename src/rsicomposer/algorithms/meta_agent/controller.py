@@ -74,7 +74,7 @@ def build_harness_research(context, execution, config):
         if config['backend'] == 'vllm' and binding.kind not in ('vllm', 'chat_completions', 'http'):
             raise ValueError('Select backend=native for this native model binding')
         transport = build_serving_backend(binding, native=config['backend'] == 'vllm', gateway=(binding.credential_env or '').startswith(
-            'RSISYS_NESTED_MODEL_TOKEN_'),
+            'RSICOMPOSER_NESTED_MODEL_TOKEN_'),
             native_schema_mode='portable', generation_options={'chat_template_kwargs': {'enable_thinking': False}})
         if not getattr(transport, 'supports_response_schema', False) or not callable(getattr(transport, 'count_tokens', None)):
             raise ValueError('backend=native requires a serving adapter with schema and token count support')

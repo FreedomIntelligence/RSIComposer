@@ -23,7 +23,7 @@ def main():
                     environment = request.get('environment', {})
                     previous = dict(os.environ)
                     for name in tuple(os.environ):
-                        if name.startswith(('RSISYS_', 'OPENAI_')) and name not in environment:
+                        if name.startswith(('RSICOMPOSER_', 'OPENAI_')) and name not in environment:
                             os.environ.pop(name)
                     os.environ.update(environment)
                     try:
@@ -42,7 +42,7 @@ def main():
                     environment = request.get('environment', {})
                     previous = dict(os.environ)
                     for name in tuple(os.environ):
-                        if name.startswith(('RSISYS_', 'OPENAI_')) and name not in environment:
+                        if name.startswith(('RSICOMPOSER_', 'OPENAI_')) and name not in environment:
                             os.environ.pop(name)
                     os.environ.update(environment)
                     try:

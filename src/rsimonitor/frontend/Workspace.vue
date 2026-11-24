@@ -147,7 +147,7 @@ const metricCount=computed(()=>groups.value.reduce((total,group)=>total+group.ch
 const chartKey=computed(()=>JSON.stringify([axis.value,selected.value,groups.value.map(g=>[g.id,g.charts.map(c=>[c.id,c.panel,c.source])])]));
 const getColor=(_,index)=>colors[Math.max(0,index)%colors.length];
 const media={get:()=>Promise.reject(new Error('Only scalar probes are exposed by this data adapter'))};
-const storageKey=()=>`rsisys.metrics.layout.${props.state.run?.run_id}`;
+const storageKey=()=>`rsicomposer.metrics.layout.${props.state.run?.run_id}`;
 function loadPreferences(){
   let saved;try{saved=JSON.parse(localStorage.getItem(storageKey()));}catch{}
   const object=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};

@@ -10,7 +10,7 @@ from rsicomposer.loops.contracts.artifacts import ArtifactRef
 class ArtifactAuthority:
     def __init__(self, store):
         self.store = store
-        self._scope = ContextVar('rsisys-artifact-scope', default=None)
+        self._scope = ContextVar('rsicomposer-artifact-scope', default=None)
         self._lock, self._active = threading.RLock(), {}
 
     def component(self, name):

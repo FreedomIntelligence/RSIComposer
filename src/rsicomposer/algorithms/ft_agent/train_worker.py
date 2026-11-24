@@ -61,7 +61,7 @@ def main(request):
             callbacks.append(schedule_guard(min(request['max_epochs'], math.ceil(recipe['num_train_epochs'])),
                                             request['max_steps']))
         run_exp(args=recipe, callbacks=callbacks)
-        print('RSISYS_NATIVE_TRAINING_RETURNED ' + mode, flush=True)
+        print('RSICOMPOSER_NATIVE_TRAINING_RETURNED ' + mode, flush=True)
         return
     if mode != 'merge':
         raise ValueError('Unknown LLaMA-Factory worker mode')

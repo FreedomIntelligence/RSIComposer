@@ -462,7 +462,7 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     from rsicomposer.runtime.execution.executor import Executor
     if context.data_dir is None:
         from tempfile import TemporaryDirectory
-        temporary = TemporaryDirectory(prefix='rsisys-host-')
+        temporary = TemporaryDirectory(prefix='rsicomposer-host-')
         context.add_cleanup(temporary.cleanup)
         host_root = Path(temporary.name)
     else:

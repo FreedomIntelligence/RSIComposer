@@ -325,9 +325,9 @@ def _supervise(directory):
                 return
             environment = {k: os.environ[k] for k in _WORKER_ENV if k in os.environ}
             environment.update(command['env'])
-            environment.update(RSISYS_REQUEST_FILE=str(directory / 'request.json'),
-                               RSISYS_RESULT_FILE=str(directory / 'result.json'),
-                               RSISYS_JOB_DIR=str(directory))
+            environment.update(RSICOMPOSER_REQUEST_FILE=str(directory / 'request.json'),
+                               RSICOMPOSER_RESULT_FILE=str(directory / 'result.json'),
+                               RSICOMPOSER_JOB_DIR=str(directory))
             started = time.monotonic()
             with (directory / 'stdout.log').open('ab') as stdout, (directory / 'stderr.log').open('ab') as stderr:
                 process = subprocess.Popen(command['argv'], cwd=command['cwd'], env=environment,
@@ -430,8 +430,8 @@ def _training_exposure(trainer, distributed):
 
 
 def _transformers_peft(config_ref):
-    directory = Path(os.environ['RSISYS_JOB_DIR'])
-    payload = json.loads(Path(os.environ['RSISYS_REQUEST_FILE']).read_text())
+    directory = Path(os.environ['RSICOMPOSER_JOB_DIR'])
+    payload = json.loads(Path(os.environ['RSICOMPOSER_REQUEST_FILE']).read_text())
     request = payload['request']
     config, rows, evidence = _native_inputs(request, config_ref)
     if (directory / 'native-inputs.json').exists():
@@ -562,7 +562,7 @@ def _train_transformers_peft(directory, payload, config, rows, evidence, argumen
     candidate = Candidate(directory.name, base.revision, {'model': artifact, 'training_evidence': evidence_artifact}, (role,),
                           **({'parent_system': origin['parent_system']} if origin else {}))
     metrics = validated_metrics(trained.metrics, 'Training metrics')
-    _write(Path(os.environ['RSISYS_RESULT_FILE']), asdict(TrainingResult(base, model_ref, candidate, metrics)))
+    _write(Path(os.environ['RSICOMPOSER_RESULT_FILE']), asdict(TrainingResult(base, model_ref, candidate, metrics)))
 
 
 if __name__ == '__main__':

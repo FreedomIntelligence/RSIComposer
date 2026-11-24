@@ -16,7 +16,7 @@ RSIComposer runs recursive self-improvement (RSI) experiments as a loop. A Contr
 
 ## Framework overview
 
-![RSIComposer architecture, in two panels. (a) The Controller requests operations from Domain Labs, which return trajectories, metrics, and artifacts as evidence. (b) The Self-Reflection Lab constructs a Controller update and can validate it in a nested trial. The current Controller decides whether to adopt the update.](assets/rsisys-overview.png)
+![RSIComposer architecture, in two panels. (a) The Controller requests operations from Domain Labs, which return trajectories, metrics, and artifacts as evidence. (b) The Self-Reflection Lab constructs a Controller update and can validate it in a nested trial. The current Controller decides whether to adopt the update.](assets/rsicomposer-overview.png)
 
 A **Controller** decides what to try and what to adopt. Its Policy makes decisions, its Harness prepares inputs and tools, and optional Memory provides context. A **Lab** executes operations such as evaluation, sampling, or training against its configured inputs. The host routes calls, enforces budgets and split rules, and preserves receipts for recovery.
 
@@ -55,7 +55,14 @@ rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer
   --config src/rsicomposer/algorithms/_template/configs/run.json --data-dir runs/gpu-quickstart
 ```
 
-The [Quickstart](docs/quickstart.md) explains how to read the results, watch runs in RSIMonitor, and resume interrupted runs.
+**Inspect runs in RSIMonitor.** Start the optional read-only web dashboard to view decision graphs, metrics, samples, and logs:
+
+```sh
+python -m pip install ./src/rsimonitor
+rsimonitor --runs-dir runs    # then open http://127.0.0.1:8765/
+```
+
+The [Quickstart](docs/quickstart.md) explains how to read the results and resume interrupted runs.
 
 ## Domain Labs and benchmarks
 
@@ -87,7 +94,7 @@ These are integration checks. Full benchmark runs with models and RSI methods ar
 
 | Family | Methods | Controller (research) | Lab (exploration) | What improves |
 | :-- | :-- | :-- | :-- | :-- |
-| Self-training | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · TTRL-verl | Schedules generate, filter and train rounds | The model samples answers, is scored and fine-tuned | Model weights |
+| Self-training | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · [TTRL-verl](https://github.com/PRIME-RL/TTRL) · [veRL-Math-GRPO](docs/config.md#online-grpo-with-verl) | Schedules generate, filter and train rounds | The model samples answers, is scored and fine-tuned | Model weights |
 | Self-editing | [SEAL](https://arxiv.org/abs/2506.10943) | Schedules self-edit rounds | The model writes its own training data and is updated | Model weights (unified) |
 | Prompt search | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · [PromptPG](https://arxiv.org/abs/2209.14610) | Searches over candidate prompts | A task model is evaluated with each prompt | Prompts |
 | Program search | [FunSearch](https://github.com/google-deepmind/funsearch) | Evolves a population of programs | Programs are executed and scored | Programs |

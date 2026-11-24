@@ -57,7 +57,7 @@ class FunSearchSampler:
         session = getattr(context, 'model_session', None)
         if session is not None and hasattr(session, 'max_concurrent'):
             session.max_concurrent = max(session.max_concurrent, workers)
-        self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='rsisys-funsearch-sampler')
+        self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='rsicomposer-funsearch-sampler')
         self.jobs = {}
 
     def submit(self, key, request):

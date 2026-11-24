@@ -45,6 +45,7 @@ computer-use = ["playwright>=1.51,<2", "requests>=2.32,<3"]
 search = ["openai>=3.51,<4", "pandas==2.3.1", "numpy==2.3.2", "pandarallel==1.6.5",
           "dateparser==1.2.2", "loguru==0.7.3", "datasets>=3,<6", "jinja2>=3.1,<4",
           "requests>=2.32,<3", "tenacity>=8,<10", "volcengine-ark-runtime>=5,<6"]
+funsearch = ["numpy>=2,<3"]
 dsh = ["deepseek-harness-sdk==0.2.1rc2"]
 dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 
@@ -53,7 +54,7 @@ dev = ["build>=1.2,<2", "twine>=6,<7", "ruff>=0.11,<1"]
 "rsicomposer.harnesses.decision.feedback" = ["prompts/*.txt"]
 "rsicomposer.harnesses.decision.policy" = ["prompts/*.txt"]
 
-"rsicomposer.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
+"rsicomposer.algorithms" = ["*/configs/*.json", "*/configs/*.toml", "*/configs/cpu/*.json", "*/configs/cpu/data/*.json", "*/configs/cpu/data/*.jsonl", "*/task.txt"]
 
 "rsicomposer.runtime.orchestration" = ["monitor_contract.json"]
 "rsicomposer.labs.coding" = ["README.md"]

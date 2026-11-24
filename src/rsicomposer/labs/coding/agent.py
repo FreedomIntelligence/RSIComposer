@@ -60,7 +60,7 @@ class CodingAgent(BaseAgent):
 
     @staticmethod
     def name():
-        return 'rsisys-coding'
+        return 'rsicomposer-coding'
 
     def version(self):
         return '6'

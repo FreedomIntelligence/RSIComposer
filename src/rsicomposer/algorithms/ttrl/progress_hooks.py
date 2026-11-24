@@ -71,12 +71,12 @@ class ProgressBridge:
 
 
 def install():
-    directory = os.environ.get('RSISYS_TTRL_JOB')
+    directory = os.environ.get('RSICOMPOSER_TTRL_JOB')
     if not directory:
         return
     from verl.trainer.ppo.ray_trainer import RayPPOTrainer
     from verl.utils.tracking import Tracking
-    if getattr(RayPPOTrainer, '_rsisys_progress_installed', False):
+    if getattr(RayPPOTrainer, '_rsicomposer_progress_installed', False):
         return
     request = json.loads((Path(directory) / 'request.json').read_text())
     total_steps = len(request['items']) // request['config']['train_batch_size'] * request['config']['total_epochs']
@@ -95,4 +95,4 @@ def install():
 
     RayPPOTrainer._save_checkpoint = save
     Tracking.log = log
-    RayPPOTrainer._rsisys_progress_installed = True
+    RayPPOTrainer._rsicomposer_progress_installed = True

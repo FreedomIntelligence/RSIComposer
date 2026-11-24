@@ -47,7 +47,7 @@ def _restored(value, role, state):
 
 class PolicyDecisionState:
     """One version's policy, Harness and evidence-backed Memory projection."""
-    state_id = 'rsisys-method-decision/v9'
+    state_id = 'rsicomposer-method-decision/v9'
 
     def __init__(self, endpoint):
         self.endpoint, self.harness = endpoint, endpoint.harness
@@ -93,7 +93,7 @@ class PolicyDecisionState:
 
 class HostExecutionStateAdapter:
     """Capture the fixed run execution owner once, outside Controller versions."""
-    state_id = 'rsisys-host-execution/v3'
+    state_id = 'rsicomposer-host-execution/v3'
 
     def __init__(self, execution):
         self.execution = execution
@@ -117,7 +117,7 @@ class HostExecutionStateAdapter:
 
 class LabGroupState:
     """Every Lab of a method, keyed by its alias."""
-    state_id = 'rsisys-method-labs/v24'
+    state_id = 'rsicomposer-method-labs/v24'
 
     def __init__(self, group):
         self.group = group
@@ -162,7 +162,7 @@ class FeedbackJournalState:
     ahead because feedback is derived asynchronously; it must retain every
     captured job and at least the recorded attempted count.
     """
-    state_id = 'rsisys-feedback-journal/v5'
+    state_id = 'rsicomposer-feedback-journal/v5'
 
     def __init__(self, service):
         self.service, self.learning = service, service.learning
@@ -191,7 +191,7 @@ class FeedbackJournalState:
 
 class ResearchMemoryState:
     """Export memory state, or rebuild it from the host's ordered observation log."""
-    state_id = 'rsisys-research-memory/v4'
+    state_id = 'rsicomposer-research-memory/v4'
 
     def __init__(self, memory, *, experience=None, controller_version=None, resuming=False):
         self.memory, self.experience = memory, experience

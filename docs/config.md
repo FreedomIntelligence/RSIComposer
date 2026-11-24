@@ -194,6 +194,14 @@ on one B200. The veRL 0.9.1 SGLang extra and its pinned SGLang 0.5.12 declare
 conflicting Transformers versions, so that combination has not been verified.
 This adapter currently uses the local RSIComposer executor and a single GPU node.
 
+## Path conventions
+
+Run commands from the repository root. Built-in presets and documentation follow consistent path rules:
+
+- `data_dir` in a config file is resolved relative to the config file's directory; `--data-dir` on the CLI overrides it and is resolved relative to the current working directory.
+- Dataset manifests, task paths, and external checkouts (such as `manifest`, `source_dir`, `upstream_root`, `artifact_dir`, `dspy_dir`, `few_shot_data`) are resolved relative to the current working directory unless an absolute path is given. Entries inside a JSON dataset manifest resolve relative to that manifest file.
+- Example configs use `<placeholder>` or `/path/to/...` for machine-specific absolute paths (such as Python interpreters, local model directories, or benchmark manifests).
+
 ## Command-line options
 
 | Command | Option | Meaning |
@@ -203,9 +211,19 @@ This adapter currently uses the local RSIComposer executor and a single GPU node
 | | `--plugin` | Load a trusted registration file or package; repeatable |
 | | `--durable` | Save a checkpoint after every step so `rsicomposer resume` can continue the run |
 | | `--experiment-name` | Name shown in RSIMonitor |
+| | `--parent-run-id` | Declare parent run ancestry without restoring model or memory state |
+| | `--literature` | Attach a literature file into the run's artifact store; repeatable |
+| | `--permissions` | Host `ActionPermissions` JSON file |
 | | `--max-decision-steps`, `--rounds` | Override the config values |
 | | `--probe` | Load an observation plugin for RSIMonitor; repeatable |
+| | `--no-monitor` | Run without publishing RSIMonitor snapshots |
 | `rsicomposer resume` | `--data-dir` | Continue a durable run in this directory |
 | | `--snapshot` | Restore a snapshot into a new `--data-dir` instead |
+| | `--run-id` | Fork a snapshot under a new run ID |
+| | `--plugin` | Trusted plugin paths for resuming (defaults to those recorded at launch); repeatable |
+| | `--max-decision-steps`, `--rounds` | Override the config values |
+| | `--probe` | Load an observation plugin for RSIMonitor; repeatable |
+| | `--no-monitor` | Run without publishing RSIMonitor snapshots |
 | `rsicomposer catalog` | `--plugin` | Include plugin registrations in the listing |
 | `rsicomposer inspect` | `--snapshot` | Validate and describe a snapshot |
+| `rsicomposer --version` | — | Print the installed package or checkout version |

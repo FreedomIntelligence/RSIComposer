@@ -16,22 +16,22 @@ require; check the preset before running it.
 
 | Method | Presets | Needs | Guide |
 | --- | --- | --- | --- |
-| `rest_em`¹ | `cpu/rest_em`, `gsm8k`, `math`, `gsm8k-8gpu`, `math-8gpu` | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsicomposer/algorithms/rest_em/README.md) |
-| `star`¹ | `gsm8k` | 4 GPUs, local base model, a math dataset manifest with `train`, `dev` and `test` splits | — |
-| `ttrl` | `8gpu` | 8 GPUs, local base model | — |
-| `ttrl_verl` | `ttrl/configs/paper` | 8 GPUs, TTRL checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
-| `verl_math_grpo` | [TOML example](config.md#online-grpo-with-verl) | Local weights, Math Lab train/dev manifest, GPU and pinned veRL environment | [Configuration](config.md#online-grpo-with-verl) |
-| `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
-| `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | — |
-| `gepa` | `aime.toml` | Chat Completions endpoint, pinned GEPA and DSPy checkouts, author's AIME data | [README](../src/rsicomposer/algorithms/gepa/README.md) |
-| `promptpg` | `tabmwp` | Model endpoint, TabMWP files | — |
-| `funsearch` | `evolution`, `frozen_parents` | Model endpoint | — |
-| `meta_agent` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
-| `rrsi` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
-| `coding_meta_agent` | `coding` | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsicomposer/algorithms/coding_meta_agent/README.md) |
-| `reflexion` | `control`, `reflection` | Model endpoint, HumanEval files | — |
-| `aide` | `gsm8k` | AIDE checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
-| `ft_agent` | `gsm8k` | RD-Agent and LLaMA-Factory checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs, a math dataset manifest with `train`, `dev` and `test` splits | — |
+| `rest_em`¹ | [`cpu/rest_em`](../src/rsicomposer/algorithms/rest_em/configs/cpu/rest_em.json), [`gsm8k`](../src/rsicomposer/algorithms/rest_em/configs/gsm8k.json), [`math`](../src/rsicomposer/algorithms/rest_em/configs/math.json), [`gsm8k-8gpu`](../src/rsicomposer/algorithms/rest_em/configs/gsm8k-8gpu.json), [`math-8gpu`](../src/rsicomposer/algorithms/rest_em/configs/math-8gpu.json) | `cpu/rest_em`: nothing. Others: CUDA and a local base model; 1 GPU, or 8 GPUs with vLLM | [README](../src/rsicomposer/algorithms/rest_em/README.md) |
+| `star`¹ | [`gsm8k`](../src/rsicomposer/algorithms/star/configs/gsm8k.json) | 4 GPUs, local base model, a math dataset manifest with `train`, `dev` and `test` splits | — |
+| `ttrl` | [`8gpu`](../src/rsicomposer/algorithms/ttrl/configs/8gpu.json) | 8 GPUs, local base model | — |
+| `ttrl_verl` | [`ttrl/configs/paper`](../src/rsicomposer/algorithms/ttrl/configs/paper.json) | 8 GPUs, [TTRL](https://github.com/PRIME-RL/TTRL) checkout and separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
+| `verl_math_grpo` | [`math.toml`](../src/rsicomposer/algorithms/verl_math_grpo/configs/math.toml) ([guide](config.md#online-grpo-with-verl)) | Local weights, Math Lab train/dev manifest, GPU and pinned veRL environment | [Configuration](config.md#online-grpo-with-verl) |
+| `seal` | [`8gpu`](../src/rsicomposer/algorithms/seal/configs/8gpu.json), [`paper`](../src/rsicomposer/algorithms/seal/configs/paper.json) | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
+| `opro` | [`evolution`](../src/rsicomposer/algorithms/opro/configs/evolution.json), [`independent_candidates`](../src/rsicomposer/algorithms/opro/configs/independent_candidates.json) | Chat Completions model endpoint, GSM8K files, a math dataset manifest, pinned [OPRO](https://github.com/google-deepmind/opro) checkout | — |
+| `gepa` | [`aime.toml`](../src/rsicomposer/algorithms/gepa/configs/aime.toml) | Chat Completions endpoint, pinned [GEPA](https://github.com/gepa-ai/gepa-artifact) and [DSPy](https://github.com/gepa-ai/dspy) checkouts, author's AIME data | [README](../src/rsicomposer/algorithms/gepa/README.md) |
+| `promptpg` | [`tabmwp`](../src/rsicomposer/algorithms/promptpg/configs/tabmwp.json) | Model endpoint, pinned [PromptPG](https://github.com/lupantech/PromptPG) checkout and TabMWP files | — |
+| `funsearch` | [`evolution`](../src/rsicomposer/algorithms/funsearch/configs/evolution.json), [`frozen_parents`](../src/rsicomposer/algorithms/funsearch/configs/frozen_parents.json) | Model endpoint, `.[funsearch]` (`numpy`), pinned [FunSearch](https://github.com/google-deepmind/funsearch) checkout | — |
+| `meta_agent` | [`math`](../src/rsicomposer/algorithms/meta_agent/configs/math.json) | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
+| `rrsi` | [`math`](../src/rsicomposer/algorithms/rrsi/configs/math.json) | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |
+| `coding_meta_agent` | [`coding.toml`](../src/rsicomposer/algorithms/coding_meta_agent/configs/coding.toml) | Model endpoint, Docker, Harbor tasks, `.[coding]` | [README](../src/rsicomposer/algorithms/coding_meta_agent/README.md) |
+| `reflexion` | [`control`](../src/rsicomposer/algorithms/reflexion/configs/control.json), [`reflection`](../src/rsicomposer/algorithms/reflexion/configs/reflection.json) | Model endpoint, pinned [Reflexion](https://github.com/noahshinn/reflexion) checkout and HumanEval files | — |
+| `aide` | [`gsm8k`](../src/rsicomposer/algorithms/aide/configs/gsm8k.json) | [AIDE](https://github.com/WecoAI/aideml) checkout and separate environment ([`requirements/aide.txt`](../requirements/aide.txt)), model endpoint | — |
+| `ft_agent` | [`gsm8k`](../src/rsicomposer/algorithms/ft_agent/configs/gsm8k.json) | [RD-Agent](https://github.com/microsoft/RD-Agent) and [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) checkouts, three Python environments ([`requirements/ft_agent.txt`](../requirements/ft_agent.txt)), GPUs, a math dataset manifest with `train`, `dev` and `test` splits | — |
 
 ¹ ReST^EM and STaR provide their own Labs for sampling, training, and evaluation.
 The [reusable Math Lab](#labs) evaluates a fixed actor and does not train it.
@@ -193,7 +193,7 @@ synchronously or as a background job.
 
 A method resolves components with
 `registry.resolve_component(kind, name, context, config)`. Supported kinds are
-`backend`, `harness`, `memory`, and `scene`.
+`backend`, `harness`, `memory`, and `lab` (`scene` is kept as a legacy alias for `lab`).
 
 | Kind | Name | Purpose |
 | --- | --- | --- |

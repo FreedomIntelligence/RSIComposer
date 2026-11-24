@@ -217,7 +217,7 @@ def train(request):
                 losses.append(float(stats) / world)
                 gradient_norms.append(float(norm))
                 if rank == 0:
-                    print('RSISYS_WORKER ' + json.dumps({'stage': algorithm, 'step': steps, 'loss': losses[-1]}), flush=True)
+                    print('RSICOMPOSER_WORKER ' + json.dumps({'stage': algorithm, 'step': steps, 'loss': losses[-1]}), flush=True)
         after = weights_digest(model.module)
         hashes = [None] * world
         dist.all_gather_object(hashes, after)
@@ -258,4 +258,4 @@ if __name__ == '__main__':
     value = {'generate': generate, 'train': train}[request['mode']](request)
     if value is not None:
         Path(request['output']).write_text(json.dumps(value))
-    print('RSISYS_WORKER ' + json.dumps({'mode': request['mode'], 'elapsed_seconds': time.monotonic() - started}), flush=True)
+    print('RSICOMPOSER_WORKER ' + json.dumps({'mode': request['mode'], 'elapsed_seconds': time.monotonic() - started}), flush=True)

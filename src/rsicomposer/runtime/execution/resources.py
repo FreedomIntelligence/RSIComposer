@@ -127,7 +127,7 @@ class ResourceManager:
         self.config = {} if config is None else config
         validate_resources(self.config)
         self.budget = budget
-        self.root = Path(lock_dir or (Path(tempfile.gettempdir()) / 'rsisys-resources'))
+        self.root = Path(lock_dir or (Path(tempfile.gettempdir()) / 'rsicomposer-resources'))
         self.root.mkdir(parents=True, exist_ok=True)
         self._roles, self._leases, self._closed = {}, set(), False
         self._lock = threading.RLock()

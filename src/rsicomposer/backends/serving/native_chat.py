@@ -136,7 +136,7 @@ class NativeChatBackend(RemoteModelBackend):
             if conflicts:
                 raise ValueError('Request schema conflicts with native generation options: ' + ', '.join(sorted(conflicts)))
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
-                'name': 'rsisys_decision', 'strict': True,
+                'name': 'rsicomposer_decision', 'strict': True,
                 'schema': self.native_response_schema(request.response_schema)}}
         payload['max_tokens'] = min(request.max_output_tokens,
                                    self.generation_options.get('max_tokens', request.max_output_tokens))
@@ -257,7 +257,7 @@ class NativeChatBackend(RemoteModelBackend):
             data=None if payload is None else json.dumps(payload, allow_nan=False).encode(), headers=headers,
             method='GET' if payload is None else 'POST')
         handlers = [NoRedirect]
-        if (self.binding.credential_env or '').startswith('RSISYS_NESTED_MODEL_TOKEN_'):
+        if (self.binding.credential_env or '').startswith('RSICOMPOSER_NESTED_MODEL_TOKEN_'):
             handlers.append(ProxyHandler({}))
         try:
             with build_opener(*handlers).open(request, timeout=self.binding.timeout_seconds) as response:
@@ -271,7 +271,7 @@ class NativeChatBackend(RemoteModelBackend):
                     response_observer({'body': body.decode('utf-8', errors='replace'),
                         'http_status': code, 'bytes_captured': len(body),
                         'capture_truncated': len(body) > response_limit})
-                if (code == 502 and (self.binding.credential_env or '').startswith('RSISYS_NESTED_MODEL_TOKEN_')
+                if (code == 502 and (self.binding.credential_env or '').startswith('RSICOMPOSER_NESTED_MODEL_TOKEN_')
                         and len(body) <= response_limit):
                     try:
                         details = json.loads(body)['error']

@@ -160,7 +160,7 @@ def prepare_nested_models(access, child_budget, call_id, host_config, version, l
         endpoint = access.server.issue(component.name, session, attribution_provider=lambda: dict(attribution))
         capabilities.append(endpoint)
         issued = endpoint.environment()
-        variable = 'RSISYS_NESTED_MODEL_TOKEN_' + uuid4().hex.upper()
+        variable = 'RSICOMPOSER_NESTED_MODEL_TOKEN_' + uuid4().hex.upper()
         environment[variable] = issued['OPENAI_API_KEY']
         return {'endpoint': issued['OPENAI_BASE_URL'], 'credential_env': variable,
                 'models': [asdict(model) for model in session.models]}
@@ -172,7 +172,7 @@ def prepare_nested_models(access, child_budget, call_id, host_config, version, l
         if not token:
             raise PermissionError('Nested model delegation credential is unavailable')
         result = post_worker(route['endpoint'] + '/delegate', token, allocation)
-        variable = 'RSISYS_NESTED_MODEL_TOKEN_' + uuid4().hex.upper()
+        variable = 'RSICOMPOSER_NESTED_MODEL_TOKEN_' + uuid4().hex.upper()
         environment[variable] = result['token']
         remote_capabilities.append((result['endpoint'], result['token']))
         return {'endpoint': result['endpoint'], 'credential_env': variable,

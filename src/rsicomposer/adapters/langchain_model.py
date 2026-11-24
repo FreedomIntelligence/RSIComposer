@@ -56,7 +56,7 @@ def _chat_model_type():
 
         @property
         def _llm_type(self):
-            return 'rsisys-product-v1-feedback'
+            return 'rsicomposer-product-v1-feedback'
 
         @property
         def _identifying_params(self):

@@ -24,12 +24,12 @@ from rsicomposer.algorithms.aide.controller import AIDE_REVISION, valid_resume
 from rsicomposer.api import (UpstreamWorker, atomic_write, checkout, emit_event, emit_observation,
                              file_hash as digest, observation_id)
 
-SNAPSHOT_FORMAT = 'rsisys-aide-snapshot/v3'
+SNAPSHOT_FORMAT = 'rsicomposer-aide-snapshot/v3'
 
 
 def worker_identity(config):
     """Pin research inputs while allowing the run-owned directory to relocate."""
-    return UpstreamWorker.identity(config, protocol='rsisys-aide-worker/v3')
+    return UpstreamWorker.identity(config, protocol='rsicomposer-aide-worker/v3')
 
 
 def rng_state():

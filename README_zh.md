@@ -16,7 +16,7 @@ RSIComposer 把递归自改进（RSI）实验组织成一个闭环：Controller 
 
 ## 框架概览
 
-![RSIComposer 架构分为两部分。（a）Controller 向 Domain Labs 请求操作，Labs 将轨迹、指标和产物作为证据返回。（b）Self-Reflection Lab 构建 Controller 更新，可用嵌套试验验证；当前 Controller 决定是否采纳更新。](assets/rsisys-overview.png)
+![RSIComposer 架构分为两部分。（a）Controller 向 Domain Labs 请求操作，Labs 将轨迹、指标和产物作为证据返回。（b）Self-Reflection Lab 构建 Controller 更新，可用嵌套试验验证；当前 Controller 决定是否采纳更新。](assets/rsicomposer-overview.png)
 
 **Controller** 决定下一步试什么、采纳什么。Policy 负责决策，Harness 准备输入和工具，可选的 Memory 提供上下文。**Lab** 使用配置好的输入执行评测、采样或训练等操作。宿主负责转发调用、执行预算和数据划分规则，并保存回执以支持恢复。
 
@@ -55,7 +55,14 @@ rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer
   --config src/rsicomposer/algorithms/_template/configs/run.json --data-dir runs/gpu-quickstart
 ```
 
-[Quickstart](docs/quickstart.md) 介绍了如何读取结果、用 RSIMonitor 查看运行，以及如何恢复中断的运行。
+**用 RSIMonitor 查看运行。** 安装并启动可选的只读 Web 看板，查看决策图、指标曲线、逐样本结果和日志：
+
+```sh
+python -m pip install ./src/rsimonitor
+rsimonitor --runs-dir runs    # 启动后打开 http://127.0.0.1:8765/
+```
+
+[Quickstart](docs/quickstart.md) 介绍了如何读取结果以及恢复中断的运行。
 
 ## 领域 Lab 与评测基准
 
@@ -89,7 +96,7 @@ rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer
 
 | 类别 | 方法 | Controller（研究） | Lab（探索） | 改进对象 |
 | :-- | :-- | :-- | :-- | :-- |
-| 自训练 | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · TTRL-verl | 调度生成、筛选、训练各轮 | 模型采样作答，经评分后微调 | 模型权重 |
+| 自训练 | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · [TTRL-verl](https://github.com/PRIME-RL/TTRL) · [veRL-Math-GRPO](docs/config.md#online-grpo-with-verl) | 调度生成、筛选、训练各轮 | 模型采样作答，经评分后微调 | 模型权重 |
 | 自我编辑 | [SEAL](https://arxiv.org/abs/2506.10943) | 调度自我编辑各轮 | 模型为自己生成训练数据并据此更新 | 模型权重（统一） |
 | 提示词搜索 | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · [PromptPG](https://arxiv.org/abs/2209.14610) | 在候选提示词中搜索 | 用每个提示词评测任务模型 | 提示词 |
 | 程序搜索 | [FunSearch](https://github.com/google-deepmind/funsearch) | 演化程序种群 | 执行程序并打分 | 程序 |

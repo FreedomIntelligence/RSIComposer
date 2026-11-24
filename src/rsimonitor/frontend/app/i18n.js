@@ -2,7 +2,7 @@
 import {ref} from 'vue';
 import {english} from './messages.js';
 
-const STORAGE_KEY = 'rsisys-language';
+const STORAGE_KEY = 'rsicomposer-language';
 export const language = ref('zh');
 try {
   const saved = localStorage.getItem(STORAGE_KEY);

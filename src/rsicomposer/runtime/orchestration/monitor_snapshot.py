@@ -50,14 +50,19 @@ def public_settings(framework, config):
     method = framework.get('method') if isinstance(framework, dict) else None
     method = method if isinstance(method, dict) else {}
     settings = {'method': method.get('name'), 'max_decision_steps': config.max_decision_steps}
-    model = getattr(config, 'roles', {}).get('actor')
+    roles = getattr(config, 'roles', {})
+    model = roles.get('actor') or roles.get('decision_maker')
     if model is not None:
         settings['model_id'] = model.model_id
     method_config = method.get('config', {})
     if isinstance(method_config, dict):
         controller = method_config.get('controller')
         labs = method_config.get('labs')
-        lab = labs.get(method.get('name'), {}) if isinstance(labs, dict) else {}
+        lab = None
+        if isinstance(labs, dict):
+            lab = labs.get(method.get('name'))
+            if not isinstance(lab, dict) and len(labs) == 1:
+                lab = next(iter(labs.values()))
         parameters = controller.get('parameters') if isinstance(controller, dict) else None
         data = lab.get('data') if isinstance(lab, dict) else None
         for source in (method_config, controller, lab, parameters, data):
@@ -670,7 +675,7 @@ def _run(app, publisher, observations, rounds, max_decision_steps, probe_paths):
         for index, path in enumerate(probe_paths):
             prior = dict(observations.probes)
             try:
-                spec = spec_from_file_location(f'rsisys_probe_{index}', Path(path).resolve())
+                spec = spec_from_file_location(f'rsicomposer_probe_{index}', Path(path).resolve())
                 if spec is None or spec.loader is None:
                     raise ValueError('Expected a Python probe module')
                 module = module_from_spec(spec)

@@ -45,7 +45,7 @@ class AssemblyRecovery:
     host-owned adapters; other graph components need component:<slot> ports.
     restore and each portable validate_snapshot hook must return None.
     """
-    contract_id = 'rsisys-assembly-state/v9'
+    contract_id = 'rsicomposer-assembly-state/v9'
 
     def _adapters(self, app):
         if app.store is None or app._closed:

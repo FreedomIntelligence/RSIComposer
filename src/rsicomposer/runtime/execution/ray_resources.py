@@ -19,7 +19,7 @@ from .resources import ResourceManager, ResourceRequest
 
 
 _BROKER_VERSION = sha256(Path(__file__).read_bytes()).hexdigest()
-_CPU_POOL = '__rsisys_cpu__'
+_CPU_POOL = '__rsicomposer_cpu__'
 _STRATEGIES = {'PACK', 'SPREAD', 'STRICT_PACK', 'STRICT_SPREAD'}
 
 
@@ -231,7 +231,7 @@ class _PoolBroker:
     def register(self, ident, pools, version=_BROKER_VERSION, heartbeat_timeout=20):
         from ray.util.placement_group import placement_group, remove_placement_group
         if version != self.version:
-            raise RuntimeError('Ray broker code version differs; restart the rsisys.resource-broker actor')
+            raise RuntimeError('Ray broker code version differs; restart the rsicomposer.resource-broker actor')
         with self.lock:
             specs = {name: _pool_spec(pool) for name, pool in pools.items()}
             for name, spec in specs.items():
@@ -242,7 +242,7 @@ class _PoolBroker:
                 for name, spec in specs.items():
                     if name not in self.pools:
                         group = placement_group(spec['bundles'], strategy=spec['strategy'],
-                                                lifetime='detached', name='rsisys-' + uuid4().hex)
+                                                lifetime='detached', name='rsicomposer-' + uuid4().hex)
                         created[name] = dict(spec=spec, group=group, node_ids=[None] * len(spec['bundles']),
                                              owners={})
             except BaseException:
@@ -545,7 +545,7 @@ class RayResourceManager(ResourceManager):
         from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
         head = next(node['NodeID'] for node in ray.nodes()
                     if node['Alive'] and 'node:__internal_head__' in node['Resources'])
-        self.broker = actor.options(name='rsisys.resource-broker', namespace=self.namespace,
+        self.broker = actor.options(name='rsicomposer.resource-broker', namespace=self.namespace,
             lifetime='detached', get_if_exists=True,
             scheduling_strategy=NodeAffinitySchedulingStrategy(head, soft=False), runtime_env={'env_vars': {
                 'PYTHONPATH': str(Path(__file__).resolve().parents[3]) + os.pathsep + os.environ.get('PYTHONPATH', '')}}).remote()
@@ -569,9 +569,9 @@ class RayResourceManager(ResourceManager):
         try:
             version = self.ray.get(self.broker.code_version.remote(), timeout=5)
         except (AttributeError, TypeError) as error:
-            raise RuntimeError('Ray broker has no current version handshake; restart rsisys.resource-broker') from error
+            raise RuntimeError('Ray broker has no current version handshake; restart rsicomposer.resource-broker') from error
         if version != _BROKER_VERSION:
-            raise RuntimeError('Ray broker code version differs; restart rsisys.resource-broker')
+            raise RuntimeError('Ray broker code version differs; restart rsicomposer.resource-broker')
 
     def _register(self, *, timeout=None):
         self._rpc(self.broker.register, self.ident, self._pools, _BROKER_VERSION,

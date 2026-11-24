@@ -64,7 +64,7 @@ class _NodeOwner:
         self._handles = set()
         self.devices = tuple(str(int(v)) if isinstance(v, (int, float)) else str(v) for v in ray.get_gpu_ids())
         self._gpu_locks = []
-        root = Path(tempfile.gettempdir()) / 'rsisys-resources'
+        root = Path(tempfile.gettempdir()) / 'rsicomposer-resources'
         root.mkdir(exist_ok=True)
         # These are the same locks as local execution. Supervisors inherit them,
         # so an actor crash cannot free a still executing child's physical GPU.
@@ -184,7 +184,7 @@ class _NodeOwner:
         with self.lock:
             group = self.groups.get(identity)
             if group is None:
-                temporary = tempfile.TemporaryDirectory(prefix='rsisys-ray-group-')
+                temporary = tempfile.TemporaryDirectory(prefix='rsicomposer-ray-group-')
                 socket = str(Path(temporary.name) / 'rpc')
                 auth = secrets.token_hex(32)
                 ident = uuid4().hex
@@ -415,18 +415,18 @@ class RayExecutor(Executor):
         sensitive = re.compile(r'(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|SESSION)(?:_|$)')
         result = {key: value for key, value in environment.items() if runtime.fullmatch(key)
                   and not sensitive.search(key)}
-        for key in ('RSISYS_HOST_URL', 'RSISYS_HOST_TOKEN', 'RSISYS_LOG_URL', 'RSISYS_LOG_TOKEN',
-                    'RSISYS_OBSERVATION_URL',
-                    'RSISYS_MODEL_BASE_URL', 'OPENAI_BASE_URL', 'OPENAI_API_KEY'):
+        for key in ('RSICOMPOSER_HOST_URL', 'RSICOMPOSER_HOST_TOKEN', 'RSICOMPOSER_LOG_URL', 'RSICOMPOSER_LOG_TOKEN',
+                    'RSICOMPOSER_OBSERVATION_URL',
+                    'RSICOMPOSER_MODEL_BASE_URL', 'OPENAI_BASE_URL', 'OPENAI_API_KEY'):
             if key in (trusted or {}):
                 result[key] = trusted[key]
         result.update({key: value for key, value in (trusted or {}).items()
-                       if re.fullmatch(r'RSISYS_NESTED_MODEL_TOKEN_[0-9A-F]{32}', key)})
+                       if re.fullmatch(r'RSICOMPOSER_NESTED_MODEL_TOKEN_[0-9A-F]{32}', key)})
         return result
 
     @staticmethod
     def _owner_name(allocation):
-        return 'rsisys-bundle-owner-' + sha256((allocation['pool'] + ':' + str(allocation['bundle_index']) + ':'
+        return 'rsicomposer-bundle-owner-' + sha256((allocation['pool'] + ':' + str(allocation['bundle_index']) + ':'
             + allocation['placement_group'].id.hex()).encode()).hexdigest()[:24]
 
     def _owner(self, allocation):

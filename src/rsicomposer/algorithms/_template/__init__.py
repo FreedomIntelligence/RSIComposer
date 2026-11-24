@@ -27,7 +27,7 @@ CONTROLLER = ControllerDefinition(PromptSearchController, harness=harness_factor
 
 def register(registry):
     def lab_factory(context, config):
-        return registry.resolve_component('scene', 'template_math', context, config)
+        return registry.resolve_component('lab', 'template_math', context, config)
 
     registry.register_controller('template_prompt_search', CONTROLLER, version='1',
                                  validate_config=validate_config)

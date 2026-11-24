@@ -15,7 +15,7 @@ _REF_FIELDS = {'artifact_id', 'kind', 'uri', 'version', 'digest'}
 _SECRET_KEY = re.compile(
     r'^(?:(?:.*[_-])?(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|password|passwd|'
     r'credential|credentials|authorization|bearer|cookie|cookies|session(?:[_-]?(?:id|token))?|'
-    r'auth[_-]?token|access[_-]?token|refresh[_-]?token|token)|RSISYS_.*(?:TOKEN|SECRET)_.*)$', re.I)
+    r'auth[_-]?token|access[_-]?token|refresh[_-]?token|token)|RSICOMPOSER_.*(?:TOKEN|SECRET)_.*)$', re.I)
 _SECRET_TEXT = re.compile(
     r'\bBearer\s+\S+|\bsk-[a-z0-9_-]+|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|'
     r'\b(?:api[_-]?key|access[_-]?token|password|secret|authorization|cookie|session)'

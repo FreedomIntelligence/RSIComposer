@@ -153,7 +153,7 @@ def run_worker(request_path):
     effective = root / 'effective.json'
     effective.write_text(json.dumps(overrides, sort_keys=True))
     env = {**os.environ, 'RAY_ADDRESS': 'local', 'HF_HUB_OFFLINE': '1', 'WANDB_MODE': 'disabled',
-           'RAY_TMPDIR': tempfile.mkdtemp(prefix='rsisys-rl-ray-'), 'VERL_FILE_LOGGER_PATH': str(root / 'metrics.jsonl')}
+           'RAY_TMPDIR': tempfile.mkdtemp(prefix='rsicomposer-rl-ray-'), 'VERL_FILE_LOGGER_PATH': str(root / 'metrics.jsonl')}
     try:
         command = [sys.executable, '-m', 'verl.trainer.main_ppo',
                    *(f'{key}={json.dumps(value)}' for key, value in overrides.items())]

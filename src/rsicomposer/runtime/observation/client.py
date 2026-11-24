@@ -12,8 +12,8 @@ import os
 from pathlib import Path
 import time
 
-INBOX_ENV = 'RSISYS_LOG_INBOX'
-OBSERVATION_URL_ENV = 'RSISYS_OBSERVATION_URL'
+INBOX_ENV = 'RSICOMPOSER_LOG_INBOX'
+OBSERVATION_URL_ENV = 'RSICOMPOSER_OBSERVATION_URL'
 TEXT_LIMIT = 2000
 
 
@@ -57,7 +57,7 @@ def log(values, *, step=None, series=None):
     if current is not None:
         current.dispatch(current.log_mixed, metrics, notes, step=step, series=series)
         return True
-    url, token = os.environ.get('RSISYS_LOG_URL'), os.environ.get('RSISYS_LOG_TOKEN')
+    url, token = os.environ.get('RSICOMPOSER_LOG_URL'), os.environ.get('RSICOMPOSER_LOG_TOKEN')
     if url and token:
         from rsicomposer.runtime.execution.remote_services import post_worker
         post_worker(url, token, {'values': {**metrics, **notes}, 'step': step, 'series': series})
@@ -74,7 +74,7 @@ def log(values, *, step=None, series=None):
 
 
 def worker_observation(wire):
-    url, token = os.environ.get(OBSERVATION_URL_ENV), os.environ.get('RSISYS_LOG_TOKEN')
+    url, token = os.environ.get(OBSERVATION_URL_ENV), os.environ.get('RSICOMPOSER_LOG_TOKEN')
     if url and token:
         from rsicomposer.runtime.execution.remote_services import post_worker
         post_worker(url, token, {'fact': json.loads(wire)}, timeout=.25)

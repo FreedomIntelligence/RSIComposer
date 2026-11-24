@@ -86,12 +86,13 @@ class Registry:
     def register_component(self, kind, name, factory, *, version, validate_config=None):
         """Register a reusable method component by role and stable name.
 
-        Supported roles are harness, memory, backend and scene. Answer verifiers
-        belong to the scene whose answer format they check, not to this catalog. The
-        factory is intentionally opaque: the method assembly supplies its
-        context and configuration when it resolves the component.
+        Supported roles are harness, memory, backend and lab (with legacy alias
+        'scene'). Answer verifiers belong to the Lab whose answer format they
+        check, not to this catalog. The factory is intentionally opaque: the
+        method assembly supplies its context and configuration when it resolves
+        the component.
         """
-        allowed = {'harness', 'memory', 'backend', 'scene'}
+        allowed = {'harness', 'memory', 'backend', 'lab', 'scene'}
         if kind not in allowed:
             raise ValueError(f'Unknown component role: {kind}')
         _name(name, 'Component')
@@ -111,7 +112,10 @@ class Registry:
             raise TypeError('Component config must be a JSON object')
         config = json.loads(_json(config))
         try:
-            definition = self._components[kind][name]
+            catalog = self._components.get(kind, {})
+            if name not in catalog and kind in ('lab', 'scene'):
+                catalog = self._components.get('scene' if kind == 'lab' else 'lab', {})
+            definition = catalog[name]
         except KeyError as exc:
             raise ValueError(f'Unknown {kind} component: {name}') from exc
         definition.validate(config)
@@ -163,7 +167,7 @@ class Registry:
             digest = hashlib.sha256(_json(identity).encode()).hexdigest()
         if expected_sha256 is not None and digest != expected_sha256:
             raise ValueError('Nested registration plugin source changed after admission')
-        name = '_rsisys_registration_' + digest
+        name = '_rsicomposer_registration_' + digest
         spec = importlib.util.spec_from_file_location(name, path,
             submodule_search_locations=[str(package_root)] if package_root is not None else None)
         module = importlib.util.module_from_spec(spec)

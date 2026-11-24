@@ -151,7 +151,7 @@ class ComponentEndpoint:
         return {'id': 'chatcmpl-' + uuid4().hex, 'object': 'chat.completion', 'created': int(time.time()),
                 'model': response.model.model_id, 'model_revision': response.model.revision,
                 'choices': [{'index': 0, 'message': message, 'finish_reason': response.finish_reason or 'stop'}],
-                'usage': counts, 'rsisys_simulated': response.simulated}
+                'usage': counts, 'rsicomposer_simulated': response.simulated}
 
 
     def _respond(self, raw):

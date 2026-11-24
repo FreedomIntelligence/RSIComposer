@@ -16,9 +16,9 @@ import threading
 from time import monotonic
 import warnings
 
-_active = ContextVar('rsisys_observation', default=None)
-_operation = ContextVar('rsisys_observed_operation', default=None)
-_suppressed = ContextVar('rsisys_observations_suppressed', default=False)
+_active = ContextVar('rsicomposer_observation', default=None)
+_operation = ContextVar('rsicomposer_observed_operation', default=None)
+_suppressed = ContextVar('rsicomposer_observations_suppressed', default=False)
 _NAME = re.compile(r'[\w./-]{1,100}\Z')
 
 
@@ -316,7 +316,7 @@ def activate(observations, inbox=None, *, background=False):
         def poll():
             while not stop.wait(1.0):
                 observations.drain(inbox)
-        reader = threading.Thread(target=poll, name='rsisys-log-inbox', daemon=True)
+        reader = threading.Thread(target=poll, name='rsicomposer-log-inbox', daemon=True)
         reader.start()
     try:
         yield observations

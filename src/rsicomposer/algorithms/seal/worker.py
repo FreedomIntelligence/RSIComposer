@@ -75,7 +75,7 @@ def adapt(request):
         del trainer, model
         gc.collect()
         torch.cuda.empty_cache()
-        print('RSISYS_WORKER ' + json.dumps({'stage': 'seal_inner', **results[-1]}), flush=True)
+        print('RSICOMPOSER_WORKER ' + json.dumps({'stage': 'seal_inner', **results[-1]}), flush=True)
     del base
     gc.collect()
     torch.cuda.empty_cache()

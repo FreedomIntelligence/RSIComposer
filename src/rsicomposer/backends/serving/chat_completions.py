@@ -70,7 +70,7 @@ class RemoteModelBackend:
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         handlers = [NoRedirect]
-        if (self.binding.credential_env or '').startswith('RSISYS_NESTED_MODEL_TOKEN_'):
+        if (self.binding.credential_env or '').startswith('RSICOMPOSER_NESTED_MODEL_TOKEN_'):
             handlers.append(ProxyHandler({}))
         try:
             with build_opener(*handlers).open(http_request, timeout=self.binding.timeout_seconds) as response:
@@ -97,7 +97,7 @@ class RemoteModelBackend:
                    'stream': False, limit: request.max_output_tokens, **request.sampling_options(), **request.chat_tools()}
         if request.response_schema is not None:
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
-                'name': 'rsisys_response', 'strict': True, 'schema': request.response_schema}}
+                'name': 'rsicomposer_response', 'strict': True, 'schema': request.response_schema}}
         elif self.binding.json_mode and not request.tools:
             payload['response_format'] = {'type': 'json_object'}
         data = self._post('chat/completions', payload)

@@ -15,7 +15,7 @@
           "b_min": 1,
           "b_max": 4,
           "researcher": {
-            "model": "rsisys-fixed",
+            "model": "rsicomposer-fixed",
             "endpoints": [
               "http://127.0.0.1:18400/v1",
               "http://127.0.0.1:18401/v1",
@@ -33,7 +33,7 @@
         },
         "labs": {
           "harness": {
-            "model": "rsisys-fixed",
+            "model": "rsicomposer-fixed",
             "endpoints": [
               "http://127.0.0.1:18400/v1",
               "http://127.0.0.1:18401/v1",

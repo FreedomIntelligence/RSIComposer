@@ -173,7 +173,7 @@ python -m rsicomposer.algorithms.coding_meta_agent.frozen --help
 
 Pass `--run-dir <completed-durable-controller-run>` to the post-selection runner.
 It requires successful host heldout receipts for the baseline and selected
-candidate; an ordinary selection file is insufficient. The former scene-level
+candidate; an ordinary selection file is insufficient. The former standalone
 `frozen` entry point reports this migration explicitly.
 GPU counts, worker counts and model choices in the deployment example above are
 examples, not requirements of the environment or the method.

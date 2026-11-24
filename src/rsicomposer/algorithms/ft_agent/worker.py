@@ -21,7 +21,7 @@ from rsicomposer.api import UpstreamWorker, ReplayMismatchError, emit_event
 
 def replay_log(root, config):
     """Records are chained from the worker configuration, so they belong to this run."""
-    base = UpstreamWorker.identity(config, protocol='rsisys-ft-worker/v3')
+    base = UpstreamWorker.identity(config, protocol='rsicomposer-ft-worker/v3')
     return UpstreamWorker.open_replay(root / 'resume', base, config.get('resume'))
 
 

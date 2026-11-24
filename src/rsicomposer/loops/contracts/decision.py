@@ -11,7 +11,7 @@ from .model_service import ModelBackend, TokenUsage
 from .coordination import OperationResult
 
 
-_host_decision_id = ContextVar('rsisys-host-decision-id', default=None)
+_host_decision_id = ContextVar('rsicomposer-host-decision-id', default=None)
 
 
 def _new_decision_id():

@@ -73,7 +73,7 @@ class ComponentDefinition:
 
 class _StaticState:
     """An explicit no-state declaration plus immutable configuration identity."""
-    state_id = 'rsisys-component-static/v1'
+    state_id = 'rsicomposer-component-static/v1'
 
     def __init__(self, configuration):
         self._configuration = _json(configuration)

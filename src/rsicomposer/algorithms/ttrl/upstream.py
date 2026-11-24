@@ -17,7 +17,7 @@ class TTRLReward:
         root = checkout(root, TTRL_REVISION)
         self.root = root
         package = root / 'verl/verl/utils/reward_score/ttrl_math'
-        name = '_rsisys_ttrl_math_' + TTRL_REVISION
+        name = '_rsicomposer_ttrl_math_' + TTRL_REVISION
         if name not in sys.modules:
             spec = importlib.util.spec_from_file_location(name, package / '__init__.py',
                 submodule_search_locations=[str(package)])

@@ -64,7 +64,7 @@ def widesearch(root, task, judge):
     query = WideSearchQuery(task['id'], task['input']['question'], rules,
                             gold[rules['required']], ref['language'])
     response = WideSearchResponse(task['id'], task['response'])
-    result = asdict(evaluation.evaluate_single_query(query, response, eval_model_config_name='rsisys-judge'))
+    result = asdict(evaluation.evaluate_single_query(query, response, eval_model_config_name='rsicomposer-judge'))
     if result['msg'].startswith('evaluator error:'):
         raise RuntimeError('WideSearch evaluator failed')
     return {key: float(value) for key, value in result.items() if key not in {'msg', 'instance_id'}}

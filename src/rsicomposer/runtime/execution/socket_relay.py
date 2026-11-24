@@ -22,7 +22,7 @@ class SocketRelay:
         if not isinstance(route, str) or not route.startswith('/sockets/') or route.count('/') != 2:
             raise ValueError('Socket relay requires a host-issued socket route')
         self.route, self.base_url, self.token = route, environment[HOST_URL_ENV], environment[HOST_TOKEN_ENV]
-        self.temporary = tempfile.TemporaryDirectory(prefix='rsisys-relay-')
+        self.temporary = tempfile.TemporaryDirectory(prefix='rsicomposer-relay-')
         self.path = str(Path(self.temporary.name) / 'broker.sock')
         owner = self
 
@@ -71,7 +71,7 @@ class SocketRelay:
                 raise ValueError('Command does not use the registered Unix socket')
             command = [self.path if value == source else value for value in command]
             environment = {key: self.path if value == source else value for key, value in environment.items()}
-        if any(key.startswith(('RSISYS_', 'OPENAI_')) for key in environment):
+        if any(key.startswith(('RSICOMPOSER_', 'OPENAI_')) for key in environment):
             raise ValueError('Isolated socket clients must not receive host capabilities')
         return command, environment
 
@@ -95,7 +95,7 @@ class SocketRelay:
 def socket_relay_command(command, environment, source, route, payload_path):
     """Prepare trusted relay execution; the persisted payload contains no token."""
     payload = {'command': list(command), 'environment': dict(environment), 'source': source, 'route': route}
-    if any(key.startswith(('RSISYS_', 'OPENAI_')) for key in environment):
+    if any(key.startswith(('RSICOMPOSER_', 'OPENAI_')) for key in environment):
         raise ValueError('Candidate environment cannot contain host capabilities')
     payload_path = Path(payload_path).resolve()
     payload_path.write_text(json.dumps(payload))

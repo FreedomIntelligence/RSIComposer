@@ -79,7 +79,7 @@ class ControllerEndpoint:
 
 
 class ControllerHostState:
-    state_id = 'rsisys-controller-host/v5'
+    state_id = 'rsicomposer-controller-host/v5'
 
     def __init__(self, host):
         self.host = host
@@ -406,21 +406,21 @@ class ControllerHost:
         if integration is None:
             raise TypeError('Candidate Controller requires an explicit Memory integration')
         history = self._approved_memory_history(state) if (isinstance(state, dict)
-            and state.get('format') == 'rsisys-agent-memory-version/v1') else ()
+            and state.get('format') == 'rsicomposer-agent-memory-version/v1') else ()
         if integration.seed_version(deepcopy(state), history=history) is not None:
             raise TypeError('Candidate Memory seed_version must return None')
 
     def approve_memory_history(self, version):
         """Approve parent evidence before an isolated child receives a version."""
         state = version.memory_state
-        if not isinstance(state, dict) or state.get('format') != 'rsisys-agent-memory-version/v1':
+        if not isinstance(state, dict) or state.get('format') != 'rsicomposer-agent-memory-version/v1':
             return ()
         return self._approved_memory_history(state)
 
     def _approved_memory_history(self, state):
         from rsicomposer.harnesses.memory import HistoryEntry
         if (not isinstance(state, dict) or set(state) != {'format', 'memory', 'history'}
-                or state['format'] != 'rsisys-agent-memory-version/v1'
+                or state['format'] != 'rsicomposer-agent-memory-version/v1'
                 or not isinstance(state['history'], (tuple, list))
                 or any(not isinstance(row, HistoryEntry) for row in state['history'])
                 or len({row.record_id for row in state['history']}) != len(state['history'])):

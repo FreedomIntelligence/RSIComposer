@@ -22,7 +22,7 @@ def _run(coroutine):
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coroutine)
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='rsisys-reme') as worker:
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='rsicomposer-reme') as worker:
         return worker.submit(asyncio.run, coroutine).result()
 
 

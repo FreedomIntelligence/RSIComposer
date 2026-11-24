@@ -13,7 +13,7 @@ from typing import Protocol, TYPE_CHECKING
 from rsicomposer.components import _json, _name
 
 
-METHOD_PROTOCOL = 'rsisys-method/v1'
+METHOD_PROTOCOL = 'rsicomposer-method/v1'
 
 if TYPE_CHECKING:
     from rsicomposer.assembly import ModuleAssembly
@@ -27,7 +27,7 @@ class RSIMethod(Protocol):
     """Method-level assembly contract.
 
     A method binds its controller and Lab together and may inject harness,
-    memory, scene, verifier and backend components through the returned
+    memory, lab, verifier and backend components through the returned
     ModuleAssembly. The host does not prescribe how those components are
     implemented; individual component registries remain lower-level extension
     points for reusable pieces.

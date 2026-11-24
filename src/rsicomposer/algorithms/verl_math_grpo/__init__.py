@@ -123,7 +123,7 @@ class GRPOMathLab(MathLab):
 
     def _training_rows(self, split):
         import json
-        return [{'messages': self._messages(problem), 'data_source': 'rsisys-math',
+        return [{'messages': self._messages(problem), 'data_source': 'rsicomposer-math',
                  'ground_truth': json.dumps(problem.answer, allow_nan=False), 'extra_info': {
                   'task_id': problem.id, 'verifier_json': json.dumps(problem.verifier.spec, sort_keys=True)}}
                 for problem in self.datasets[split]]

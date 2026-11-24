@@ -12,6 +12,6 @@ def _verifier(spec):
 
 
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
-    if data_source != 'rsisys-math':
+    if data_source != 'rsicomposer-math':
         raise ValueError('Unexpected MathLab reward source')
     return float(_verifier(extra_info['verifier_json']).is_correct(solution_str, json.loads(ground_truth)))

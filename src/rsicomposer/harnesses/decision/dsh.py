@@ -78,7 +78,7 @@ class DSHConfig:
 def _runtime_patch(config):
     # A row patch replaces its entire config. Use the exact routed model so the
     # adapter's advisory catalog cannot silently override the declared window.
-    route = 'rsisys-local' if config.provider == 'openai-completions' else config.provider
+    route = 'rsicomposer-local' if config.provider == 'openai-completions' else config.provider
     rows = [{'id': 'compaction-basic', 'config': {
         'thresholdRatio': config.trigger_tokens / config.context_window,
         'headroomTokens': 0, 'retainTokens': config.target_tokens - config.summary_tokens,
@@ -86,7 +86,7 @@ def _runtime_patch(config):
     }}]
     if config.provider == 'openai-completions':
         rows += [{'id': 'llm-deepseek', 'disabled': True}, {'insert': [{
-            'id': 'rsisys-llm-pi-ai', 'name': '@deepseek-ai/dsh-llm-pi-ai',
+            'id': 'rsicomposer-llm-pi-ai', 'name': '@deepseek-ai/dsh-llm-pi-ai',
             'config': {'providers': {route: {
                 'api': 'openai-completions', 'baseURL': config.base_url,
                 'apiKeyEnv': config.api_key_env,
@@ -266,7 +266,7 @@ class _SessionPolicy:
         self.parser = (policy_factory(backend, model) if policy_factory is not None else
                        ModelDecisionPolicy(backend, model))
         self.parser.context_compactor = IdentityContextCompactor()
-        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='rsisys-dsh')
+        self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='rsicomposer-dsh')
         self.future: Future | None = None
         self.kind: str | None = None
         self.closed = False
@@ -315,7 +315,7 @@ class _SessionPolicy:
 
 class DeepSeekResearchPolicy(_SessionPolicy):
     """DSH inference lifecycle, independent of run execution and tools."""
-    recovery_id = 'rsisys-dsh-policy/v2'
+    recovery_id = 'rsicomposer-dsh-policy/v2'
     asynchronous_usage = True
 
     def __init__(self, config, harness, *, runtime_factory=None, on_notification=None,

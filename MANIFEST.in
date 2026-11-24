@@ -3,7 +3,7 @@ include src/rsicomposer/README.md src/rsimonitor/README.md
 recursive-include docs *.md
 recursive-include src/rsicomposer/labs README.md
 recursive-include src/rsicomposer/labs/_template *.json *.jsonl README.md
-include assets/rsisys-overview.png
+include assets/rsicomposer-overview.png
 include src/rsicomposer/runtime/orchestration/monitor_contract.json
 recursive-include src/rsicomposer/algorithms *.json *.jsonl *.toml *.txt README.md
 recursive-include src/rsimonitor *.py *.toml *.html *.css *.js *.json LICENSE

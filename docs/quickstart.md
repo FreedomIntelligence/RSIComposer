@@ -18,10 +18,10 @@ Most methods need more than the core. Install the
 upstream project in a separate environment list its packages in
 [`requirements/`](../requirements/).
 
-If you installed the project under its former name (`rsisys`), install this checkout
-in a fresh environment and use `rsicomposer` for commands and `rsicomposer.api` for
+If you are upgrading from an earlier checkout, install this repository in a fresh
+environment and use `rsicomposer` for commands and `rsicomposer.api` for
 plugin imports. Keep the original checkout and environment for resuming existing
-checkpoints or restoring snapshots made before the rename.
+checkpoints or restoring snapshots made before the package migration.
 
 ## Run without a GPU
 

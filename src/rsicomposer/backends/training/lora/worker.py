@@ -57,7 +57,7 @@ def generate(request, output):
     log({'inference/requests': len(result), 'inference/generated_tokens': tokens,
          'inference/tokens_per_second': tokens / max(seconds, 1e-9), 'inference/load_seconds': load_seconds},
         series=f"gpu-{os.environ['CUDA_VISIBLE_DEVICES']}")
-    print('RSISYS_WORKER ' + json.dumps({'stage': 'inference', 'rank': request['rank'],
+    print('RSICOMPOSER_WORKER ' + json.dumps({'stage': 'inference', 'rank': request['rank'],
         'gpu': os.environ['CUDA_VISIBLE_DEVICES'], 'requests': len(result),
         'generated_tokens': sum(len(r.outputs[0].token_ids) for r in generated),
         'load_seconds': load_seconds, 'generation_seconds': time.monotonic() - started - load_seconds,
@@ -170,7 +170,7 @@ def train(request):
                 'elapsed_seconds': time.monotonic() - started}
             (output / 'training.json').write_text(json.dumps(metrics))
         dist.barrier()
-        print('RSISYS_WORKER ' + json.dumps({'stage': 'train', 'rank': rank,
+        print('RSICOMPOSER_WORKER ' + json.dumps({'stage': 'train', 'rank': rank,
             'steps': steps, 'peak_allocated_bytes': torch.cuda.max_memory_allocated(),
             'elapsed_seconds': time.monotonic() - started}), flush=True)
     finally:

@@ -1,0 +1,36 @@
+objective = "Compare baseline and GRPO checkpoints on the Math Lab dev split"
+data_dir = "../../../../../runs/math-grpo"
+
+[framework.method]
+name = "verl_math_grpo"
+
+[framework.method.config.labs.math]
+manifest = "/path/to/math/manifest.json"
+initial_model = "/path/to/local/model"
+inference_python = "/path/to/evaluation-env/bin/python"
+
+[framework.method.config.labs.math.backend]
+name = "verl_grpo"
+
+[framework.method.config.labs.math.backend.config]
+training_python = "/path/to/verl-env/bin/python"
+training_strategy = "fsdp2"
+verl_version = "0.9.1"
+rollout_engine = "vllm"
+rollout_version = "0.24.0"
+gpus = 1
+samples_per_prompt = 4
+steps = 2
+
+[resources.pools.gpu]
+nodes = 1
+gpus = [0]
+gpus_per_node = 1
+
+[resources.placement."math.rollout"]
+pool = "gpu"
+gpus = 1
+
+[resources.placement."math.trainer"]
+pool = "gpu"
+gpus = 1

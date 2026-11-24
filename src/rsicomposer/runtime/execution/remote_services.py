@@ -18,10 +18,10 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from rsicomposer.loops.contracts.artifacts import ArtifactRef
 
-HOST_URL_ENV = 'RSISYS_HOST_URL'
-HOST_TOKEN_ENV = 'RSISYS_HOST_TOKEN'
-LOG_URL_ENV = 'RSISYS_LOG_URL'
-LOG_TOKEN_ENV = 'RSISYS_LOG_TOKEN'
+HOST_URL_ENV = 'RSICOMPOSER_HOST_URL'
+HOST_TOKEN_ENV = 'RSICOMPOSER_HOST_TOKEN'
+LOG_URL_ENV = 'RSICOMPOSER_LOG_URL'
+LOG_TOKEN_ENV = 'RSICOMPOSER_LOG_TOKEN'
 
 
 def service_addresses(context):
@@ -146,7 +146,7 @@ class HostWorkerServices:
         if current_observations() is not None and not capability[2]['sealed']:
             environment[OBSERVATION_URL_ENV] = self.base_url + '/observations'
         if model_access is not None:
-            environment['RSISYS_MODEL_BASE_URL'] = model_access.server.base_url
+            environment['RSICOMPOSER_MODEL_BASE_URL'] = model_access.server.base_url
             environment.update(model_access.server.worker_environment(component, supplied))
         return environment
 

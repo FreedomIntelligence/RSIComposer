@@ -14,7 +14,7 @@ class HostedLoRAEngine(LoRAEngine):
 
     def _call(self, mode, ref, rows, round_number, **options):
         with self.resources.acquire('rollout' if mode == 'generate' else 'trainer') as lease:
-            with tempfile.TemporaryDirectory(prefix='rsisys-transformers-',
+            with tempfile.TemporaryDirectory(prefix='rsicomposer-transformers-',
                     dir=getattr(getattr(self.executor, 'owner', self.executor), 'root', None)) as temporary:
                 directory = Path(temporary)
                 request, output = directory / 'request.json', directory / 'output.json'

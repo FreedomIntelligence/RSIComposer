@@ -59,7 +59,7 @@ def run_workers(commands, environments, directory, timeout, *, executor, lease):
             time.sleep(0.2)
         for rank in range(len(processes)):
             for line in (directory / f'worker-{rank}.log').read_text().splitlines():
-                if line.startswith('RSISYS_WORKER '):
+                if line.startswith('RSICOMPOSER_WORKER '):
                     print(line, file=sys.stderr, flush=True)
     finally:
         for process in processes:

@@ -13,7 +13,7 @@
   "roles": {
     "decision_maker": {
       "backend_id": "local",
-      "model_id": "rsisys-research",
+      "model_id": "rsicomposer-research",
       "revision": "frozen-local-deployment"
     }
   },
@@ -31,7 +31,7 @@
         },
         "labs": {
           "math": {
-            "model": "rsisys-fixed",
+            "model": "rsicomposer-fixed",
             "endpoints": [
               "http://127.0.0.1:18400/v1",
               "http://127.0.0.1:18401/v1",

@@ -45,7 +45,7 @@ class VLLMDeploymentBackend:
         with _lock(self.root / '.lock'):
             path = self.root / 'namespace.json'
             if not path.exists():
-                _write(path, {'namespace': 'rsisys-' + uuid4().hex,
+                _write(path, {'namespace': 'rsicomposer-' + uuid4().hex,
                     'endpoint': backend.binding.endpoint, 'backend': self.identity})
             namespace = json.loads(path.read_text())
             if namespace['endpoint'] != backend.binding.endpoint or namespace['backend'] != self.identity:

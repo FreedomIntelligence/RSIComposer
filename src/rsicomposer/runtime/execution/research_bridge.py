@@ -11,7 +11,7 @@ import time
 
 from rsicomposer.runtime.execution.process_identity import process_group_alive
 
-_EVENT_FD_ENV = 'RSISYS_UPSTREAM_EVENT_FD'
+_EVENT_FD_ENV = 'RSICOMPOSER_UPSTREAM_EVENT_FD'
 _EMIT_LOCK = threading.Lock()
 
 

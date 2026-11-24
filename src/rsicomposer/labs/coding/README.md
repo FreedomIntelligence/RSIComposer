@@ -1,6 +1,6 @@
 # Coding task environment
 
-`CodingLab` is a reusable task-scene environment. Any RSI method can submit an
+`CodingLab` is a reusable domain Lab environment. Any RSI method can submit an
 immutable agent artifact, evaluate it on frozen coding tasks, and inspect the
 result. The method owns proposal generation, search, selection and stopping.
 The Lab owns task bindings, artifact snapshots, trial scheduling and measurement
@@ -102,7 +102,7 @@ For framework-routed calls, the host enforces sealed split roles. If calling
 final split until selection. Subset scores are development measurements, not
 full leaderboard scores.
 
-This scene takes task manifests for evaluation and has no training dataset
+This Lab takes task manifests for evaluation and has no training dataset
 operation. A method that trains weights should bind training inputs to its
 training Lab. See the [Lab template](../_template/README.md) for a minimal
 example that binds training and development inputs separately.
@@ -174,7 +174,7 @@ Trace pages contain up to 6000 characters and return `next_offset`.
 ## Plugging in a method or coding agent
 
 A method imports framework symbols through `rsicomposer.api` and can bind the shared
-scene directly; its controller submits `Decision.invoke(OperationCall('coding.evaluate', ...))`:
+Lab directly; its controller submits `Decision.invoke(OperationCall('coding.evaluate', ...))`:
 
 ```python
 from rsicomposer.api import CodingLab, MethodDefinition
@@ -189,7 +189,7 @@ registry.register_method('my_coding_method', MethodDefinition.from_factories(
 
 For explicit controller/Lab composition, the global Lab name is `coding`.
 Published algorithms still need a method adapter translating their candidate and
-feedback conventions to this interface; registering this scene alone does not
+feedback conventions to this interface; registering this Lab alone does not
 reproduce those algorithms.
 
 To search harness settings, keep the instruction fixed and evaluate a separate
