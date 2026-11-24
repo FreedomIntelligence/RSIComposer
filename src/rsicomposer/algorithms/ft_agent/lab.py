@@ -28,9 +28,12 @@ from rsicomposer.api import (
     WeightEngine,
     atomic_write,
     checkout,
+    emit_observation,
     file_hash,
+    report_version, report_version_evaluation, report_version_selection,
     validate_engine,
 )
+from ..shared.weight_observation import model_version
 
 TRAIN_FIELDS = {
     'stage', 'do_train', 'finetuning_type', 'template', 'cutoff_len',
@@ -77,7 +80,7 @@ class GSM8KMathVerify(MathVerifyVerifier):
 def validate_config(config):
     allowed = {'initial_model', 'manifest',
         'llama_factory_root', 'training_python', 'inference_python', 'inference_cuda_home',
-        'training_cuda_home', 'max_tokens', 'max_length', 'enforce_eager',
+        'training_cuda_home', 'max_tokens', 'max_length', 'enforce_eager', 'gpu_memory_utilization',
         'seed', 'output_subdir', 'max_epochs', 'max_steps', 'max_train_samples',
         'max_batch_size', 'max_cutoff_len', 'data_timeout'}
     if not isinstance(config, dict) or set(config) - allowed:
@@ -112,6 +115,9 @@ def bounded_train_config(raw, config, directory, *, world_size=1):
     for key in ('trust_remote_code', 'fp16', 'train_on_prompt'):
         if raw.get(key, False) is not False:
             raise ValueError(key + ' is not supported by this Lab')
+    workers = raw.get('preprocessing_num_workers')
+    if 'preprocessing_num_workers' in raw and (type(workers) is not int or workers < 1):
+        raise ValueError('preprocessing_num_workers must be positive; omit it for the backend default')
     limits = {'num_train_epochs': (0, config.get('max_epochs', 2)),
         'learning_rate': (0, 0.01), 'cutoff_len': (0, config.get('max_cutoff_len', 1024)),
         'per_device_train_batch_size': (0, config.get('max_batch_size', 8)),
@@ -142,6 +148,8 @@ def bounded_train_config(raw, config, directory, *, world_size=1):
             raise ValueError('Proposal changed Lab-owned ' + key)
     if raw.get('report_to') not in (None, 'none', [], ['none']):
         raise ValueError('External reporting is not installed')
+    if (raw.get('do_eval') or raw.get('eval_strategy', 'no') != 'no') and not raw.get('val_size'):
+        raise ValueError('Internal evaluation requires a nonzero val_size from candidate training data')
     # The directory and base are execution bindings, advertised before proposal.
     result = dict(raw, model_name_or_path=str(Path(config['initial_model']).resolve()),
         dataset='processed_data', dataset_dir=str(directory), output_dir=str(directory / 'output'),
@@ -167,6 +175,9 @@ def bounded_train_config(raw, config, directory, *, world_size=1):
     batch = result['per_device_train_batch_size'] * result['gradient_accumulation_steps'] * world_size
     estimated = math.ceil(size / batch) * math.ceil(result['num_train_epochs'])
     effective = result.get('max_steps', -1)
+    if effective > estimated:
+        raise ValueError(f'max_steps={effective} exceeds the epoch budget (at most {estimated} steps); '
+                         'omit positive max_steps for epoch-based training')
     if (effective if effective > 0 else estimated) > config.get('max_steps', 32):
         raise ValueError('Proposed effective training schedule exceeds max_steps budget')
     return result
@@ -317,7 +328,27 @@ class LLMFinetuneLab(MathLab):
         data['request'] = deepcopy(call.arguments)
         # Atomic: on resume these receipts are this Lab's record of completed work.
         atomic_write(self.root / f'{key[0]}-{key[1]}-receipt.json', json.dumps(data, indent=2).encode())
+        self.observe_receipt(call, iteration, data)
         return OperationResult('FT-Agent Lab ' + call.name, (), False, data=data)
+
+    def observe_receipt(self, call, iteration, data):
+        if call.name in ('prepare', 'train'):
+            subject = model_version(self.models[iteration]) if call.name == 'train' and data['ok'] else None
+            emit_observation('ft_agent.recipe', call.call_id, scope=f'round-{iteration}', subject=subject,
+                fields={'iteration': iteration, 'stage': call.name, 'ok': data['ok']})
+        if not data['ok'] or call.name == 'prepare':
+            return
+        version = model_version(self.models[iteration])
+        if call.name == 'baseline':
+            report_version(version, label='Baseline', round_index=0, parent_ids=())
+        if call.name == 'train':
+            report_version(version, label=f'Checkpoint {iteration}', round_index=iteration,
+                           parent_ids=(model_version(self.models[0]),))
+        if call.name in ('baseline', 'train', 'evaluate'):
+            report_version_evaluation(version, call.call_id)
+        elif call.name == 'select':
+            report_version_selection(version, step=iteration, event_id=call.call_id,
+                                     action='selected' if iteration else 'kept')
 
     def _score(self, model, split, directory):
         # The worker directory is where the engine writes samples; it is this call's own and stays out of
@@ -361,7 +392,8 @@ class LLMFinetuneLab(MathLab):
         assets.mkdir(parents=True, exist_ok=False)
         raw = [{'instruction': row.prompt, 'input': '', 'output': row.answer} for row in self.datasets['train']]
         (assets / 'train.json').write_text(json.dumps(raw))
-        benchmark = self._score(self.models[0], 'dev', self.root / 'baseline-dev').data['benchmark']
+        score = self._score(self.models[0], 'dev', self.root / 'baseline-dev').data
+        benchmark = score['benchmark']
         self.initialized = True
         parameter_info = {'methods': ['lora'], 'supported_models': {'target': 'target'}, 'parameters': {
             'model': {}, 'data': {}, 'training': {}, 'finetuning': {'lora': {}}}}
@@ -374,13 +406,24 @@ class LLMFinetuneLab(MathLab):
             f'LLaMA-Factory v0.9.3 LoRA SFT on {self.resources.request("trainer").gpus} GPUs. '
             'Data processing executes with Python standard library only, no network, LLM API or extra packages. '
             'Read /datasets/seed/train.json (an Alpaca JSON list with instruction/input/output); '
-            'write ./data.json in Alpaca format. Existing outputs contain supplied reasoning. '
+            'write a nonempty ./data.json list containing instruction/input/output strings. '
+            'Every source input is an empty string by design; preserve it. '
+            'Source outputs contain worked solutions ending with #### and a numeric answer. '
+            'For a format-only transformation, split at the last ####, keep the original reasoning, and '
+            'wrap the stripped answer in \\boxed{}. Do not require preexisting boxes or <think> tags, '
+            'and do not duplicate or replace the supplied reasoning. '
             f'Use at most {len(raw)} examples, {self.config.get("max_epochs", 2)} epochs, '
             f'{self.config.get("max_steps", 32)} optimizer steps, cutoff_len <= {self.config.get("max_cutoff_len", 1024)}, '
             f'per-device batch <= {self.config.get("max_batch_size", 8)} and LoRA rank <=128. '
             'No DeepSpeed/quantization/PiSSA; installed attention is sdpa or fa2. Qwen template, bf16. '
+            'Use train_on_prompt: false. Use a Transformers scheduler such as linear, cosine, or constant. '
+            'For single-process dataset preprocessing, omit preprocessing_num_workers or set it to 1. '
+            'Omit max_steps (or set -1) for epoch-based training. A positive max_steps overrides epochs; '
+            'the resulting schedule must still fit both the epoch and step limits after preprocessing. '
             'Numerical bounds: learning_rate (0,0.01], gradient accumulation <=64, LoRA alpha <=512, '
             'val_size/warmup_ratio <=0.3, LoRA dropout <=0.5, weight_decay <=1. '
+            'With do_eval or eval_strategy other than no, set a nonzero val_size; '
+            'otherwise use eval_strategy no. The Lab measures development accuracy after training either way. '
             'Use dataset processed_data, dataset_dir ./, model_name_or_path /models/target, '
             'output_dir ./output, tokenized_path ./tokenized_cache. External logging disabled (report_to none). '
             f'Evaluation uses the fixed Qwen user/assistant chat template, greedy decoding and a {self.config.get("max_tokens", 512)}-token cap. '
@@ -391,7 +434,8 @@ class LLMFinetuneLab(MathLab):
             'fields': {'instruction': 'problem text', 'input': 'empty optional context',
                        'output': 'GSM8K reference reasoning with #### numerical final answer'},
             'samples': raw[:3]}
-        return {'benchmark': benchmark, 'policy_context': {'benchmark': 'gsm8k-dev', 'scenario': description,
+        return {'benchmark': benchmark, 'split': 'dev', 'quality_metrics': score['quality_metrics'],
+            'evidence_refs': score['evidence_refs'], 'policy_context': {'benchmark': 'gsm8k-dev', 'scenario': description,
             'dataset_description': json.dumps(preview, ensure_ascii=False, indent=2),
             'dataset_info': {'seed': {'tasks': {'_root': {'files': ['train.json'], 'sample_count': len(raw)}},
                 'total_samples': len(raw), 'file_tree': 'train.json', 'readme': json.dumps(preview, ensure_ascii=False)}},
@@ -482,7 +526,8 @@ class LLMFinetuneLab(MathLab):
                 request = directory / (mode + '-request.json')
                 request.write_text(json.dumps({'mode': mode, 'recipe': recipe, 'directory': str(directory),
                     'base_model': self.models[0], 'llama_factory_root': str(upstream),
-                    'world_size': len(lease.devices)}))
+                    'world_size': len(lease.devices), 'max_steps': self.config.get('max_steps', 32),
+                    'max_epochs': self.config.get('max_epochs', 2)}))
                 logs = directory / (mode + '-workers')
                 logs.mkdir()
                 command = [python]
@@ -502,9 +547,10 @@ class LLMFinetuneLab(MathLab):
             if not training.get('weights_changed') or training.get('steps', 0) < 1:
                 raise ValueError('No verified trained model was published')
             model = str(directory / 'model')
-        benchmark = self._score(model, 'dev', directory / 'dev-evaluation').data['benchmark']
+        score = self._score(model, 'dev', directory / 'dev-evaluation').data
         self.models[iteration] = model
-        return {'result': {'benchmark': benchmark, 'training_metrics': training},
+        return {'result': {'benchmark': score['benchmark'], 'training_metrics': training},
+                'split': 'dev', 'quality_metrics': score['quality_metrics'], 'evidence_refs': score['evidence_refs'],
                 'training_performed': True, 'elapsed_seconds': time.monotonic() - started}
 
     def _select(self, args):

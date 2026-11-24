@@ -126,10 +126,11 @@ class MethodDefinition:
     version: str
     protocol: str = METHOD_PROTOCOL
     validate_config: Callable | None = None
+    observation_probes: tuple = ()
 
     @classmethod
     def from_factories(cls, *, controller, labs, version, validate_controller=None,
-                       validate_labs=None):
+                       validate_labs=None, observation_probes=()):
         """Bind private factories without registering each implementation.
 
         controller is a ControllerDefinition or a policy factory accepting
@@ -184,16 +185,22 @@ class MethodDefinition:
                 selected.append((alias, definition, deepcopy(params)))
             return _build_policy_assembly(policy, deepcopy(options), selected)
 
-        return cls(build, version)
+        return cls(build, version, observation_probes=observation_probes)
 
     @classmethod
-    def from_method(cls, method: RSIMethod, *, validate_config=None):
+    def from_method(cls, method: RSIMethod, *, validate_config=None, observation_probes=()):
         """Create a catalog definition from a method-level assembly object."""
         if not callable(getattr(method, 'build', None)):
             raise TypeError('RSIMethod must provide build(config)')
-        return cls(method.build, method.version, validate_config=validate_config)
+        return cls(method.build, method.version, validate_config=validate_config, observation_probes=observation_probes)
 
     def __post_init__(self):
+        from rsicomposer.runtime.observation.facts import ObservationProbe
+        probes = tuple(self.observation_probes)
+        if (any(not isinstance(p, ObservationProbe) or p.kind.startswith('host.') for p in probes)
+                or len({p.kind for p in probes}) != len(probes)):
+            raise ValueError('Method observation probes must declare unique, non-host event kinds')
+        object.__setattr__(self, 'observation_probes', probes)
         if not callable(self.factory) or (self.validate_config is not None and not callable(self.validate_config)):
             raise TypeError('Method factory and optional validator must be callable')
         if not isinstance(self.version, str) or not self.version.strip():
@@ -233,4 +240,5 @@ class MethodCatalog:
             raise TypeError('Method factory must return ModuleAssembly')
         if modules.method_identity is not None:
             raise ValueError('Method factory must not replace its host-selected identity')
-        return replace(modules, method_identity=identity)
+        return replace(modules, method_identity=identity,
+                       observation_probes=definition.observation_probes or modules.observation_probes)

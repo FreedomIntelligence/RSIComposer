@@ -95,6 +95,8 @@ class ApplicationConfig:
             backend.pop('backend_id')
             if backend['engine_version'] is None:
                 backend.pop('engine_version')
+            if backend['enable_thinking'] is None:
+                backend.pop('enable_thinking')
         return raw
 
 

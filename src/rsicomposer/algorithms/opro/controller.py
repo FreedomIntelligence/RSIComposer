@@ -4,7 +4,8 @@ from dataclasses import asdict
 from contextlib import contextmanager
 import math
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import (Decision, ExecutionStatus, OperationCall,
+    emit_observation, observation_id, report_version, report_version_evaluation, report_version_selection)
 
 from ..shared.experiment import MethodEvents
 
@@ -96,7 +97,8 @@ class OPROController:
             exemplars = data.get('exemplars')
             if not isinstance(exemplars, list) or len(exemplars) != len(request['indices']):
                 raise RuntimeError('Invalid OPRO exemplar receipt')
-            proposal = self.proposer.propose([record for record, _ in self.optimizer_history()], exemplars,
+            history = self.optimizer_history()
+            proposal = self.proposer.propose([record for record, _ in history], exemplars,
                                              round_index=self.round)
             self.optimizer_calls += self.parameters['candidates_per_round']
             self.emit('proposal', {'round': self.round, 'meta_prompt_sha256': proposal.meta_prompt_sha256,
@@ -108,6 +110,12 @@ class OPROController:
                 self.candidate_count += 1
                 self.emit('candidate', {'candidate_id': candidate_id(instruction),
                                         'instruction': instruction, 'round': self.round})
+                key = candidate_id(instruction)
+                report_version(key, label=f'Prompt {key[:8]}', round_index=self.round + 1,
+                               parent_ids=(), source_decision_ids=tuple(ident for _, ident in history[-24:]))
+                emit_observation('opro.proposal', observation_id('opro.proposal', key), subject=key,
+                                 scope=f'round-{self.round + 1}', links={'evidence': [ident for _, ident in history[-128:]]},
+                                 fields={'round': self.round + 1}, components={'instruction': instruction})
                 self.queue.append(('register', {'candidate': {'instruction': instruction}}))
                 self.queue.append(self.score(instruction, 'search', self.round))
                 self.queue.append(self.score(instruction, 'validation', self.round))
@@ -119,6 +127,10 @@ class OPROController:
             if (type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1
                     or type(count) is not int or count != self.counts[split]):
                 raise RuntimeError('Invalid OPRO score receipt')
+            key = request['candidate_id']
+            if instruction == self.initial:
+                report_version(key, label='Baseline', round_index=0, parent_ids=())
+            report_version_evaluation(key, feedback.call_id)
             self.emit('evaluation', {'candidate_id': candidate_id(instruction), 'instruction': instruction,
                 'phase': label, 'score': score, 'count': count, 'round': request['round'],
                 'protocol': 'opro-official-gsm8k', 'receipt_id': receipt_id})
@@ -128,6 +140,8 @@ class OPROController:
             else:
                 key = instruction if split == 'validation' else label
                 self.scores[split][key] = score
+        elif decision.operations[0].name == 'opro.select':
+            report_version_selection(request['candidate_id'], step=self.round + 1, event_id=feedback.call_id)
         self.last_decision_id = decision.decision_id
         self.pending = None
 

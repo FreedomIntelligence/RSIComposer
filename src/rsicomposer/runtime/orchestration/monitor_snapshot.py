@@ -11,6 +11,8 @@ import warnings
 from uuid import uuid4
 
 from rsicomposer.runtime.observation import Observations, activate, current_observations
+from rsicomposer.runtime.observation.facts import observation_id, token
+from rsicomposer.runtime.observation.journal import ObservationJournal
 from rsicomposer.runtime.storage.files import atomic_write, json_bytes
 
 
@@ -23,9 +25,10 @@ METRIC_GROUPS = ('quality_metrics', 'training_metrics', 'execution_metrics', 'co
 CONTRACT = json.loads(Path(__file__).with_name('monitor_contract.json').read_text())
 LIMITS = {'decisions': CONTRACT['max_rows'], 'evaluations': CONTRACT['max_rows'], 'samples': CONTRACT['max_samples'],
           'artifacts': CONTRACT['max_artifacts'], 'metric_points': CONTRACT['max_metric_points'],
-          'logs': CONTRACT['max_logs']}
+          'logs': CONTRACT['max_logs'], 'observation_events': CONTRACT['max_observation_events']}
+VERSION_LIMITS = {'versions': CONTRACT['max_rows'], 'version_selections': CONTRACT['max_rows']}
 # Shed the bulkiest history first when a snapshot would exceed what the monitor accepts.
-SHED_ORDER = ('metric_points', 'samples', 'logs', 'events')
+SHED_ORDER = ('metric_points', 'samples', 'logs', 'events', 'versions', 'version_selections', 'observation_events')
 
 
 def now():
@@ -55,7 +58,7 @@ def public_settings(framework, config):
         controller = method_config.get('controller')
         labs = method_config.get('labs')
         lab = labs.get(method.get('name'), {}) if isinstance(labs, dict) else {}
-        parameters = lab.get('parameters') if isinstance(lab, dict) else None
+        parameters = controller.get('parameters') if isinstance(controller, dict) else None
         data = lab.get('data') if isinstance(lab, dict) else None
         for source in (method_config, controller, lab, parameters, data):
             if isinstance(source, dict):
@@ -71,7 +74,7 @@ def public_settings(framework, config):
 
 
 class RunSnapshot:
-    def __init__(self, root, engine_id, objective, *, settings=None, simulated=None, parent_id=None):
+    def __init__(self, root, engine_id, objective, *, settings=None, simulated=None, parent_id=None, probes=(), metrics=None):
         self.root = Path(root).resolve()
         self.clock = monotonic()
         self.started_at = now()
@@ -90,6 +93,11 @@ class RunSnapshot:
         self.log_offsets = {}
         self.seen_evaluations = set()
         self.io_failed = False
+        self.incomplete = False
+        self.journal = ObservationJournal(self.root, engine_id, probes)
+        self.lab_metrics = metrics or {}
+        self._publish_deferred = False
+        self._needs_publish = False
 
     def continue_history(self):
         path = self.root / 'monitor.json'
@@ -110,13 +118,15 @@ class RunSnapshot:
             return
 
         # This is the previous public projection, independent of checkpoint state.
-        for key, limit in LIMITS.items():
+        for key, limit in (LIMITS | VERSION_LIMITS).items():
             rows = previous.get(key)
             if isinstance(rows, list):
                 self.data[key] = [row for row in rows[-limit:] if isinstance(row, dict)]
-        for key in ('started_at', 'experiment_name'):
+        for key in ('started_at', 'experiment_name', 'observation_status'):
             if isinstance(previous.get(key), str):
                 self.data[key] = previous[key]
+        if type(previous.get('observation_dropped')) is int:
+            self.data['observation_dropped'] = previous['observation_dropped']
         for key in ('config', 'resources', 'metric_definitions', 'history_window'):
             if isinstance(previous.get(key), dict):
                 self.data[key] = {**self.data.get(key, {}), **previous[key]}
@@ -136,9 +146,15 @@ class RunSnapshot:
         if numeric(elapsed) and elapsed >= 0:
             self.clock -= elapsed
 
-    def publish(self, status=None):
+    def publish(self, status=None, *, force=False):
         if status is not None:
             self.data['status'] = status
+        if not force and self._publish_deferred:
+            self._needs_publish = True
+            return
+        self._needs_publish = False
+        if self.incomplete:
+            self.data['observation_status'] = 'degraded'
         self.data['updated_at'] = now()
         self.data['workflow'] = {'elapsed_seconds': round(monotonic() - self.clock, 3)}
         self.data['current'] = self.stages.get(self.current_id, {})
@@ -154,7 +170,7 @@ class RunSnapshot:
         # The monitor rejects larger files outright; keep the newest half of bulky lists until it fits.
         # observations.jsonl still holds every metric point.
         while len(encoded) > CONTRACT['max_bytes']:
-            key = max(SHED_ORDER, key=lambda name: len(payload[name]))
+            key = max(SHED_ORDER, key=lambda name: len(payload.get(name, ())))
             if len(payload[key]) < 2:
                 break
             payload[key] = payload[key][len(payload[key]) // 2:]
@@ -168,6 +184,7 @@ class RunSnapshot:
             os.replace(temporary, self.root / 'monitor.json')
             self.io_failed = False
         except OSError:
+            self.data['observation_status'] = 'degraded'
             if not self.io_failed:
                 warnings.warn('RSIMonitor could not publish this run snapshot', RuntimeWarning, stacklevel=2)
             self.io_failed = True
@@ -181,6 +198,100 @@ class RunSnapshot:
     @staticmethod
     def coordinates(row):
         return {key: row[key] for key in ('decision_id', 'call_id') if row.get(key) is not None}
+
+    def fact(self, payload, *, publish=True):
+        try:
+            row = self.journal.append(payload)
+        except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError) as error:
+            self.data['observation_status'] = 'degraded'
+            if not getattr(self, '_journal_failed', False):
+                self.log('Monitor journal could not record an event: ' + type(error).__name__,
+                         source='observation', level='ERROR')
+            self._journal_failed = True
+            self.publish()
+            return False
+        if row is None:
+            return False
+        self._journal_failed = False
+        events = self.data['observation_events']
+        events.append(row)
+        per_category = LIMITS['observation_events'] // len(CONTRACT['observation_categories'])
+        matching = [index for index, event in enumerate(events) if event.get('category') == row['category']]
+        for index in reversed(matching[:-per_category]):
+            del events[index]
+        del events[:-LIMITS['observation_events']]
+        if publish:
+            self.publish()
+        return True
+
+    def _fact(self, kind, *identity, scope='run', subject=None, call_id=None, links=None, fields=None):
+        self.fact({'kind': kind, 'event_id': observation_id(kind, *identity), 'scope': scope,
+                   'subject': subject, 'call_id': call_id, 'links': links or {}, 'fields': fields or {}},
+                  publish=False)
+
+    def version(self, version_id, *, label, round_index=None, parent_ids=None, source_decision_ids=()):
+        if (not self._version_id(version_id) or not isinstance(label, str) or not label.strip()
+                or len(label) > 100 or '/' in label or '\\' in label
+                or (round_index is not None and (type(round_index) is not int or not 0 <= round_index <= 2**53))):
+            return
+        parents = self._version_refs(parent_ids, 8) if parent_ids is not None else None
+        if parent_ids is not None and (parents is None or version_id in parents):
+            return
+        refs = self._version_refs(source_decision_ids, 24)
+        rows = self.data.setdefault('versions', [])
+        row = self._find_version(version_id)
+        if row is None:
+            row = {'version_id': version_id}
+            rows.append(row)
+        row['label'] = label
+        if round_index is not None:
+            row['round'] = round_index
+        if parents is not None and 'parent_ids' not in row:
+            row['parent_ids'] = parents
+        if refs:
+            row['source_decision_ids'] = refs
+        del rows[:-VERSION_LIMITS['versions']]
+        self.publish()
+
+    def version_evaluation(self, version_id, evaluation_id):
+        if self._version_id(version_id) and self._version_id(evaluation_id):
+            self._fact('host.version_evaluated', version_id, evaluation_id, subject=version_id,
+                       call_id=evaluation_id, links={'evaluates': [version_id]})
+        row = self._find_version(version_id)
+        if row is not None and self._version_id(evaluation_id):
+            refs = row.setdefault('evaluation_ids', [])
+            if evaluation_id not in refs:
+                refs.append(evaluation_id)
+                del refs[:-LIMITS['evaluations']]
+        self.publish()
+
+    def version_selection(self, version_id, step, *, scope='run', event_id=None, action='selected'):
+        if (self._version_id(version_id) and token(scope) and action in ('kept', 'selected', 'applied')
+                and type(step) is int and 0 <= step <= 2**53):
+            event_id = event_id or observation_id('selection', scope, version_id, step, action)
+            if not token(event_id):
+                return
+            self._fact('host.version_selected', event_id, scope=scope, subject=version_id,
+                       links={action: [version_id]}, fields={'step': step, 'action': action})
+            rows = self.data.setdefault('version_selections', [])
+            if not any((row.get('scope'), row.get('event_id')) == (scope, event_id) for row in rows):
+                rows.append({'version_id': version_id, 'step': step, 'scope': scope,
+                             'event_id': event_id, 'action': action})
+                del rows[:-VERSION_LIMITS['version_selections']]
+            self.publish()
+
+    def _find_version(self, version_id):
+        return next((row for row in self.data.get('versions', ()) if row.get('version_id') == version_id), None)
+
+    @staticmethod
+    def _version_id(value):
+        return isinstance(value, str) and PUBLIC_ID.fullmatch(value) is not None
+
+    @classmethod
+    def _version_refs(cls, values, limit):
+        if isinstance(values, (list, tuple)) and len(values) <= limit and all(cls._version_id(v) for v in values):
+            return list(dict.fromkeys(values))
+        return None
 
     def log(self, message, *, decision_id=None, call_id=None, level='INFO', source='runner'):
         logs = self.data['logs']
@@ -236,6 +347,8 @@ class RunSnapshot:
         stage['step'] = step
         stage['metrics'] = values
         self.add_points(values, step=step, **self.coordinates(stage))
+        self._fact('host.measurement', stage_id, step, values, scope=stage_id, subject=stage_id,
+                   call_id=stage.get('call_id'), fields={'step': step, 'metrics': values, 'source': 'trainer'})
         message = 'step=' + str(step) + ' ' + ' '.join(f'{key}={value}' for key, value in values.items())
         self.log(message, source='trainer', **self.coordinates(stage))
         if publish:
@@ -411,7 +524,7 @@ class RunSnapshot:
             already_closed = 'finished_at' in row
             status = receipt.get('status') or 'unknown'
             row.update(status=status, finished_at=row.get('finished_at') or now())
-            for source, target in (('summary', 'feedback_summary'), ('error', 'error')):
+            for source, target in (() if sealed else (('summary', 'feedback_summary'), ('error', 'error'))):
                 if isinstance(receipt.get(source), str) and receipt[source].strip():
                     row[target] = receipt[source][:4000]
             data = receipt.get('data') or {}
@@ -426,22 +539,58 @@ class RunSnapshot:
                 self.add_points(values, **coordinates, **({'step': row['step']} if 'step' in row else {}))
                 self.log(row['operation'] + ' · ' + status, **coordinates,
                          level='ERROR' if status == 'failed' else 'INFO')
+                if not sealed:
+                    execution = {**grouped['training_metrics'], **grouped['execution_metrics'], **grouped['collection']}
+                    self._fact('host.operation', ident, status, scope=ident, subject=ident, call_id=call_id,
+                               fields={'operation': row['operation'], 'status': status, 'metrics': execution})
             for artifact in (() if sealed else receipt.get('artifacts', receipt.get('artifact_refs', []))):
                 if isinstance(artifact, dict):
                     kind = artifact.get('kind')
                     self.add_artifact(artifact.get('artifact_id'), kind if isinstance(kind, str) and PUBLIC_ID.fullmatch(kind) else 'artifact', **coordinates)
-            model = data.get('model')
+            model = None if sealed else data.get('model')
             if not sealed and data.get('checkpoint') and isinstance(model, str) and PUBLIC_ID.fullmatch(model):
                 self.add_artifact(model, 'checkpoint', model=model, **coordinates)
             if not sealed and data.get('dataset') and grouped['collection']:
                 self.add_artifact('accepted.jsonl', 'training_data', **coordinates)
             request = data.get('request') if isinstance(data.get('request'), dict) else {}
             split = row.get('split') or request.get('split') or data.get('split') or data.get('role')
-            split = {'validation': 'dev', 'development': 'dev'}.get(split, split) if isinstance(split, str) else None
+            split = split if token(split) else None
             if status == 'completed' and grouped['quality_metrics'] and ident not in self.seen_evaluations:
                 self.seen_evaluations.add(ident)
+                alias = row['operation'].split('.', 1)[0]
+                metric = self.lab_metrics.get(alias, {})
+                metric = metric if isinstance(metric, dict) else {}
+                subject = None if sealed else data.get('candidate_id') or model or request.get('candidate_id')
+                subject = subject if token(subject) else ident
+                benchmark = data.get('benchmark') or request.get('benchmark')
+                benchmark = benchmark if token(benchmark) else None
+                scores = grouped['quality_metrics']
+                protocols = data.get('benchmarks')
+                protocols = {name: ref for name, ref in protocols.items() if token(name)} if isinstance(protocols, dict) else {}
+                if benchmark is None and len(protocols) == 1:
+                    benchmark = next(iter(protocols))
+                measurements = {benchmark: scores}
+                for name in protocols:
+                    prefix = name + '_'
+                    per_bench = {key.removeprefix(prefix): value for key, value in scores.items() if key.startswith(prefix)}
+                    if name != benchmark and per_bench:
+                        measurements[name] = per_bench
+                if isinstance(data.get('by_benchmark'), dict):
+                    for name, result in data['by_benchmark'].items():
+                        if token(name) and isinstance(result, dict):
+                            measurements[name] = numeric_fields(result.get('quality_metrics', result.get('metrics', result)))
+                for name, scores in measurements.items():
+                    if scores:
+                        # A benchmark row may use a different scorer than the Lab's primary aggregate.
+                        primary = metric.get('name') if name == benchmark else None
+                        primary = primary if primary in scores else None
+                        self._fact('host.evaluated', ident, name, scope=ident, subject=subject, call_id=call_id,
+                                   links={'evaluates': [subject]}, fields={'benchmark': name, 'split': split,
+                                       'model': model, 'metrics': scores, 'protocol': protocols.get(name),
+                                       'scorer': metric.get('scorer') if primary else None,
+                                       'direction': metric.get('direction') if primary else None, 'primary_metric': primary})
                 self.data['evaluations'].append({'evaluation_id': ident, **coordinates,
-                    'split': split if isinstance(split, str) and PUBLIC_ID.fullmatch(split) else None,
+                    'split': {'validation': 'dev', 'development': 'dev'}.get(split, split), 'benchmark': benchmark,
                     'model': model if isinstance(model, str) and PUBLIC_ID.fullmatch(model) else row.get('model'),
                     'label': row.get('label'), 'round': row.get('round'), 'timestamp': now(),
                     'elapsed_seconds': round(monotonic() - self.clock, 3), 'metrics': grouped['quality_metrics']})
@@ -488,8 +637,17 @@ class RunSnapshot:
 def run_monitored(app, *, rounds, max_decision_steps, framework=None, experiment_name=None,
                   probe_paths=(), continue_history=False):
     config = app.config
+    identity = getattr(getattr(getattr(app, 'assembly', None), 'lab_execution', None), 'profile_identity', None)
+    try:
+        metrics = {alias: profile['primary_metric'] for alias, profile in identity().items()} if callable(identity) else {}
+    except Exception as error:
+        metrics = {}
+        metric_error = type(error).__name__
+    else:
+        metric_error = None
     publisher = RunSnapshot(config.data_dir, config.run_id, config.objective,
-                            settings=public_settings(framework, config), parent_id=config.parent_run_id)
+                            settings=public_settings(framework, config), parent_id=config.parent_run_id,
+                            probes=getattr(getattr(app, 'modules', None), 'observation_probes', ()), metrics=metrics)
     if continue_history:
         publisher.continue_history()
     if isinstance(experiment_name, str) and experiment_name.strip():
@@ -499,30 +657,37 @@ def run_monitored(app, *, rounds, max_decision_steps, framework=None, experiment
     if rounds is not None:
         publisher.data['config']['runner_round_limit'] = rounds
     observations = Observations(publisher)
-    with activate(observations, inbox=Path(config.data_dir) / 'log-inbox'):
+    if metric_error:
+        observations.degraded('Could not read Lab metric declarations: ' + metric_error)
+    publisher._publish_deferred = True
+    with activate(observations, inbox=Path(config.data_dir) / 'log-inbox', background=True):
         return _run(app, publisher, observations, rounds, max_decision_steps, probe_paths)
 
 
 def _run(app, publisher, observations, rounds, max_decision_steps, probe_paths):
-    config = app.config
-    try:
+    def load_probes():
+        from importlib.util import module_from_spec, spec_from_file_location
         for index, path in enumerate(probe_paths):
-            from importlib.util import module_from_spec, spec_from_file_location
-            spec = spec_from_file_location(f'rsisys_probe_{index}', Path(path).resolve())
-            if spec is None or spec.loader is None:
-                raise ValueError('Probe plugins must be Python files exposing register(observations)')
-            module = module_from_spec(spec)
-            spec.loader.exec_module(module)
-            module.register(observations)
-        observations.trigger('start', {'run_id': config.run_id})
-        with observations.lock:
-            publisher.publish('running')
+            prior = dict(observations.probes)
+            try:
+                spec = spec_from_file_location(f'rsisys_probe_{index}', Path(path).resolve())
+                if spec is None or spec.loader is None:
+                    raise ValueError('Expected a Python probe module')
+                module = module_from_spec(spec)
+                spec.loader.exec_module(module)
+                module.register(observations)
+            except (Exception, SystemExit) as error:
+                observations.probes = prior
+                observations.degraded('Could not load probe: ' + type(error).__name__)
+
+    observations.dispatch(publisher.publish, 'running')
+    observations.dispatch(load_probes)
+    observations.dispatch(observations.trigger, 'start', {'run_id': app.config.run_id})
+    try:
         result = app.run(rounds=rounds, max_decision_steps=max_decision_steps, wait_for_jobs=True)
-        observations.trigger('finish', {'status': result.status})
-        with observations.lock:
-            publisher.publish(result.status)
-        return result
+        observations.dispatch(observations.trigger, 'finish', {'status': result.status})
     except BaseException as error:
-        with observations.lock:
-            publisher.fail(type(error).__name__)
+        observations.finish(publisher.fail, type(error).__name__)
         raise
+    observations.finish(publisher.publish, result.status)
+    return result

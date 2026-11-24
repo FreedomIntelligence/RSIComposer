@@ -199,6 +199,7 @@ class ModuleAssembly:
     registry_source: dict | None = field(default=None, repr=False)
     controller_activator: object | None = field(default=None, repr=False)
     controller_learner: object | None = field(default=None, repr=False)
+    observation_probes: tuple = field(default=(), repr=False, compare=False)
 
     def __post_init__(self):
         if self.decision_factory is None and 'decision' not in self.component_bindings:

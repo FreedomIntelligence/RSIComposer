@@ -11,7 +11,8 @@ import re
 import statistics
 from copy import deepcopy
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall, file_hash as digest
+from rsicomposer.api import (Decision, ExecutionStatus, OperationCall, file_hash as digest, observe,
+    report_version, report_version_evaluation, report_version_selection)
 
 STRUCTURAL = {"client_tool", "skill", "memory", "subagent"}
 COMPONENTS = {
@@ -251,13 +252,39 @@ class RRSIController:
             self.best_score = data["score"]
             if self.delta is None:
                 self.delta = calibrated_delta(data["rewards"])
+            self._observe_incumbent(0)
+            report_version('rrsi-baseline', label='Baseline', round_index=0, parent_ids=())
+            report_version_evaluation('rrsi-baseline', feedback.call_id)
+            report_version_selection('rrsi-baseline', step=0, action='applied')
             self.stage = "search"
         elif self.stage == "candidate":
             proposal = self.proposals[self.index]
             self.round_candidates.append({**data, **proposal})
+            version_id = self._version_id(self.round, self.index)
+            report_version(version_id, label=f'R{self.round + 1} · C{self.index + 1}',
+                           round_index=self.round + 1, parent_ids=(self._incumbent_version(),))
+            report_version_evaluation(version_id, feedback.call_id)
             self.index += 1
             self.stage = "search"
         self.pending = None
+
+    @staticmethod
+    def _version_id(round_index, index):
+        return f'rrsi-r{round_index + 1}-c{index + 1}'
+
+    def _incumbent_version(self):
+        # The existing selection journal carries enough identity to resume without storing monitor state.
+        for row in reversed(self.history):
+            if row['winner'] != row['parent']:
+                return next(self._version_id(row['round'], i) for i, item in enumerate(row['decisions'])
+                            if item['harness'] == row['winner'])
+        return 'rrsi-baseline'
+
+    def _observe_incumbent(self, step):
+        key = f'incumbent/search/{self.metric.name}'
+        observe({key: self.incumbent['score']}, step=step, definitions={
+            key: {'label': self.metric.name, 'unit': 'percent', 'direction': 'higher'},
+        })
 
     def _select(self):
         decisions = []
@@ -288,6 +315,9 @@ class RRSIController:
             }
         )
         self.researcher.record(self.history[-1])
+        if winner:
+            self._observe_incumbent(self.round + 1)
+        report_version_selection(self._incumbent_version(), step=self.round + 1, action='applied' if winner else 'kept')
         self.round += 1
         self.proposals, self.round_candidates, self.index = [], [], 0
 

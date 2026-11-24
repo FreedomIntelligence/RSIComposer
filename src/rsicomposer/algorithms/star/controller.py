@@ -5,6 +5,7 @@ from copy import deepcopy
 from rsicomposer.api import Decision, ExecutionStatus, OperationCall
 
 from .protocol import curriculum
+from ..shared.weight_observation import observe_weight_receipt
 
 
 class StarController:
@@ -102,6 +103,7 @@ class StarController:
                 if ((feedback is None or feedback.call_id != self.pending.call_id) or feedback.status != ExecutionStatus.COMPLETED
                         or feedback.data["request"] != self.pending.arguments):
                     raise RuntimeError("STaR feedback differs from its request")
+                observe_weight_receipt('star', self.pending, feedback.data)
                 self.replies.append(deepcopy(feedback.data))
                 name, request, reason = self.flow.send(feedback.data)
         except StopIteration:

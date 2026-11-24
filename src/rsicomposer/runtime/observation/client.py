@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 
 INBOX_ENV = 'RSISYS_LOG_INBOX'
+OBSERVATION_URL_ENV = 'RSISYS_OBSERVATION_URL'
 TEXT_LIMIT = 2000
 
 
@@ -54,7 +55,7 @@ def log(values, *, step=None, series=None):
         raise ValueError('series must be a short nonempty string')
     current = current_observations()
     if current is not None:
-        current.log_mixed(metrics, notes, step=step, series=series)
+        current.dispatch(current.log_mixed, metrics, notes, step=step, series=series)
         return True
     url, token = os.environ.get('RSISYS_LOG_URL'), os.environ.get('RSISYS_LOG_TOKEN')
     if url and token:
@@ -69,4 +70,21 @@ def log(values, *, step=None, series=None):
     # One file per process: appends from different workers never interleave.
     with (Path(inbox) / f'{os.getpid()}.jsonl').open('a', encoding='utf-8') as file:
         file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + '\n')
+    return True
+
+
+def worker_observation(wire):
+    url, token = os.environ.get(OBSERVATION_URL_ENV), os.environ.get('RSISYS_LOG_TOKEN')
+    if url and token:
+        from rsicomposer.runtime.execution.remote_services import post_worker
+        post_worker(url, token, {'fact': json.loads(wire)}, timeout=.25)
+        return True
+    inbox = os.environ.get(INBOX_ENV)
+    if not inbox:
+        return False
+    # A single append per fact, so parallel threads in one worker cannot mix records.
+    path = Path(inbox) / f'{os.getpid()}.jsonl'
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(fd, 'ab') as stream:
+        stream.write(b'{"fact":' + wire.encode('ascii') + b'}\n')
     return True

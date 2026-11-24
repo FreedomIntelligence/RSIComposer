@@ -30,10 +30,7 @@
           <a class="run-back" href="#experiments"><Icon name="arrow-left" />{{ t('实验列表') }}</a>
           <div class="title-row"><h1>{{ runLabel(run) }}</h1><StatusBadge :status="run.status" /><span v-if="run.simulated === true" class="tag">{{ t('模拟') }}</span></div>
           <p class="meta">{{ meta }}</p>
-          <details v-if="run.objective" class="run-objective">
-            <summary>{{ t('实验目标') }}</summary>
-            <p class="objective">{{ run.objective }}</p>
-          </details>
+          <p v-if="run.objective" class="objective">{{ run.objective }}</p>
         </div>
       </header>
       <nav class="run-tabs" :aria-label="t('实验视图')">

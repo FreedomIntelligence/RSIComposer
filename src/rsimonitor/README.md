@@ -3,7 +3,8 @@
 RSIMonitor is the optional read-only viewer for RSIComposer experiments. It is an
 independent Python distribution with a bundled Vue dashboard and no mandatory
 third-party Python runtime dependencies. A run is produced by RSIComposer; the viewer
-reads its public `monitor.json` and serves a bounded projection to the browser.
+reads its public snapshot and event journal. The runtime can use `--no-monitor`
+to run without publishing observations.
 
 See the [RSIComposer package guide](../rsicomposer/README.md) for method execution and state
 recovery, or the [project overview](../../README.md) ([中文](../../README_zh.md))
@@ -23,19 +24,13 @@ rsimonitor --runs-dir runs
 
 Open `http://127.0.0.1:8765/` and select a run. The dashboard shows the decision
 graph, metrics, samples, logs, and experiment comparisons in English and Chinese.
+Search and filter the experiment list, or select multiple runs for comparison.
 Give each experiment a distinct output directory, for example
 `rsicomposer run --config config.json --data-dir runs/experiment-002 --experiment-name 'Experiment 002'`.
 Point `--runs-dir` at the common parent of these directories. `rsicomposer run` publishes `monitor.json`;
 the dashboard follows newly started experiments and displays the observations reported for each run.
 
 It binds to loopback by default and has no authentication or multi-tenant isolation.
-
-The experiment index supports text search, status filters, and comparison of
-selected runs. Overview separates held-out scores from search and validation
-results, comparing the initial and selected versions when both were measured.
-Trajectory separates version lineage, recorded decisions, and execution stages.
-Lineage and event details appear when the run reports them; older snapshots still
-open without this data.
 
 The Monitor exposes its versioned scalar wire limits and enums at `/api/schema`.
 Evaluation records retain reported split, protocol identity and validated protocol/submission digests.
@@ -44,7 +39,68 @@ For application-level integrations, `app.runner.add_observer(observer)` accepts 
 step after the execution transaction commits; observation failures warn without replaying work.
 The bundled decision endpoint also provides `observed_decisions()` as a detached ledger view.
 
+## Version lineage
+
+Trajectory shows the version graph when a method reports parent links, a candidate
+list when it reports versions without links, and the operation view for other runs.
+Versions can have multiple parents. The monitor never infers ancestry from the order
+of evaluations or changes in scores. A method can opt in from its Controller:
+
+```python
+from rsicomposer.api import report_version, report_version_evaluation, report_version_selection
+
+report_version('candidate-2', label='Candidate 2', round_index=2, parent_ids=('candidate-1',))
+report_version_evaluation('candidate-2', evaluation_call_id)
+report_version_selection('candidate-2', step=2, action='selected', event_id=decision_id)
+```
+
+Use a stable public ID per candidate or attempt. Omit `parent_ids` if ancestry is
+unknown, or pass `()` if the version intentionally has no parents. References to
+prior decisions can be reported as `source_decision_ids`; they do not become parent
+edges. Report each benchmark evaluation by its own call ID. Use `selected` for a
+choice, `applied` once it takes effect, and `kept` for an unchanged incumbent.
+Selection events can share a step; give independent choices different event IDs
+or scopes. These reports do not change the decisions or recovery state.
+
+## Method probes
+
+Add `ObservationProbe` declarations to `MethodDefinition.observation_probes`.
+For example, a method that rewrites an instruction can register:
+
+```python
+from rsicomposer.api import ObservationProbe, emit_observation
+
+probe = ObservationProbe('my_method.prompt', 'decision', (('round', 'number'),), 'diff', content=True)
+# Include probe in the method definition. Emit after a new candidate is recorded:
+emit_observation('my_method.prompt', event_id, subject=candidate_id,
+                 fields={'round': step}, components={'instruction': new_instruction})
+```
+
+Probes declare `decision`, `quality` or `execution`, the public fields they
+accept, and a view (`timeline`, `lineage`, `table`, `series`, or `diff`). Use a
+candidate or attempt as the `subject` and explicit links for `derived_from`,
+`evidence`, `evaluates` and other method relationships. Views only draw parent
+edges between reported parents. A `diff` probe with `content=True` can publish
+public component text; the loopback viewer compares it with the recorded parents.
+Display text should be free of private inputs and credentials. The viewer never
+opens private artifacts or model logs.
+
+The Host appends projected facts to `monitor-events.jsonl`. Its observation
+queue is bounded, and overload or probe failures degrade monitoring while the
+experiment continues. Monitoring does not call a model or add fields to policy
+inputs. The snapshot keeps a recent event window; the event log remains paged.
+
 ## Metrics and probes
+
+The overview plots comparable validation receipts by recorded iteration round,
+separating benchmarks and evaluation protocols. If several candidates were
+evaluated in one round, the chart labels the round's best candidate explicitly.
+The final held-out comparison shows the initial and selected versions separately.
+
+To report the incumbent, emit `observe({"incumbent/search/accuracy": score}, step=version_step)`
+using `incumbent/<split>/<metric>`. Report step 0 for the initial version and
+emit a later point only when a measured candidate takes effect. Associate the
+point with its evaluation call so the dashboard can plot the recorded round.
 
 The metrics workspace ports native chart components from
 [SwanLab-Dashboard](https://github.com/SwanHubX/SwanLab-Dashboard). Sources live in
@@ -57,7 +113,7 @@ Layouts are browser-local and do not modify experiment artifacts.
 
 Use **Add chart** to choose one or more Y metrics and an X axis (observation order,
 reported step, elapsed/record time, or another metric). Each card's **Settings**
-button opens a per-chart settings drawer for data, axes and smoothing: title, group,
+button opens the chart dialog for data, axes and smoothing: title, group,
 axis labels, linear/log scales, optional bounds, Time Weighted EMA, Running Average
 or Gaussian Smoothing. Smoothing parameters and the raw-curve overlay are saved
 independently for each chart and also apply when zoomed. The workspace toolbar
@@ -98,7 +154,7 @@ Host events are `start`, `step`, `feedback` and `finish`. Sampling starts with t
 first event, then every N events. Callbacks receive an event copy and return finite
 numeric metrics or `None`; keys are prefixed with the probe name.
 
-Callbacks execute synchronously at event boundaries. Keep them short; schedule
+Monitor callbacks run on the observation worker. Keep them short; schedule
 expensive evaluation as an explicit Lab operation. Browser refreshes never trigger
 probes or adopt candidates. Host-launched workers can use `rsicomposer.log()` with the
 inherited observation environment; other subprocesses return measurements through
@@ -147,8 +203,8 @@ Continuing a durable run in place preserves the history in its existing
 | `/api/projects` | Project groups and run summaries |
 | `/api/runs` | Run summaries |
 | `/api/runs/<directory-name>` | Projected public run snapshot |
-| `/api/runs/<directory-name>/events?cursor=0&category=decision` | Paged observations, if recorded |
-| `/api/runs/<directory-name>/versions/<version-id>` | Published version text and its parents, available only on a loopback listener |
+| `/api/runs/<directory-name>/events?cursor=0&category=decision` | A bounded event page with optional category and next cursor |
+| `/api/runs/<directory-name>/versions/<version-id>` | Explicitly published version and parent text (loopback only) |
 
 JSON responses support ETags. Write methods are rejected. The run directory is
 never exposed as a general file server, so artifact files and internal journals

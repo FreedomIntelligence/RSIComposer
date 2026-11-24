@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .upstream import TTRL_REVISION, checkout
 from .native_jobs import atomic_json
-from .progress_hooks import StopAtCheckpoint, install
+from .progress_hooks import StopAtCheckpoint
 
 SUFFIX = '\nPlease reason step by step, and put your final answer within \\boxed{}.'
 
@@ -101,6 +101,25 @@ def tensor_hashes(path):
     return result
 
 
+def changed_model_tensors(before, after, before_config, after_config):
+    def canonical(weights, config):
+        # veRL may serialize the Qwen2 LM head even when it shares the input weights.
+        if (config.get('model_type') == 'qwen2' and config.get('tie_word_embeddings') is True
+                and 'lm_head.weight' in weights):
+            if weights['lm_head.weight'] != weights.get('model.embed_tokens.weight'):
+                raise ValueError('Tied weights differ in the native model publication')
+            return {key: value for key, value in weights.items() if key != 'lm_head.weight'}
+        return weights
+
+    if any(before_config.get(key) != after_config.get(key)
+           for key in ('model_type', 'tie_word_embeddings')):
+        raise ValueError('Native publication changed the model parameter schema')
+    before, after = canonical(before, before_config), canonical(after, after_config)
+    if before.keys() != after.keys() or any(before[key][0] != after[key][0] for key in before):
+        raise ValueError('Native publication changed the model parameter schema')
+    return sum(before[key][1] != after[key][1] for key in before)
+
+
 def fit(request):
     from datasets import Dataset
     from hydra import compose, initialize_config_dir
@@ -133,22 +152,25 @@ def fit(request):
     for sig in (signal.SIGTERM, signal.SIGINT):
         handlers[sig] = signal.signal(sig, cancelled)
     stopped = False
+    runtime_env = dict(worker_process_setup_hook='rsicomposer.algorithms.ttrl.progress_hooks.install', env_vars={
+        'RSISYS_TTRL_JOB': str(directory), 'PYTHONPATH': env['PYTHONPATH'],
+        'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': env.get('NCCL_DEBUG', 'WARN'),
+        'VLLM_LOGGING_LEVEL': 'WARN', 'VLLM_ALLOW_RUNTIME_LORA_UPDATING': 'true'})
     try:
         session = ray.init(address='local', include_dashboard=False,
+            runtime_env=runtime_env,
             num_cpus=min(32, os.cpu_count() or 1), num_gpus=request['world_size'],
             _temp_dir=tempfile.mkdtemp(prefix='rsisys-ray-'))
         env['RAY_ADDRESS'] = session.address_info['address']
         atomic_json(directory / 'ray-session.json', json.loads(json.dumps(session.address_info, default=str)))
         atomic_json(directory / 'execution-environment.json', {k: v for k, v in env.items()
             if k.startswith(('NCCL_', 'VLLM_')) or k == 'CUDA_VISIBLE_DEVICES'})
-        runtime_env = dict(worker_process_setup_hook=install, env_vars={
-            'RSISYS_TTRL_JOB': str(directory), 'PYTHONPATH': env['PYTHONPATH'],
-            'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': env.get('NCCL_DEBUG', 'WARN'),
-            'VLLM_LOGGING_LEVEL': 'WARN', 'VLLM_ALLOW_RUNTIME_LORA_UPDATING': 'true'})
         profile_steps = OmegaConf.select(config.trainer, 'profile_steps')
         if profile_steps:
-            runtime_env['nsight'] = OmegaConf.to_container(config.trainer.controller_nsight_options)
-        runner = TaskRunner.options(runtime_env=runtime_env).remote()
+            runner = TaskRunner.options(runtime_env={
+                'nsight': OmegaConf.to_container(config.trainer.controller_nsight_options)}).remote()
+        else:
+            runner = TaskRunner.remote()
         try:
             ray.get(runner.run.remote(config))
         except ray.exceptions.RayTaskError as exc:
@@ -175,10 +197,9 @@ def fit(request):
         raise ValueError('Refusing to overwrite checkpoint')
     subprocess.run([sys.executable, '-m', 'verl.model_merger', 'merge', '--backend', 'fsdp',
         '--local_dir', str(actor), '--target_dir', str(checkpoint)], cwd=upstream, env=env, check=True)
-    before, after = tensor_hashes(request['model']), tensor_hashes(checkpoint)
-    if before.keys() != after.keys():
-        raise ValueError('Native publication changed the model parameter schema')
-    changed = sum(before[key] != after[key] for key in before)
+    base = Path(request['model'])
+    changed = changed_model_tensors(tensor_hashes(base), tensor_hashes(checkpoint),
+        json.loads((base / 'config.json').read_text()), json.loads((checkpoint / 'config.json').read_text()))
     if not changed:
         raise ValueError('Native training did not change published model tensors')
     result = dict(steps=step, samples=len(request['items']), world_size=request['world_size'],

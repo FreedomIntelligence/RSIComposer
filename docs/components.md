@@ -10,7 +10,7 @@ selected in the run config; a method's code resolves them by name.
 ## Methods
 
 A method is a Controller bound to its own Labs. Select one with
-`"framework": {"method": {"name": …}}`. The presets are the JSON files in each
+`"framework": {"method": {"name": …}}`. The presets are the TOML and JSON files in each
 method's `configs/` directory. The **Needs** column lists what the presets
 require; check the preset before running it.
 
@@ -23,8 +23,7 @@ require; check the preset before running it.
 | `verl_math_grpo` | [TOML example](config.md#online-grpo-with-verl) | Local weights, Math Lab train/dev manifest, GPU and pinned veRL environment | [Configuration](config.md#online-grpo-with-verl) |
 | `seal` | `8gpu`, `paper` | 8 GPUs, local base model; `paper` also needs a separate environment ([`requirements/seal-ttrl.txt`](../requirements/seal-ttrl.txt)) | — |
 | `opro` | `evolution`, `independent_candidates` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | — |
-| `gepa` | `reflective`, `score-only` | Chat Completions model endpoint, GSM8K files and a math dataset manifest | [README](../src/rsicomposer/algorithms/gepa/README.md) |
-| `gepa_merge` | `gepa/configs/merge-screen` | Model endpoint, pinned GEPA checkout in `external/gepa` | [README](../src/rsicomposer/algorithms/gepa/README.md) |
+| `gepa` | `aime.toml` | Chat Completions endpoint, pinned GEPA and DSPy checkouts, author's AIME data | [README](../src/rsicomposer/algorithms/gepa/README.md) |
 | `promptpg` | `tabmwp` | Model endpoint, TabMWP files | — |
 | `funsearch` | `evolution`, `frozen_parents` | Model endpoint | — |
 | `meta_agent` | `math` | Model endpoint and a math dataset manifest with `search` and `heldout` splits | — |

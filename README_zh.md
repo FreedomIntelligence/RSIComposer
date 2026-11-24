@@ -91,7 +91,7 @@ rsicomposer run --plugin src/rsicomposer/labs/_template --plugin src/rsicomposer
 | :-- | :-- | :-- | :-- | :-- |
 | 自训练 | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · TTRL-verl | 调度生成、筛选、训练各轮 | 模型采样作答，经评分后微调 | 模型权重 |
 | 自我编辑 | [SEAL](https://arxiv.org/abs/2506.10943) | 调度自我编辑各轮 | 模型为自己生成训练数据并据此更新 | 模型权重（统一） |
-| 提示词搜索 | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · GEPA-Merge · [PromptPG](https://arxiv.org/abs/2209.14610) | 在候选提示词中搜索 | 用每个提示词评测任务模型 | 提示词 |
+| 提示词搜索 | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · [PromptPG](https://arxiv.org/abs/2209.14610) | 在候选提示词中搜索 | 用每个提示词评测任务模型 | 提示词 |
 | 程序搜索 | [FunSearch](https://github.com/google-deepmind/funsearch) | 演化程序种群 | 执行程序并打分 | 程序 |
 | Harness 搜索 | [RRSI](https://arxiv.org/abs/2609.24972) · Meta-Agent · [Coding Meta-Agent](src/rsicomposer/algorithms/coding_meta_agent/README.md) | 模型提出 harness 修改 | agent 用候选 harness 解题 | Agent harness |
 | 反思 | [Reflexion](https://arxiv.org/abs/2303.11366) | 决定何时重试 | 同一个 agent 写代码、跑测试并反思失败 | 自身的反思（统一） |

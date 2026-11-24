@@ -139,7 +139,7 @@ a domain agent that sets fields it does not accept.
 | Runtime | Domain agent | Settings recorded in the protocol | Trust | Used by |
 | --- | --- | --- | --- | --- |
 | `instruction` | An instruction; one actor call per problem | `temperature`, `max_output_tokens` | `data` | `MathLab` |
-| `prompt-template` | An instruction rendered into a method's own pinned prompt, answered by the actor under a call budget | `template`, `system`, `temperature`, `top_p`, `seed`, `max_output_tokens`, `max_model_calls` | `data` | GEPA, GEPA-Merge, OPRO |
+| `prompt-template` | An instruction rendered into a versioned prompt, answered by the actor under a call budget | `template`, `system`, `temperature`, `top_p`, `seed`, `max_output_tokens`, `max_model_calls` | `data` | GEPA, OPRO |
 | `step-program` | A `step(problem, history)` program run in a bwrap sandbox, with the Lab calling a fixed model pool for it | `max_calls`, `seed`, `temperature`, `max_tokens`, `timeout`, `trials`, `sandbox_timeout` | `sandboxed-code` | the RRSI and Meta-Agent harness Lab |
 | `checkpoint` | A checkpoint reference; an engine the Lab owns generates | `engine`, `temperature`, `max_new_tokens` | `data` | ReST^EM, STaR, FT-Agent |
 
@@ -150,10 +150,10 @@ evaluations in flight cannot see each other. A Lab that needs a different runtim
 `make_runtime()` and calls `run_runtime()` from `solve()`; it never runs one runtime while
 recording another.
 
-GEPA, GEPA-Merge and OPRO keep their prompts identical to the pinned upstream by supplying
-`render()` to `PromptSearchLab`, which builds a `prompt-template` runtime. The template name
-is recorded (OPRO's includes `instruction_pos`) and the rendering function is not, so a change
-to the upstream prompt format must change the template name.
+GEPA and OPRO supply `render()` to `PromptSearchLab`, which builds a `prompt-template`
+runtime. GEPA uses a local template with strategy and verification fields; OPRO uses
+its upstream prompt format. The protocol records the template name (OPRO's includes
+`instruction_pos`), so changing the prompt format requires changing the template name.
 
 ## Answer verifiers
 

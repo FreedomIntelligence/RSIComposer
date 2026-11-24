@@ -1,12 +1,15 @@
 """One veRL GRPO training job bracketed by independent MathLab evaluations."""
 
 from copy import deepcopy
+import json
 from pathlib import Path
 
 from rsicomposer.api import (
     CheckpointRuntime, Decision, ExecutionStatus, HostedLoRAEngine, MathLab, MethodDefinition,
-    ModelRef, OperationCall, OperationResult, OperationSpec, file_hash,
+    ModelRef, ObservationProbe, OperationCall, OperationResult, OperationSpec, emit_observation, file_hash, report_version,
+    report_version_evaluation, report_version_selection,
 )
+from ..shared.weight_observation import model_version
 
 
 class Controller:
@@ -30,6 +33,11 @@ class Controller:
                 raise ValueError('Expected the receipt for the pending veRL experiment operation')
             if feedback.status != ExecutionStatus.COMPLETED:
                 return Decision('finish', reason=f'{self.pending.name} ended with {feedback.status.value}')
+            if self.pending.arguments.get('candidate') == 'trained':
+                version = model_version(feedback.data['checkpoint'])
+                report_version_selection(version, step=1, event_id=feedback.call_id, action='applied')
+                emit_observation('verl_math_grpo.applied', feedback.call_id, subject=version,
+                                 fields={'action': 'applied'})
         if self.stage == 3:
             return Decision('finish', reason='GRPO candidate evaluated against the baseline protocol')
         name, arguments = (('evaluate', {'split': 'dev', 'candidate': 'base'}), ('fit', {}),
@@ -69,7 +77,11 @@ class GRPOMathLab(MathLab):
             evaluation['inference_python'] = config['inference_python']
         self.inference = HostedLoRAEngine(evaluation)
         self.inference.bind_execution(context)
-        super().__init__(context, {'manifest': config['manifest'], 'split_roles': {'train': 'train', 'dev': 'dev'}})
+        manifest = Path(config['manifest'])
+        roles = {'train': 'train', 'dev': 'dev'}
+        if 'test' in json.loads(manifest.read_text())['splits']:
+            roles['test'] = 'sealed'
+        super().__init__(context, {'manifest': config['manifest'], 'split_roles': roles})
 
     def resource_roles(self):
         return {'rollout': self.inference.resource_roles()['rollout'], **self.trainer.resource_roles()}
@@ -94,9 +106,16 @@ class GRPOMathLab(MathLab):
             'type': 'object', 'properties': {}, 'additionalProperties': False}))
 
     def evaluate_schema(self):
-        return {'type': 'object', 'properties': {'split': {'const': 'dev'},
+        splits = [split for split in ('dev', 'test') if split in self.datasets]
+        return {'type': 'object', 'properties': {'split': {'enum': splits},
             'candidate': {'enum': ['base', 'trained']}}, 'required': ['split', 'candidate'],
             'additionalProperties': False}
+
+    def final_evaluations(self):
+        if self.checkpoint_files is None or 'test' not in self.datasets:
+            return ()
+        return tuple(OperationCall('evaluate', {'split': 'test', 'candidate': candidate})
+                     for candidate in ('base', 'trained'))
 
     @staticmethod
     def _messages(problem):
@@ -115,19 +134,29 @@ class GRPOMathLab(MathLab):
 
     def execute(self, call):
         if call.name != 'fit':
-            return super().execute(call)
+            result = super().execute(call)
+            if call.name == 'evaluate' and result.status == ExecutionStatus.COMPLETED:
+                candidate = call.arguments['candidate']
+                version = model_version(str(self.initial_model if candidate == 'base' else self.output))
+                if candidate == 'base':
+                    report_version(version, label='Baseline', round_index=0, parent_ids=())
+                report_version_evaluation(version, call.call_id)
+            return result
         if call.arguments or self.checkpoint_files is not None or self.output.exists():
             raise ValueError('fit accepts no arguments and publishes one checkpoint per experiment')
         result = self.trainer.fit(self.initial_model, self._training_rows('train'), self._training_rows('dev'),
                                   self.output, reward_module=Path(__file__).with_name('reward.py'))
         self.checkpoint_files = result['checkpoint_files']
         self._check_weights()
+        parent = model_version(str(self.initial_model))
+        report_version(model_version(str(self.output)), label='GRPO checkpoint', round_index=1,
+                       parent_ids=(parent,))
         return OperationResult('veRL GRPO checkpoint published', (), False, call_id=call.call_id,
                                data={'model': str(self.output), 'training_performed': True, 'training': result})
 
     def solve(self, problems, arguments):
-        if arguments != {'split': 'dev', 'candidate': arguments.get('candidate')}:
-            raise ValueError('Evaluate only the held-out development split')
+        if set(arguments) != {'split', 'candidate'} or arguments['split'] not in ('dev', 'test'):
+            raise ValueError('Evaluate only a configured development or sealed test split')
         if arguments['candidate'] == 'trained':
             self._check_weights()
             model = self.output
@@ -142,6 +171,9 @@ class GRPOMathLab(MathLab):
 
         return self.run_runtime({'model': str(model)}, problems, arguments, context={'generate': generate})
 
+    def result_data(self, records, ref, arguments):
+        return {'checkpoint': str(self.initial_model if arguments['candidate'] == 'base' else self.output)}
+
 
 def register(registry):
     def lab(context, config):
@@ -152,4 +184,5 @@ def register(registry):
 
     registry.register_method('verl_math_grpo', MethodDefinition.from_factories(
         controller=lambda context, config: Controller(**config), labs={'math': lab},
+        observation_probes=(ObservationProbe('verl_math_grpo.applied', 'decision', (('action', 'id'),)),),
         version='1', validate_labs={'math': validate_config}))

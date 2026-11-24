@@ -416,6 +416,7 @@ class RayExecutor(Executor):
         result = {key: value for key, value in environment.items() if runtime.fullmatch(key)
                   and not sensitive.search(key)}
         for key in ('RSISYS_HOST_URL', 'RSISYS_HOST_TOKEN', 'RSISYS_LOG_URL', 'RSISYS_LOG_TOKEN',
+                    'RSISYS_OBSERVATION_URL',
                     'RSISYS_MODEL_BASE_URL', 'OPENAI_BASE_URL', 'OPENAI_API_KEY'):
             if key in (trusted or {}):
                 result[key] = trusted[key]

@@ -41,6 +41,9 @@ def validate_engine(config):
     temperature = config.get('temperature', 0.7)
     if type(temperature) not in (int, float) or not math.isfinite(temperature) or temperature <= 0:
         raise ValueError('temperature must be finite and positive')
+    fraction = config.get('gpu_memory_utilization', 0.8)
+    if type(fraction) not in (int, float) or not 0 < fraction < 1:
+        raise ValueError('gpu_memory_utilization must be between 0 and 1')
     if 'stop' in config and (not isinstance(config['stop'], list) or
             any(not isinstance(s, str) or not s for s in config['stop'])):
         raise ValueError('stop must be a list of nonempty strings')

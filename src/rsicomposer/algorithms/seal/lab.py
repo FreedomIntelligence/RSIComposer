@@ -89,7 +89,7 @@ def validate_config(config):
     allowed = {'data_root', 'output_subdir', 'inference_python', 'training_python',
                'seed', 'max_length', 'max_tokens', 'lora_rank', 'inner_rank', 'inner_epochs',
                'outer_epochs', 'batch_size', 'inner_lr', 'outer_lr', 'gradient_checkpointing',
-               'temperature', 'enforce_eager', 'inference_cuda_home', 'training_cuda_home',
+               'temperature', 'enforce_eager', 'gpu_memory_utilization', 'inference_cuda_home', 'training_cuda_home',
                'profile', 'split_newlines', 'adaptation_seeds', 'evaluation_seeds',
                'inner_max_length', 'outer_gradient_accumulation_steps'}
     if set(config) - allowed:

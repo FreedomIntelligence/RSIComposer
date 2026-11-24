@@ -1,6 +1,6 @@
 """ttrl method package and single registration entry point."""
 from rsicomposer.algorithms.ttrl.controller import TTRLController, TTRLVerlController
-from rsicomposer.api import MethodDefinition
+from rsicomposer.api import MethodDefinition, ObservationProbe
 
 def register(registry):
     from rsicomposer.algorithms.ttrl.lab import TTRLLab, validate_config
@@ -13,5 +13,9 @@ def register(registry):
         validate_labs={'ttrl': validate_config}))
     registry.register_method('ttrl_verl', MethodDefinition.from_factories(
         controller=native, labs={'ttrl': TTRLVerlLab}, version='3',
+        observation_probes=(
+            ObservationProbe('ttrl_verl.checkpoint', 'execution', (('step', 'number'), ('sequence', 'number')), 'table'),
+            ObservationProbe('ttrl_verl.control', 'decision', (('action', 'id'), ('step', 'number'))),
+        ),
         validate_controller=TTRLVerlController.validate_config,
         validate_labs={'ttrl': validate_verl}))

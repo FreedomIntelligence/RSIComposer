@@ -1,5 +1,5 @@
 """Meta-agent coding harness search, with fixed model weights and real graders."""
-from rsicomposer.api import ControllerDefinition, MethodDefinition
+from rsicomposer.api import ControllerDefinition, MethodDefinition, ObservationProbe
 from .lab import CodingSearchLab
 from rsicomposer.algorithms.meta_agent.controller import (
     build_harness_research, validate_harness_research,
@@ -68,5 +68,6 @@ def register(registry):
     registry.register_method('coding_meta_agent', MethodDefinition.from_factories(
         controller=ControllerDefinition(build, memory=_memory, endpoint=True),
         labs={'coding': CodingSearchLab}, version='3',
+        observation_probes=(ObservationProbe('coding_meta_agent.candidate', 'decision', (), 'lineage', content=True),),
         validate_controller=validate_harness_research,
         validate_labs={'coding': CodingSearchLab.validate_config}))

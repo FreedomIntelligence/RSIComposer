@@ -64,6 +64,7 @@ def main() -> None:
     for command in (run, resume):
         command.add_argument('--probe', type=Path, action='append', default=[],
                              help='Trusted Python observation plugin with register(observations); repeatable')
+        command.add_argument('--no-monitor', action='store_true', help='Run without the optional Monitor publisher')
         command.add_argument('--rounds', type=int)
         command.add_argument('--max-decision-steps', type=int)
     inspect = commands.add_parser('inspect', help='Validate and describe a local snapshot')
@@ -125,10 +126,14 @@ def main() -> None:
                 if args.command == 'run':
                     for path in getattr(args, 'literature', ()):
                         app.artifacts.put_file(path, kind='literature')
-                result = run_monitored(app, rounds=args.rounds, max_decision_steps=args.max_decision_steps,
-                                       framework=selection if args.command == 'run' or args.snapshot is None else None,
-                                       experiment_name=getattr(args, 'experiment_name', None), probe_paths=args.probe,
-                                       continue_history=args.command == 'resume' and args.snapshot is None)
+                limits = dict(rounds=args.rounds, max_decision_steps=args.max_decision_steps)
+                if args.no_monitor:
+                    result = app.run(**limits, wait_for_jobs=True)
+                else:
+                    result = run_monitored(app, **limits,
+                                           framework=selection if args.command == 'run' or args.snapshot is None else None,
+                                           experiment_name=getattr(args, 'experiment_name', None), probe_paths=args.probe,
+                                           continue_history=args.command == 'resume' and args.snapshot is None)
                 snapshot = None
                 from rsicomposer.runtime.state.component_state import snapshot_integration
                 snapshot_supported = snapshot_integration(app)

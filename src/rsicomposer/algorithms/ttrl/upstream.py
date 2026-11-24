@@ -2,6 +2,7 @@
 import ast
 import importlib.util
 import sys
+from threading import current_thread, main_thread
 
 from rsicomposer.api import checkout
 
@@ -14,6 +15,7 @@ class TTRLReward:
 
     def __init__(self, root):
         root = checkout(root, TTRL_REVISION)
+        self.root = root
         package = root / 'verl/verl/utils/reward_score/ttrl_math'
         name = '_rsisys_ttrl_math_' + TTRL_REVISION
         if name not in sys.modules:
@@ -43,6 +45,12 @@ class TTRLReward:
 
     def is_correct(self, completion, gold):
         return bool(self.module.compute_score(completion, gold)['acc'])
+
+    def score_many(self, pairs):
+        if current_thread() is not main_thread():
+            from ._reward_worker import score_official_pairs
+            return score_official_pairs(pairs, self.root)
+        return [self.is_correct(completion, gold) for completion, gold in pairs]
 
     def rewards(self, completions):
         pseudo, ratio = self.vote(completions)

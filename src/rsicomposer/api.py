@@ -114,6 +114,9 @@ _EXPORTS = {
     'TokenUsage': ('rsicomposer.loops.contracts.model_service', 'TokenUsage'),
     # Observation from the host and worker processes.
     'current_observations': ('rsicomposer.runtime.observation', 'current_observations'),
+    'ObservationProbe': ('rsicomposer.runtime.observation.facts', 'ObservationProbe'),
+    'emit_observation': ('rsicomposer.runtime.observation.facts', 'emit_observation'),
+    'observation_id': ('rsicomposer.runtime.observation.facts', 'observation_id'),
     'log': ('rsicomposer.runtime.observation.client', 'log'),
     'observe': ('rsicomposer.runtime.observation', 'observe'),
     'register_probe': ('rsicomposer.runtime.observation', 'register_probe'),
@@ -121,6 +124,9 @@ _EXPORTS = {
     'report_model_calls': ('rsicomposer.runtime.observation', 'report_model_calls'),
     'report_samples': ('rsicomposer.runtime.observation', 'report_samples'),
     'report_training_log': ('rsicomposer.runtime.observation', 'report_training_log'),
+    'report_version': ('rsicomposer.runtime.observation', 'report_version'),
+    'report_version_evaluation': ('rsicomposer.runtime.observation', 'report_version_evaluation'),
+    'report_version_selection': ('rsicomposer.runtime.observation', 'report_version_selection'),
     'trigger_probe': ('rsicomposer.runtime.observation', 'trigger_probe'),
     # The math Lab's answer verifiers, shared by math methods (Math-Verify is optional).
     'AnswerCheck': ('rsicomposer.labs.math.verifiers', 'AnswerCheck'),
@@ -391,9 +397,17 @@ if _TYPE_CHECKING:
         report_model_calls as report_model_calls,
         report_samples as report_samples,
         report_training_log as report_training_log,
+        report_version as report_version,
+        report_version_evaluation as report_version_evaluation,
+        report_version_selection as report_version_selection,
         trigger_probe as trigger_probe,
     )
     from rsicomposer.runtime.observation.client import log as log
+    from rsicomposer.runtime.observation.facts import (
+        ObservationProbe as ObservationProbe,
+        emit_observation as emit_observation,
+        observation_id as observation_id,
+    )
     from rsicomposer.runtime.storage.files import (
         atomic_write as atomic_write,
         file_hash as file_hash,

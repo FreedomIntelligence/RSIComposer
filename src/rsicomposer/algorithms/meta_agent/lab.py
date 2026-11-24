@@ -18,7 +18,11 @@ from rsicomposer.api import (
     OperationCall,
     OperationResult,
     OperationSpec,
+    emit_observation,
     file_hash,
+    report_version,
+    report_version_evaluation,
+    report_version_selection,
     sandbox_step,
     validate_source,
 )
@@ -194,6 +198,8 @@ class HarnessResearchLab:
                 raise LabToolError('Harness interface check failed: ' + str(exc)) from exc
             self.candidates[ident] = (path, file_hash(path))
             (self.root / (ident + '.json')).write_text(json.dumps({'hypothesis': hypothesis, 'sha256': file_hash(path)}))
+            report_version(ident, label=ident)
+            emit_observation('meta_agent.candidate', call.call_id, subject=ident, components={'source': source})
             return OperationResult('Candidate registered; no measurement or adoption yet', (), False,
                                    data={'candidate_id': ident, 'sha256': file_hash(path)})
         ident = args['candidate_id']
@@ -207,6 +213,10 @@ class HarnessResearchLab:
             trials = self.config.get('final_trials', 2) if split == 'heldout' else self.config.get('trials', 2)
             result = self._measure(ident, split, trials, args['indices'])
             data = dict(result.data, request=args, candidate_id=ident, baseline=ident == 'baseline')
+            if result.status == ExecutionStatus.COMPLETED:
+                if ident == 'baseline':
+                    report_version(ident, label='Baseline', round_index=0, parent_ids=())
+                report_version_evaluation(ident, call.call_id)
             if split == 'heldout':
                 return replace(result, data=data)
             self.measured.add(ident)
@@ -221,6 +231,8 @@ class HarnessResearchLab:
             data['example_is_excerpt'] = True
             return replace(result, data=data)
         self.selected = ident
+        report_version_selection(ident, step=len(self.candidates) - 1, event_id=call.call_id,
+                                 action='kept' if ident == 'baseline' else 'selected')
         return OperationResult('Selection recorded; finish to request host final evaluation', (), False,
             data={'selection_recorded': True, 'selected_candidate': ident, 'candidate_id': ident})
 

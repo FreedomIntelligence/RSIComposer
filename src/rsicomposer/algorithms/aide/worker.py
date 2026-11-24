@@ -21,7 +21,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from rsicomposer.algorithms.aide.controller import AIDE_REVISION, valid_resume
-from rsicomposer.api import UpstreamWorker, atomic_write, checkout, emit_event, file_hash as digest
+from rsicomposer.api import (UpstreamWorker, atomic_write, checkout, emit_event, emit_observation,
+                             file_hash as digest, observation_id)
 
 SNAPSHOT_FORMAT = 'rsisys-aide-snapshot/v3'
 
@@ -90,6 +91,13 @@ def prepare_preview(files, preview):
         (preview / name).write_bytes(content.encode())
 
 
+def normalize_review_metric(result):
+    # JSON integers satisfy the number schema, but aideml's reviewer requires float.
+    output = result[0]
+    if isinstance(output, dict) and type(output.get('metric')) is int:
+        return ({**output, 'metric': float(output['metric'])}, *result[1:])
+    return result
+
 
 def run(config, channel=None):
     channel = channel or UpstreamWorker()
@@ -101,6 +109,7 @@ def run(config, channel=None):
     from aide.journal import Journal
     from aide.utils.config import _load_cfg
     from aide.utils.serialize import dumps_json, loads_json
+    from jsonschema import ValidationError
 
     resume = config.get('resume')
     if resume is not None and not valid_resume(resume):
@@ -141,7 +150,21 @@ def run(config, channel=None):
             calls.append({'input_tokens': result[2], 'output_tokens': result[3]})
             return result
         try:
-            result = native_query(**kwargs)
+            for attempt in range(3):
+                try:
+                    result = native_query(**kwargs)
+                    if function is not None and function.name == 'submit_review':
+                        result = normalize_review_metric(result)
+                    break
+                except ValidationError as error:
+                    if function is None or attempt == 2:
+                        raise
+                    field = '.'.join(map(str, error.absolute_path)) or 'arguments'
+                    key = 'user_message' if kwargs.get('user_message') is not None else 'system_message'
+                    kwargs = {**kwargs, key: kwargs[key] + (
+                        f'\nThe previous tool reply failed schema validation at {field}. '
+                        'Return the same required tool using the declared types. When a field is unknown '
+                        'and nullable, use the literal null, not the string "None".')}
         except Exception as exc:
             trace['error'] = type(exc).__name__ + ': ' + str(exc)
             with (root / 'llm-calls.jsonl').open('a') as stream:
@@ -217,7 +240,11 @@ def run(config, channel=None):
         if result.get('kind') != 'execution_result':
             raise ValueError('Expected AIDE execution callback result')
         return ExecutionResult(**result['execution_result'])
+    def observed_node(node):
+        return observation_id('aide.node', str(node.id))
+
     while len(journal.nodes) < cfg.agent.steps:
+        previous_nodes = len(journal.nodes)
         agent.step(execute)
         if current['log'].replaying:
             raise RuntimeError('Resumed AIDE step finished with unreplayed recorded replies')
@@ -225,10 +252,19 @@ def run(config, channel=None):
         (root / 'journal.json').write_text(dumps_json(journal))
         snapshot_sha = snapshot(agent, journal)
         current['log'] = store.step_log(len(journal.nodes), snapshot_sha)
+        for node in journal.nodes[previous_nodes:]:
+            ident = observed_node(node)
+            emit_observation('aide.node', ident, scope='aide', subject=ident,
+                             links={'derived_from': [observed_node(node.parent)] if node.parent else []},
+                             fields={'step': node.step, 'stage': node.stage_name,
+                                     'score': getattr(node.metric, 'value', None)})
     best = journal.get_best_node()
     initial = next(iter(journal.good_nodes), None)
     evaluations = []
     if best is not None:
+        emit_observation('aide.selection', observation_id('aide.selection', str(best.id)), scope='aide',
+                         subject=observed_node(best), links={'selected': [observed_node(best)]},
+                         fields={'step': best.step, 'score': best.metric.value})
         for label, node in (('initial', initial), ('selected', best)):
             candidate = root / f'candidate-{node.step}.py'
             evaluations.append({'label': label, 'candidate': candidate.relative_to(root).as_posix(), 'sha256': digest(candidate)})

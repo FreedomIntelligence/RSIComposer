@@ -1,10 +1,9 @@
 """ReST^EM's Lab: a MathLab whose candidates are model checkpoints trained from its own samples.
 
-Data, verifiers and scoring are MathLab's. The dataset manifest has a `train`
-split (problems to sample from) and a `dev` split (measured after every round)
-and selects each split's answer verifier; MathLab rejects problems that repeat
-across splits. The engine generates and trains; evaluate() reuses MathLab's
-solve/score/trace, and filtering reuses its verify().
+Data, verifiers and scoring are MathLab's. The manifest has train and dev
+splits and may include a split reserved for host evaluation after selection.
+MathLab rejects problems that repeat across splits. The engine generates and
+trains; evaluation and filtering reuse MathLab's scoring.
 
 The Controller owns phase ordering and model selection; it names a split in
 `dataset` (or the split file's path). The Lab owns execution and artifact
@@ -25,7 +24,7 @@ from rsicomposer.api import WorkerLostError
 from rsicomposer.api import (
     ExecutionStatus, Invariant,
     CheckpointRuntime, MathAttempt, MathLab, MetricSpec, ModelRef,
-    OperationResult,
+    OperationCall, OperationResult,
     OperationSpec,
     file_hash,
 )
@@ -37,7 +36,8 @@ def validate_config(config):
                'generation_batch_size', 'train_batch_size', 'gradient_accumulation_steps',
                'prompt_format', 'few_shot_data', 'answer_format',
                'inference_python', 'training_python', 'gpu_memory_utilization',
-               'max_num_seqs', 'max_num_batched_tokens', 'train_gradient_checkpointing', 'trainer'}
+               'max_num_seqs', 'max_num_batched_tokens', 'train_gradient_checkpointing', 'trainer',
+               'sealed_split'}
     if set(config) - allowed or config.get('engine', config.get('mode', 'fixture')) not in ('fixture', 'transformers', 'vllm'):
         raise ValueError('Unknown math Lab configuration or engine')
     if config.get('engine', config.get('mode')) == 'vllm' and config.get('device', 'cuda') != 'cuda':
@@ -61,6 +61,10 @@ def validate_config(config):
         raise ValueError('mode and engine must agree when both are supplied')
     if not isinstance(config.get('manifest'), str) or not config['manifest'].strip():
         raise ValueError('manifest must be the path of a math dataset manifest with train and dev splits')
+    if 'sealed_split' in config:
+        name = config['sealed_split']
+        if not isinstance(name, str) or not name.strip() or name in ('train', 'dev'):
+            raise ValueError('sealed_split must name a distinct split in the math manifest')
     subdir = config.get('output_subdir', 'math-lab')
     if not isinstance(subdir, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', subdir):
         raise ValueError('output_subdir must be a simple run-local directory name')
@@ -114,8 +118,12 @@ class RestEMLab(MathLab):
         if type(getattr(self.engine, 'simulated', None)) is not bool:
             raise TypeError('Math engine must declare simulated as a bool')
         self.simulated = self.engine.simulated
+        self.sealed_split = config.get('sealed_split')
+        split_roles = {'train': 'train', 'dev': 'dev'}
+        if self.sealed_split:
+            split_roles[self.sealed_split] = 'sealed'
         MathLab.__init__(self, context, {
-            'manifest': config['manifest'], 'split_roles': {'train': 'train', 'dev': 'dev'},
+            'manifest': config['manifest'], 'split_roles': split_roles,
             'grading_workers': config.get('grading_workers', 1)})
         self.root = Path(context.data_dir) / config.get('output_subdir', 'math-lab')
         # A resumed run rebuilds the Lab over its own existing output directory.
@@ -156,7 +164,16 @@ class RestEMLab(MathLab):
         return (Invariant.baseline_before('generate'),)
 
     def final_evaluations(self):
-        return ()
+        selection = self.root / 'selection.jsonl'
+        digest = self.artifact_hashes.get(str(selection.resolve()))
+        if not self.sealed_split or digest is None:
+            return ()
+        if file_hash(selection) != digest:
+            raise ValueError('ReST^EM selection changed after publication')
+        selected = self._read(selection)[0]['model']
+        return tuple(OperationCall('evaluate', {'round': 0, 'split': self.sealed_split,
+                     'dataset': self.sealed_split, 'model': model, 'baseline': baseline})
+                     for model, baseline in ((self.initial, True), (selected, False)))
 
     def describe(self):
         fields = {
@@ -219,7 +236,12 @@ class RestEMLab(MathLab):
             raise ValueError('temperature must be finite and nonnegative')
         if call.name == 'generate' and args['condition'] not in ('none', 'answer'):
             raise ValueError('condition must be none or answer')
-        key = (args['round'], call.name)
+        phase = call.name
+        if phase == 'evaluate' and self.sealed_split and args['split'] == self.sealed_split:
+            if type(args.get('baseline')) is not bool:
+                raise ValueError('A sealed evaluation must identify its baseline or selected arm')
+            phase = 'sealed-baseline' if args['baseline'] else 'sealed-selected'
+        key = (args['round'], phase)
         if key in self.seen:
             raise ValueError('Repeated stage rejected: each (round, operation) runs once per run')
         self.seen.add(key)
@@ -301,9 +323,11 @@ class RestEMLab(MathLab):
         return {'model': str(output.resolve()), 'manifest': manifest}
 
     def _evaluate(self, call, args):
-        if self.split_named(args['dataset'], 'dev') != args['split']:
-            raise ValueError('ReST EM evaluates its configured development dataset')
-        if args['round'] == 0:
+        split = args['split']
+        role = 'sealed' if split == self.sealed_split else 'dev'
+        if self.split_named(args['dataset'], role) != split:
+            raise ValueError('ReST^EM dataset and evaluation split must match')
+        if role == 'dev' and args['round'] == 0:
             self.initial = args['model']
         return self.evaluate(call.call_id, args)
 

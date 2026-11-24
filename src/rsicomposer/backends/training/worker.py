@@ -101,7 +101,7 @@ def generate(request):
         raise ValueError('Prompt and generation budget exceed max_length')
     llm = LLM(model=request['model'], dtype='bfloat16', tensor_parallel_size=1,
         max_model_len=config.get('max_length', 4096), max_num_seqs=128,
-        max_num_batched_tokens=32768, gpu_memory_utilization=0.8,
+        max_num_batched_tokens=32768, gpu_memory_utilization=config.get('gpu_memory_utilization', 0.8),
         enforce_eager=config.get('enforce_eager', False), enable_prefix_caching=True,
         seed=config.get('seed', 73) + request.get('seed_offset', 0) + request['rank'])
     params = SamplingParams(temperature=request.get('temperature', config.get('temperature', 0.7)) if request['sample'] else 0.0,

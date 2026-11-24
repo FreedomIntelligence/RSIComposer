@@ -1,5 +1,14 @@
 <template>
   <LiveStage :run="run" />
+  <section class="section iteration-section" aria-labelledby="iteration-title">
+    <h2 id="iteration-title">{{ t('迭代表现') }}</h2>
+    <div v-if="!loadingTrendFacts && trends.length" class="iteration-grid">
+      <SeriesChart v-for="series in trends" :key="series.key" :title="trendTitle(series)"
+        :context="trendContext(series)" :sets="[{name: t(series.definition.label || series.metric), points: series.points}]"
+        :definition="series.definition" :axis-label="t('轮次')" />
+    </div>
+    <p v-else-if="!loadingTrendFacts" class="muted">{{ t('缺少两个不同轮次的同口径评测') }}</p>
+  </section>
   <section v-if="sealed.length && reported?.kind !== 'bin_packing'" class="section results-section">
     <SectionTitle :title="t('封存评测')" />
     <div class="benchmark-panels">
@@ -9,8 +18,7 @@
   </section>
   <section v-if="reported?.kind === 'promptpg'" class="section">
     <SectionTitle :title="t('TabMWP · 封存集策略对照')" />
-    <DataTable :headers="[t('策略'), t('答对 / 总数'), t('准确率')]" :numeric="[1, 2]"
-      :rows="reported.comparison.map(score => [t(armLabels[score.arm]), `${score.correct}/${score.total}`, tallyRate(score)])" />
+    <ResultPanel :title="t('准确率')" :rows="promptRows" :maximum="1" scale-start="0%" scale-end="100%" />
   </section>
   <section v-else-if="reported?.kind === 'reflexion'" class="section">
     <SectionTitle :title="t('HumanEval · 隐藏测试')" />
@@ -36,9 +44,7 @@
   <div v-if="reported?.kind !== 'bin_packing' && (performance || selected.length)" class="section benchmark-panels">
     <section v-if="performance" class="benchmark-panel">
       <SectionTitle :title="panelTitle(performance, '搜索集')" />
-      <SeriesChart v-if="performance.points.length > 1" :title="t('采纳版本表现')"
-        :sets="[{name: metricLabel, points: performance.points}]" :definition="performance.definition" :axis-label="t('版本次序')" />
-      <dl v-else class="benchmark-scores">
+      <dl class="benchmark-scores">
         <div><dt>{{ t('当前版本') }}</dt><dd class="num">{{ formatMetric(performance.value, performance.definition) }}</dd></div>
       </dl>
     </section>
@@ -66,7 +72,7 @@
   </details>
 </template>
 <script setup>
-import {computed} from 'vue';
+import {computed, ref, watch} from 'vue';
 import LiveStage from '../components/LiveStage.vue';
 import StageTable from '../components/StageTable.vue';
 import SectionTitle from '../components/SectionTitle.vue';
@@ -78,12 +84,56 @@ import ResultPanel from '../components/ResultPanel.vue';
 import {store, navigate} from '../app/store.js';
 import {t, durationText} from '../app/i18n.js';
 import {rowsOf, stagesOf, incumbentPerformance, selectedPerformance, sealedPerformance, methodPerformance,
-  benchmarkLabel, formatMetric, formatNumber} from '../app/insight.js';
+  validationTrends, missingValidationFacts, qualityReceiptKey, benchmarkLabel, formatMetric, formatNumber} from '../app/insight.js';
 const props = defineProps({run: {type: Object, required: true}});
 const performance = computed(() => incumbentPerformance(props.run));
 const selected = computed(() => performance.value ? [] : selectedPerformance(props.run));
 const sealed = computed(() => sealedPerformance(props.run));
 const reported = computed(() => methodPerformance(props.run));
+const archivedFacts = ref([]), loadingTrendFacts = ref(false);
+const wantedFacts = computed(() => JSON.stringify(missingValidationFacts(props.run)));
+watch(wantedFacts, async (_, __, onCleanup) => {
+  const needed = new Set(missingValidationFacts(props.run, archivedFacts.value));
+  loadingTrendFacts.value = needed.size > 0;
+  if (!needed.size) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  let current = true;
+  onCleanup(() => { current = false; clearTimeout(timeout); controller.abort(); });
+  const found = [];
+  try {
+    // A snapshot only contains recent events; recover older scorer/protocol references by receipt.
+    let cursor = 0;
+    for (let page = 0; page < 10 && needed.size && cursor !== null; page++) {
+      const response = await fetch(`/api/runs/${encodeURIComponent(props.run.run_id)}/events?cursor=${cursor}&category=quality`,
+        {signal: controller.signal});
+      if (!response.ok) break;
+      const data = await response.json();
+      for (const event of rowsOf(data.events)) {
+        if (event.kind !== 'host.evaluated' || !(event.fields?.scorer || event.fields?.protocol)) continue;
+        if (needed.delete(qualityReceiptKey(event.call_id, event.fields?.benchmark))) found.push(event);
+      }
+      cursor = Number.isSafeInteger(data.next_cursor) && data.next_cursor > cursor ? data.next_cursor : null;
+    }
+  } catch {
+    // Receipts missing metadata remain in their own group if the archive cannot be read.
+  } finally {
+    clearTimeout(timeout);
+    if (current) {
+      archivedFacts.value = [...archivedFacts.value, ...found];
+      loadingTrendFacts.value = false;
+    }
+  }
+}, {immediate: true});
+const trends = computed(() => [
+  ...(performance.value?.points.length > 1 ? [{...performance.value, key: 'incumbent'}] : []),
+  ...validationTrends(props.run, archivedFacts.value),
+]);
+const trendTitle = series => [t(benchmarkLabel(series.benchmark || '')), splitLabel(series.split) || t('评测'),
+  series.key === 'incumbent' ? t('采纳版本表现') : series.multiple ? t('本轮最佳候选') : ''].filter(Boolean).join(' · ');
+const trendContext = series => [t(series.definition.label || series.metric), t('第 {p0}–{p1} 轮', {
+  p0: series.points[0].x, p1: series.points.at(-1).x,
+}), series.count ? t('每次评测 {p0} 个样本', {p0: formatNumber(series.count)}) : ''].filter(Boolean).join(' · ');
 const armLabels = {trained: '训练后的选择器', random: '随机选择', nearest: '最近邻选择'};
 const packingArms = {first_fit: 'First Fit', best_fit: 'Best Fit', selected: '最终选中版本'};
 const packingDelta = computed(() => {
@@ -93,8 +143,11 @@ const packingDelta = computed(() => {
     {p0: formatNumber(Math.abs(delta))});
 });
 const tallyRate = score => formatMetric(score.correct / score.total, {unit: 'ratio'});
+const promptRows = computed(() => reported.value?.kind === 'promptpg' ? reported.value.comparison.map(score => ({
+  label: t(armLabels[score.arm]), value: tallyRate(score), detail: `${score.correct}/${score.total}`,
+  amount: score.correct / score.total, chosen: score.arm === 'trained',
+})) : []);
 const actionLabels = {kept: '保留原版本', selected: '已选定', applied: '已生效'};
-const metricLabel = computed(() => performance.value?.definition.label || performance.value?.metric);
 const stageCount = computed(() => stagesOf(props.run).length);
 const evaluations = computed(() => rowsOf(props.run.evaluations).length);
 const cards = computed(() => {
@@ -137,9 +190,10 @@ function changeFrom(definition, baseline, value) {
   return {change, tone};
 }
 function comparison({definition}, initial, chosen, chosenLabel) {
-  const rows = [[initial, t('初始版本'), false], [chosen, chosenLabel, true]].filter(([score]) => score)
-    .map(([score, label, selected]) => ({label, value: formatMetric(score.value, definition), amount: score.value,
-      detail: score.correct != null && score.count != null ? `${score.correct}/${score.count}` : '', chosen: selected}));
+  const rows = [[initial, t('初始版本'), false], [chosen, chosenLabel, true]]
+    .map(([score, label, selected]) => ({label, value: Number.isFinite(score?.value) ? formatMetric(score.value, definition) : t('无可比较成绩'),
+      amount: score?.value, detail: score?.correct != null && score.count != null ? `${score.correct}/${score.count}` : '',
+      chosen: selected && Number.isFinite(score?.value)}));
   const maximum = isRatio(definition) && rows.some(({amount}) => amount >= 0 && amount <= 1) ? 1 : 0;
   return {rows, maximum, scaleStart: '0%', scaleEnd: '100%', ...changeFrom(definition, initial?.value, chosen?.value)};
 }
@@ -149,6 +203,10 @@ function open(id) {
 }
 </script>
 <style scoped>
+.iteration-section h2 { margin-bottom: 10px; }
+.iteration-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 25rem), 1fr)); gap: 16px; }
+.iteration-grid > * { min-width: 0; }
+.iteration-grid :deep(h3) { overflow-wrap: anywhere; }
 .benchmark-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 24px; }
 .benchmark-panel { min-width: 0; }
 .benchmark-scores { margin: 0; border-top: 1px solid var(--line); }

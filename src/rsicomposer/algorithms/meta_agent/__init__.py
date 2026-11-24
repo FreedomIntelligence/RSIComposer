@@ -12,8 +12,9 @@ def _memory(config):
 
 
 def register(registry):
-    from rsicomposer.api import ControllerDefinition, MethodDefinition
+    from rsicomposer.api import ControllerDefinition, MethodDefinition, ObservationProbe
     from .lab import HarnessResearchLab, validate_config as validate_lab
     registry.register_method('meta_agent', MethodDefinition.from_factories(
         controller=ControllerDefinition(build_harness_research, memory=_memory, endpoint=True), labs={'math': HarnessResearchLab}, version='2',
+        observation_probes=(ObservationProbe('meta_agent.candidate', 'decision', (), 'lineage', content=True),),
         validate_controller=validate_harness_research, validate_labs={'math': validate_lab}))

@@ -8,7 +8,9 @@ from copy import deepcopy
 import math
 import re
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import Decision, ExecutionStatus, OperationCall, report_version_selection
+
+from ..shared.weight_observation import model_version, observe_weight_receipt
 
 
 def _ref(value, label):
@@ -61,7 +63,7 @@ class RestEMController:
                 raise ValueError(f'{key} must be a positive integer')
 
     def required_operations(self):
-        return tuple(f'{self.lab}.{name}' for name in ('generate', 'filter', 'train', 'evaluate'))
+        return tuple(f'{self.lab}.{name}' for name in ('generate', 'filter', 'train', 'evaluate', 'select'))
 
     def required_profiles(self):
         return {self.lab: 'round-weight-training/v1'}
@@ -75,6 +77,8 @@ class RestEMController:
             args.update(samples=self.generated, max_accepted_per_prompt=self.max_accepted_per_prompt)
         elif self.stage == 'train':
             args.update(parent=self.initial_model, dataset=self.accepted)
+        elif self.stage == 'select':
+            args.update(model=self.current_model)
         else:
             args.update(model=self.candidate or self.current_model, dataset=self.eval_data, split='dev', baseline=self.round == 0)
         return OperationCall(f'{self.lab}.{self.stage}', args)
@@ -85,6 +89,7 @@ class RestEMController:
         # tables remain outside the decision window, behind artifact references.
         if data.get('request') != args:
             raise ValueError('ReST^EM receipt request does not match the pending operation')
+        observe_weight_receipt('rest_em', self.pending, data)
         if self.stage in ('generate', 'filter'):
             count = data.get('count')
             if type(count) is not int or count < 0:
@@ -106,6 +111,10 @@ class RestEMController:
                 raise ValueError('Training must publish a distinct immutable model reference')
             self.candidate = candidate
             self.stage = 'evaluate'
+        elif self.stage == 'select':
+            if data.get('model') != self.current_model:
+                raise ValueError('ReST^EM selection receipt must name the applied model')
+            self.stopped = 'Configured ReST^EM rounds completed; quality change is recorded in evaluation receipts'
         else:
             metrics = data.get('quality_metrics')
             if not isinstance(metrics, dict) or not metrics or any(
@@ -116,8 +125,10 @@ class RestEMController:
                                  'quality_metrics': deepcopy(metrics), 'simulated': feedback.simulated})
             if self.candidate is not None:
                 self.current_model, self.candidate = self.candidate, None
+                report_version_selection(model_version(self.current_model), step=self.round,
+                                         event_id=feedback.call_id, action='applied')
             if self.round >= self.iterations:
-                self.stopped = 'Configured ReST^EM rounds completed; quality change is recorded in evaluation receipts'
+                self.stage = 'select'
             else:
                 self.round += 1
                 self.stage = 'generate'

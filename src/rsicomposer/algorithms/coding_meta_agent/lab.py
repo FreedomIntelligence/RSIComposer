@@ -9,7 +9,8 @@ from pathlib import Path
 import time
 
 from rsicomposer.api import (DomainAgentRejected, DomainAgentSpec, CodingLab, CodingArtifact, DEV, SEALED, Invariant, MetricSpec,
-                        OperationCall, OperationResult, OperationSpec, LabToolError, atomic_write, json_bytes)
+                        OperationCall, OperationResult, OperationSpec, LabToolError, atomic_write, json_bytes,
+                        emit_observation, report_version, report_version_evaluation, report_version_selection)
 
 BASELINE = 'Inspect the project, implement a correct minimal fix, and run relevant tests before finishing.'
 POLICY_OPTIONS = {'min_candidates', 'max_candidates'}
@@ -222,6 +223,9 @@ class CodingSearchLab:
                     raise LabToolError('Candidate budget exhausted; select a measured candidate')
                 atomic_json(path, {'id': ident, 'instruction': instruction, 'hypothesis': hypothesis,
                                    'sha256': digest(instruction)})
+            report_version(ident, label=ident)
+            emit_observation('coding_meta_agent.candidate', call.call_id, subject=ident,
+                             components={'instruction': instruction})
             return self._result('Candidate registered, not evaluated', {'candidate_id': ident})
         candidate, path = self._candidate(args['candidate_id'])
         if call.name == 'inspect':
@@ -252,10 +256,15 @@ class CodingSearchLab:
                 scores=[row['score'] for row in data['tasks']],
                 trace_refs=[asdict(ref)] * len(data['tasks']),
                 feedback=[f"{row['task_id']}: reward {row['score']}" for row in data['tasks']])
+            if candidate['id'] == 'baseline':
+                report_version('baseline', label='Baseline', round_index=0, parent_ids=())
+            report_version_evaluation(candidate['id'], call.call_id)
             return self._result('Coding candidate evaluated', data)
         self.selected = candidate['id']
         atomic_json(self.root / 'selection.json', {'candidate_id': self.selected,
                     'selected_at': time.time(), 'protocol_fingerprint': self.fingerprint})
+        report_version_selection(self.selected, step=len(list(self.candidates.glob('candidate-*.json'))),
+                                 event_id=call.call_id, action='kept' if self.selected == 'baseline' else 'selected')
         return self._result('Selection recorded; finish to request host final evaluation', {
             'candidate_id': self.selected, 'selected_candidate': self.selected, 'selection_recorded': True})
 

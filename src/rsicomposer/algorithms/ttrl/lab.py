@@ -66,7 +66,7 @@ def _majority_reward(completions, verifier):
 def validate_config(config):
     allowed = {'data_root', 'output_subdir', 'inference_python', 'training_python',
                'seed', 'max_length', 'max_tokens', 'lora_rank', 'batch_size', 'rl_lr', 'kl_beta',
-               'gradient_checkpointing', 'temperature', 'enforce_eager', 'stop',
+               'gradient_checkpointing', 'temperature', 'enforce_eager', 'gpu_memory_utilization', 'stop',
                'inference_cuda_home', 'training_cuda_home', 'eval_samples', 'evaluation_temperature',
                'evaluation_top_p', 'top_p', 'apply_chat_template'}
     if set(config) - allowed:
@@ -201,12 +201,18 @@ class TTRLLab(WeightTrainingLab):
                 'top_p': self.config.get('evaluation_top_p', 0.95)} if sampled else {}))
         if len(outputs) != len(rows) * count:
             raise ValueError('Missing evaluation samples')
+        pairs = [(output['completion'], row['answer'])
+                 for output, row in zip(outputs, (row for row in rows for _ in range(count)), strict=True)]
+        score_many = getattr(self.verifier, 'score_many', None)
+        scores = score_many(pairs) if callable(score_many) else [self.verifier.is_correct(*p) for p in pairs]
+        if len(scores) != len(outputs):
+            raise ValueError('Evaluation scorer did not return one result per sample')
         scored = []
         for i, row in enumerate(rows):
             for sample, output in enumerate(outputs[i * count:(i + 1) * count]):
                 scored.append({'id': row['id'], 'sample': sample,
                     'split': 'target' if i < len(data['target']) else 'transfer',
-                    'completion': output['completion'], 'correct': self.verifier.is_correct(output['completion'], row['answer'])})
+                    'completion': output['completion'], 'correct': scores[i * count + sample]})
         metrics = {}
         for split in ('target', 'transfer'):
             subset = [r for r in scored if r['split'] == split]

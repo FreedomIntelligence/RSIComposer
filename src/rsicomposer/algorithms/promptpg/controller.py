@@ -2,7 +2,10 @@
 
 from copy import deepcopy
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import (
+    Decision, ExecutionStatus, OperationCall, emit_observation, observation_id,
+    report_version, report_version_selection,
+)
 
 from ..shared.experiment import MethodEvents
 
@@ -94,10 +97,25 @@ class PromptPGController:
                     raise RuntimeError('Expected a matching completed PromptPG Lab receipt')
                 if receipt.data.get('request') != self.pending.arguments:
                     raise RuntimeError('PromptPG Lab receipt differs from its request')
-                value = self.received(self.pending.name.removeprefix('tabmwp.'), receipt.data)
+                operation = self.pending.name.removeprefix('tabmwp.')
+                if operation == 'prepare':
+                    report_version('promptpg-initial', label='Initial selector', round_index=0, parent_ids=())
+                elif operation in ('save', 'restore'):
+                    epoch = self.pending.arguments['epoch']
+                    version = f'promptpg-selector-{epoch}'
+                    if operation == 'save':
+                        # Later epochs continue from live weights, which may not have been saved.
+                        report_version(version, label=f'Selector epoch {epoch}', round_index=epoch,
+                                       parent_ids=('promptpg-initial',) if epoch == 1 else None)
+                    else:
+                        report_version_selection(version, step=epoch, event_id=receipt.call_id)
+                value = self.received(operation, receipt.data)
                 self.sent.append(value)
                 name, args, reason = self.flow.send(deepcopy(value))
         except StopIteration:
+            for arm, score in self.events.report()['heldout'].items():
+                emit_observation('promptpg.heldout', observation_id('promptpg.heldout', arm),
+                                 subject=arm, fields={'arm': arm, 'correct': score['correct'], 'total': score['total']})
             return Decision('finish', reason='PromptPG and held-out comparisons completed')
         self.pending = OperationCall('tabmwp.' + name, args)
         return Decision.invoke(self.pending, reason=reason)

@@ -12,7 +12,8 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import (Decision, ExecutionStatus, OperationCall, report_version,
+                             report_version_evaluation, report_version_selection)
 
 from ..shared.experiment import MethodEvents
 from .packing import BASES
@@ -121,12 +122,19 @@ class FunSearchController:
                 raise RuntimeError('Unexpected FunSearch seed receipt')
             self.seen.update(row['version']['digest'] for row in self.baselines.values())
             for label, row in self.baselines.items():
+                report_version(row['version']['digest'], label=label, parent_ids=(),
+                               source_decision_ids=(decision_id,))
                 self.queue.append(self.score_request(row, 'development', label))
         elif operation == 'register':
             self.registered.add(data['candidate_id'])
             self.queue.appendleft(pending['followup'])
         elif operation == 'evaluate':
             self.consume_score(call.arguments, data, receipt, decision_id)
+            if data['score'] is not None:
+                report_version_evaluation(call.arguments['candidate_id'], feedback.call_id)
+        elif operation == 'select':
+            report_version_selection(call.arguments['candidate_id'], step=self.stats['proposals'],
+                                     event_id=feedback.call_id)
         return receipt
 
     def consume_generation(self, request, data, receipt):
@@ -139,9 +147,13 @@ class FunSearchController:
         for row in candidates:
             index, version = row['index'], row['version']
             if version is None:
-                self.stats['parse_rejections'] += 1
-                self.emit('candidate', {'index': index, 'status': 'parse_rejected',
-                                       'generation_receipt_id': receipt})
+                event = {'index': index, 'generation_receipt_id': receipt}
+                if 'generation_error' in row:
+                    event.update(status='generation_rejected', reason=row['generation_error'])
+                else:
+                    self.stats['parse_rejections'] += 1
+                    event['status'] = 'parse_rejected'
+                self.emit('candidate', event)
                 continue
             key = version['digest']
             is_duplicate = key in self.seen
@@ -152,6 +164,10 @@ class FunSearchController:
                 self.stats['duplicates'] += 1
                 continue
             self.seen.add(key)
+            parents = request['parents']
+            report_version(key, label=f'Candidate {index + 1}',
+                           parent_ids=tuple(dict.fromkeys(parent['version']['digest'] for parent in parents)),
+                           source_decision_ids=tuple(dict.fromkeys(parent['score_decision_id'] for parent in parents)))
             self.queue.append(self.score_request({**row, 'island': request['island'],
                                                   'receipt_id': receipt}, 'development', 'candidate'))
 
@@ -297,7 +313,7 @@ class FunSearchController:
                 self.sampling[key] = {'request': request, 'decision_id': None}
                 self.sampler.submit(key, request)
                 started.append(key)
-        if (not self.pending and not self.sampling and not self.queue and not self.selected
+        if (not active_evaluators and not self.pending and not self.sampling and not self.queue and not self.selected
                 and self.stats['proposals'] == self.config['proposals']):
             self.selected = True
             self.emit('selection', {'source_split': 'development', **self.best})

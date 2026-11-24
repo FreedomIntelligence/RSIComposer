@@ -89,7 +89,7 @@ These are integration checks. Full benchmark runs with models and RSI methods ar
 | :-- | :-- | :-- | :-- | :-- |
 | Self-training | [ReST^EM](https://arxiv.org/abs/2312.06585) · [STaR](https://arxiv.org/abs/2203.14465) · [TTRL](https://arxiv.org/abs/2504.16084) · TTRL-verl | Schedules generate, filter and train rounds | The model samples answers, is scored and fine-tuned | Model weights |
 | Self-editing | [SEAL](https://arxiv.org/abs/2506.10943) | Schedules self-edit rounds | The model writes its own training data and is updated | Model weights (unified) |
-| Prompt search | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · GEPA-Merge · [PromptPG](https://arxiv.org/abs/2209.14610) | Searches over candidate prompts | A task model is evaluated with each prompt | Prompts |
+| Prompt search | [OPRO](https://arxiv.org/abs/2309.03409) · [GEPA](https://arxiv.org/abs/2507.19457) · [PromptPG](https://arxiv.org/abs/2209.14610) | Searches over candidate prompts | A task model is evaluated with each prompt | Prompts |
 | Program search | [FunSearch](https://github.com/google-deepmind/funsearch) | Evolves a population of programs | Programs are executed and scored | Programs |
 | Harness search | [RRSI](https://arxiv.org/abs/2609.24972) · Meta-Agent · [Coding Meta-Agent](src/rsicomposer/algorithms/coding_meta_agent/README.md) | A model proposes harness changes | An agent solves tasks with the candidate harness | Agent harness |
 | Reflection | [Reflexion](https://arxiv.org/abs/2303.11366) | Decides when to retry | The same agent writes code, runs tests and reflects on failures | Its own reflections (unified) |

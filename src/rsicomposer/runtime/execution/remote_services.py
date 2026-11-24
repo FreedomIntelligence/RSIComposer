@@ -119,6 +119,8 @@ class HostWorkerServices:
             return tuple(self._issued_tokens)
 
     def environment(self, component, supplied=None):
+        from rsicomposer.runtime.observation import current_observations
+        from rsicomposer.runtime.observation.client import OBSERVATION_URL_ENV
         model_access = getattr(self.context, '_model_access', None)
         delegated = model_access.nested_environment(supplied) if model_access is not None else {}
         if component is None:
@@ -141,6 +143,8 @@ class HostWorkerServices:
                 self._tokens[token] = capability
         environment = dict(delegated, **{HOST_URL_ENV: self.base_url, HOST_TOKEN_ENV: token,
                        LOG_URL_ENV: self.base_url + '/log', LOG_TOKEN_ENV: token})
+        if current_observations() is not None and not capability[2]['sealed']:
+            environment[OBSERVATION_URL_ENV] = self.base_url + '/observations'
         if model_access is not None:
             environment['RSISYS_MODEL_BASE_URL'] = model_access.server.base_url
             environment.update(model_access.server.worker_environment(component, supplied))
@@ -216,6 +220,19 @@ class HostWorkerServices:
                           time=time.time(), pid='remote-' + component)
             with self._lock, (self.inbox / 'remote.jsonl').open('a', encoding='utf-8') as stream:
                 stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + '\n')
+            return {'accepted': True}
+        if route == '/observations' and set(raw) == {'fact'}:
+            if self.authority.current(component)['sealed']:
+                return {'accepted': False}
+            from rsicomposer.runtime.observation.facts import MAX_RECORD_BYTES
+            if not isinstance(raw['fact'], dict):
+                raise ValueError('Worker observation must be an object')
+            fact = {**raw['fact'], 'call_id': capability[1]}
+            record = json.dumps({'fact': fact}, ensure_ascii=True, allow_nan=False, separators=(',', ':')) + '\n'
+            if len(record) > MAX_RECORD_BYTES + 256:
+                raise ValueError('Worker observation is too large')
+            with self._lock, (self.inbox / 'remote.jsonl').open('a', encoding='utf-8') as stream:
+                stream.write(record)
             return {'accepted': True}
         raise ValueError('Unknown worker route or request fields')
 

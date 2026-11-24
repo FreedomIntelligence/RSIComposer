@@ -16,6 +16,11 @@ def worker_environment(**overrides):
     The parent PYTHONPATH is preserved unless explicitly overridden.
     """
     env = dict(os.environ, **overrides)
+    from rsicomposer.runtime.observation import observations_suppressed
+    if observations_suppressed():
+        from rsicomposer.runtime.observation.client import INBOX_ENV, OBSERVATION_URL_ENV
+        env.pop(INBOX_ENV, None)
+        env.pop(OBSERVATION_URL_ENV, None)
     root = str(Path(rsicomposer.__file__).resolve().parent.parent)
     env['PYTHONPATH'] = root + os.pathsep + env.get('PYTHONPATH', '')
     return env

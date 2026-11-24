@@ -1,4 +1,4 @@
-"""Run a round of reference TTRL rewards on a Python main thread."""
+"""Run TTRL scoring on a Python main thread."""
 import json
 import subprocess
 import sys
@@ -11,11 +11,19 @@ def score_groups(groups, verifier):
     # parse and verification) grade on a child main thread. Start one process
     # per reward call and send only final answer boxes.
     boxed = [[final_boxed(completion) or '' for completion in group] for group in groups]
-    timeout = 10 + 4 * sum(len(group) for group in boxed)
+    return _score({'verifier': verifier, 'groups': boxed}, sum(map(len, boxed)))
+
+
+def score_official_pairs(pairs, root):
+    return _score({'upstream_root': str(root), 'pairs': pairs}, len(pairs))
+
+
+def _score(request, count):
+    timeout = 10 + 4 * count
     try:
         result = subprocess.run(
             [sys.executable, '-m', 'rsicomposer.algorithms.ttrl._reward_worker'],
-            input=json.dumps({'verifier': verifier, 'groups': boxed}), capture_output=True, text=True, check=True, timeout=timeout,
+            input=json.dumps(request), capture_output=True, text=True, check=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as error:
         raise RuntimeError(f'TTRL reward worker exceeded its {timeout}-second deadline') from error
@@ -25,10 +33,15 @@ def score_groups(groups, verifier):
 
 
 def main():
-    from .lab import _majority_rewards_many
     request = json.load(sys.stdin)
-    json.dump(_majority_rewards_many(request['groups'], build_verifier(request['verifier'])),
-              sys.stdout, allow_nan=False)
+    if 'pairs' in request:
+        from .upstream import TTRLReward
+        verifier = TTRLReward(request['upstream_root'])
+        results = verifier.score_many(request['pairs'])
+    else:
+        from .lab import _majority_rewards_many
+        results = _majority_rewards_many(request['groups'], build_verifier(request['verifier']))
+    json.dump(results, sys.stdout, allow_nan=False)
 
 
 if __name__ == '__main__':

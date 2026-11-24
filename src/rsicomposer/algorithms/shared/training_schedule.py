@@ -6,7 +6,10 @@ import math
 import re
 from copy import deepcopy
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import (Decision, ExecutionStatus, OperationCall, report_version,
+                             report_version_evaluation, report_version_selection)
+
+from .weight_observation import model_version
 
 
 def _ref(value, label):
@@ -125,6 +128,10 @@ class TrainingScheduleController:
                 raise ValueError('Evaluation must return finite measured metrics')
             self.history.append({'round': self.round, 'model': self.current_model,
                                  'metrics': deepcopy(metrics), 'simulated': feedback.simulated})
+            version = model_version(self.current_model)
+            if self.round == 0:
+                report_version(version, label='Baseline', round_index=0, parent_ids=())
+            report_version_evaluation(version, feedback.call_id)
             if self.round == self.iterations:
                 self.outcome = 'completed'
                 self.stopped = f'{self.method} configured rounds completed; inspect independent evaluation receipts'
@@ -137,8 +144,12 @@ class TrainingScheduleController:
                 raise ValueError('Training must publish a distinct immutable checkpoint')
             if not feedback.simulated and data.get('training_performed') is not True:
                 raise ValueError('Real training receipt must attest an actual optimizer update')
+            version = model_version(model)
+            report_version(version, label=f'Checkpoint {self.round}', round_index=self.round,
+                           parent_ids=(model_version(self.pending.arguments['parent']),))
             self.models.add(model)
             self.current_model = model
+            report_version_selection(version, step=self.round, event_id=feedback.call_id, action='applied')
             self.training_rounds += 1
             self.real_training_rounds += int(not feedback.simulated)
             if self.round == self.iterations:

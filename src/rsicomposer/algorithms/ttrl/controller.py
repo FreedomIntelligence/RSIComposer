@@ -1,6 +1,6 @@
 """TTRL majority-reward GRPO and native continuous-training decisions."""
 from rsicomposer.algorithms.shared.training_schedule import TrainingScheduleController
-from rsicomposer.api import Decision, JobControl
+from rsicomposer.api import Decision, JobControl, emit_observation, observation_id
 
 
 class TTRLController(TrainingScheduleController):
@@ -45,6 +45,12 @@ class TTRLVerlController(TTRLController):
                         action = ('stop' if self.stop_after_checkpoints is not None
                                   and len(self.checkpoints) + 1 >= self.stop_after_checkpoints else 'continue')
                         self.checkpoints.append(dict(sequence=event.sequence, step=event.progress.step, action=action))
+                        ident = observation_id('ttrl_verl.checkpoint', event.call_id, event.sequence)
+                        emit_observation('ttrl_verl.checkpoint', ident, scope=event.call_id, subject=ident,
+                                         fields={'step': event.progress.step, 'sequence': event.sequence})
+                        emit_observation('ttrl_verl.control', observation_id('ttrl_verl.control', ident),
+                                         scope=event.call_id, subject=ident, links={'controls': [ident]},
+                                         fields={'action': action, 'step': event.progress.step})
                         return Decision('control', control=JobControl(event.call_id, event.sequence, action))
                 return Decision('wait', reason='Native TTRL schedule is running')
         return super().decide(window)

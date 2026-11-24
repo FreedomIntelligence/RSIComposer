@@ -29,7 +29,7 @@ class NativeChatBackend(RemoteModelBackend):
 
     def __init__(self, binding, models=None, *, generation_options=None, native_schema_mode='exact',
                  max_tokenize_response_bytes=64 * 1024 * 1024):
-        super().__init__(replace(binding, kind='chat_completions'))
+        super().__init__(replace(binding, kind='chat_completions', enable_thinking=None))
         self.binding = binding
         if native_schema_mode not in ('exact', 'portable'):
             raise ValueError('native_schema_mode must be exact or portable')
@@ -41,6 +41,10 @@ class NativeChatBackend(RemoteModelBackend):
         self._aliases = {}  # Historical pins survive release/removal of active bindings.
         self._bindings_lock = threading.RLock()
         self.generation_options = json.loads(json.dumps(generation_options or {}, allow_nan=False))
+        if binding.enable_thinking is not None:
+            kwargs = self.generation_options.setdefault('chat_template_kwargs', {})
+            if kwargs.setdefault('enable_thinking', binding.enable_thinking) is not binding.enable_thinking:
+                raise ValueError('Conflicting native enable_thinking settings')
         if set(self.generation_options) & {'model', 'messages', 'stream'}:
             raise ValueError('Native options cannot override request identity/messages/stream')
         if 'max_completion_tokens' in self.generation_options:

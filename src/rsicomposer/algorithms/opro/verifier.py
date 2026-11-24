@@ -36,4 +36,4 @@ class OPROVerifier(AnswerVerifier):
         choice = self.parse(completion) if isinstance(completion, str) else ''
         accuracy = self.eval_utils.get_accuracy_of_list(
             true_answer=answer, pred_answer_list=[choice], input_text='', treat_include_as_correct=False)
-        return AnswerCheck(bool(choice), accuracy == 1, choice or None)
+        return AnswerCheck(bool(choice), bool(accuracy == 1), choice or None)

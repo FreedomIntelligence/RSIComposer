@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import Decision, ExecutionStatus, OperationCall, emit_observation, observation_id
 
 from ..shared.experiment import MethodEvents
 
@@ -62,9 +62,12 @@ class ReflexionController:
             'operation': decision.operations[0].name if request is not None else None, 'request': request,
             'reason': decision.reason, 'depends_on_decision_ids': list(dependencies)})
         if operation is None:
+            passed = sum(row['passed'] for row in self.results)
             self.emit('finish', {'method': 'reflexion', 'condition': self.options['condition'],
-                'tasks': len(self.results), 'success_rate': sum(row['passed'] for row in self.results) / len(self.results),
+                'tasks': len(self.results), 'success_rate': passed / len(self.results),
                 'task_results': self.results, 'training_submissions': 0})
+            emit_observation('reflexion.summary', observation_id('reflexion.summary', 'run'),
+                             fields={'correct': passed, 'total': len(self.results)})
         else:
             self.pending = decision
         return decision
@@ -87,6 +90,20 @@ class ReflexionController:
             'artifacts': [asdict(ref) for ref in feedback.artifacts]})
 
         name = call.name.split('.', 1)[1]
+        scope = f'task-{call.arguments["task"]}'
+        attempt = call.arguments['attempt']
+        subject = observation_id('reflexion', scope, attempt)
+        if name in ('implement', 'reflect', 'tests'):
+            links = {'depends_on': list(decision.depends_on_decision_ids)} if decision.depends_on_decision_ids else {}
+            if name == 'implement' and attempt > 1:
+                links['derived_from'] = [observation_id('reflexion', scope, attempt - 1)]
+            if name == 'implement':
+                links['content'] = [data['program']['digest']]
+            emit_observation('reflexion.action', feedback.call_id, scope=scope, subject=subject,
+                             links=links, fields={'attempt': attempt, 'operation': name})
+        if name in ('execute', 'hidden') and type(data.get('passed')) is bool:
+            emit_observation('reflexion.test', feedback.call_id, scope=scope, subject=subject,
+                             links={'evaluates': [subject]}, fields={'attempt': attempt, 'suite': name, 'passed': data['passed']})
         if name == 'tests':
             self.tests = data['tests']
             return 'implement', {}

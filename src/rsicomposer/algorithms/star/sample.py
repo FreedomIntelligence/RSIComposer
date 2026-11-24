@@ -18,11 +18,11 @@ def bind_device():
     raw = subprocess.check_output(['nvidia-smi', '--query-gpu=index,uuid,pci.bus_id',
                                    '--format=csv,noheader'], text=True, timeout=15)
     rows = [(index.strip(), uuid.strip(), pci_address(bus)) for index, uuid, bus in csv.reader(raw.splitlines())]
-    matches = [(index, bus) for index, uuid, bus in rows if uuid == expected]
+    matches = [(uuid, bus) for index, uuid, bus in rows if expected in (index, uuid)]
     if len(matches) != 1:
         raise PermissionError('Expected one assigned GPU for STaR sampling')
-    index, bus = matches[0]
-    os.environ['CUDA_DEVICE_ORDER'], os.environ['CUDA_VISIBLE_DEVICES'] = 'PCI_BUS_ID', index
+    uuid, bus = matches[0]
+    os.environ['CUDA_DEVICE_ORDER'], os.environ['CUDA_VISIBLE_DEVICES'] = 'PCI_BUS_ID', uuid
     if cuda_pci_devices() != [bus]:
         raise PermissionError('STaR sampler GPU differs from the allocation')
 

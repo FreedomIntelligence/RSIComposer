@@ -1,95 +1,72 @@
-"""Choose one GEPA parent, mutate it with the decision model, and act on one matched Lab receipt per decision."""
+"""Run the pinned GEPA optimizer behind the Controller/Lab receipt boundary.
+
+Evaluations are Lab operations. Reflection is the Controller's own research
+step: the decision model answers it here and the reply joins the replay journal.
+"""
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from collections import Counter
 from hashlib import sha256
-from random import Random
-from types import SimpleNamespace
+import json
 
-from rsicomposer.api import Decision, ExecutionStatus, OperationCall
+from rsicomposer.api import (Decision, ExecutionStatus, OperationCall, ReplayMismatchError,
+    emit_observation, observation_id, report_version, report_version_evaluation, report_version_selection)
 
-from ..shared.experiment import MethodEvents, random_state, set_random_state
-
-from .proposer import GEPAProposer
-from .protocol import budget, upstream
-
-
-def candidate_id(instruction):
-    return sha256(instruction.encode()).hexdigest()
+from .proposer import GEPAReflector
+from .paper_bridge import PaperGEPA
+from .protocol import ARTIFACT_COMMIT, aime_protocol
 
 
-@dataclass(frozen=True)
-class ValidatedCandidate:
-    instruction: str
-    scores: tuple[int, ...]
-    receipt_id: str
-    decision_id: str
-    metric_value: float
+def _digest(value):
+    return sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def candidate_id(candidate, component):
+    if (not isinstance(candidate, dict) or set(candidate) != {component}
+            or not isinstance(candidate[component], str) or not candidate[component].strip()):
+        raise ValueError(f'GEPA requires one nonempty instruction for {component}')
+    return _digest(candidate)
+
+
+class _RequestLab(BaseException):
+    # Upstream catches Exception during reflection; suspending for a Lab is not a failure.
+    def __init__(self, operation, arguments, parents):
+        self.operation, self.arguments, self.parents = operation, arguments, parents
 
 
 class GEPAController:
-    def __init__(self, context, config, *, proposer=None):
-        self.metric = context.lab_catalog.primary_metric('gepa')
-        self.parameters = config['parameters']
-        self.counts = {name: config['data'][name + '_count'] for name in ('search', 'validation', 'test')}
-        self.initial = self.parameters['initial_instruction']
-        self.emit = MethodEvents(context, 'gepa')
-        # One mutation per round.
-        self.proposer = proposer or GEPAProposer(context, config, max_calls=self.parameters['rounds'])
-        ensure_loader, self.select_parent, sampler_type, _ = upstream(config['source_dir'])
-        self.search_indices = ensure_loader(list(range(self.counts['search'])))
-        self.sampler = sampler_type(self.parameters['minibatch_size'], Random(config['seed']))
-        self.parent_rng = Random(config['seed'])
-        actor, mutation = budget(config)
-        self.planned_calls = (actor - 2 * self.counts['test'], mutation)
-        self.candidates = []
-        self.receipts = set()
-        self.registered = {}
-        self.deferred = None
-        self.pending = None
-        self.last = None
-        self.selected = None
-        self.iteration = 0
-        self.sequence = 0
-        self.actor_calls = 0
-        self.mutation_calls = 0
-        self.indices = self.proposal_valid = self.parent_correct = self.accepted = None
-        # Each upstream sampler call as [round, indices]; restore replays them on a fresh sampler.
-        self.sampler_calls = []
-
-    _SCALARS = ('registered', 'deferred', 'pending', 'last', 'iteration', 'sequence', 'actor_calls', 'mutation_calls',
-                'indices', 'proposal_valid', 'parent_correct', 'accepted')
-
-    def state(self):
-        return {**{name: getattr(self, name) for name in self._SCALARS},
-                'candidates': [asdict(item) for item in self.candidates],
-                'selected': None if self.selected is None else self.candidates.index(self.selected),
-                'receipts': sorted(self.receipts), 'sampler_calls': self.sampler_calls,
-                'parent_rng': random_state(self.parent_rng), 'summary': self.emit.summary}
-
-    def restore(self, state):
-        if self.sampler_calls or self.candidates:
-            raise RuntimeError('GEPA state restores into a newly constructed controller')
-        if set(state) != {*self._SCALARS, 'candidates', 'selected', 'receipts', 'sampler_calls',
-                          'parent_rng', 'summary'}:
-            raise ValueError('Unexpected GEPA controller state')
-        # The upstream sampler owns its shuffle RNG and epoch; replaying its calls rebuilds both exactly.
-        for round_index, indices in state['sampler_calls']:
-            if self.next_minibatch(round_index) != indices:
-                raise ValueError('Rebuilt GEPA sampler diverged from the saved minibatches')
-        for name in self._SCALARS:
-            setattr(self, name, state[name])
-        self.candidates = [ValidatedCandidate(row['instruction'], tuple(row['scores']), row['receipt_id'],
-                                              row['decision_id'], row['metric_value']) for row in state['candidates']]
-        self.selected = None if state['selected'] is None else self.candidates[state['selected']]
-        self.receipts = set(state['receipts'])
-        set_random_state(self.parent_rng, state['parent_rng'])
-        self.emit.summary = state['summary']
-        self.proposer.calls.count = self.mutation_calls
-
-    def next_minibatch(self, round_index):
-        indices = list(self.sampler.next_minibatch_ids(self.search_indices, SimpleNamespace(i=round_index)))
-        self.sampler_calls.append([round_index, indices])
-        return indices
+    def __init__(self, context, config, *, reflector=None):
+        p, data = config['parameters'], config['data']
+        use_merge = p.get('use_merge', False)
+        if type(use_merge) is not bool:
+            raise ValueError('GEPA use_merge must be a boolean')
+        if 'max_merge_invocations' in p:
+            limit = p['max_merge_invocations']
+            if type(limit) is not int or limit < 1:
+                raise ValueError('GEPA max_merge_invocations must be a positive integer')
+        protocol = aime_protocol(config['artifact_dir'], config['dspy_dir'])
+        self.paper = PaperGEPA(config, protocol)
+        self.component = self.paper.component
+        self.initial = self.paper.candidate(self.paper.benchmark.program_cot)
+        self.train = [('search', i) for i in range(data['search_count'])]
+        self.validation = [('validation', i) for i in range(data['validation_count'])]
+        if (not self.train or len(self.validation) < 5
+                or any(type(p[key]) is not int or p[key] < 1 for key in
+                       ('minibatch_size', 'max_metric_calls'))
+                or type(p.get('max_reflection_calls')) is not int or p['max_reflection_calls'] < 1
+                or p['minibatch_size'] > len(self.train)):
+            raise ValueError('GEPA requires valid positive budgets, a train batch and at least five validation examples')
+        self.use_merge = use_merge
+        self.max_lab_calls = p['max_lab_calls']
+        if type(self.max_lab_calls) is not int or self.max_lab_calls < p['max_metric_calls']:
+            raise ValueError('GEPA max_lab_calls must cover the optimizer budget')
+        metric = context.lab_catalog.primary_metric('gepa')
+        if metric.direction != 'maximize':
+            raise ValueError('GEPA requires a metric to maximize')
+        self.reflector = reflector or GEPAReflector(context, config, max_calls=p['max_reflection_calls'])
+        self.pending = self.previous = None
+        self.registered, self.journal = set(), []
+        self._reported_screening = set()
+        self.summary = {'method': 'gepa', 'use_merge': use_merge, 'status': 'running'}
 
     def required_operations(self):
         return ('gepa.register', 'gepa.evaluate', 'gepa.select')
@@ -97,160 +74,176 @@ class GEPAController:
     def required_profiles(self):
         return {'gepa': 'artifact-search/v1'}
 
-    def utility(self, value):
-        return value if self.metric.direction == 'maximize' else -value
-
-    def report(self):
-        return self.emit.report()
-
     @contextmanager
     def context_scope(self, compactor, *, recent_limit):
-        # Exact typed receipts carry the score vector and immutable trajectory reference.
         yield
 
-    def invoke(self, operation, arguments, *, sources=()):
-        self.sequence += 1
-        dependencies = [item for item in (self.last.decision_id if self.last else None, *sources) if item]
-        call = OperationCall('gepa.' + operation, {'request_id': f'gepa-{self.sequence}',
-                                                    'round': self.iteration, **arguments})
-        self.pending = Decision.invoke(call, reason=f"GEPA {arguments.get('label', operation)}", depends_on_decision_ids=tuple(dict.fromkeys(dependencies)))
-        self.record(self.pending)
+    def state(self):
+        return {'version': 4, 'pending': self.pending, 'previous': self.previous,
+                'registered': sorted(self.registered), 'journal': self.journal, 'summary': self.summary}
+
+    def restore(self, state):
+        if set(state) != {'version', 'pending', 'previous', 'registered', 'journal', 'summary'} or state['version'] != 4:
+            raise ValueError('Unsupported GEPA checkpoint')
+        self.pending, self.previous = state['pending'], state['previous']
+        self.registered, self.journal = set(state['registered']), state['journal']
+        self.summary = state['summary']
+        self.reflector.calls.count = sum('text' in response for _, response in self.journal)
+
+    def report(self):
+        return self.summary
+
+    def invoke(self, operation, arguments):
+        self.pending = Decision.invoke(OperationCall('gepa.' + operation, arguments),
+            reason=f'GEPA {operation}', depends_on_decision_ids=(self.previous,) if self.previous else ())
         return self.pending
 
-    def score(self, instruction, split, label, *, indices=None, sources=()):
-        if instruction not in self.registered:
-            self.deferred = {'instruction': instruction, 'split': split, 'label': label,
-                             'indices': indices, 'sources': tuple(sources)}
-            return self.invoke('register', {'candidate': {'instruction': instruction}}, sources=sources)
-        return self.invoke('evaluate', {'candidate_id': self.registered[instruction],
-            'split': split, 'label': label, 'indices': indices,
-            'baseline': label == 'validation_initial'}, sources=sources)
-
-    def record(self, decision):
-        self.emit('decision', {'decision_id': decision.decision_id, 'kind': decision.kind, 'reason': decision.reason,
-                              'depends_on_decision_ids': list(decision.depends_on_decision_ids),
-                              'operation': decision.operations[0].name if decision.operations else None,
-                              'request': decision.operations[0].arguments if decision.operations else None})
-
     def consume(self, window):
-        feedback = window.feedbacks[0] if window.feedbacks else None
         decision = self.pending
-        request = decision.operations[0].arguments
-        if ((feedback is None or feedback.call_id != decision.operations[0].call_id)
-                or feedback.status != ExecutionStatus.COMPLETED):
-            raise RuntimeError(f"GEPA operation {request['request_id']} did not complete: {getattr(feedback, 'error', None)}")
-        data = feedback.data
-        receipt_id = data.get('receipt_id')
-        if (data.get('request') != request or not isinstance(receipt_id, str)
-                or not receipt_id or receipt_id in self.receipts or len(feedback.artifacts) != 1):
-            raise RuntimeError('GEPA received an unmatched or duplicate Lab receipt')
-        if decision.operations[0].name == 'gepa.evaluate':
-            count = len(request['indices']) if request['indices'] is not None else self.counts[request['split']]
-            scores = data.get('scores')
-            if (not isinstance(scores, list) or len(scores) != count or data.get('count') != count
-                    or any(type(value) is not int or value not in (0, 1) for value in scores)):
-                raise RuntimeError('Invalid GEPA score receipt')
-            self.actor_calls += count
-        self.receipts.add(receipt_id)
-        self.last, self.pending = decision, None
-        self.emit('receipt', {'request_id': request['request_id'], 'receipt_id': receipt_id,
-                              'decision_id': decision.decision_id,
-                              'artifacts': [asdict(ref) for ref in feedback.artifacts]})
-        if decision.operations[0].name == 'gepa.evaluate':
-            self.emit('evaluation', {'candidate_id': request['candidate_id'],
-                'instruction': next(text for text, key in self.registered.items() if key == request['candidate_id']), 'phase': request['label'], 'score': sum(scores) / count,
-                'count': count, 'round': self.iteration, 'receipt_id': receipt_id})
-        return request, feedback
+        if decision is None:
+            return False
+        call = decision.operations[0]
+        operation = call.name.removeprefix('gepa.')
+        feedback = next((item for item in window.feedbacks if item.call_id == call.call_id), None)
+        if feedback is None or feedback.status != ExecutionStatus.COMPLETED:
+            raise RuntimeError(f'GEPA {operation} did not complete: {getattr(feedback, "error", None)}')
+        expected = call.arguments.get('candidate_id')
+        if operation == 'register':
+            expected = candidate_id(call.arguments['candidate'], self.component)
+        if expected is not None and feedback.data.get('candidate_id') != expected:
+            raise RuntimeError('GEPA candidate identity differs from receipt')
+        if operation == 'register':
+            self.registered.add(expected)
+            initial = expected == candidate_id(self.initial, self.component)
+            report_version(expected, label='Baseline' if initial else f'Candidate {expected[:8]}',
+                           round_index=0 if initial else None, parent_ids=() if initial else None)
+            emit_observation('gepa.prompt', observation_id('gepa.prompt', expected), subject=expected,
+                             fields={'component': self.component, 'baseline': initial},
+                             components={self.component: call.arguments['candidate'][self.component]})
+        elif operation == 'evaluate':
+            count = len(call.arguments['indices'])
+            data = feedback.data
+            if (data.get('count') != count or len(data.get('scores', ())) != count
+                    or any(type(score) is not int or score not in (0, 1) for score in data['scores'])):
+                raise RuntimeError('Invalid GEPA evaluation receipt')
+            response = {'scores': data['scores']}
+            if call.arguments['capture_traces']:
+                traces = data.get('trajectories')
+                if not isinstance(traces, list) or len(traces) != count:
+                    raise RuntimeError('Missing GEPA trajectories')
+                response['trajectories'] = traces
+            self.journal.append([call.arguments['exchange'], response])
+            report_version_evaluation(expected, feedback.call_id)
+        elif operation == 'select':
+            report_version_selection(expected, step=0, event_id=call.call_id)
+        self.pending, self.previous = None, decision.decision_id
+        return operation == 'select'
 
-    def next_parent(self):
-        if self.iteration == self.parameters['rounds']:
-            self.selected = max(self.candidates, key=lambda item: self.utility(item.metric_value))
-            self.emit('selection', {'candidate_id': candidate_id(self.selected.instruction),
-                'instruction': self.selected.instruction, 'phase': 'validation',
-                'score': self.selected.metric_value,
-                'receipt_id': self.selected.receipt_id})
-            return self.invoke('select', {'candidate_id': candidate_id(self.selected.instruction)},
-                               sources=(self.selected.decision_id,))
-
-        frontier = {}
-        for index, scores in enumerate(zip(*(item.scores for item in self.candidates), strict=True)):
-            best = (max if self.metric.direction == 'maximize' else min)(scores)
-            frontier[index] = {candidate for candidate, score in enumerate(scores) if score == best}
-        selected = self.select_parent(frontier, [self.utility(item.metric_value) for item in self.candidates],
-                                      self.parent_rng)
-        parent = self.candidates[selected]
-        self.indices = self.next_minibatch(self.iteration)
-        self.emit('parent', {'round': self.iteration, 'candidate_id': candidate_id(parent.instruction),
-                             'frontier_receipt_id': parent.receipt_id, 'indices': self.indices})
-        return self.score(parent.instruction, 'search', 'parent', indices=self.indices,
-                          sources=(parent.decision_id,))
-
-    def mutate(self, parent, request, feedback):
-        """Research step: propose a child of the parent from its minibatch trace, then score it."""
-        records = self.proposer.parent_records(feedback.artifacts[0], feedback.data['receipt_id'], request)
-        proposal = self.proposer.propose(parent, records, round_index=self.iteration)
-        self.mutation_calls += 1
-        self.proposal_valid = proposal.candidate is not None
-        child = proposal.candidate if self.proposal_valid else parent
-        self.emit('candidate', {'candidate_id': candidate_id(child), 'instruction': child,
-            'parent_id': candidate_id(parent), 'round': self.iteration,
-            'valid_mutation': self.proposal_valid, 'meta_prompt_sha256': proposal.meta_prompt_sha256,
-            'proposal': asdict(proposal.evidence)})
-        return self.score(child, 'search', 'child', indices=self.indices)
-
-    def admit(self, instruction, data):
-        self.candidates.append(ValidatedCandidate(
-            instruction, tuple(data['scores']), data['receipt_id'], self.last.decision_id, self.metric.value(data)))
+    def observe_screening(self, fields, parents, child):
+        round_index, status = fields['round'], fields['status']
+        key = (round_index, status)
+        if key in self._reported_screening:
+            return
+        attempt = observation_id('gepa.screening', round_index)
+        if emit_observation('gepa.screening', observation_id(attempt, status), scope=f'round-{round_index}',
+                            subject=attempt, fields=fields, links={
+                                'derived_from': [candidate_id(parent, self.component) for parent in parents],
+                                'content': [candidate_id(child, self.component)] if child is not None else [],
+                            }):
+            self._reported_screening.add(key)
 
     def decide(self, window):
-        if self.pending is None:
-            return self.score(self.initial, 'validation', 'validation_initial')
-        request, feedback = self.consume(window)
-        data = feedback.data
-        if self.last.operations[0].name == 'gepa.register':
-            instruction = request['candidate']['instruction']
-            if data['candidate_id'] != candidate_id(instruction):
-                raise RuntimeError('GEPA registration identity mismatch')
-            self.registered[instruction] = data['candidate_id']
-            deferred, self.deferred = self.deferred, None
-            return self.score(**deferred)
-        if self.last.operations[0].name == 'gepa.select':
-            return self.finish()
-        label = request['label']
-        instruction = next(text for text, key in self.registered.items() if key == request['candidate_id'])
-        if label == 'validation_initial':
-            self.admit(instruction, data)
-            return self.next_parent()
-        if label == 'parent':
-            self.parent_correct = self.metric.value(data)
-            return self.mutate(instruction, request, feedback)
-        if label == 'child':
-            self.accepted = (self.proposal_valid and self.utility(self.metric.value(data)) > self.utility(self.parent_correct)
-                             and all(item.instruction != instruction for item in self.candidates))
-            self.emit('acceptance', {'round': self.iteration, 'candidate_id': candidate_id(instruction),
-                'parent_correct': self.parent_correct, 'child_correct': self.metric.value(data),
-                'accepted': self.accepted, 'receipt_id': data['receipt_id']})
-            # Run the same validation calls in both arms on every attempt.
-            return self.score(instruction, 'validation', 'validation_child')
-        if label == 'validation_child':
-            if self.accepted:
-                self.admit(instruction, data)
-            self.iteration += 1
-            return self.next_parent()
-        raise RuntimeError(f'Unexpected GEPA evaluation label: {label}')
+        if self.consume(window):
+            return Decision('finish', reason='GEPA selected a candidate; host runs sealed evaluation',
+                            depends_on_decision_ids=(self.previous,))
 
-    def finish(self):
-        if (self.actor_calls, self.mutation_calls) != self.planned_calls:
-            raise RuntimeError('GEPA did not consume the paired experiment budget')
-        decision = Decision('finish', reason='GEPA prompt selection completed; host sealed evaluation follows',
-                            depends_on_decision_ids=(self.last.decision_id,))
-        self.record(decision)
-        self.emit('finish', {'method': 'gepa', 'condition': self.parameters['condition'],
-            'rounds': self.iteration, 'accepted_candidates': len(self.candidates) - 1,
-            'initial_instruction': self.initial, 'selected_instruction': self.selected.instruction,
-            'selected_candidate_id': candidate_id(self.selected.instruction),
-            'validation_score': self.selected.metric_value,
-            'sealed_evaluation': 'host_after_finish',
-            'test_count': self.counts['test'], 'actor_calls': self.actor_calls, 'mutation_calls': self.mutation_calls,
-            'training_submissions': 0})
-        return decision
+        cursor = 0
+        metric_calls = reflection_calls = 0
+
+        def exchange(operation, arguments, parents):
+            nonlocal cursor, metric_calls, reflection_calls
+            digest = _digest([operation, arguments])
+            if cursor < len(self.journal):
+                recorded, response = self.journal[cursor]
+                if recorded != digest:
+                    # Do not let upstream convert a replay error into a skipped proposal.
+                    raise _ReplayDiverged(cursor, operation)
+                cursor += 1
+                if operation == 'evaluate':
+                    metric_calls += len(response['scores'])
+                else:
+                    reflection_calls += 1
+                return response
+            if operation == 'reflect':
+                # A new reflection: ask the decision model now and journal the reply.
+                try:
+                    response = {'text': self.reflector.reflect(arguments['prompt'], round_index=arguments['round'])}
+                except Exception as error:
+                    # Upstream skips invalid proposals, but an unavailable model is a run failure.
+                    raise _ReflectionFailed() from error
+                self.journal.append([digest, response])
+                cursor += 1
+                reflection_calls += 1
+                return response
+            if metric_calls + len(arguments['indices']) > self.max_lab_calls:
+                raise _LabBudgetReached()
+            raise _RequestLab(operation, {**arguments, 'exchange': digest}, parents)
+
+        # Only deterministic CPU decisions and journaled reflections replay; evaluations are Lab operations.
+        try:
+            result = self.paper.run(self.train, self.validation, exchange, self.observe_screening)
+        except _ReplayDiverged as error:
+            raise ReplayMismatchError(f'GEPA diverged at exchange {error.args[0]} ({error.args[1]})') from error
+        except _ReflectionFailed as error:
+            raise RuntimeError('GEPA reflection model call failed') from error.__cause__
+        except _LabBudgetReached:
+            raise RuntimeError('GEPA Lab safety budget reached before the paper optimizer counted enough scores') from None
+        except _RequestLab as request:
+            arguments = request.arguments
+            if request.operation == 'evaluate':
+                candidate = arguments.pop('candidate')
+                key = candidate_id(candidate, self.component)
+                parents = tuple(candidate_id(parent, self.component) for parent in request.parents)
+                round_index = arguments['round']
+                if not arguments['baseline'] and key not in parents:
+                    attempt = observation_id('gepa.proposal', round_index, key, parents)
+                    emit_observation('gepa.proposal', attempt, scope=f'round-{round_index}', subject=attempt,
+                                     links={'derived_from': parents, 'content': [key]},
+                                     fields={'round': round_index, 'merge': len(parents) > 1})
+                if key not in self.registered:
+                    if parents and key not in parents and self.registered.issuperset(parents):
+                        report_version(key, label=f'Candidate {key[:8]}',
+                                       round_index=arguments['round'], parent_ids=parents)
+                    return self.invoke('register', {'candidate': candidate})
+                arguments['candidate_id'] = key
+            return self.invoke(request.operation, arguments)
+
+        if cursor != len(self.journal):
+            raise ReplayMismatchError('GEPA finished with unused receipts')
+        # The final population can also fill ancestry for candidates restored from older runs.
+        keys = [candidate_id(candidate, self.component) for candidate in result['candidates']]
+        counts = Counter(keys)
+        for index, (key, parents) in enumerate(zip(keys, result['parents'], strict=True)):
+            refs = tuple(keys[parent] for parent in parents if parent is not None)
+            attempt = observation_id('gepa.population', index, key)
+            emit_observation('gepa.population', attempt, subject=attempt,
+                             links={'content': [key], 'derived_from': [observation_id('gepa.population', parent, keys[parent])
+                                    for parent in parents if parent is not None]}, fields={'index': index})
+            if counts[key] == 1 and all(counts[ref] == 1 for ref in refs):
+                report_version(key, label='Baseline' if index == 0 else f'Candidate {key[:8]}', parent_ids=refs)
+        self.summary = {**result, 'method': 'gepa', 'use_merge': self.use_merge,
+            'status': 'completed', 'artifact_commit': ARTIFACT_COMMIT,
+            'metric_calls': metric_calls, 'reflection_calls': reflection_calls, 'sealed_evaluation': 'host_after_finish'}
+        return self.invoke('select', {'candidate_id': candidate_id(result['selected_candidate'], self.component)})
+
+
+class _ReplayDiverged(BaseException):
+    pass
+
+
+class _ReflectionFailed(BaseException):
+    pass
+
+
+class _LabBudgetReached(BaseException):
+    pass

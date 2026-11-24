@@ -1,5 +1,6 @@
 """Private native LLaMA-Factory training and numerical publication worker."""
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -26,6 +27,20 @@ def checkpoint_sync_callback():
     return CheckpointSync()
 
 
+def schedule_guard(max_epochs, max_steps):
+    from transformers import TrainerCallback
+
+    class ScheduleGuard(TrainerCallback):
+        def on_train_begin(self, args, state, control, **kwargs):
+            # The native trainer has the real dataloader after filtering, splitting and packing.
+            if state.num_train_epochs > max_epochs or state.max_steps > max_steps:
+                raise ValueError(f'Effective FT-Agent schedule is {state.num_train_epochs} epochs / '
+                                 f'{state.max_steps} steps; limits are {max_epochs} epochs / {max_steps} steps. '
+                                 'Reduce the schedule or omit positive max_steps for epoch-based training.')
+
+    return ScheduleGuard()
+
+
 def main(request):
     import faulthandler
     faulthandler.enable()
@@ -41,7 +56,11 @@ def main(request):
                 tokenized_path=str(directory / 'micro-tokens'), save_strategy='no',
                 eval_strategy='no', load_best_model_at_end=False, report_to='none',
                 plot_loss=False)
-        run_exp(args=recipe, callbacks=[checkpoint_sync_callback()])
+        callbacks = [checkpoint_sync_callback()]
+        if mode == 'train':
+            callbacks.append(schedule_guard(min(request['max_epochs'], math.ceil(recipe['num_train_epochs'])),
+                                            request['max_steps']))
+        run_exp(args=recipe, callbacks=callbacks)
         print('RSISYS_NATIVE_TRAINING_RETURNED ' + mode, flush=True)
         return
     if mode != 'merge':
@@ -75,4 +94,5 @@ def main(request):
 
 
 if __name__ == '__main__':
-    main(json.loads(Path(sys.argv[1]).read_text()))
+    from torch.distributed.elastic.multiprocessing.errors import record
+    record(main)(json.loads(Path(sys.argv[1]).read_text()))

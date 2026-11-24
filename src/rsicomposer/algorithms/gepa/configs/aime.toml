@@ -1,0 +1,57 @@
+objective = "GEPA instruction search using the authors' AIME evaluation protocol"
+data_dir = "../../../../../runs/gepa-aime"
+max_decision_steps = 3000
+
+[backends.local]
+kind = "chat_completions"
+endpoint = "http://127.0.0.1:18601/v1"
+json_mode = false
+timeout_seconds = 720
+
+[roles.decision_maker]
+backend_id = "local"
+model_id = "Qwen3.5-9B"
+revision = "Qwen3.5-9B-c2022362"
+
+[roles.actor]
+backend_id = "local"
+model_id = "Qwen3.5-9B"
+revision = "Qwen3.5-9B-c2022362"
+
+[framework.method]
+name = "gepa"
+
+[framework.method.config.controller]
+artifact_dir = ".local/upstream/gepa-artifact"
+dspy_dir = ".local/upstream/dspy-gepa-study"
+seed = 0
+
+[framework.method.config.controller.data]
+search_count = 45
+validation_count = 45
+
+[framework.method.config.controller.parameters]
+minibatch_size = 16
+max_metric_calls = 1839
+max_lab_calls = 6000
+max_reflection_calls = 650
+reflection_max_output_tokens = 16384
+use_merge = false
+
+[framework.method.config.controller.model]
+optimizer_temperature = 0.6
+optimizer_top_p = 0.95
+
+[framework.method.config.labs.gepa]
+artifact_dir = ".local/upstream/gepa-artifact"
+dspy_dir = ".local/upstream/dspy-gepa-study"
+manifest = ".local/gepa-aime-paper/data/manifest.json"
+max_model_calls = 6300
+max_concurrent = 32
+workers = 32
+sealed_trials = 5
+
+[framework.method.config.labs.gepa.model]
+max_output_tokens = 16384
+temperature = 0.6
+top_p = 0.95

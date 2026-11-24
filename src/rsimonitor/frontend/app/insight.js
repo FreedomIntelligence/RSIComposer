@@ -187,9 +187,9 @@ const isSealed = row => ['heldout', 'test'].includes(row.split) || /^test_(initi
 const armOf = row => row.label === 'test_initial' || (isSealed(row) && row.label === 'initial') ? 'initial'
   : row.label === 'test_selected' || (isSealed(row) && row.label === 'selected') ? 'selected' : '';
 
-function qualityByEvaluation(run) {
+function qualityByEvaluation(run, archived = []) {
   const index = new Map();
-  for (const event of rowsOf(run.observation_events)) {
+  for (const event of [...archived, ...rowsOf(run.observation_events)]) {
     if (event.kind !== 'host.evaluated' || !event.call_id) continue;
     if (!index.has(event.call_id)) index.set(event.call_id, new Map());
     index.get(event.call_id).set(event.fields?.benchmark || '', event.fields || {});
@@ -218,6 +218,65 @@ function evaluationScores(run, row, fact) {
 
 const scoreKey = score => JSON.stringify([score.split, score.benchmark, score.metric,
   score.protocol, score.scorer, score.dataset, score.evaluator, score.count]);
+
+const validationReceipt = row => row.verified !== false && !isSealed(row)
+  && ['dev', 'development', 'validation'].includes(row.split);
+export const qualityReceiptKey = (call, benchmark) => JSON.stringify([call, benchmark || '']);
+
+export function missingValidationFacts(run, archived = []) {
+  if (!rowsOf(run.observation_events).some(event => event.kind === 'host.evaluated')) return [];
+  const factFor = qualityByEvaluation(run, archived);
+  return [...new Set(rowsOf(run.evaluations).filter(row => validationReceipt(row) && row.call_id
+    && !factFor(row).scorer && !factFor(row).protocol).map(row => qualityReceiptKey(row.call_id, row.benchmark)))];
+}
+
+const validRound = value => Number.isSafeInteger(value) && value >= 0;
+
+/** Search minibatches and baseline/final-only tests do not form a round series. */
+export function validationTrends(run, archived = []) {
+  const groups = new Map(), versionRounds = new Map();
+  const factFor = qualityByEvaluation(run, archived);
+  for (const version of rowsOf(run.versions)) {
+    if (!validRound(version.round)) continue;
+    for (const id of version.evaluation_ids || []) {
+      if (!versionRounds.has(id)) versionRounds.set(id, new Set());
+      versionRounds.get(id).add(version.round);
+    }
+  }
+  for (const row of evaluationRows(run)) {
+    if (!validationReceipt(row)) continue;
+    const linked = new Set([row.evaluation_id, row.call_id].flatMap(id => [...(versionRounds.get(id) || [])]));
+    const round = validRound(row.round) ? row.round : linked.size === 1 ? [...linked][0] : undefined;
+    if (!validRound(round)) continue;
+    const scores = evaluationScores(run, row, factFor(row));
+    // TTRL reports explicit target and transfer cohorts in the same receipt.
+    if (run.config?.method === 'ttrl' && scores.length) {
+      const separate = ['target', 'transfer'].flatMap(arm => {
+        const metric = `${arm}_accuracy`, value = row.flat[metric], count = row.flat[`${arm}_questions`];
+        return Number.isFinite(value) && Number.isSafeInteger(count) && count > 0
+          ? [{...scores[0], benchmark: arm === 'target' ? '目标集' : '迁移集', metric, value, count,
+            correct: undefined, definition: {...metricDefinition(run, metric), label: '准确率'}}] : [];
+      });
+      if (separate.length) scores.splice(0, scores.length, ...separate);
+    }
+    for (const score of scores) {
+      if (!Number.isFinite(score.value) || !Number.isSafeInteger(score.count) || score.count < 1) continue;
+      const key = JSON.stringify([scoreKey(score), row.evaluation_protocol, score.definition.direction]);
+      if (!groups.has(key)) groups.set(key, {...score, key, rounds: new Map()});
+      const group = groups.get(key);
+      if (!group.rounds.has(round)) group.rounds.set(round, []);
+      group.rounds.get(round).push(score.value);
+    }
+  }
+  return [...groups.values()].flatMap(({rounds, ...group}) => {
+    const multiple = [...rounds.values()].some(values => values.length > 1);
+    const direction = group.definition.direction;
+    if (rounds.size < 2 || (multiple && !['higher', 'lower'].includes(direction))) return [];
+    const points = [...rounds].sort(([a], [b]) => a - b).map(([x, values]) => ({x,
+      y: values.reduce((a, b) => direction === 'lower' ? Math.min(a, b) : Math.max(a, b))}));
+    return [{...group, points, multiple}];
+  }).sort((a, b) => b.points.length - a.points.length);
+}
 
 /** Join the selected version to its evaluation references. Other candidate scores do not qualify. */
 export function selectedPerformance(run) {
@@ -252,13 +311,18 @@ export function incumbentPerformance(run) {
     const [, split, ...name] = latest.metric.split('/');
     const metric = name.join('/');
     const versions = new Map(reported.filter(point => point.metric === latest.metric).map(point => [point.step, point.value]));
-    const points = [...versions].sort(([a], [b]) => a - b).map(([, y], index) => ({x: index + 1, y}));
     const rows = evaluationRows(run).filter(row => row.split === split);
+    const byCall = new Map(rows.map(row => [row.call_id, row]));
+    const tracked = reported.filter(point => point.metric === latest.metric);
+    const points = [...new Map(tracked.flatMap(point => {
+      const round = byCall.get(point.call_id)?.round;
+      return validRound(round) ? [[round, {x: round, y: point.value}]] : [];
+    })).values()].sort((a, b) => a.x - b.x);
     const matching = latest.call_id && rows.find(row => row.call_id === latest.call_id);
     const names = new Set((matching ? [matching] : rows).flatMap(row => benchmarkMetrics(row, metric).map(r => r.benchmark)));
     const benchmark = names.size === 1 ? [...names][0] : '';
     return {split, metric, benchmark, definition: run.metric_definitions?.[latest.metric] || metricDefinition(run, metric),
-      value: points.at(-1).y, baseline: versions.get(0), points};
+      value: versions.get(Math.max(...versions.keys())), baseline: versions.get(0), points};
   }
   const adopted = evaluationRows(run).filter(row => row.adopted === true && row.verified !== false
     && !['heldout', 'test'].includes(row.split) && !['test_initial', 'test_selected'].includes(row.label)).at(-1);

@@ -1,6 +1,6 @@
 """Register the PromptPG selector and its TabMWP Lab."""
 
-from rsicomposer.api import MethodDefinition
+from rsicomposer.api import MethodDefinition, ObservationProbe
 
 from .controller import PromptPGController
 from .lab import PromptPGLab
@@ -9,4 +9,6 @@ from .lab import PromptPGLab
 def register(registry):
     registry.register_method('promptpg', MethodDefinition.from_factories(
         controller=PromptPGController, labs={'tabmwp': PromptPGLab}, version='1',
+        observation_probes=(ObservationProbe('promptpg.heldout', 'quality',
+            (('arm', 'id'), ('correct', 'number'), ('total', 'number')), 'table'),),
     ))
