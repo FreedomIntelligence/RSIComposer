@@ -121,8 +121,9 @@ class ActionPermissions:
         return allowed
 
     def to_dict(self):
-        if self.check is not None and not isinstance(self.check, SensitivePolicy):
-            raise TypeError('Custom permission callbacks need explicit snapshot integration')
+        if type(self) is not ActionPermissions or (self.check is not None and type(self.check) is not SensitivePolicy):
+            raise TypeError('Durable recovery and portable snapshots require serializable ActionPermissions; '
+                            'custom permission callbacks are unsupported')
         result = {'operations': sorted(self.operations) if self.operations is not None else None}
         if self.check is not None:
             result['sensitive_policy'] = self.check.to_dict()
@@ -138,12 +139,33 @@ class ActionPermissions:
         return cls(**raw, check=SensitivePolicy.from_dict(policy) if policy is not None else None)
 
 
+def restore_action_permissions(state):
+    """Restore Host admission before assembly. Older state did not record the policy."""
+    if 'action_permissions' not in state:
+        return ActionPermissions(operations=frozenset())
+    raw = state['action_permissions']
+    permissions = ActionPermissions.from_dict(raw)
+    if permissions.to_dict() != raw:
+        raise ValueError('Invalid saved action permissions')
+    return permissions
+
+
+def _same_permissions(left, right):
+    # Do not invoke custom equality methods when deduplicating checks.
+    return left is right or (type(left) is ActionPermissions and type(right) is ActionPermissions
+        and left.operations == right.operations and (left.check is right.check or (
+            type(left.check) is SensitivePolicy and type(right.check) is SensitivePolicy
+            and left.check == right.check)))
+
+
 class AuthorizedActionSpace:
     """A phase view over any existing Action Space. Reads permissions anew on every call."""
-    def __init__(self, source, phase='decision', *, permissions: ActionPermissions | None = None):
+    def __init__(self, source, phase='decision', *, permissions: ActionPermissions | None = None,
+                 required_permissions=()):
         if phase not in ('decision',):
             raise ValueError('Unknown action phase')
         self.source, self.phase, self._permissions = source, phase, permissions
+        self._required_permissions = required_permissions
 
     @property
     def permissions(self):
@@ -159,25 +181,45 @@ class AuthorizedActionSpace:
     def _request(self, kind, name, *, read_only=False, action=None):
         return AccessRequest(self.phase, kind, name, read_only, action)
 
+    def _policies(self):
+        local = self.permissions
+        if any(_same_permissions(local, policy) for policy in self._required_permissions):
+            return self._required_permissions
+        return (*self._required_permissions, local)
+
     def describe(self):
-        return tuple(spec for spec in self.source.describe() if self.permissions.allows(
-            self._request('operation', spec.name, read_only=spec.read_only)))
+        policies = self._policies()
+        return tuple(spec for spec in self.source.describe() if all(policy.allows(
+            self._request('operation', spec.name, read_only=spec.read_only)) for policy in policies))
 
     def validate(self, call):
         normalized = self.source.validate(call)
         spec = next((spec for spec in self.source.describe() if spec.name == normalized.name), None)
-        if not self.permissions.allows(self._request(
-                'operation', normalized.name, read_only=spec.read_only if spec is not None else False,
-                action=normalized)):
+        request = self._request('operation', normalized.name,
+                                read_only=spec.read_only if spec is not None else False, action=normalized)
+        if not all(policy.allows(request) for policy in self._policies()):
             raise PermissionError(f'Operation is not permitted during {self.phase}: {normalized.name}')
         return normalized
 
 
-
-
-
-
 def authorized_space(source, phase='decision'):
     if isinstance(source, AuthorizedActionSpace):
-        return AuthorizedActionSpace(source.source, phase, permissions=source._permissions)
+        if source.phase == phase:
+            return source
+        return AuthorizedActionSpace(source.source, phase, permissions=source._permissions,
+                                     required_permissions=source._required_permissions)
     return AuthorizedActionSpace(source, phase)
+
+
+def enforce_host_permissions(action_space, policy):
+    """Require the Host's policy in addition to any endpoint-local restrictions."""
+    if not isinstance(policy, ActionPermissions):
+        raise TypeError('Expected ActionPermissions')
+    if type(action_space) is not AuthorizedActionSpace:
+        # Preserve validation and discovery if an endpoint supplies its own subclass.
+        return AuthorizedActionSpace(action_space, required_permissions=(policy,))
+    space = action_space
+    if any(_same_permissions(policy, existing) for existing in space._required_permissions):
+        return space
+    return AuthorizedActionSpace(space.source, space.phase, permissions=space._permissions,
+                                 required_permissions=(*space._required_permissions, policy))

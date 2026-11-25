@@ -2,7 +2,11 @@
 from contextlib import nullcontext, contextmanager
 from copy import deepcopy
 from dataclasses import asdict, replace
+from errno import ENAMETOOLONG
+from hashlib import sha256
 import json
+import os
+from stat import S_ISREG
 from threading import RLock
 from time import perf_counter
 from pathlib import Path
@@ -18,7 +22,21 @@ from rsicomposer.loops.contracts.jobs import JobRef, JobOutcome, JobStatus, Oper
 from rsicomposer.runtime.storage.files import atomic_write, json_bytes
 
 
-_RECEIPT_SCHEMA = 24
+_LEGACY_RECEIPT_SCHEMA = 24
+_RECEIPT_SCHEMA = 25
+_RECEIPT_FIELDS = {'schema', 'name', 'arguments', 'outcome', 'lab_state', 'profile_state',
+                   'sequence', 'elapsed_seconds'}
+
+
+def _open_receipt(path, flags):
+    return os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK)
+
+
+def _read_receipt(path):
+    with open(path, encoding='utf-8', opener=_open_receipt) as stream:
+        if not S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('Lab receipt must be a regular file')
+        return stream.read()
 
 
 class LabGroup:
@@ -51,24 +69,33 @@ class LabGroup:
         if self._receipts is not None:
             self._receipts.mkdir(parents=True, exist_ok=True)
 
-    def add(self, alias, lab, *, model_scope=None, max_concurrent=1):
-        if type(max_concurrent) is not int or max_concurrent < 1:
-            raise ValueError("Lab max_concurrent must be a positive integer")
-        # Own a newly constructed provider before validating its catalog.
+    def add(self, alias, lab, *, model_scope=None, max_concurrent=1, declare_roles=None):
+        if any(existing is lab for existing in self._labs.values()):
+            raise ValueError('Lab aliases must own distinct instances')
+        # Own the new provider before calling any of its declaration ports.
         close = optional_method(lab, 'close')
         if close is not None:
             self._owned.append(close)
+        if type(max_concurrent) is not int or max_concurrent < 1:
+            raise ValueError('Lab max_concurrent must be a positive integer')
+        if not isinstance(alias, str) or not alias or '.' in alias:
+            raise ValueError('Lab aliases must be nonempty and cannot contain dots')
         if not callable(getattr(lab, 'describe', None)) or not callable(getattr(lab, 'execute', None)):
             raise TypeError(f'Lab {alias} must implement describe/execute')
-        if any(existing is lab for existing in self._labs.values()):
-            if close is not None:
-                self._owned.pop()
-            raise ValueError('Lab aliases must own distinct instances')
         if alias in self._labs:
             raise ValueError(f'Duplicate Lab alias: {alias}')
+        if declare_roles is not None:
+            roles = optional_method(lab, 'resource_roles')
+            if roles is not None:
+                declare_roles(roles())
         catalog = tuple(lab.describe())
-        if any(not isinstance(spec, OperationSpec) for spec in catalog):
-            raise TypeError('Lab catalogs must contain OperationSpec entries')
+        for spec in catalog:
+            if not isinstance(spec, OperationSpec) or not isinstance(spec.name, str) or not spec.name:
+                raise TypeError('Lab catalogs must contain named OperationSpec entries')
+            if '.' in spec.name:
+                raise ValueError('Lab local operation names cannot contain dots: ' + spec.name)
+        if len({spec.name for spec in catalog}) != len(catalog):
+            raise ValueError('Lab operation names must be distinct')
         self._bindings[alias] = ProfileBinding(alias, lab, catalog)
         if optional_method(lab, 'state') is not None and getattr(lab, 'concurrent_state_safe', False) is not True:
             self._state_locks[alias] = RLock()
@@ -76,11 +103,7 @@ class LabGroup:
         self._labs[alias] = lab
         self._model_scopes[alias] = model_scope
         for spec in catalog:
-            if not isinstance(spec, OperationSpec) or not isinstance(spec.name, str) or not spec.name:
-                raise TypeError('Lab catalogs must contain named OperationSpec entries')
             name = f'{alias}.{spec.name}'
-            if name in self._operations:
-                raise ValueError(f'Duplicate Lab operation: {name}')
             self._operations[name] = (lab, spec.name)
             self._specs.append(replace(spec, name=name))
 
@@ -100,7 +123,13 @@ class LabGroup:
 
     def profile_identity(self):
         return {alias: binding.identity() for alias, binding in self._bindings.items()
-                if binding.profiles or binding.metric is not None or binding.model_roles or binding.data_bindings}
+                if (binding.profiles or binding.metric is not None or binding.model_roles or binding.data_bindings
+                    or binding.roles or binding.rules or binding.evaluations)}
+
+    def is_evaluation(self, name):
+        """Check the installed Lab catalog, not an operation receipt's claims."""
+        alias, _, local = name.rpartition('.')
+        return alias in self._bindings and local in self._bindings[alias].evaluations
 
     def primary_metric(self, alias):
         """The declaration of this Lab instance; callers must not compare across aliases."""
@@ -284,8 +313,8 @@ class LabGroup:
         capture = optional_method(lab, 'state')
         sequence = self._receipt_sequences.get(alias, 0) + 1
         atomic_write(self._receipt_path(call), json_bytes(encode(
-            {'schema': _RECEIPT_SCHEMA, 'name': call.name, 'arguments': call.arguments, 'outcome': outcome,
-             'lab_state': capture() if capture is not None else None,
+            {'schema': _RECEIPT_SCHEMA, 'call_id': call.call_id, 'name': call.name,
+             'arguments': call.arguments, 'outcome': outcome, 'lab_state': capture() if capture is not None else None,
              'profile_state': binding.state(), 'sequence': sequence, 'elapsed_seconds': elapsed})))
         self._receipt_sequences[alias] = self._applied_sequences[alias] = sequence
         self._applied_receipts.add(call.call_id)
@@ -464,20 +493,77 @@ class LabGroup:
         self._receipt_sequences = dict(state['sequences'])
 
     def _receipt_path(self, call):
-        return self._receipts / (call.call_id + '.json')
+        digest = sha256(call.call_id.encode('utf-8')).hexdigest()
+        # Historical filenames ended in .json; keep new writes in a disjoint namespace.
+        return self._receipts / f'sha256-{digest}.receipt'
+
+    def _legacy_receipt_path(self, call):
+        name = call.call_id + '.json'
+        # Only probe a bounded, literal child filename, never a legacy path expression.
+        if any(ch in name for ch in '/\\:\x00') or len(os.fsencode(name)) > 255:
+            return None
+        path = self._receipts / name
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            if error.errno == ENAMETOOLONG:
+                return None
+            raise
+        # Old JobRefs carry no call_id. Require exact spelling even on filesystems
+        # where lookup can match another case or Unicode normalization.
+        if not any(entry.name == name for entry in self._receipts.iterdir()):
+            raise ValueError('Legacy Lab receipt filename does not match the call_id exactly')
+        return path
 
     def _saved(self, call):
-        if self._receipts is None or not self._receipt_path(call).exists():
+        if self._receipts is None:
             return None
+        legacy = False
+        try:
+            raw = _read_receipt(self._receipt_path(call))
+        except FileNotFoundError:
+            path = self._legacy_receipt_path(call)
+            if path is None:
+                return None
+            raw = _read_receipt(path)
+            legacy = True
         from rsicomposer.runtime.storage.codec import decode
-        saved = decode(json.loads(self._receipt_path(call).read_text()))
-        if not isinstance(saved, dict) or saved.get('schema') != _RECEIPT_SCHEMA:
+        saved = decode(json.loads(raw))
+        schema = _LEGACY_RECEIPT_SCHEMA if legacy else _RECEIPT_SCHEMA
+        if not isinstance(saved, dict) or saved.get('schema') != schema:
             raise ValueError('Lab receipt uses an unsupported RSIComposer protocol; start a new run')
-        if set(saved) != {'schema', 'name', 'arguments', 'outcome', 'lab_state', 'profile_state', 'sequence', 'elapsed_seconds'}:
+        if set(saved) != (_RECEIPT_FIELDS if legacy else _RECEIPT_FIELDS | {'call_id'}):
             raise ValueError('Invalid Lab receipt fields')
+        if not legacy and saved['call_id'] != call.call_id:
+            raise ValueError('Lab receipt call_id does not match')
         if saved['name'] != call.name or saved['arguments'] != call.arguments:
             raise ValueError(f'call_id {call.call_id} was already used for a different operation')
+        outcome = saved['outcome']
+        if isinstance(outcome, OperationResult):
+            if outcome.call_id != call.call_id:
+                raise ValueError('Terminal Lab receipt call_id does not match')
+        elif (not isinstance(outcome, JobRef) or not isinstance(outcome.job_id, str) or not outcome.job_id.strip()
+                or not isinstance(outcome.backend, str) or not outcome.backend.strip()):
+            raise ValueError('Invalid Lab receipt outcome')
+        if type(saved['sequence']) is not int or saved['sequence'] < 1:
+            raise ValueError('Invalid Lab receipt sequence')
         return saved
+
+    def _recovery_receipt_evidence(self, call):
+        """Read-only description of a stored receipt, not authorization to replay it."""
+        if self._receipts is None:
+            return {'receipt': 'unavailable'}
+        try:
+            saved = self._saved(call)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            return {'receipt': 'unreadable_or_invalid', 'receipt_error_type': type(error).__name__}
+        if saved is None:
+            return {'receipt': 'missing'}
+        outcome = saved['outcome']
+        return {'receipt': 'terminal' if isinstance(outcome, OperationResult) else 'job',
+                'receipt_sequence': saved['sequence']}
 
     def receipt_sequence(self, call):
         saved = self._saved(call)

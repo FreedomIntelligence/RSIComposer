@@ -73,6 +73,16 @@ class ControllerEndpoint:
     def checkpoint_boundary(self):
         return self.host.advance()
 
+    def checkpoint_boundary_guarded(self, guard):
+        return self.host.advance(before_adoption=guard)
+
+    def pending_stop_checkpoint(self):
+        """Report unsettled cleanup or publication, not an uncommitted swap."""
+        return bool(self.host._retired or self.host._pending_adoption_event is not None)
+
+    def stop_checkpoint_boundary(self):
+        return self.host.stop_checkpoint()
+
     def recovery_bindings(self):
         # The host explicitly owns and captures all replaceable Controller parts.
         return (self.host, self.host.context.host_execution)
@@ -115,34 +125,73 @@ def _context(owner, version, *, initial, endpoint):
     return local, scope(local, owner)
 
 
+def _controller_parts(endpoint):
+    if endpoint is None:
+        return ()
+    return (endpoint, endpoint.harness, endpoint.policy, _policy(endpoint))
+
+
+def _require_independent(part, protected, role):
+    if any(part is old for old in protected):
+        raise TypeError(f'Controller construction must return an independently owned {role}')
+
+
+def _own_close(local, part):
+    close = optional_method(part, 'close')
+    if close is not None:
+        local.add_owned_cleanup(close)
+
+
+def _discard_borrowed_cleanups(local, protected):
+    # A factory may have explicitly registered a bound close before returning
+    # a part or raising. Do not let rejection release someone else's resource.
+    callbacks = getattr(local, '_cleanup', None)
+    if callbacks and protected:
+        callbacks[:] = [(callback, owned) for callback, owned in callbacks
+                        if not any(getattr(callback, '__self__', None) is part for part in protected)]
+
+
 def build_controller(owner, definition, options, version, *, initial=False, memory=None):
     """Rebuild a catalog-selected policy, harness and Memory with local ownership."""
     from rsicomposer.assembly import build_default_decision
     from rsicomposer.harnesses.defaults import build_harness_decision
+    from rsicomposer.loops.decision_making.action_space.access import enforce_host_permissions
+    host = getattr(owner, 'controller_host', None)
+    protected = _controller_parts(getattr(owner.host_execution, 'endpoint', None))
+    if host is not None:
+        protected += (host.active.context,)
     local, scoped = _context(owner, version, initial=initial, endpoint=definition.endpoint)
     try:
         if definition.endpoint:
             endpoint = definition.policy(scoped, owner.lab_execution, deepcopy(options))
+            _require_independent(endpoint, protected, 'endpoint')
+            _require_independent(endpoint.harness, protected, 'harness')
+            _own_close(local, endpoint.harness)
         else:
             policy = definition.policy(scoped, deepcopy(options))
-            close = optional_method(policy, 'close')
-            if close is not None:
-                local.add_owned_cleanup(close)
+            _require_independent(policy, protected, 'policy')
+            _own_close(local, policy)
             if not callable(policy) and optional_method(policy, 'decide') is None:
                 raise TypeError('Controller factory must return a policy or explicit endpoint')
             custom = definition.harness(scoped, deepcopy(options)) if definition.harness is not None else None
             if custom is not None:
+                _require_independent(custom, protected, 'harness')
+                if custom is not policy:
+                    _own_close(local, custom)
                 endpoint = build_harness_decision(scoped, owner.lab_execution, policy=policy, harness=custom)
             else:
                 endpoint = build_default_decision(scoped, owner.lab_execution, policy=policy)
+                _own_close(local, endpoint.harness)
+        required_policy = _policy(endpoint)
+        _require_independent(endpoint.policy, protected, 'policy')
+        _require_independent(required_policy, protected, 'policy')
+        _discard_borrowed_cleanups(local, protected)
         endpoint.controller_version = local._controller_version
         endpoint.model_scope = scoped.models.scope
-        close = optional_method(endpoint.harness, 'close')
-        if close is not None:
-            local.add_owned_cleanup(close)
         if endpoint.operation_router.lab is not owner.lab_execution:
             raise ValueError('Controller endpoint must retain the assembled Lab routing')
-        required_policy = _policy(endpoint)
+        if definition.endpoint:
+            endpoint.action_space = enforce_host_permissions(endpoint.action_space, owner.action_permissions)
         local.controller_report = optional_method(required_policy, 'report')
         owner.lab_execution.validate_controller(required_policy)
         if definition.endpoint and endpoint is not required_policy:
@@ -158,14 +207,23 @@ def build_controller(owner, definition, options, version, *, initial=False, memo
                 raise ValueError('Controller requires missing Lab operations: ' + ', '.join(sorted(set(names) - available)))
         if memory is None and definition.memory is not None:
             memory = definition.memory(deepcopy(options))
+        if (memory is None and initial and local.restoring and local.data_dir is not None
+                and (local.data_dir / 'research_assembly.json').exists()):
+            raise ValueError('Supply the original Controller Memory when restoring this workspace')
         if memory is not None:
             memory.install(endpoint, owner=local,
                 path=local.data_dir / 'feedback_learning.json' if local.data_dir is not None else None)
         return BuiltController(endpoint, local)
     except BaseException as error:
+        _discard_borrowed_cleanups(local, protected)
         try:
             local.close()
         except BaseException as cleanup:
+            if local.cleanup_pending:
+                if host is not None:
+                    host._retired.append(local)
+                else:
+                    owner.add_owned_cleanup(local.close)
             error.add_note('Controller build cleanup failed: ' + str(cleanup))
         raise
 
@@ -248,6 +306,29 @@ class ControllerHost:
         if endpoint.operation_router.lab is not active.operation_router.lab:
             raise ValueError('Controller replacement must retain the run Lab routing')
 
+    def _validate_replacement(self, candidate):
+        self._validate_execution(candidate.endpoint)
+        protected = _controller_parts(self.active.endpoint)
+        _require_independent(candidate.context, (self.active.context, self.context), 'context')
+        for part, role in zip(_controller_parts(candidate.endpoint), ('endpoint', 'harness', 'policy', 'policy')):
+            _require_independent(part, protected, role)
+        integration = getattr(candidate.endpoint, 'integration', None)
+        previous = getattr(self.active.endpoint, 'integration', None)
+        if (integration is not None and previous is not None
+                and integration.memory is not None and integration.memory is previous.memory):
+            raise TypeError('Controller construction must create an independently owned Memory')
+
+    def _close_rejected(self, candidate, error):
+        if candidate.context is self.active.context or candidate.context is self.context:
+            return
+        protected = (*_controller_parts(self.active.endpoint), self.active.context, self.context)
+        _discard_borrowed_cleanups(candidate.context, protected)
+        try:
+            candidate.close()
+        except BaseException as cleanup:
+            self._retired.append(candidate)
+            error.add_note('Rejected Controller cleanup failed: ' + str(cleanup))
+
     def _delivery(self):
         state = self.context.host_execution.state
         return {'feedback': state.decision_feedback_cursor, 'progress': state.progress_cursor}
@@ -297,16 +378,22 @@ class ControllerHost:
             bool(training_result and training_result.simulated),
             data={'controller_version': version.version_id, 'status': 'pending'})
 
-    def advance(self):
-        """Drain one receipt or atomically adopt; never sample either policy here."""
+    def stop_checkpoint(self):
+        """Finish committed adoption bookkeeping without starting a pending swap."""
         self._close_retired()
         self._publish_adoption()
+
+    def advance(self, *, before_adoption=None):
+        """Drain one receipt or atomically adopt; never sample either policy here."""
+        self.stop_checkpoint()
         if self.pending is None:
             return None
         old = self.active
         endpoint = old.endpoint
         if endpoint.pending_records():
-            endpoint.flush_pending_records()
+            flushed = endpoint.flush_pending_records()
+            if isinstance(flushed, LoopStepResult):
+                return flushed
             return LoopStepResult('progressed', reason='Controller swap records flushed', decision_steps=0)
         if endpoint.pending_research_job() is not None:
             endpoint.drain_research()
@@ -321,8 +408,12 @@ class ControllerHost:
         blocking = {call.call_id: ('drain' if mode == 'handover' else mode)
                     for call in (row['operation'] for row in tasks)
                     if (mode := plan[call.call_id]) != 'handover' or call.name not in names}
+        if before_adoption is not None:
+            before_adoption()
         if blocking:
-            return endpoint.drain_operation_plan(blocking)
+            if before_adoption is None:
+                return endpoint.drain_operation_plan(blocking)
+            return endpoint.drain_operation_plan(blocking, before_launch=before_adoption)
         version = self.pending['version']
         training = self.pending['training_result']
         if training is not None:
@@ -338,15 +429,12 @@ class ControllerHost:
             self._grant_prepared_model(ready, training)
             self.prepared_models[ready] = {'result': deepcopy(training),
                                           'activation_key': 'controller-version:' + version.version_id}
+            if before_adoption is not None:
+                before_adoption()
         candidate = self.build_controller(deepcopy(version))
+        execution = self.context.host_execution
         try:
-            self._validate_execution(candidate.endpoint)
-            if candidate.endpoint is endpoint or candidate.endpoint.harness is endpoint.harness:
-                raise TypeError('Controller construction must return an independently owned endpoint and harness')
-            integration = getattr(candidate.endpoint, 'integration', None)
-            previous = getattr(old.endpoint, 'integration', None)
-            if integration is not None and previous is not None and integration.memory is not None and integration.memory is previous.memory:
-                raise TypeError('Controller construction must create an independently owned Memory')
+            self._validate_replacement(candidate)
             if version.policy_state is not None:
                 restore = optional_method(_policy(candidate.endpoint), 'restore')
                 if restore is None or restore(deepcopy(version.policy_state)) is not None:
@@ -360,23 +448,24 @@ class ControllerHost:
             if actual_model is not None:
                 candidate.bind_model(actual_model)
             archive = {'version': deepcopy(self.current_version), 'state': deepcopy(old.capture())}
+            adopted_version = deepcopy(version)
+            adopted_ref = deepcopy(self.pending['ref'])
+            event = {'adoption_id': self.pending['adoption_id'], 'controller_version': version.version_id}
+            activation = execution.prepare_activation(candidate.endpoint, version.version_id,
+                                                       delivery=self.pending['delivery'])
+            if before_adoption is not None:
+                before_adoption()
         except BaseException as error:
-            try:
-                candidate.close()
-            except BaseException as cleanup:
-                self._retired.append(candidate)
-                error.add_note('Rejected Controller cleanup failed: ' + str(cleanup))
+            self._close_rejected(candidate, error)
             raise
+        # The activation and Host identity change together, with no user callbacks.
+        execution.commit_activation(activation)
         self.archives.append(archive)
         self._retired.append(old)
-        self.current_version = deepcopy(version)
-        self.active = candidate
-        self._adopted[version.version_id] = deepcopy(self.pending['ref'])
-        delivery = self.pending['delivery']
-        self._pending_adoption_event = {'adoption_id': self.pending['adoption_id'],
-                                        'controller_version': self.version_id}
+        self.current_version, self.active = adopted_version, candidate
+        self._adopted[version.version_id] = adopted_ref
+        self._pending_adoption_event = event
         self.pending = None
-        self._label(candidate, delivery=delivery)
         self._publish_adoption()
         # Old cleanup can fail, but adoption is already represented in state;
         # retain failed instances for an explicit retry without reverting it.
@@ -553,27 +642,30 @@ class ControllerHost:
             if ready != model:
                 raise ValueError('Recovered Controller deployment differs from its prepared model')
             self._grant_prepared_model(ready, entry['result'])
-        self.prepared_models = deepcopy(prepared)
-        candidate = self.active if version == self.current_version else self.build_controller(deepcopy(version))
+        restored = deepcopy(state)
+        replacing = version != self.current_version
+        candidate = self.build_controller(deepcopy(version)) if replacing else self.active
+        execution = self.context.host_execution
         try:
-            self._validate_execution(candidate.endpoint)
-            candidate.restore(deepcopy(state['active']))
+            if replacing:
+                self._validate_replacement(candidate)
+            else:
+                self._validate_execution(candidate.endpoint)
+            candidate.restore(restored['active'])
+            activation = execution.prepare_activation(candidate.endpoint, version.version_id, reset_delivery=False)
+            self.learning.restore(restored['learning'])
         except BaseException as error:
-            if candidate is not self.active:
-                try:
-                    candidate.close()
-                except BaseException as cleanup:
-                    self._retired.append(candidate)
-                    error.add_note('Recovered Controller cleanup failed: ' + str(cleanup))
+            if replacing:
+                self._close_rejected(candidate, error)
             raise
-        if candidate is not self.active:
+        execution.commit_activation(activation)
+        if replacing:
             self._retired.append(self.active)
-        self.active, self.current_version = candidate, deepcopy(version)
-        self.pending, self.archives, self._adopted = deepcopy(state['pending']), deepcopy(state['archives']), deepcopy(state['adopted'])
-        self._version_deliveries = deepcopy(deliveries)
-        self._pending_adoption_event = deepcopy(event)
-        self.learning.restore(state['learning'])
-        self.context.host_execution.activate(candidate.endpoint, self.version_id, reset_delivery=False)
+        self.active, self.current_version = candidate, restored['current_version']
+        self.pending, self.archives, self._adopted = restored['pending'], restored['archives'], restored['adopted']
+        self.prepared_models = restored['prepared_models']
+        self._version_deliveries = restored['version_deliveries']
+        self._pending_adoption_event = restored['pending_adoption_event']
         self._close_retired()
 
     def validate_snapshot(self):

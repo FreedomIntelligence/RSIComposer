@@ -15,7 +15,7 @@ import time
 from rsicomposer.algorithms.ttrl.lab import TTRLLab
 from rsicomposer.algorithms.ttrl.lab import validate_config as validate_reference
 from rsicomposer.api import (ArtifactRef, ExecutionStatus, JobOutcome, JobProgress, JobRef, JobStatus,
-                        OperationProgress, OperationResult, WeightEngine, WorkerSpec, file_hash)
+                        OperationProgress, OperationResult, WeightEngine, WorkerLostError, WorkerSpec, file_hash)
 from .native_jobs import atomic_json, control_checkpoint, latest_progress, process_identity, read_events
 
 from .upstream import TTRL_REVISION, TTRLReward, checkout
@@ -85,33 +85,76 @@ class VerlTTRLEngine(WeightEngine):
     def _descriptor(self, job):
         if job.backend != self.name:
             raise ValueError('Native job backend does not match this engine')
+        if not isinstance(job.job_id, str) or not job.job_id.strip():
+            raise ValueError('Invalid native job reference')
         directory = Path(job.job_id)
         descriptor = json.loads((directory / 'job.json').read_text())
+        if (not isinstance(descriptor, dict) or 'start_ticks' not in descriptor
+                or type(descriptor.get('pid')) is not int or descriptor['pid'] < 1
+                or not isinstance(descriptor.get('call_id'), str) or not descriptor['call_id'].strip()):
+            raise ValueError('Invalid native job descriptor')
+        start = descriptor['start_ticks']
+        if start is not None and (not isinstance(start, str) or not start.strip()):
+            raise ValueError('Invalid native job process identity')
         return directory, descriptor
 
-    def _alive(self, descriptor):
-        identity = process_identity(descriptor['pid'])
-        return identity is not None and identity == descriptor['start_ticks']
+    @staticmethod
+    def _terminal_status(directory):
+        try:
+            raw = (directory / 'status.json').read_text()
+        except FileNotFoundError:
+            return None
+        status = json.loads(raw)
+        if isinstance(status, dict):
+            if set(status) == {'status'} and status['status'] == 'succeeded':
+                response = json.loads((directory / 'response.json').read_text())
+                if not isinstance(response, dict):
+                    raise ValueError('Invalid native worker response')
+                return JobStatus.SUCCEEDED, response, None
+            if (set(status) == {'status', 'error'} and status['status'] == 'failed'
+                    and isinstance(status['error'], str) and status['error'].strip()):
+                return JobStatus.FAILED, None, status['error']
+        raise ValueError('Invalid native worker terminal status')
+
+    def _fit_state(self, job):
+        directory, descriptor = self._descriptor(job)
+        terminal = self._terminal_status(directory)
+        if terminal is not None:
+            return directory, terminal
+        pid, start = descriptor['pid'], descriptor['start_ticks']
+        identity = process_identity(pid)
+        identity_unavailable = False
+        if identity is None and not sys.platform.startswith('linux'):
+            # The portable process probe also returns None for failed lookups.
+            # Treat only an absent PID as confirmed loss; permission errors propagate.
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                identity_unavailable = True
+        elif identity is not None and (not isinstance(identity, str) or not identity.strip()):
+            raise ValueError('Invalid native worker process identity observation')
+        if identity is not None and identity == start:
+            return directory, (JobStatus.RUNNING, None, None)
+        # Publication precedes worker exit. Close the window between our first
+        # status read and observing that the worker is no longer the same process.
+        terminal = self._terminal_status(directory)
+        if terminal is not None:
+            return directory, terminal
+        if start is None:
+            raise RuntimeError('Native job descriptor has no captured process identity')
+        if identity_unavailable:
+            raise RuntimeError('Cannot verify native worker process identity')
+        cause = 'worker is gone' if identity is None else 'worker PID identity changed'
+        raise WorkerLostError(f'Native {cause} without a terminal publication; no job was resubmitted')
 
     def reattach_fit(self, job):
-        directory, descriptor = self._descriptor(job)
-        if not (directory / 'status.json').exists() and not self._alive(descriptor):
-            raise RuntimeError('Native worker is gone or its PID identity changed; no job was resubmitted')
+        self._fit_state(job)
 
     def poll_fit(self, job):
-        directory, descriptor = self._descriptor(job)
-        status_path = directory / 'status.json'
-        progress = latest_progress(directory)
-        if status_path.exists():
-            status = json.loads(status_path.read_text())
-            if status['status'] == 'succeeded':
-                return JobOutcome(job, JobStatus.SUCCEEDED, json.loads((directory / 'response.json').read_text()),
-                                  simulated=self.simulated, progress=progress)
-            return JobOutcome(job, JobStatus.FAILED, error=status['error'], simulated=self.simulated, progress=progress)
-        if not self._alive(descriptor):
-            return JobOutcome(job, JobStatus.FAILED, error='Native worker exited without a terminal publication',
-                              simulated=self.simulated, progress=progress)
-        return JobOutcome(job, JobStatus.RUNNING, simulated=self.simulated, progress=progress)
+        directory, (status, result, error) = self._fit_state(job)
+        return JobOutcome(job, status, result, error=error, simulated=self.simulated, progress=latest_progress(directory))
 
     def fit_events(self, job, *, after):
         directory, _ = self._descriptor(job)

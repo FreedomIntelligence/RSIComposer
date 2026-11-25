@@ -29,6 +29,46 @@ class RecoveryRequired(RuntimeError):
 from rsicomposer.runtime.state.contracts import select_contract
 
 
+def _intervention_summary(incident):
+    """Public diagnostics only; the journal and repair callback retain the full incident."""
+    if not isinstance(incident, dict):
+        return {'reason': 'unconfirmed_mutation'}
+    reason = incident.get('reason')
+    if incident.get('operation') == 'reconcile':
+        reason = 'interrupted_reconciliation'
+    elif reason not in ('interrupted_mutation', 'interrupted_operation'):
+        reason = 'unconfirmed_mutation'
+    summary = {'reason': reason}
+    for key in ('generation', 'checkpoint_generation'):
+        value = incident.get(key)
+        if type(value) is int and value >= 0:
+            summary[key] = value
+    rows = incident.get('checkpoint_in_flight_evidence')
+    if isinstance(rows, list):
+        summary['calls'] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            call = {}
+            call_id = row.get('call_id')
+            if type(call_id) is str:
+                # IDs can be supplied by callers and need not be UUIDs. Keep a
+                # stable correlation reference without publishing their text.
+                call['call_id_sha256'] = sha256(call_id.encode('utf-8', errors='surrogatepass')).hexdigest()
+            status = row.get('checkpoint_status')
+            if status in ('queued', 'running', 'waiting'):
+                call['checkpoint_status'] = status
+            receipt = row.get('receipt')
+            if receipt in ('terminal', 'job', 'missing', 'unavailable', 'unreadable_or_invalid'):
+                call['receipt'] = receipt
+            sequence = row.get('receipt_sequence')
+            if type(sequence) is int and sequence > 0:
+                call['receipt_sequence'] = sequence
+            if call:
+                summary['calls'].append(call)
+    return summary
+
+
 def durable_mutation(method):
     @wraps(method)
     def wrapped(self, *args, **kwargs):
@@ -42,7 +82,7 @@ def durable_mutation(method):
 # Only data fields: callbacks, endpoints and clocks are rebound by the assembly.
 _RUN_FIELDS = ('_research_round', '_researcher_finished', '_restart_context', '_stop_decision',
                '_terminal_step', '_outcomes', '_quiescing', '_decision_finished',
-               '_execution_shutdown_error', '_finishing_complete')
+               '_execution_shutdown_error', '_execution_shutdown_complete', '_finishing_complete')
 _RUN_TIMERS = ('_run_started', '_restart_at', '_stop_started')
 
 
@@ -56,6 +96,10 @@ def capture_runner(runner):
 
 def restore_runner(runner, state, downtime):
     state = dict(state)
+    # Older captures did not record whether execution shutdown had settled.
+    state.setdefault('_execution_shutdown_complete', False)
+    if type(state['_execution_shutdown_complete']) is not bool:
+        raise ValueError('Invalid execution shutdown state')
     if set(state) != {*_RUN_FIELDS, 'timers', 'cleanup_timeout_seconds'} or set(state['timers']) != set(_RUN_TIMERS):
         raise ValueError('Unsupported runner recovery fields')
     for key in _RUN_FIELDS:
@@ -104,7 +148,8 @@ class DurableRecovery:
     """Two atomically replaced files; checkpoint generation is the commit record.
 
     A journal ahead of the checkpoint is uncertain. Never roll back SQLite/artifacts
-    or replay an interrupted operation. All mutations use the owning Runner thread.
+    or re-execute an operation whose effects are uncertain. All mutations use
+    the owning Runner thread.
     """
     def __init__(self, app, contract=None, *, wall_clock=time):
         self.app = app
@@ -129,6 +174,7 @@ class DurableRecovery:
                    'run_id': self.app.config.run_id, 'objective': self.app.config.objective,
                    'config': _config_identity(self.app.config), 'saved_at': self.wall_clock(),
                    'policy': policy_state(self.app.runner.run_policy, external=True),
+                   'action_permissions': self.app._action_permissions.to_dict(),
                    'runner': capture_runner(self.app.runner), 'components': self.contract.capture(self.app),
                    'intervention': intervention, 'in_flight': in_flight}
         encoded = encode(payload)
@@ -137,8 +183,10 @@ class DurableRecovery:
         self.generation = generation
 
     def initialize(self):
-        self._checkpoint(0)
+        # There are no effects to reconcile yet. The first checkpoint is the
+        # commit record, so its required journal must already be durable.
         atomic_write(self.root / 'journal.json', json_bytes({'generation': 0, 'status': 'committed'}))
+        self._checkpoint(0)
 
     @staticmethod
     def read(root):
@@ -152,14 +200,18 @@ class DurableRecovery:
                              'or start a new run')
         return state
 
-    def load(self, state, supplied_policy=None):
+    @staticmethod
+    def validate_workspace(state, config):
         from rsicomposer.runtime.state.provenance import code_revision
         if state['source'] != code_revision() or state['python'] != list(sys.version_info[:2]):
             raise ValueError('Recovery requires the same framework source and Python major/minor')
+        if state['config'] != _config_identity(config):
+            raise ValueError('Recovery configuration/run identity mismatch')
+
+    def load(self, state, supplied_policy=None):
+        self.validate_workspace(state, self.app.config)
         if state['contract_id'] != self.contract.contract_id:
             raise TypeError('Supply the original recovery contract')
-        if state['config'] != _config_identity(self.app.config):
-            raise ValueError('Recovery configuration/run identity mismatch')
         journal = json.loads((self.root / 'journal.json').read_text())
         self.generation = state['generation']
         if journal['generation'] not in (self.generation, self.generation + 1):
@@ -171,7 +223,12 @@ class DurableRecovery:
         if journal['generation'] > self.generation:
             if journal['status'] != 'started':
                 raise ValueError('Missing committed recovery checkpoint')
-            self.intervention = {**journal, 'reason': 'interrupted_mutation'}
+            # The new mutation has no committed prefix. Even a terminal receipt
+            # matching a prior call cannot prove that nothing else happened (e.g.
+            # Controller adoption, progress observations, or feedback delivery).
+            self.intervention = {**journal, 'reason': 'interrupted_mutation',
+                                 'checkpoint_generation': self.generation,
+                                 'checkpoint_in_flight_evidence': self._in_flight_evidence(in_flight)}
         self.downtime = max(0.0, self.wall_clock() - state['saved_at'])
         self.app.runner.run_policy = restore_policy(state['policy'], supplied_policy)
         self.app.runner._guard_actions = True
@@ -189,6 +246,19 @@ class DurableRecovery:
             raise TypeError('Recovery restore must return None')
         if in_flight and self.intervention is None:
             self._resume_in_flight(in_flight)
+
+    def _in_flight_evidence(self, in_flight):
+        from rsicomposer.runtime.orchestration.lab_group import LabGroup
+        lab = self.app.assembly.lab_execution
+        evidence = []
+        for item in in_flight:
+            call = item['operation']
+            # Inspect the built-in receipt files only; do not invoke custom Lab
+            # hooks while the effect boundary is uncertain.
+            receipt = lab._recovery_receipt_evidence(call) if type(lab) is LabGroup else {'receipt': 'unavailable'}
+            evidence.append({**receipt, 'decision_id': item['decision_id'], 'operation': call.name,
+                             'call_id': call.call_id, 'checkpoint_status': item['status']})
+        return evidence
 
     def _resume_in_flight(self, in_flight):
         """An operation was running when the process stopped. Continue only when that is safe.
@@ -213,7 +283,9 @@ class DurableRecovery:
                 unsafe.append({'decision_id': item['decision_id'], 'operation': call.name, 'call_id': call.call_id})
         # Resolve the complete set before changing a single task or executing a receipt.
         if unsafe:
-            self.intervention = {'reason': 'interrupted_operation', 'operations': unsafe}
+            self.intervention = {'reason': 'interrupted_operation', 'operations': unsafe,
+                                 'checkpoint_generation': self.generation,
+                                 'checkpoint_in_flight_evidence': self._in_flight_evidence(in_flight)}
             return
         calls = tuple(item['operation'] for item in in_flight if item.get('owner') != 'host_finish')
         if calls:
@@ -241,7 +313,8 @@ class DurableRecovery:
             if self._active:
                 return callback()  # e.g. a step's internal cancel belongs to the same boundary
             if self.intervention is not None:
-                raise RecoveryRequired('Interrupted mutation requires reconciliation: ' + str(self.intervention))
+                summary = json.dumps(_intervention_summary(self.intervention))
+                raise RecoveryRequired('Interrupted mutation requires reconciliation: ' + summary)
             # Reject uncontracted component swaps before allowing another external effect.
             json_bytes(encode(self.contract.capture(self.app)))
             policy_state(self.app.runner.run_policy, external=True)

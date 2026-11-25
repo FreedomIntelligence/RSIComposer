@@ -1,5 +1,8 @@
 # Compose a system
 
+For the guarantees and Python interfaces shared by all assembly paths, see
+[Framework contracts](framework-contracts.md).
+
 A run config chooses what to run in its `framework` section. There are two
 forms:
 
@@ -67,6 +70,10 @@ fixed number of times; here it measures one prompt setting:
 }
 ```
 
+At startup, the host checks that the selected Lab alias exposes the operation
+configured for `single_loop`. For example, `math.evaluate` requires the `math`
+Lab to publish `evaluate`. This check does not validate operation arguments.
+
 ## Write a Controller and load it as a plugin
 
 A plugin is a Python file or package with a `register(registry)` function. Load
@@ -132,8 +139,14 @@ Things to know when writing a Controller:
 
 - **Match receipts by `call_id`.** `window.feedbacks` holds the receipts
   delivered at this step.
-- **Follow the Lab's rules.** The host checks each call against the Lab's
-  schema and profile and returns a failed receipt if a rule is broken.
+- **Declare required operations.** Define `required_operations()` to return a
+  tuple of distinct, fully qualified names such as `("math.evaluate",)`. The
+  host rejects missing names at startup, before the first decision.
+- **Follow the Lab's rules.** The host enforces call permissions and Lab profile
+  rules at dispatch. Local operation names cannot contain dots: the host uses
+  the dot to separate the Lab alias from the local name. The Lab validates
+  domain-specific arguments; an operation
+  name passing the startup check does not guarantee valid arguments.
 - **Keep `model` free.** If a Policy has a `model` attribute, the host treats
   it as the Policy's own decision model and requires a `ModelRef`.
 - **For durable runs**, add `state()` and `restore(state)`; see the
@@ -211,3 +224,11 @@ Three things to know:
   attributes memory observations to it.
 - **Mark operations that call a model or change data as `read_only=False`.** The
   host keeps read-only receipts out of Memory and the evidence journal.
+
+When using `MetricGoal`, only operations declared as evaluations by the Lab
+profile participate. A custom Lab can return the local operation names from
+`evaluation_operations()`. A qualifying evaluation receipt includes
+`candidate_id`, a versioned `protocol_ref`, exact `input_refs` and the measured
+`quality_metrics`. Use a distinct protocol reference per dataset, or provide
+`input_refs` in the goal to select exactly which cohort counts. Training scores
+and simulated receipts (unless explicitly accepted) cannot satisfy the goal.

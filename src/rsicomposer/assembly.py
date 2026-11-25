@@ -309,6 +309,7 @@ class ModuleAssembly:
         saved = read_saved_module_layout(directory)
         if saved is not None:
             saved.pop('lab_profiles', None)
+            saved.pop('evaluation_operations', None)  # Validated after constructing the Lab.
             if saved != self.configuration():
                 raise TypeError('Supply the original module assembly when restoring this workspace')
         elif self.method_identity is not None:
@@ -321,7 +322,10 @@ class ModuleAssembly:
         """Stable assembly identity, shared by durable and portable restore."""
         layout = {'schema_version': _MODULE_ASSEMBLY_SCHEMA,
                   **{role + '_factory': self.has_port(role) for role in ('decision', 'lab')}}
-        layout.update(memory=self.memory is not None, state_factory=self.state_factory is not None)
+        selected = (self.controller_catalog.get(self.controller_selection['name'])
+                    if self.controller_selection else None)
+        layout.update(memory=self.memory is not None or bool(selected is not None and selected.memory is not None),
+                      state_factory=self.state_factory is not None)
         if self.components is not None:
             layout['components'] = self.component_configuration()
         if self.method_identity is not None:
@@ -360,11 +364,8 @@ def _build_policy_assembly(controller, options, selected_labs):
             capacity = options.pop('max_concurrent', 1)
             scoped.models.max_concurrent = capacity
             lab = definition.factory(scoped, options)
-            roles = optional_method(lab, 'resource_roles')
-            if roles is not None:
-                scoped.resources.declare(roles())
-            group.add(alias, lab, model_scope=scoped.models.scope,
-                      max_concurrent=capacity)
+            group.add(alias, lab, model_scope=scoped.models.scope, max_concurrent=capacity,
+                      declare_roles=scoped.resources.declare)
         return group
 
     def decision_factory(context, execution):
@@ -392,9 +393,8 @@ def _build_policy_assembly(controller, options, selected_labs):
         context._initial_controller_version = version
         return instance.endpoint
 
-    memory = controller.memory(deepcopy(options)) if controller.memory is not None else None
     from rsicomposer.method_state import method_state_factory
-    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory, memory=memory,
+    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory,
                           state_factory=method_state_factory,
                           controller_catalog={'current': ControllerDefinition(controller.factory,
                               memory=controller.memory, endpoint=controller.endpoint,
@@ -523,8 +523,6 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     context.nested_manifest = nested_manifest
     factories = modules._factories(context)
     decision = _assemble_loops(context, decision_factory=factories['decision'], lab_factory=factories['lab'])
-    context.resources.validate_roles()
-    validate_weight_sync_roles(context.weight_sync, context.resources)
     # Resolve the current harness at close, including domain configuration before
     # the first step. Owned close retains its dependencies if cleanup must retry.
     def close_decision():
@@ -533,7 +531,20 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         if close is not None and not (context.components is not None and context.components.owns(decision.harness)):
             close()
     if not hasattr(context, '_initial_controller_instance'):
+        host_loop = isinstance(decision, DecisionMakingLoop) and isinstance(decision.host_execution, HostExecution)
+        if host_loop and decision.host_execution is not context.host_execution:
+            raise ValueError('Controller endpoint belongs to another run execution')
         context.add_owned_cleanup(close_decision)
+        if host_loop:
+            if decision.operation_router.lab is not context.lab_execution:
+                raise ValueError('Controller endpoint must retain the assembled Lab routing')
+            from rsicomposer.loops.decision_making.action_space.access import enforce_host_permissions
+            decision.action_space = enforce_host_permissions(decision.action_space, context.action_permissions)
+            if context.host_execution.endpoint is not decision:
+                context.host_execution.activate(decision, getattr(decision, 'controller_version', None))
+            context.controller_report = optional_method(decision.policy, 'report')
+    context.resources.validate_roles()
+    validate_weight_sync_roles(context.weight_sync, context.resources)
     profiles = optional_method(context.lab_execution, 'profile_identity')
     if context.method_identity is not None and profiles is not None and profiles():
         declared = context.method_identity.configuration()
@@ -631,8 +642,33 @@ class AssemblyRunner(Runner):
                          execution_shutdown=optional_method(assembly.lab_execution, 'shutdown'),
                          finish_execution=optional_method(assembly.lab_execution, 'finish_step'))
         self.assembly = assembly
+        self._evaluation_operations = optional_method(assembly.lab_execution, 'is_evaluation')
+        self._declared_evaluations = None
+        declared = optional_method(assembly.lab_execution, 'evaluation_operations')
+        if self._evaluation_operations is None and declared is not None:
+            from rsicomposer.runtime.orchestration.profiles import evaluation_operations
+            self._declared_evaluations = evaluation_operations(assembly.lab_execution,
+                                                               assembly.lab_execution.describe(), 'execution')
+            self._evaluation_operations = self._declared_evaluations.__contains__
         self.host_budget = assembly.budget
         self._guard_actions = True
+
+    def _classify_outcome(self, receipt, decision_id):
+        classify = self._evaluation_operations
+        from rsicomposer.host.execution import HostExecution
+        execution = self.assembly.host_execution
+        if classify is not None and decision_id is not None and isinstance(execution, HostExecution):
+            record = execution.state.decision_records.get(decision_id, {})
+            if record.get('operation_outcomes', {}).get(receipt.call_id) == receipt.status.value:
+                call = next((call for call in record['proposal']['operations']
+                             if call['call_id'] == receipt.call_id), None)
+                if call is not None and classify(call['name']) is True:
+                    from rsicomposer.loops.contracts.decision import OperationCall
+                    from rsicomposer.runtime.orchestration.run_policy import EvaluationOutcome
+                    outcome = EvaluationOutcome.from_call(OperationCall(**call), receipt)
+                    if outcome is not None:
+                        return outcome
+        return super()._classify_outcome(receipt, decision_id)
 
     @property
     def closed(self) -> bool:

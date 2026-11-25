@@ -4,6 +4,7 @@ import sys
 from dataclasses import replace
 from time import time
 
+from rsicomposer.loops.decision_making.action_space.access import restore_action_permissions
 from rsicomposer.runtime.state.recovery import (
     capture_runner,
     policy_state,
@@ -27,12 +28,14 @@ def _validate(contract, app):
 
 def capture_components(app, store, contract, label):
     validate_contract(contract, portable=True)
+    action_permissions = app._action_permissions.to_dict()
     _validate(contract, app)
     # Encode before staging. The integration must reject unknown effects and
     # capture dependent memory/files here instead of copying its workspace.
     state = encode({'contract_id': contract.contract_id, 'components': contract.capture(app),
                     'runner': capture_runner(app.runner),
-                    'policy': policy_state(app.runner.run_policy, external=True)})
+                    'policy': policy_state(app.runner.run_policy, external=True),
+                    'action_permissions': action_permissions})
     return capture_bundle(app, store, label=label, config=app.config, state=state,
         runtime={'python': list(sys.version_info[:2]), 'saved_at': time()},
         loop_state_refs={'assembly': 'state.json'},
@@ -55,9 +58,11 @@ def restore_components(directory, target, manifest, *, run_id, modules, contract
     # State adapters are available after constructing the supplied assembly.
     contract = select_contract(contract, has_state_adapters=modules.state_factory is not None, portable=True)
     state = decode(json.loads((directory / 'state.json').read_text()))
-    if (not isinstance(state, dict) or set(state) != {'contract_id', 'components', 'runner', 'policy'}
+    fields = {'contract_id', 'components', 'runner', 'policy'}
+    if (not isinstance(state, dict) or set(state) not in (fields, {*fields, 'action_permissions'})
             or state['contract_id'] != contract.contract_id):
         raise TypeError('Snapshot requires the original component state contract')
+    action_permissions = restore_action_permissions(state)
     config = ApplicationConfig.from_dict(json.loads((directory / 'config.json').read_text()), base_dir=directory)
     if run_id is not None:
         raise ValueError('Component snapshots preserve run identity; forking needs explicit domain integration')
@@ -81,7 +86,8 @@ def restore_components(directory, target, manifest, *, run_id, modules, contract
     def construct():
         # Snapshot restore is not a new durable run. The same state contract
         # still authorizes reconstruction of Lab/feedback markers if supplied.
-        return Application(config, modules=modules, run_policy=policy, _restore=True)
+        return Application(config, modules=modules, run_policy=policy, _restore=True,
+                           action_permissions=action_permissions)
 
     def restore(app):
         restore_runner(app.runner, state['runner'], max(0.0, time() - runtime['saved_at']))

@@ -20,6 +20,7 @@ CORE_METADATA_FIELDS = frozenset(Decision.__dataclass_fields__) | frozenset({
     'proposal', 'objective', 'operation_read_only', 'decision_model', 'controller_version',
     'requested_metadata', 'metadata_projection', 'context_metadata', 'authorization_rejected',
     'operation_elapsed_seconds', 'operation', 'result', 'event', 'elapsed_seconds',
+    'research_cancel_requested',
     'call_id', 'task_id', 'issuing_controller_version', 'issuing_model', 'history_ref', 'history_owner',
 })
 

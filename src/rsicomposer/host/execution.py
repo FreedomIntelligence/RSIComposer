@@ -19,6 +19,9 @@ from rsicomposer.loops.decision_making.action_space.access import authorized_spa
 from rsicomposer.runtime.capabilities import optional_method
 from rsicomposer.runtime.evidence.records import ExperienceRecord
 from rsicomposer.runtime.observation import observe_operation, report_stage_start
+from rsicomposer.runtime.orchestration.runner import (
+    _LOCAL_OPERATION_WAIT, _OPERATION_CHECKPOINT_WAIT, _UNCERTAIN_OPERATION_WAIT, _RunStopping,
+)
 from .ledger import OperationLedger, _PendingOperationRecord, validate_metadata_record
 
 
@@ -60,6 +63,9 @@ class HostExecutionState:
                     or record.get('status') not in ('pending', 'executing', 'completed', 'failed', 'cancelled', 'partial', 'blocked')):
                 raise ValueError('Invalid decision ledger record')
             validate_metadata_record(record)
+            if ('research_cancel_requested' in record and
+                    (record.get('kind') != 'wait' or record['research_cancel_requested'] is not True)):
+                raise ValueError('Invalid Controller research cancellation marker')
             for name in ('depends_on_decision_ids', 'source_decision_ids', 'adopted_candidate_ids', 'adopted_decision_ids',
                          'unresolved_adopted_candidate_ids'):
                 refs = record.get(name, ())
@@ -99,6 +105,15 @@ class HostExecutionState:
             raise ValueError('Decision results must reference their ledger identity')
 
 
+@dataclass
+class _PreparedActivation:
+    endpoint: object
+    version: str | None
+    reset: bool
+    cursors: tuple[int, int] | None
+    committed: bool = False
+
+
 class HostExecution:
     def __init__(self, *, experience):
         self._memory = _HostHistory(self)
@@ -111,29 +126,48 @@ class HostExecution:
         self.ledger = OperationLedger(self)
 
     def activate(self, endpoint, controller_version=None, *, reset_delivery=True, delivery=None):
+        self.commit_activation(self.prepare_activation(endpoint, controller_version,
+                                                        reset_delivery=reset_delivery, delivery=delivery))
+
+    def prepare_activation(self, endpoint, controller_version=None, *, reset_delivery=True, delivery=None):
+        """Bind a candidate to a staged view without changing the active run state."""
         if endpoint.host_execution is not self:
             raise ValueError('Controller endpoint belongs to another run execution')
-        changing = self.endpoint is not endpoint
-        if changing and reset_delivery and delivery is not None:
+        reset = self.endpoint is not endpoint and reset_delivery
+        cursors = None
+        if reset and delivery is not None:
             if (not isinstance(delivery, dict) or set(delivery) != {'feedback', 'progress'}
                     or type(delivery['feedback']) is not int
                     or not 0 <= delivery['feedback'] <= len(self.state.operation_results)
                     or type(delivery['progress']) is not int
                     or not 0 <= delivery['progress'] <= len(self.state.operation_progress)):
                 raise ValueError('Invalid Controller version delivery boundary')
-        self.endpoint = endpoint
-        self.controller_version = controller_version
-        endpoint.controller_version = controller_version
+            cursors = (delivery['feedback'], delivery['progress'])
+        prepared = _PreparedActivation(endpoint, controller_version, reset, cursors)
+        # This setter and the Harness callback belong to trusted endpoint code.
+        # Do both before publishing the candidate; commit is assignments only.
+        if self.endpoint is not endpoint or getattr(endpoint, 'controller_version', None) != controller_version:
+            endpoint.controller_version = controller_version
         bind = optional_method(endpoint.harness, 'bind_execution')
         if bind is not None:
-            bind(self.execution_view)
-        if changing and reset_delivery:
-            if delivery is not None:
-                self.state.decision_feedback_cursor = delivery['feedback']
-                self.state.progress_cursor = delivery['progress']
+            def read():
+                if prepared.committed:
+                    return self.execution_view()
+                progress = cursors[1] if cursors is not None else self.state.progress_cursor
+                return self._execution_view(endpoint, progress)
+            bind(read)
+        return prepared
+
+    def commit_activation(self, prepared):
+        self.endpoint = prepared.endpoint
+        self.controller_version = prepared.version
+        if prepared.reset:
+            if prepared.cursors is not None:
+                self.state.decision_feedback_cursor, self.state.progress_cursor = prepared.cursors
             self.state.finished = False
             self.state.finish_after_operations = None
             self.state.pending_decision = None
+        prepared.committed = True
 
     @property
     def harness(self):
@@ -194,10 +228,13 @@ class HostExecution:
 
     def execution_view(self):
         """Detached facts for Harness context; no scheduling or mutable state access."""
+        return self._execution_view(self.endpoint, self.state.progress_cursor)
+
+    def _execution_view(self, endpoint, progress_cursor):
         return deepcopy({'operation_results': tuple(self.state.operation_results),
-            'progresses': tuple(self.state.operation_progress[self.state.progress_cursor:]),
+            'progresses': tuple(self.state.operation_progress[progress_cursor:]),
             'run_control': self.state.run_control, 'pending': tuple(self.state.operation_tasks),
-            'decision_graph': self.decision_graph(), 'decision_model': self.current_model()})
+            'decision_graph': self.decision_graph(), 'decision_model': endpoint.current_model()})
 
     def _inference_ready(self):
         """True when the Controller's own background inference finished and it should decide
@@ -263,7 +300,8 @@ class HostExecution:
         if self.operation_scheduler.can_poll_job(job):
             return True
         can_poll = optional_method(self.policy, 'can_poll_job')
-        return self.state.pending_job == job and can_poll is not None and can_poll(job) is True
+        return (job is not None and self.pending_research_job() == job
+                and can_poll is not None and can_poll(job) is True)
 
     def _complete_policy_wait(self, outcome):
         job, ident = self.state.pending_job, self.state.pending_operation_decision_id
@@ -297,16 +335,19 @@ class HostExecution:
         return self._complete_policy_wait(poll(job))
 
     def drain_research(self):
-        if self.state.pending_job is None:
-            drain = optional_method(self.policy, 'drain_research')
-            if drain is not None:
-                drain()
-                usages = optional_method(self.policy, 'drain_usage')
-                if usages is not None:
-                    for usage in usages():
-                        self._record_usage(usage)
-            return None
         job = self.state.pending_job
+        drain = optional_method(self.policy, 'drain_research')
+        native_job = optional_method(self.policy, 'pending_research_job')
+        # An explicit wait can refer to the same policy-owned research. Signal
+        # drain before polling that wait so the owner can stop admitting work.
+        if drain is not None and (job is None or (native_job is not None and native_job() == job)):
+            drain()
+            usages = optional_method(self.policy, 'drain_usage')
+            if usages is not None:
+                for usage in usages():
+                    self._record_usage(usage)
+        if job is None:
+            return None
         can_poll = optional_method(self.policy, 'can_poll_job')
         poll = optional_method(self.policy, 'poll_job')
         if job is None or can_poll is None or poll is None or can_poll(job) is not True:
@@ -330,12 +371,23 @@ class HostExecution:
                     self._record_usage(usage)
             return complete
         job = self.state.pending_job
-        can_poll = optional_method(self.policy, 'can_poll_job')
-        cancel = optional_method(self.policy, 'cancel_job')
-        if job is None or can_poll is None or cancel is None or can_poll(job) is not True:
+        if job is None:
             return False
-        outcome = cancel(job)
-        self._complete_policy_wait(outcome)
+        row = self.state.decision_records[self.state.pending_operation_decision_id]
+        cancel = optional_method(self.policy, 'cancel_job')
+        if row.get('research_cancel_requested') or cancel is None:
+            # The request was already issued, or there is no cancellation port.
+            # Only a terminal observation clears the pending wait.
+            self.poll_research()
+        else:
+            can_poll = optional_method(self.policy, 'can_poll_job')
+            if can_poll is None or can_poll(job) is not True:
+                return False
+            result = self._complete_policy_wait(cancel(job))
+            if result.kind == 'waiting':
+                # Store this on the decision, so durable resume polls the same
+                # job rather than reissuing a committed cancel request.
+                row['research_cancel_requested'] = True
         return self.state.pending_job is None
 
     def pending_research_job(self) -> JobRef | None:
@@ -349,12 +401,9 @@ class HostExecution:
         """Include unfinished reviews even when their tool receipts are recorded."""
         return self.state.pending_operation_record is not None
 
-    def flush_pending_records(self) -> None:
-        """Retry existing receipts without executing the operation again."""
-        if self.state.pending_operation_record is not None:
-            call_id = self.state.pending_operation_record.result.call_id
-            self.ledger._flush_operation_record()
-            self.state.operation_tasks.pop(call_id, None)
+    def flush_pending_records(self) -> LoopStepResult | None:
+        """Retry and return the existing receipt, without executing the operation again."""
+        return self._flush_operation_step()
 
     def restart_research(self, context: dict[str, object]) -> None:
         """Reopen a finished, drained cycle; retries of accepted rounds are no-ops."""
@@ -387,36 +436,75 @@ class HostExecution:
     def drain_operations(self, action_space, mode):
         """Host stop control drains receipts without sampling another policy."""
         return self.operation_scheduler.drain_plan(action_space,
-            {ident: mode for ident in self.state.operation_tasks})
+            {ident: mode for ident in self.state.operation_tasks}, stopping=True)
 
     def in_flight_operations(self):
         return self.operation_scheduler.in_flight()
 
-    def drain_operation_plan(self, action_space, plan):
-        return self.operation_scheduler.drain_plan(action_space, plan)
+    def drain_operation_plan(self, action_space, plan, *, before_launch=None):
+        return self.operation_scheduler.drain_plan(action_space, plan, before_launch=before_launch)
+
+    def _flush_operation_step(self):
+        pending = self.state.pending_operation_record
+        if pending is None:
+            return None
+        ident, call_id = pending.decision_id, pending.result.call_id
+        result = self.ledger._flush_operation_record()
+        self.state.operation_tasks.pop(call_id, None)
+        return LoopStepResult('progressed', operation_result=result, decision_id=ident, decision_steps=0)
+
+    def settle_admitted_operations(self, action_space, *, before_launch):
+        """Advance the accepted queue without sampling, stopping, or adopting."""
+        flushed = self._flush_operation_step()
+        if flushed is not None:
+            return flushed
+        scheduler = self.operation_scheduler
+        result = scheduler.advance(action_space, before_launch=before_launch)
+        if result.kind != 'waiting' or result.job is None:
+            return result
+        tasks = self.state.operation_tasks.values()
+        held = any(task['job'] == result.job and task['checkpoint'] is not None for task in tasks)
+        if held or not scheduler.can_poll_job(result.job):
+            # A blocked call must not hide another accepted job that can settle.
+            managed = next((task for task in tasks if task['job'] is not None and task['checkpoint'] is None
+                            and scheduler.can_poll_job(task['job'])), None)
+            if managed is not None:
+                return replace(result, job=managed['job'], decision_id=managed['decision_id'])
+        # A fresh Controller action, not another idle poll, is needed.
+        return replace(result, reason=_OPERATION_CHECKPOINT_WAIT) if held else result
 
     def step(self, objective: str, action_space) -> LoopStepResult:
+        from rsicomposer.loops.decision_making.loop import _GuardedActionSpace
+        # The run guard checks admission on the owning thread. The worker
+        # still validates/authorizes the actual call, but never drives run state.
+        before_launch = None
+        if isinstance(action_space, _GuardedActionSpace):
+            before_launch, action_space = action_space.before_action, action_space.source
         action_space = authorized_space(action_space, 'decision')
-        if self.state.pending_operation_record is not None:
-            ident = self.state.pending_operation_record.decision_id
-            call_id = self.state.pending_operation_record.result.call_id
-            result = self.ledger._flush_operation_record()
-            self.state.operation_tasks.pop(call_id, None)
-            return LoopStepResult("progressed", operation_result=result, decision_id=ident, decision_steps=0)
+        def advance(*, interrupt=None):
+            return self.operation_scheduler.advance(action_space, interrupt=interrupt, before_launch=before_launch)
+        flushed = self._flush_operation_step()
+        if flushed is not None:
+            return flushed
         if self.state.finished:
-            return LoopStepResult("finished")
+            return LoopStepResult("finished", decision_steps=0)
         if self.state.finish_after_operations is not None:
             if self.state.operation_tasks:
-                return self.operation_scheduler.advance(action_space)
+                return advance()
             self.state.finished = True
             return deepcopy(self.state.finish_after_operations)
         if self.state.pending_job is not None:
             return self.poll_research()
+        budget = self.state.run_control.get('decision_steps', {})
+        if budget.get('remaining') == 0:
+            if self.state.operation_tasks:
+                return advance()
+            return LoopStepResult('waiting', reason='Decision step budget exhausted', decision_steps=0)
         if (self.state.operation_tasks and self.state.pending_decision is None
                 and self.state.decision_feedback_cursor == len(self.state.operation_results)
                 and not any(task.get('checkpoint') is not None for task in self.state.operation_tasks.values())
                 and not self._inference_ready()):
-            return self.operation_scheduler.advance(action_space, interrupt=self._inference_ready)
+            return advance(interrupt=self._inference_ready)
         ready = optional_method(self.policy, 'can_decide')
         if self.state.pending_decision is None and ready is not None and ready() is False:
             drain = optional_method(self.policy, 'drain_usage')
@@ -431,6 +519,8 @@ class HostExecution:
             if not callable(self.policy):
                 raise TypeError('Controller policy requires decide(input) or a callable')
             sample = self.policy
+        if before_launch is not None:
+            before_launch()
         decision = saved_pending or self._call_policy(sample, objective, action_space)
         if not isinstance(decision, Decision):
             raise TypeError('Controller policy must return Decision')
@@ -448,18 +538,22 @@ class HostExecution:
             return deepcopy(previous)
         try:
             if decision.kind == "invoke":
-                self.operation_scheduler.submit(decision, action_space)
-                return replace(self.operation_scheduler.advance(action_space, interrupt=self._inference_ready),
+                if before_launch is not None:
+                    before_launch()
+                self.operation_scheduler.submit(decision, action_space, before_launch=before_launch)
+                return replace(advance(interrupt=self._inference_ready),
                                decision_steps=1)
             elif decision.kind == 'control':
-                self.operation_scheduler.control(decision.control)
+                if before_launch is not None:
+                    before_launch()
+                self.operation_scheduler.control(decision.control, before_launch=before_launch)
                 row['status'] = 'completed'
                 result = LoopStepResult('progressed', decision_id=ident, reason='Job checkpoint ' + decision.control.action)
             elif decision.kind == "wait":
                 if self.state.operation_tasks and decision.job is None:
                     row['status'] = 'completed'
                     self.state.pending_decision = None
-                    return replace(self.operation_scheduler.advance(action_space, interrupt=self._inference_ready),
+                    return replace(advance(interrupt=self._inference_ready),
                                    decision_steps=1)
                 self.state.pending_job = decision.job
                 self.state.pending_operation_decision_id = ident if decision.job else None
@@ -471,11 +565,19 @@ class HostExecution:
                 if self.state.operation_tasks:
                     self.state.finish_after_operations = replace(result, decision_steps=0)
                     self.state.pending_decision = None
-                    return replace(self.operation_scheduler.advance(action_space), decision_steps=1)
+                    return replace(advance(), decision_steps=1)
                 self.state.finished = True
+        except _RunStopping as stop:
+            if self.state.pending_decision is not None:
+                row.update(status='cancelled', error=str(stop))
+                self.state.pending_decision = None
+            stop.decision_steps = int(saved_pending is None)
+            raise
         except Exception as error:
             if self.state.pending_operation_record is None:
-                row.update(status='failed', error=f'{type(error).__name__}: {error}')
+                # A dispatch fault is not a terminal receipt for admitted work.
+                if not any(task['decision_id'] == ident for task in self.state.operation_tasks.values()):
+                    row.update(status='failed', error=f'{type(error).__name__}: {error}')
                 self.state.pending_decision = None
                 self.state.pending_operation_decision_id = None
             raise
@@ -523,6 +625,7 @@ class OperationScheduler:
         self._executors = {}
         self._futures = {}
         self._arrivals = Queue()
+        self._ready = {}
 
     @property
     def tasks(self):
@@ -543,7 +646,7 @@ class OperationScheduler:
             return '<host>'
         return call.name.rsplit('.', 1)[0] if '.' in call.name else '<host>'
 
-    def submit(self, decision, action_space):
+    def submit(self, decision, action_space, *, before_launch=None):
         # Admit the complete batch before starting any effects.
         seen = {call['call_id'] for row in self.host.state.decision_records.values()
                 if row['decision_id'] != decision.decision_id
@@ -584,60 +687,93 @@ class OperationScheduler:
                 'retry_sequence': retries.get(call.call_id)}
         self.host.state.pending_decision = None
         self.host.state.decision_records[decision.decision_id]['status'] = 'executing'
-        self._launch(action_space)
+        self._launch(action_space, before_launch=before_launch)
 
     def _checkpoint(self):
         if self.host.in_flight_hook is not None:
             self.host.in_flight_hook(self.in_flight())
 
-    def _launch(self, action_space):
+    @staticmethod
+    def _uses_capacity(task):
+        return task['status'] == 'running' or (task['status'] == 'waiting' and task['checkpoint'] is None)
+
+    def _occupied_capacity(self):
         active = {}
         for task in self.tasks.values():
-            if task['status'] == 'running' or (task['status'] == 'waiting' and task['checkpoint'] is None):
+            if self._uses_capacity(task):
                 alias = self.alias(task['call'])
                 active[alias] = active.get(alias, 0) + 1
+        return active
+
+    def _launch(self, action_space, call_ids=None, *, before_launch=None):
+        active = self._occupied_capacity()
         ready = []
         for ident, task in self.tasks.items():
+            if task['status'] != 'queued' or (call_ids is not None and ident not in call_ids):
+                continue
             alias = self.alias(task['call'])
-            if task['status'] == 'queued' and active.get(alias, 0) < self.capacity(task['call'].name):
+            capacity = self.capacity(task['call'].name)
+            if active.get(alias, 0) < capacity:
                 active[alias] = active.get(alias, 0) + 1
-                task['status'] = 'running'
-                ready.append((ident, task))
+                ready.append((ident, task, alias, capacity))
         if not ready:
             return
-        # Persist ALL running and queued calls before launching the first worker.
-        self._checkpoint()
         tools = self.host.tools
-        for ident, task in ready:
-            row = self.host.state.decision_records[task['decision_id']]
-            report_stage_start(task['decision_id'], task['call'].name, task['call'].arguments, {
-                **{key: row.get(key) for key in ('reason', 'depends_on_decision_ids', 'source_decision_ids')},
-                **deepcopy(row.get('context_metadata', {}))}, call_id=ident)
-            # ContextVars preserve model/accounting and artifact scopes in the Lab worker.
-            context = copy_context()
-            def run(task=deepcopy(task)):
-                token = _host_decision_id.set(task['decision_id'])
-                try:
-                    with observe_operation(task['call'].call_id):
-                        return execute_operation(tools, action_space, task['call'],
-                                                 simulated=task['simulated'], clock=perf_counter, retry=task['retry'],
-                                                 retry_sequence=task['retry_sequence'])
-                finally:
-                    _host_decision_id.reset(token)
-            alias = self.alias(task['call'])
-            if alias == '<host>':
-                future = Future()
-                try:
-                    future.set_result(context.run(run))
-                except BaseException as error:
-                    future.set_exception(error)
-            else:
-                if alias not in self._executors:
-                    self._executors[alias] = ThreadPoolExecutor(max_workers=self.capacity(task['call'].name),
-                                                               thread_name_prefix='rsicomposer-' + alias)
-                future = self._executors[alias].submit(context.run, run)
-            self._futures[ident] = future
-            future.add_done_callback(lambda future, ident=ident: self._arrivals.put(ident))
+        attempted = set()
+        try:
+            if before_launch is not None:
+                before_launch()
+            # Persist ALL ready intents before launching the first worker. A
+            # process loss at this boundary intentionally errs on the safe side.
+            for _, task, _, _ in ready:
+                task['status'] = 'running'
+            self._checkpoint()
+            for ident, task, alias, capacity in ready:
+                if before_launch is not None:
+                    before_launch()
+                row = self.host.state.decision_records[task['decision_id']]
+                report_stage_start(task['decision_id'], task['call'].name, task['call'].arguments, {
+                    **{key: row.get(key) for key in ('reason', 'depends_on_decision_ids', 'source_decision_ids')},
+                    **deepcopy(row.get('context_metadata', {}))}, call_id=ident)
+                # ContextVars preserve model/accounting and artifact scopes in the Lab worker.
+                context = copy_context()
+                def run(task=deepcopy(task)):
+                    token = _host_decision_id.set(task['decision_id'])
+                    try:
+                        with observe_operation(task['call'].call_id):
+                            return execute_operation(tools, action_space, task['call'],
+                                                     simulated=task['simulated'], clock=perf_counter, retry=task['retry'],
+                                                     retry_sequence=task['retry_sequence'])
+                    finally:
+                        _host_decision_id.reset(token)
+                submit = None
+                if alias == '<host>':
+                    future = Future()
+                else:
+                    if alias not in self._executors:
+                        self._executors[alias] = ThreadPoolExecutor(max_workers=capacity,
+                                                                   thread_name_prefix='rsicomposer-' + alias)
+                    submit = self._executors[alias].submit
+                if before_launch is not None:
+                    before_launch()
+                attempted.add(ident)
+                if submit is None:
+                    try:
+                        future.set_result(context.run(run))
+                    except BaseException as error:
+                        future.set_exception(error)
+                else:
+                    future = submit(context.run, run)
+                self._futures[ident] = future
+                future.add_done_callback(lambda future, ident=ident: self._arrivals.put((ident, future)))
+        except BaseException:
+            # A failed guard, checkpoint or preparation did not dispatch these
+            # calls. An attempted submission can have taken effect even if the
+            # executor raises without returning a Future, so do not requeue it.
+            for ident, task, _, _ in ready:
+                if ident not in attempted:
+                    task['status'] = 'queued'
+            raise
 
     def _poll_jobs(self, call_ids=None):
         from rsicomposer.loops.contracts.feedback_context import EvidenceEvent
@@ -671,47 +807,76 @@ class OperationScheduler:
         return check is not None and any(task['job'] == job and check(task['call'], job)
                                          for task in self.tasks.values())
 
-    def advance(self, action_space, call_ids=None, *, interrupt=None):
-        """Run queued operations until one completes, or until interrupt() reports Controller work."""
+    def advance(self, action_space, call_ids=None, *, observe_also=(), interrupt=None,
+                launch=True, before_launch=None):
+        """Observe one receipt or yield, leaving incomplete workers in their owner's queue."""
+        observed = None if call_ids is None else call_ids.union(observe_also)
+        progress = self._poll_jobs(observed)
+        if progress is not None:
+            return progress
+        if launch:
+            self._launch(action_space, call_ids, before_launch=before_launch)
+
+        # Preserve arrival order, including across a selective Controller drain.
+        # A done callback can run after this probe; the next tick will see it.
         while True:
-            progress = self._poll_jobs(call_ids)
-            if progress is not None:
-                return progress
-            self._launch(action_space)
-            futures = {key: value for key, value in self._futures.items() if call_ids is None or key in call_ids}
-            if not futures:
-                waiting = next((task for key, task in self.tasks.items()
-                                if task['job'] is not None and (call_ids is None or key in call_ids)), None)
-                if waiting is not None:
-                    return LoopStepResult('waiting', job=waiting['job'], decision_id=waiting['decision_id'], decision_steps=0)
-                raise RuntimeError('Operation queue cannot make progress')
-            if call_ids is not None:
-                ident = next((key for key, future in futures.items() if future.done()), None)
-                if ident is None:
-                    from concurrent.futures import wait, FIRST_COMPLETED
-                    wait(tuple(futures.values()), timeout=.05, return_when=FIRST_COMPLETED)
-                    continue
-            else:
-                try:
-                    ident = self._arrivals.get(timeout=.05)
-                except Empty:
-                    if interrupt is not None and interrupt():
-                        # The Controller decides next; the running operations keep going.
-                        return LoopStepResult('progressed', reason='Controller inference finished', decision_steps=0)
-                    continue
-                if ident not in self._futures:
-                    continue  # A selective drain already consumed this arrival.
+            try:
+                ident, future = self._arrivals.get_nowait()
+            except Empty:
+                break
+            if self._futures.get(ident) is future:
+                self._ready[ident] = None
+        eligible = lambda key: observed is None or key in observed
+        ident = next((key for key in self._ready if eligible(key)), None)
+        if ident is not None:
+            self._ready.pop(ident)
             execution = self._futures.pop(ident).result()
             task = self.tasks[ident]
-            if isinstance(execution.outcome, JobRef):
-                task.update(status='waiting', job=execution.outcome)
-                self._checkpoint()
-                continue
-            return self.complete(ident, execution.observation(), elapsed=execution.elapsed_seconds,
-                                 error=execution.error)
+            if not isinstance(execution.outcome, JobRef):
+                return self.complete(ident, execution.observation(), elapsed=execution.elapsed_seconds,
+                                     error=execution.error)
+            task.update(status='waiting', job=execution.outcome)
+            self._checkpoint()
+            # A submission may already be terminal. Do not replace the real
+            # backend handle with an artificial local JobRef.
+            progress = self._poll_jobs({ident})
+            if progress is not None:
+                return progress
 
-    def drain_plan(self, action_space, plan):
-        """Apply only the named swap actions, preserving handover operations."""
+        if interrupt is not None and interrupt():
+            return LoopStepResult('progressed', reason='Controller inference finished', decision_steps=0)
+        if any(eligible(key) for key in self._futures):
+            return LoopStepResult('waiting', reason=_LOCAL_OPERATION_WAIT, decision_steps=0)
+        waiting = [task for key, task in self.tasks.items() if eligible(key) and task['job'] is not None]
+        if waiting:
+            # An external wait must not hide a managed handover that can free
+            # capacity for a selective drain.
+            task = (next((task for task in waiting if task['checkpoint'] is None
+                          and self.can_poll_job(task['job'])), waiting[0]) if observe_also else waiting[0])
+            return LoopStepResult('waiting', job=task['job'], decision_id=task['decision_id'], decision_steps=0)
+        # A submit can raise without returning its Future. Keep its running
+        # intent in the queue, but neither announce settlement nor retry it.
+        unknown = next((task for key, task in self.tasks.items()
+                        if eligible(key) and task['status'] == 'running'), None)
+        if unknown is not None:
+            return LoopStepResult('waiting', reason=_UNCERTAIN_OPERATION_WAIT,
+                                  decision_id=unknown['decision_id'], decision_steps=0)
+        raise RuntimeError('Operation queue cannot make progress')
+
+    def _capacity_dependencies(self, call_ids):
+        """Include already-active handovers only when a drain needs their slots."""
+        active = self._occupied_capacity()
+        full = set()
+        for ident, task in self.tasks.items():
+            if ident in call_ids and task['status'] == 'queued':
+                alias = self.alias(task['call'])
+                if active.get(alias, 0) >= self.capacity(task['call'].name):
+                    full.add(alias)
+        return {ident for ident, task in self.tasks.items() if ident not in call_ids
+                and self._uses_capacity(task) and self.alias(task['call']) in full}
+
+    def drain_plan(self, action_space, plan, *, stopping=False, before_launch=None):
+        """Settle selected operations; global shutdown never starts queued work."""
         from rsicomposer.loops.contracts.jobs import JobControl
         for ident, mode in plan.items():
             task = self.tasks.get(ident)
@@ -719,19 +884,34 @@ class OperationScheduler:
                 continue
             if mode not in ('drain', 'cancel'):
                 raise ValueError('Selective drain accepts drain or cancel')
-            if mode == 'cancel' and task['status'] == 'queued':
-                return self.complete(ident, OperationResult('Cancelled for Controller replacement', (),
-                    task['simulated'], ExecutionStatus.CANCELLED, call_id=ident))
+            if stopping or mode == 'cancel':
+                if before_launch is not None:
+                    before_launch()
+                future = self._futures.get(ident)
+                if task['status'] == 'queued' or (future is not None and future.cancel()):
+                    self._futures.pop(ident, None)
+                    self._ready.pop(ident, None)
+                    reason = 'Run stopping before operation started' if stopping else 'Cancelled for Controller replacement'
+                    return self.complete(ident, OperationResult(reason, (), task['simulated'],
+                                                               ExecutionStatus.CANCELLED, call_id=ident))
             if task['checkpoint'] is not None:
-                self.control(JobControl(ident, task['checkpoint'], 'stop' if mode == 'cancel' else 'continue'))
+                self.control(JobControl(ident, task['checkpoint'], 'stop' if mode == 'cancel' else 'continue'),
+                             before_launch=before_launch)
             elif mode == 'cancel' and task['job'] is not None:
                 cancel = optional_method(getattr(self.host.tools, 'lab', None), 'cancel_job')
                 if cancel is None:
-                    raise TypeError('Swap cancellation requires a Lab cancel_job contract or a job checkpoint')
+                    raise TypeError('Operation cancellation requires a Lab cancel_job contract or a job checkpoint')
+                if before_launch is not None:
+                    before_launch()
                 cancel(task['call'], task['job'], decision_id=task['decision_id'])
-        return self.advance(action_space, set(plan)) if any(key in self.tasks for key in plan) else None
+        call_ids = self.tasks.keys() & plan.keys()
+        if not call_ids:
+            return None
+        dependencies = self._capacity_dependencies(call_ids) if not stopping else ()
+        return self.advance(action_space, call_ids, observe_also=dependencies,
+                            launch=not stopping, before_launch=before_launch)
 
-    def control(self, control):
+    def control(self, control, *, before_launch=None):
         task = self.tasks.get(control.call_id)
         if task is None or task['job'] is None or task['checkpoint'] != control.sequence:
             raise ValueError('Job control must match a pending checkpoint event')
@@ -740,6 +920,8 @@ class OperationScheduler:
             raise TypeError('Lab group has no job control capability')
         # The control key (call_id, sequence) is durable before applying it.
         self._checkpoint()
+        if before_launch is not None:
+            before_launch()
         apply(task['call'], task['job'], control, decision_id=task['decision_id'])
         task['checkpoint'] = None
 
@@ -782,6 +964,9 @@ class OperationScheduler:
             self.host.state.decision_records[self.tasks[call.call_id]['decision_id']]['status'] = 'executing'
 
     def close(self):
+        # Pending submissions can be cancelled; Python cannot safely interrupt
+        # already running Lab code. Joining here retains the enclosing owner's
+        # dependencies, but Application.close is not a bounded wait.
         for executor in self._executors.values():
             executor.shutdown(wait=True, cancel_futures=True)
         self._executors.clear()

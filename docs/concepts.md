@@ -19,6 +19,19 @@ finish. The host executes the calls, stores each receipt, and passes the
 receipts to the Controller at the next step. A run ends when the Controller
 finishes or a budget or step limit is reached.
 
+A stop decision closes admission: it does not start a pending Controller swap
+or a new sealed evaluation. The host drains or requests cancellation of
+already dispatched operations. Cancellation is not proof of shutdown; a cleanup
+deadline can leave unresolved work. Python Lab calls, provider callbacks, and
+resource teardown are cooperative: a call already entered cannot be force-stopped
+by the Runner's clock, and closing the Application can take longer than the
+Runner's cleanup deadline. The Python API can return a managed wait before a Lab
+supplies a backend job reference; set `wait_for_jobs=True` to drive these waits as
+the CLI does. The decision cap limits new Controller decisions, not operations
+already admitted by the last decision. With waiting enabled, the host settles
+those operations unless a stop policy takes precedence or the remaining work
+requires an external action, such as a decision at a paused job checkpoint.
+
 ## Terms
 
 | Term | Meaning | In code |
@@ -76,7 +89,27 @@ its profile can drive it.
 The Controller is also replaceable at run time. The
 [Self-Reflection Lab](../src/rsicomposer/labs/self_reflection/lab.py) builds
 candidate Controllers and tests them in nested runs. The current Controller then
-decides whether to adopt one.
+decides whether to adopt one. The host adopts only after the candidate has
+restored and bound its execution view. Controller factories must return their
+own Policy and Harness instances. The outgoing Policy and Harness need state
+ports for archiving, even when the workspace itself is not durable.
+
+Durable recovery distinguishes a terminal receipt from proof that the whole
+interrupted step committed. When the mutation journal is ahead of its
+checkpoint, the host can report matching receipt evidence without treating it
+as permission to resume automatically. Uncertain non-idempotent work is not
+resubmitted. Blocked recovery messages show a limited summary with generation
+numbers, receipt status, and hashed call IDs where available. Original objectives,
+arguments, and reconciliation evidence remain in the private workspace records.
+Stable receipt IDs allow recipients to deduplicate; a deduplicated SQLite row
+does not promise exactly-once delivery to external observers.
+
+Host action permissions apply to built-in and custom Controller endpoints that
+use the Host's action route, and are restored from durable checkpoints and
+portable snapshots. Older state
+that omitted permissions does not authorize Controller operations by default.
+Arbitrary in-process permission callbacks are supported only for ordinary,
+non-durable runs, not as portable or resumable permission policies.
 
 ## What a run writes
 
@@ -84,10 +117,23 @@ Each run writes to its data directory. The most useful files are:
 
 | Path | Contents |
 | --- | --- |
-| `result.json` | Final status, stop reason, every step's receipt in `events`, and `controller_report` if the Controller provides one |
+| `result.json` | Run status, stop reason, effective limits, step receipts, optional exports, and separate `postprocessing` and `cleanup` status |
 | `lab_receipts/` | One stored receipt per operation call |
 | `artifacts/` and Lab output directories (for example `math-lab/`) | Files that Labs produced, such as generated data, evaluations, and models |
 | `snapshots/` | Snapshots for `rsicomposer resume --snapshot`, for methods that support them |
+
+The CLI saves the run summary before attempting the optional Controller report
+and automatic snapshot. Their statuses are recorded separately under
+`postprocessing`. A failed Controller report is a warning; a failed snapshot
+keeps a nonzero exit code. Either way, the completed run and its receipts stay
+available. A phase still marked `pending` has no recorded outcome.
+
+The CLI also saves the summary before closing the Application. Check `cleanup.status`
+separately from the run's `status`: `completed` means close returned successfully;
+`failed` means it raised and the CLI exited nonzero. `pending` means no cleanup outcome
+was recorded, for example if the process stopped during close. The summary and
+receipts are still available after a cleanup failure. This is distinct from
+`shutdown_complete`, the Runner's report at its own stop boundary.
 
 The [Quickstart](quickstart.md#read-the-results) shows how to print the metrics
 from `result.json`.

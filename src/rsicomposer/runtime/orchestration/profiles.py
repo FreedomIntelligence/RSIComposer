@@ -27,6 +27,15 @@ def _typed(value, kind):
                 'null': value is None}.get(name, False) for name in kinds)
 
 
+def evaluation_operations(lab, catalog, label):
+    declarations = _optional(lab, 'evaluation_operations', ())
+    operations = {spec.name for spec in catalog}
+    if (not isinstance(declarations, tuple) or any(not isinstance(name, str) or name not in operations
+            for name in declarations) or len(set(declarations)) != len(declarations)):
+        raise ValueError(f'Lab {label} evaluation_operations() must name distinct declared operations')
+    return frozenset(declarations)
+
+
 class ProfileBinding:
     def __init__(self, alias, lab, catalog):
         self.alias = alias
@@ -40,6 +49,11 @@ class ProfileBinding:
                 profile.validate_catalog(catalog)
             except ValueError as error:
                 raise ValueError(f'Lab {alias}: {error}') from error
+        operations = {spec.name for spec in catalog}
+        self.declared_evaluations = evaluation_operations(lab, catalog, alias)
+        self.evaluations = self.declared_evaluations | frozenset(
+            operation for profile in self.profiles for operation, fields in profile.receipt_fields.items()
+            if operation in operations and fields.get('quality_metrics') == 'object')
         self.metric = _optional(lab, 'primary_metric', None)
         if self.metric is not None and not isinstance(self.metric, MetricSpec):
             raise TypeError(f'Lab {alias} primary_metric() must return MetricSpec')
@@ -99,6 +113,7 @@ class ProfileBinding:
                    if self.model_roles else {}),
                 **({'data_bindings': deepcopy(self.data_bindings)}
                    if self.data_bindings else {}),
+                **({'evaluation_operations': sorted(self.declared_evaluations)} if self.declared_evaluations else {}),
                 'profiles': [p.identity for p in self.profiles],
                 'primary_metric': asdict(self.metric) if self.metric is not None else None,
                 'split_roles': {name: asdict(role) for name, role in sorted(self.roles.items())},

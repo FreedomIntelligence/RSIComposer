@@ -3,17 +3,18 @@
 The Controller samples new priority programs from the decision model with its
 own concurrent samplers (sampler.py) while the Lab evaluates earlier ones.
 inference_ready() lets the host call decide as soon as a sampling request
-finishes, even while Lab evaluations are still running; with no Lab work
-outstanding, decide waits for the first sampling request itself.
+finishes, even while Lab evaluations are still running. With no Lab work
+outstanding, a managed research wait gives control back to the host.
 """
 
 from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
+from uuid import uuid4
 
-from rsicomposer.api import (Decision, ExecutionStatus, OperationCall, report_version,
-                             report_version_evaluation, report_version_selection)
+from rsicomposer.api import (Decision, ExecutionStatus, JobOutcome, JobRef, JobStatus, OperationCall,
+                             report_version, report_version_evaluation, report_version_selection)
 
 from ..shared.experiment import MethodEvents
 from .packing import BASES
@@ -49,6 +50,8 @@ class FunSearchController:
             if type(value) is not int or value < 1:
                 raise ValueError('FunSearch sampler/evaluator and batch/reset counts must be positive integers')
         self.sampler = sampler or FunSearchSampler(context, config, workers=self.samplers)
+        self._research_job = JobRef(str(uuid4()), 'funsearch-sampler')
+        self._stopping = False
 
     _FIELDS = ('pending', 'stats', 'baselines', 'development', 'best', 'selected', 'sequence',
                'issued_proposals', 'reset_cursor', 'sampling')
@@ -57,11 +60,19 @@ class FunSearchController:
         return {**{name: getattr(self, name) for name in self._FIELDS},
                 'queue': [[operation, arguments] for operation, arguments in self.queue],
                 'receipts': sorted(self.receipts), 'seen': sorted(self.seen),
-                'registered': sorted(self.registered), 'population': self.population.state(), 'summary': self.emit.summary}
+                'registered': sorted(self.registered), 'population': self.population.state(), 'summary': self.emit.summary,
+                'research_job_id': self._research_job.job_id, 'stopping': self._stopping}
 
     def restore(self, state):
-        if set(state) != {*self._FIELDS, 'queue', 'receipts', 'seen', 'registered', 'population', 'summary'}:
+        previous = {*self._FIELDS, 'queue', 'receipts', 'seen', 'registered', 'population', 'summary'}
+        if set(state) not in (previous, previous | {'research_job_id', 'stopping'}):
             raise ValueError('Unexpected FunSearch controller state')
+        job_id = state.get('research_job_id', self._research_job.job_id)
+        stopping = state.get('stopping', False)
+        if (not isinstance(job_id, str) or not job_id.strip() or type(stopping) is not bool
+                or (stopping and state['sampling'])):
+            raise ValueError('Invalid FunSearch research state')
+        self._research_job = JobRef(job_id, 'funsearch-sampler')
         self.population.restore(state['population'])
         for name in self._FIELDS:
             setattr(self, name, deepcopy(state[name]))
@@ -71,8 +82,11 @@ class FunSearchController:
         self.emit.summary = state['summary']
         # Completed proposals were charged; in-flight requests are asked again with the same seeds.
         self.sampler.calls.count = self.stats['proposals']
-        for key, row in self.sampling.items():
-            self.sampler.submit(key, row['request'])
+        if stopping:
+            self._stop_research()
+        else:
+            for key, row in self.sampling.items():
+                self.sampler.submit(key, row['request'])
 
     def required_operations(self):
         return ('funsearch.task_spec', 'funsearch.register', 'funsearch.evaluate', 'funsearch.select')
@@ -84,9 +98,44 @@ class FunSearchController:
         return self.emit.report()
 
     def inference_ready(self):
-        return bool(self.sampler.finished())
+        return not self._stopping and bool(self.sampler.finished())
+
+    def pending_research_job(self):
+        return self._research_job if self.sampler.jobs else None
+
+    def can_poll_job(self, job):
+        return job == self._research_job
+
+    def poll_job(self, job):
+        if not self.can_poll_job(job):
+            raise ValueError('FunSearch does not own this research job')
+        if self._stopping:
+            status = JobStatus.CANCELLED if self.sampler.stop() else JobStatus.RUNNING
+            return JobOutcome(job, status)
+        if self.inference_ready():
+            return JobOutcome(job, JobStatus.SUCCEEDED, True)
+        return JobOutcome(job, JobStatus.RUNNING)
+
+    def cancel_job(self, job):
+        if not self.can_poll_job(job):
+            raise ValueError('FunSearch does not own this research job')
+        status = JobStatus.CANCELLED if self._stop_research() else JobStatus.RUNNING
+        return JobOutcome(job, status)
+
+    def _mark_stopping(self):
+        self._stopping = True
+        self.sampling.clear()  # Unpublished batches must not restart on durable recovery.
+
+    def _stop_research(self):
+        self._mark_stopping()
+        return self.sampler.stop()
+
+    # Both stop modes allow an already admitted provider call to exit but
+    # discard uncommitted results and never admit another proposal.
+    drain_research = cancel_research = _stop_research
 
     def close(self):
+        self._mark_stopping()
         self.sampler.close()
 
     @contextmanager
@@ -223,6 +272,8 @@ class FunSearchController:
             receipts.append(receipt)
 
     def decide(self, window):
+        if self._stopping:
+            raise RuntimeError('Cannot decide after FunSearch research has stopped')
         sources, receipts, started = [], [], []
         for feedback in window.feedbacks:
             pending = self.pending.get(feedback.call_id)
@@ -239,13 +290,8 @@ class FunSearchController:
             operations.append(call)
             metadata.append({'call': call, 'followup': followup})
 
-        while True:
-            self.consume_samples(sources, receipts)
-            self.dispatch(issue, sources, started)
-            if operations or self.pending or not self.sampling:
-                break
-            # Only the Controller's own sampling is outstanding: wait here for it.
-            self.sampler.wait()
+        self.consume_samples(sources, receipts)
+        self.dispatch(issue, sources, started)
         sources = tuple(dict.fromkeys(ident for ident in sources if ident is not None))
         if operations:
             decision = Decision('invoke', operations=tuple(operations), reason='FunSearch asynchronous dispatch',
@@ -254,6 +300,9 @@ class FunSearchController:
                 self.pending[row['call'].call_id] = {**row, 'decision_id': decision.decision_id}
         elif self.pending:
             decision = Decision('wait', reason='FunSearch awaiting evaluator receipts', source_decision_ids=sources)
+        elif self.sampling:
+            decision = Decision('wait', job=self._research_job, reason='FunSearch awaiting sampling',
+                                source_decision_ids=sources)
         else:
             decision = Decision('finish', reason='FunSearch search complete; host sealed evaluation follows',
                                 source_decision_ids=sources)

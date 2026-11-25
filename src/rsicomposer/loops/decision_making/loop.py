@@ -59,8 +59,7 @@ class DecisionMakingLoop:
 
     def flush_pending_records(self):
         flush = getattr(self.host_execution, 'flush_pending_records', None)
-        if callable(flush):
-            flush()
+        return flush() if callable(flush) else None
 
     def restart_research(self, context: dict[str, object]) -> None:
         restart = getattr(self.host_execution, 'restart_research', None)
@@ -70,7 +69,7 @@ class DecisionMakingLoop:
 
     def run_control_capabilities(self):
         """Advertise underlying optional hooks, rather than wrapper methods."""
-        return frozenset(name for name in ('restart_research', 'update_run_control')
+        return frozenset(name for name in ('restart_research', 'update_run_control', 'settle_admitted_operations')
                          if callable(getattr(self.host_execution, name, None)))
 
     def update_run_control(self, context: dict[str, object]) -> None:
@@ -96,6 +95,11 @@ class DecisionMakingLoop:
         cancel = getattr(self.host_execution, 'cancel_research', None)
         return cancel() if callable(cancel) else False
 
+    def settle_admitted_operations(self, before_launch):
+        """Advance already authorized work without entering the decision loop."""
+        space = authorized_space(self.action_space, 'decision')
+        return self.host_execution.settle_admitted_operations(space, before_launch=before_launch)
+
     def drain_operations(self, mode):
         drain = getattr(self.host_execution, 'drain_operations', None)
         return drain(authorized_space(self.action_space, 'decision'), mode) if callable(drain) else None
@@ -104,11 +108,14 @@ class DecisionMakingLoop:
         pending = getattr(self.host_execution, 'in_flight_operations', None)
         return pending() if callable(pending) else ()
 
-    def drain_operation_plan(self, plan):
+    def drain_operation_plan(self, plan, *, before_launch=None):
         drain = getattr(self.host_execution, 'drain_operation_plan', None)
         if not callable(drain):
             raise TypeError('Controller endpoint does not support planned operation draining')
-        return drain(authorized_space(self.action_space, 'decision'), plan)
+        space = authorized_space(self.action_space, 'decision')
+        if before_launch is None:
+            return drain(space, plan)
+        return drain(space, plan, before_launch=before_launch)
 
     def can_poll_job(self, job):
         pollable = getattr(self.host_execution, 'can_poll_job', None)

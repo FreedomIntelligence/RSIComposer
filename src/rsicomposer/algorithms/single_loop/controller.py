@@ -35,6 +35,9 @@ class SingleLoopController:
         if type(config.get('stop_on_failure', True)) is not bool:
             raise TypeError('stop_on_failure must be boolean')
 
+    def required_operations(self) -> tuple[str, ...]:
+        return (self.operation,)
+
     def decide(self, window):
         feedback = window.feedbacks[0] if window.feedbacks else None
         if self.submitted:

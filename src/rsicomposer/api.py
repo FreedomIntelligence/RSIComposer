@@ -69,6 +69,7 @@ _EXPORTS = {
     'EvidenceEvent': ('rsicomposer.loops.contracts.feedback_context', 'EvidenceEvent'),
     'RecoveryContract': ('rsicomposer.runtime.state.contracts', 'RecoveryContract'),
     'SnapshotContract': ('rsicomposer.runtime.state.contracts', 'SnapshotContract'),
+    'RecoveryRequired': ('rsicomposer.runtime.state.recovery', 'RecoveryRequired'),
     'AssemblyRecovery': ('rsicomposer.runtime.state.component_state', 'AssemblyRecovery'),
     'LocalSnapshotCapture': ('rsicomposer.snapshot.local', 'LocalSnapshotCapture'),
     'restore_snapshot': ('rsicomposer.snapshot.local', 'restore_snapshot'),
@@ -87,6 +88,19 @@ _EXPORTS = {
     'Registry': ('rsicomposer.registry', 'Registry'),
     'ResearchAssembly': ('rsicomposer.research', 'ResearchAssembly'),
     'build_default_decision': ('rsicomposer.assembly', 'build_default_decision'),
+    # Host authorization and run-control contracts.
+    'AccessRequest': ('rsicomposer.loops.decision_making.action_space.access', 'AccessRequest'),
+    'ActionPermissions': ('rsicomposer.loops.decision_making.action_space.access', 'ActionPermissions'),
+    'SensitivePolicy': ('rsicomposer.loops.decision_making.action_space.access', 'SensitivePolicy'),
+    'RunPolicy': ('rsicomposer.runtime.orchestration.run_policy', 'RunPolicy'),
+    'RunContext': ('rsicomposer.runtime.orchestration.run_policy', 'RunContext'),
+    'RunDecision': ('rsicomposer.runtime.orchestration.run_policy', 'RunDecision'),
+    'ResearcherRunPolicy': ('rsicomposer.runtime.orchestration.run_policy', 'ResearcherRunPolicy'),
+    'TimeRunPolicy': ('rsicomposer.runtime.orchestration.run_policy', 'TimeRunPolicy'),
+    'GoalRunPolicy': ('rsicomposer.runtime.orchestration.run_policy', 'GoalRunPolicy'),
+    'MetricGoal': ('rsicomposer.runtime.orchestration.run_policy', 'MetricGoal'),
+    'RunResult': ('rsicomposer.runtime.orchestration.runner', 'RunResult'),
+
     # Controller, Lab, artifact and job contracts.
     'ArtifactRef': ('rsicomposer.loops.contracts.artifacts', 'ArtifactRef'),
     'BackendBinding': ('rsicomposer.loops.contracts.model_service', 'BackendBinding'),
@@ -105,6 +119,7 @@ _EXPORTS = {
     'JobRef': ('rsicomposer.loops.contracts.jobs', 'JobRef'),
     'JobStatus': ('rsicomposer.loops.contracts.jobs', 'JobStatus'),
     'LabExecution': ('rsicomposer.loops.contracts.execution', 'LabExecution'),
+    'ExecutionLifecycle': ('rsicomposer.loops.contracts.execution', 'ExecutionLifecycle'),
     'LabToolError': ('rsicomposer.loops.contracts.execution', 'LabToolError'),
     'ModelBackend': ('rsicomposer.loops.contracts.model_service', 'ModelBackend'),
     'ModelRef': ('rsicomposer.loops.contracts.model_service', 'ModelRef'),
@@ -424,6 +439,23 @@ if _TYPE_CHECKING:
     from rsicomposer.loops.contracts.feedback_context import EvidenceEvent as EvidenceEvent
     from rsicomposer.runtime.state.contracts import RecoveryContract as RecoveryContract
     from rsicomposer.runtime.state.contracts import SnapshotContract as SnapshotContract
+    from rsicomposer.runtime.state.recovery import RecoveryRequired as RecoveryRequired
+    from rsicomposer.loops.contracts.execution import ExecutionLifecycle as ExecutionLifecycle
+    from rsicomposer.loops.decision_making.action_space.access import (
+        AccessRequest as AccessRequest,
+        ActionPermissions as ActionPermissions,
+        SensitivePolicy as SensitivePolicy,
+    )
+    from rsicomposer.runtime.orchestration.run_policy import (
+        RunPolicy as RunPolicy,
+        RunContext as RunContext,
+        RunDecision as RunDecision,
+        ResearcherRunPolicy as ResearcherRunPolicy,
+        TimeRunPolicy as TimeRunPolicy,
+        GoalRunPolicy as GoalRunPolicy,
+        MetricGoal as MetricGoal,
+    )
+    from rsicomposer.runtime.orchestration.runner import RunResult as RunResult
     from rsicomposer.runtime.state.component_state import AssemblyRecovery as AssemblyRecovery
     from rsicomposer.snapshot.local import LocalSnapshotCapture as LocalSnapshotCapture
     from rsicomposer.snapshot.local import restore_snapshot as restore_snapshot

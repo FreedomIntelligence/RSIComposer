@@ -7,7 +7,7 @@ from typing import Callable, Literal, Protocol
 import warnings
 
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
-from rsicomposer.loops.contracts.coordination import DecisionEndpoint
+from rsicomposer.loops.contracts.coordination import DecisionEndpoint, LoopStepResult
 from rsicomposer.loops.contracts.jobs import JobRef
 from rsicomposer.runtime.state.recovery import durable_mutation
 from rsicomposer.runtime.observation import report_step, trigger_probe
@@ -39,8 +39,14 @@ class RunObserver(Protocol):
     def on_step(self, result: RunnerStep) -> None: ...
 
 
+_LOCAL_OPERATION_WAIT = 'Waiting for a local Lab operation'
+_OPERATION_CHECKPOINT_WAIT = 'Lab job is paused for Controller checkpoint control'
+_UNCERTAIN_OPERATION_WAIT = 'Lab operation dispatch outcome is unknown; automatic retry is disabled'
+
+
 class _RunStopping(BaseException):
     """Internal control signal; tool-error recovery must not swallow a run stop."""
+    decision_steps = 0
 
 
 def _shutdown_error_details(error):
@@ -67,6 +73,8 @@ class Runner:
         self._finish_execution = finish_execution
         self._finishing_complete = False
         self._execution_shutdown = execution_shutdown
+        self._execution_shutdown_complete = False
+        self._last_uncertain_dispatch = False
         self._execution_shutdown_error = None
         self._run_started = None
         self._decision_step_budget = None
@@ -106,16 +114,22 @@ class Runner:
         pending = getattr(self.decision_making, 'pending_records', None)
         return pending() if callable(pending) else False
 
-    def _record_outcome(self, receipt):
+    def _classify_outcome(self, receipt, decision_id):
+        return ExperimentOutcome(receipt)
+
+    def _record_outcome(self, receipt, decision_id):
         if receipt.call_id is None:
             return
-        outcome = ExperimentOutcome(deepcopy(receipt))
+        outcome = self._classify_outcome(deepcopy(receipt), decision_id)
         previous = self._outcomes.get(receipt.call_id)
         if previous is not None and previous != outcome:
             prior = previous.receipt
             if not (prior.status == ExecutionStatus.FAILED
                     and prior.data.get('effects_uncertain') is True and prior.data.get('retryable') is True):
                 raise ValueError('Conflicting delivered run outcome')
+            # The legitimate new delivery supersedes intervening evaluations
+            # of the same candidate/input set; preserve receipt delivery order.
+            del self._outcomes[receipt.call_id]
         self._outcomes[receipt.call_id] = outcome
 
     def _run_context(self, objective):
@@ -160,87 +174,94 @@ class Runner:
             self._stop_decision, self._stop_started = decision, self._clock()
         self._quiescing = True
 
+    def _cleanup_expired(self):
+        return self._clock() - self._stop_started >= self.cleanup_timeout_seconds
+
     def _stop_step(self, objective, original=None):
-        research_job = self._research_job()
-        if research_job is not None and self._stop_decision.shutdown == 'cancel':
-            cancel_research = getattr(self.decision_making, 'cancel_research', None)
-            if callable(cancel_research):
-                cancel_research()
-                research_job = self._research_job()  # an acknowledgement alone is not completion
-        if research_job is not None and self._stop_decision.shutdown == 'drain':
-            # Finish the current policy generation boundary, then close its worker
-            # without dispatching another Lab operation during host shutdown.
-            drain_research = getattr(self.decision_making, 'drain_research', None)
-            if callable(drain_research):
-                drain_research()
-                research_job = self._research_job()
-        pending_records = self._pending_records()
-        execution_complete = True
+        mode = self._stop_decision.shutdown
+        execution_complete = self._execution_shutdown is None or self._execution_shutdown_complete
         execution_error = None
-        if self._execution_shutdown is not None:
+        result = None
+        research_job = self._research_job()
+        # Trusted teardown/poll callbacks are synchronous and must cooperate.
+        # The deadline bounds starting another cleanup action, not the duration
+        # of a callback already entered or eventual Application.close().
+        if not self._cleanup_expired() and research_job is not None:
+            research = getattr(self.decision_making, mode + '_research', None)
+            if callable(research):
+                research()
+                research_job = self._research_job()  # Cancellation acknowledgement is not settlement.
+        if not self._cleanup_expired() and self._execution_shutdown is not None:
             try:
-                execution_complete = self._execution_shutdown(self._stop_decision.shutdown)
+                execution_complete = self._execution_shutdown(mode)
                 if type(execution_complete) is not bool:
                     raise TypeError('Execution shutdown must return bool confirming owned work has exited')
+                self._execution_shutdown_complete = execution_complete
             except Exception as exc:
                 execution_complete = False
+                self._execution_shutdown_complete = False
                 execution_error = exc
                 self._execution_shutdown_error = _shutdown_error_details(exc)
-        complete = not self.busy and research_job is None and not pending_records and execution_complete
-        expired = self._clock() - self._stop_started >= self.cleanup_timeout_seconds
-        stop = {'reason': self._stop_decision.reason, 'shutdown': self._stop_decision.shutdown,
+        if not self._cleanup_expired() and self._pending_records():
+            flush = getattr(self.decision_making, 'flush_pending_records', None)
+            if callable(flush):
+                flushed = flush()
+                if isinstance(flushed, LoopStepResult):
+                    result = self._loop_result(flushed)
+        if result is None and not self._cleanup_expired():
+            # A stopping run can finish already committed bookkeeping, but it
+            # must never run a pending Controller swap or its per-job policy.
+            result = self._checkpoint_step(stopping=True)
+        if result is None and not self._cleanup_expired() and self.busy:
+            drain = getattr(self.decision_making, 'drain_operations', None)
+            drained = drain(mode) if callable(drain) else None
+            if drained is not None:
+                result = self._loop_result(drained)
+                self._last_uncertain_dispatch = (result.event.get('reason') == _UNCERTAIN_OPERATION_WAIT
+                                                 or self._last_uncertain_dispatch)
+        busy, pending_records = self.busy, self._pending_records()
+        checkpoint_pending = getattr(self.decision_making, 'pending_stop_checkpoint', None)
+        unresolved_checkpoint = callable(checkpoint_pending) and bool(checkpoint_pending())
+        complete = (not busy and research_job is None and not pending_records
+                    and not unresolved_checkpoint and execution_complete)
+        expired = self._cleanup_expired()
+        stop = {'reason': self._stop_decision.reason, 'shutdown': mode,
                 'evidence_refs': list(self._stop_decision.evidence_refs),
                 'shutdown_complete': complete, 'cleanup_timed_out': bool(expired and not complete),
-                'unresolved_operations': bool(self.busy),
+                'unresolved_operations': busy,
                 'unresolved_research_job': asdict(research_job) if research_job else None,
                 'unresolved_execution': not execution_complete,
-                'unresolved_records': bool(pending_records)}
+                'unresolved_records': bool(pending_records),
+                'unresolved_checkpoint': unresolved_checkpoint}
         if self._execution_shutdown_error is not None:
             stop['execution_shutdown_error'] = {**self._execution_shutdown_error, 'resolved': execution_complete}
-        # A pending drain adoption must not suppress hard-stop cancellation of
-        # the old Controller's jobs or bypass the bounded cleanup deadline.
-        if not expired and self._stop_decision.shutdown == 'cancel' and self.busy:
-            drain = getattr(self.decision_making, 'drain_operations', None)
-            result = drain('cancel') if callable(drain) else None
-            if result is not None:
-                if result.operation_result is not None:
-                    self._record_outcome(result.operation_result)
-                event = {**asdict(result), 'run_stop': stop}
-                if original is not None:
-                    event['preceding_step'] = original.event
-                return RunnerStep(result.kind, event,
-                    result.decision_steps + (original.decision_steps if original else 0), result.job)
-        boundary = self._checkpoint_step() if not expired else None
-        if boundary is not None:
-            if original is not None:
-                return replace(boundary, event={**boundary.event, 'preceding_step': original.event},
-                               decision_steps=boundary.decision_steps + original.decision_steps)
-            return boundary
         if complete or expired:
-            event = {**(original.event if original else {}), 'run_stop': stop}
-            if original is not None and original.kind == 'completed':
-                # Preserve the final feedback event; the next tick reports run termination.
-                self._terminal_step = RunnerStep('finished', {'run_stop': stop})
-                return replace(original, event=event)
-            self._terminal_step = RunnerStep('finished', event, original.decision_steps if original else 0)
-            return deepcopy(self._terminal_step)
+            event = {'run_stop': stop}
+            if expired and busy and self._last_uncertain_dispatch:
+                event['reason'] = _UNCERTAIN_OPERATION_WAIT
+            if result is not None and result.kind != 'waiting':
+                # Deliver the final receipt once, then expose the terminal stop on
+                # the next tick. Re-reading a stopped run does not resend it.
+                self._terminal_step = RunnerStep('finished', event)
+            elif original is not None and original.kind == 'completed':
+                self._terminal_step = RunnerStep('finished', event)
+                return replace(original, event={**original.event, **event})
+            else:
+                self._terminal_step = RunnerStep('finished', {**(original.event if original else {}), **event},
+                                                original.decision_steps if original else 0)
+                return deepcopy(self._terminal_step)
+        if result is not None:
+            if result.kind == 'waiting' and original is not None and original.kind != 'waiting':
+                return replace(original, event={**original.event, 'run_stop': stop})
+            event = {**result.event, 'run_stop': stop}
+            if original is not None:
+                event['preceding_step'] = original.event
+            return replace(result, event=event, decision_steps=result.decision_steps +
+                           (original.decision_steps if original else 0))
         if execution_error is not None:
             raise execution_error
         if original is not None:
             return replace(original, event={**original.event, 'run_stop': stop})
-        if pending_records:
-            flush = getattr(self.decision_making, 'flush_pending_records', None)
-            if callable(flush):
-                flush()
-            if not self._pending_records():
-                return self._stop_step(objective, RunnerStep('progressed', {'run_control': 'records_flushed'}))
-        if self.busy:
-            drain = getattr(self.decision_making, 'drain_operations', None)
-            result = drain(self._stop_decision.shutdown) if callable(drain) else None
-            if result is not None:
-                if result.operation_result is not None:
-                    self._record_outcome(result.operation_result)
-                return RunnerStep(result.kind, {**asdict(result), 'run_stop': stop}, 0, result.job)
         return RunnerStep('waiting', {'run_stop': stop}, job=research_job)
 
     def add_observer(self, observer: RunObserver):
@@ -270,16 +291,25 @@ class Runner:
             self._run_started = self._clock()
         if self._stop_decision is not None:
             return self._stop_step(objective)
-        if self._researcher_finished and not self._finishing_complete:
-            finished = self._finish_step()
-            if finished is not None:
-                return finished
         context = self._run_context(objective)
         decision = self._evaluate_run(context)
+        if self._stop_before_finish(decision):
+            self._begin_stop(decision)
+            return self._stop_step(objective)
+        if self._decision_step_budget is not None and self._decision_step_budget['remaining'] == 0:
+            self._update_run_hints(context)
+            return self._settle_admitted_step(objective)
+        if self._researcher_finished and not self._finishing_complete:
+            finished = self._finish_step(objective)
+            if finished is not None:
+                return finished
         if decision.action == 'stop':
             self._begin_stop(decision)
             return self._stop_step(objective)
-        boundary = self._checkpoint_step()
+        try:
+            boundary = self._checkpoint_step(guard=lambda: self._guard_boundary(objective))
+        except _RunStopping:
+            return self._stop_step(objective)
         if boundary is not None:
             return boundary
         if context.researcher_finished and not self.busy and self._research_job() is None:
@@ -300,20 +330,22 @@ class Runner:
             self._researcher_finished = self._decision_finished = False
             self._restart_at = self._restart_context = None
             return RunnerStep('progressed', {'run_control': 'research_restarted', 'research_round': self._research_round})
-        update = self._control_method('update_run_control')
-        if callable(update) and (type(self.run_policy) is not ResearcherRunPolicy or self._decision_step_budget is not None or self.host_budget is not None):
-            update(self._control_context(context))
+        self._update_run_hints(context)
         try:
             result = self._transport_step(objective)
-        except _RunStopping:
+        except _RunStopping as stop:
             return self._stop_step(objective, RunnerStep('waiting',
-                {'run_control': 'stopping_before_action'}, decision_steps=1))
+                {'run_control': 'stopping_before_action'}, decision_steps=stop.decision_steps))
         if result.kind == 'finished' or self._decision_finished:
             self._researcher_finished = True
-            finished = self._finish_step()
-            if finished is not None:
-                return replace(finished, decision_steps=result.decision_steps)
         decision = self._evaluate_run(self._run_context(objective))
+        if self._stop_before_finish(decision):
+            self._begin_stop(decision)
+            return self._stop_step(objective, result)
+        if self._researcher_finished and not self._finishing_complete:
+            finished = self._finish_step(objective, result)
+            if finished is not None:
+                return finished
         if decision.action == 'stop':
             self._begin_stop(decision)
             return self._stop_step(objective, result)
@@ -323,28 +355,64 @@ class Runner:
             return replace(result, kind='waiting', event={**result.event, 'run_control': 'researcher_finished'})
         return result
 
-    def _finish_step(self):
-        boundary = self._checkpoint_step()
-        if boundary is not None:
-            return boundary
-        if self._finishing_complete:
-            return None
+    def _stop_before_finish(self, decision):
+        # Normal researcher completion still runs the Host's sealed evaluation
+        # while permitted. Host and time budget exhaustion never does.
+        return decision.action == 'stop' and not (
+            type(self.run_policy) is ResearcherRunPolicy and decision.reason == 'researcher_finished'
+            and not self._finishing_complete)
+
+    def _guard_boundary(self, objective):
+        decision = self._evaluate_run(self._run_context(objective))
+        if self._stop_before_finish(decision):
+            self._begin_stop(decision)
+            raise _RunStopping('Run stopping at a checkpoint boundary')
+
+    def _finish_step(self, objective, original=None):
+        steps = original.decision_steps if original is not None else 0
         recovery = getattr(self, 'recovery', None)
-        hook = recovery.commit_in_flight if recovery is not None else None
-        event = self._finish_execution(hook) if self._finish_execution is not None else None
+
+        def guard():
+            self._guard_boundary(objective)
+
+        def before_execute(in_flight):
+            guard()
+            if recovery is not None:
+                recovery.commit_in_flight(in_flight)
+                guard()
+
+        try:
+            boundary = self._checkpoint_step(guard=guard)
+            if boundary is not None:
+                return replace(boundary, decision_steps=boundary.decision_steps + steps)
+            guard()
+            event = self._finish_execution(before_execute) if self._finish_execution is not None else None
+        except _RunStopping:
+            return self._stop_step(objective, original)
         if event is not None:
-            return RunnerStep('progressed', event)
+            return RunnerStep('progressed', event, steps)
         self._finishing_complete = True
         return None
 
-    def _checkpoint_step(self):
-        boundary = getattr(self.decision_making, 'checkpoint_boundary', None)
-        adopted = boundary() if callable(boundary) else None
+    def _checkpoint_step(self, *, stopping=False, guard=None):
+        guarded = getattr(self.decision_making, 'checkpoint_boundary_guarded', None) if guard is not None else None
+        if callable(guarded):
+            adopted = guarded(guard)
+        else:
+            name = 'stop_checkpoint_boundary' if stopping else 'checkpoint_boundary'
+            boundary = getattr(self.decision_making, name, None)
+            adopted = boundary() if callable(boundary) else None
         if adopted is None:
             return None
         if adopted.operation_result is not None:
-            self._record_outcome(adopted.operation_result)
+            self._record_outcome(adopted.operation_result, adopted.decision_id)
         return RunnerStep(adopted.kind, asdict(adopted), adopted.decision_steps, adopted.job)
+
+    def _update_run_hints(self, context):
+        update = self._control_method('update_run_control')
+        if callable(update) and (type(self.run_policy) is not ResearcherRunPolicy
+                                 or self._decision_step_budget is not None or self.host_budget is not None):
+            update(self._control_context(context))
 
     def _control_method(self, name):
         capabilities = getattr(self.decision_making, 'run_control_capabilities', None)
@@ -358,12 +426,65 @@ class Runner:
         pending = getattr(self.decision_making, 'in_flight_operations', None)
         return bool(pending()) if callable(pending) else False
 
+    def _loop_result(self, result):
+        if result.operation_result is not None:
+            self._record_outcome(result.operation_result, result.decision_id)
+        return RunnerStep(result.kind, asdict(result), result.decision_steps, result.job)
+
     def _transport_step(self, objective: str) -> RunnerStep:
         """One bounded Controller/Lab scheduling tick."""
-        result = self._decision_step(objective)
-        if result.operation_result is not None:
-            self._record_outcome(result.operation_result)
-        return RunnerStep(result.kind, asdict(result), result.decision_steps, result.job)
+        return self._loop_result(self._decision_step(objective))
+
+    def _settle_admitted_step(self, objective):
+        """At the decision cap only advance accepted Lab operations, not a Controller.
+
+        Ordinary dispatch would offer an adoption/restart checkpoint, and a
+        generic endpoint need not honor zero-remaining decision hints.
+        """
+        settle = self._control_method('settle_admitted_operations')
+        try:
+            settled = settle(lambda: self._guard_boundary(objective))
+        except _RunStopping:
+            return self._stop_step(objective)
+        if settled.decision_steps != 0:
+            raise ValueError('Admitted operation settlement cannot consume a decision step')
+        result = self._loop_result(settled)
+        decision = self._evaluate_run(self._run_context(objective))
+        if self._stop_before_finish(decision):
+            self._begin_stop(decision)
+            return self._stop_step(objective, result)
+        return result
+
+    def _has_admitted_work(self):
+        return self._control_method('settle_admitted_operations') is not None and self.busy
+
+    def _managed_wait(self, result):
+        if result.kind != 'waiting' or result.event.get('reason') == _OPERATION_CHECKPOINT_WAIT:
+            return False
+        if result.job is not None:
+            can_poll = getattr(self.decision_making, 'can_poll_job', None)
+            return callable(can_poll) and can_poll(result.job)
+        if result.event.get('reason') == _UNCERTAIN_OPERATION_WAIT:
+            return 'run_stop' in result.event
+        if result.event.get('reason') == _LOCAL_OPERATION_WAIT:
+            return True
+        stop = result.event.get('run_stop', {})
+        return bool((stop.get('unresolved_execution') or stop.get('unresolved_checkpoint'))
+                    and not stop.get('unresolved_operations') and not stop.get('unresolved_research_job'))
+
+    def _wait_for_progress(self):
+        # Sit outside the durable mutation. Do not spin or oversleep a known
+        # time/cleanup boundary merely because there is no backend JobRef yet.
+        delay = .1
+        if self._stop_started is not None:
+            delay = min(delay, self.cleanup_timeout_seconds - (self._clock() - self._stop_started))
+        else:
+            seconds = getattr(self.run_policy, 'seconds', None) if isinstance(self.run_policy, TimeRunPolicy) else (
+                self.run_policy.max_seconds if isinstance(self.run_policy, GoalRunPolicy) else None)
+            if seconds is not None:
+                delay = min(delay, seconds - (self._clock() - self._run_started))
+        if delay > 0:
+            sleep(delay)
 
     def run(self, objective: str, rounds: int, *, max_decision_steps: int | None = None,
             wait_for_jobs: bool = False) -> RunResult:
@@ -376,16 +497,18 @@ class Runner:
             raise ValueError('max_decision_steps must be a positive integer')
         events, completed, decision_steps = [], 0, 0
         previous_budget = self._decision_step_budget
+        def can_advance():
+            return decision_steps < limit or (wait_for_jobs and (self._quiescing or self._has_admitted_work()))
+
         try:
-            while decision_steps < limit:
+            while can_advance():
                 self._decision_step_budget = {'scope': 'this_run_invocation', 'limit': limit,
-                                              'used': decision_steps, 'remaining': limit - decision_steps}
+                                              'used': decision_steps, 'remaining': max(0, limit - decision_steps)}
                 result = self.step(objective)
-                can_poll = getattr(self.decision_making, 'can_poll_job', None)
-                managed_wait = (wait_for_jobs and result.kind == 'waiting' and result.job is not None
-                                and callable(can_poll) and can_poll(result.job))
+                managed_wait = wait_for_jobs and self._managed_wait(result)
                 if managed_wait and result.decision_steps == 0:
-                    sleep(.1)
+                    if can_advance():
+                        self._wait_for_progress()
                     continue  # Idle polls do not inflate events or decision budgets.
                 events.append(result.event)
                 report_step(result.event)
@@ -396,7 +519,8 @@ class Runner:
                 if result.kind == 'finished' and 'feedback' in result.event:
                     completed += 1
                 if managed_wait:
-                    sleep(.1)
+                    if can_advance():
+                        self._wait_for_progress()
                     continue
                 if result.kind in ('waiting', 'finished'):
                     return RunResult(result.kind, completed, decision_steps, events, result.job,

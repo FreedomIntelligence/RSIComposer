@@ -1,5 +1,6 @@
 """Explicit services bound to registered method components."""
 from copy import deepcopy
+from dataclasses import dataclass
 from types import MappingProxyType, SimpleNamespace
 
 
@@ -55,6 +56,30 @@ class EndpointContext(ControllerContext):
 
 def controller_wiring(context):
     return context._wiring if isinstance(context, ControllerContext) else context
+
+
+@dataclass(frozen=True)
+class DecisionWiring:
+    lab_execution: object
+    host_execution: object
+    host_capabilities: object
+    action_permissions: object
+    experience: object
+    experience_limit: int
+    memory_limit: int
+    project_context: object
+
+
+def decision_wiring(context):
+    """Supply the built-in Harness with only the runtime ports it consumes."""
+    owner = controller_wiring(context)
+    return DecisionWiring(owner.lab_execution, owner.host_execution, getattr(owner, '_host_capabilities', None),
+                          owner.action_permissions, owner.experience, owner.experience_limit, owner.memory_limit,
+                          owner.project_context)
+
+
+def controller_model_access(context):
+    return context.models if isinstance(context, ControllerContext) else context._model_access.component('controller')
 
 
 def controller_learning(owner):

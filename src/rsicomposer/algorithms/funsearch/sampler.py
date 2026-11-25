@@ -10,11 +10,12 @@ In-flight requests are not checkpointed: the Controller keeps each request in
 its state and resubmits it after a resume. Seeds depend only on the proposal
 index, so a resubmitted request asks the model exactly the same questions.
 """
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 import ast
 from contextvars import copy_context
 from dataclasses import asdict
 import json
+from threading import Event
 
 from rsicomposer.api import GenerationRequest, ModelResponseError
 
@@ -58,35 +59,74 @@ class FunSearchSampler:
         if session is not None and hasattr(session, 'max_concurrent'):
             session.max_concurrent = max(session.max_concurrent, workers)
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='rsicomposer-funsearch-sampler')
-        self.jobs = {}
+        self.jobs = {}  # Only the Controller's owning thread changes this table.
+        self._stopping = Event()
 
     def submit(self, key, request):
+        if self._stopping.is_set():
+            raise RuntimeError('FunSearch sampler is stopping')
+        if key in self.jobs:
+            raise ValueError('FunSearch sampling request is already owned')
         self.jobs[key] = self.pool.submit(copy_context().run, self.sample, request)
 
     def finished(self):
         """Keys of finished requests, in submission order."""
         return [key for key, job in self.jobs.items() if job.done()]
 
-    def wait(self):
-        """Block until at least one request finishes."""
-        wait(tuple(self.jobs.values()), return_when=FIRST_COMPLETED)
-
     def take(self, key):
-        return self.jobs.pop(key).result()
+        """Publish a completed batch only on the Controller's owning thread."""
+        if self._stopping.is_set():
+            raise RuntimeError('Cannot publish stopped FunSearch research')
+        request, staged, samples = self.jobs[key].result()
+        refs, proposals = [], []
+        for row in staged:
+            proposal = dict(row)
+            source = proposal.pop('source', None)
+            if source is not None:
+                ref = self.artifacts.put(source.encode(), kind='funsearch-priority')
+                proposal['version'] = asdict(ref)
+                refs.append(ref)
+            proposals.append(proposal)
+        payload = {'operation': 'propose', 'request': request, 'evidence': {'samples': samples}}
+        evidence = self.artifacts.put(json.dumps(payload, allow_nan=False).encode(), kind='funsearch-propose')
+        del self.jobs[key]
+        return {'proposals': proposals, 'receipt_id': digest(payload), 'artifacts': (*refs, evidence)}
+
+    def stop(self):
+        """Close admission, discard uncommitted results and confirm actual settlement."""
+        if not self._stopping.is_set():
+            self._stopping.set()
+            self.pool.shutdown(wait=False, cancel_futures=True)
+        if any(not job.done() for job in self.jobs.values()):
+            return False
+        self.pool.shutdown(wait=True)  # Only join threads once no provider call is running.
+        self.jobs.clear()
+        return True
 
     def close(self):
-        self.pool.shutdown(wait=False, cancel_futures=True)
+        if not self.stop():
+            # The Host retains owned cleanup and its dependencies for retry.
+            raise RuntimeError('FunSearch sampler still owns running generation')
 
     def sample(self, request):
-        """Sample, parse and seal one request's programs: {'proposals', 'receipt_id', 'artifacts'}."""
-        proposals, samples, refs = [], [], []
+        """Generate and parse one batch without publishing artifacts from a worker."""
+        proposals, samples = [], []
+        prompt = proposal_prompt(request['prompt'])
         for index in range(request['start'], request['start'] + request['count']):
             seed = (self.config['seed'] * 100003 + index) % 2**32
             sample = {'index': index, 'seed': seed, 'response': None}
+            generation = GenerationRequest('decision_maker', self.model, prompt, system=SYSTEM,
+                max_output_tokens=self.config['max_output_tokens'], temperature=self.config['temperature'],
+                top_p=0.95, seed=seed)
+            # This is the admission boundary for each proposal, not just each batch.
+            # The accepted provider call may not be interruptible, but no further
+            # proposals may be admitted after stop has been signalled.
+            if self._stopping.is_set():
+                return None
             try:
-                response = self.calls.generate(GenerationRequest('decision_maker', self.model,
-                    proposal_prompt(request['prompt']), system=SYSTEM, max_output_tokens=self.config['max_output_tokens'],
-                    temperature=self.config['temperature'], top_p=0.95, seed=seed))
+                response = self.calls.generate(generation)
+                if self._stopping.is_set():
+                    return None
                 sample['response'] = response.text
                 if response.finish_reason == 'length':
                     raise ModelResponseError('Candidate output reached its token limit', reason='output_truncated',
@@ -102,14 +142,9 @@ class FunSearchSampler:
                 continue
             try:
                 source, _ = normalize(response.text)
-                ref = self.artifacts.put(source.encode(), kind='funsearch-priority')
-                version = asdict(ref)
-                refs.append(ref)
             except InvalidPriority as exc:
-                version = None
+                source = None
                 sample.update(rejection=str(exc), rejection_kind='parse')
-            proposals.append({'index': index, 'version': version})
+            proposals.append({'index': index, 'version': None, 'source': source})
             samples.append(sample)
-        payload = {'operation': 'propose', 'request': request, 'evidence': {'samples': samples}}
-        evidence = self.artifacts.put(json.dumps(payload, allow_nan=False).encode(), kind='funsearch-propose')
-        return {'proposals': proposals, 'receipt_id': digest(payload), 'artifacts': (*refs, evidence)}
+        return request, proposals, samples

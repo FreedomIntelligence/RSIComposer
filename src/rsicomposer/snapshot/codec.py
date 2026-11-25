@@ -29,7 +29,7 @@ from rsicomposer.loops.contracts.profiles import MetricSpec, SplitRole, Invarian
 from rsicomposer.loops.contracts.requests import EvaluationSpec, PromptSpec, RLSpec, SFTSpec
 from rsicomposer.loops.contracts.training import ResumeMode, TrainingOrigin, TrainingResult
 from rsicomposer.runtime.evidence.records import ExperienceRecord
-from rsicomposer.runtime.orchestration.run_policy import ExperimentOutcome, RunDecision
+from rsicomposer.runtime.orchestration.run_policy import EvaluationOutcome, ExperimentOutcome, RunDecision
 from rsicomposer.runtime.orchestration.runner import RunnerStep
 from rsicomposer.runtime.storage.codec import decode, encode, register_enums, register_types
 
@@ -38,7 +38,7 @@ __all__ = ['decode', 'encode']
 register_types(
     ControllerVersion, EvidenceScope,
     MetricSpec, SplitRole, Invariant, LabProfile,
-    OperationProgress, JobControl, Decision, RunnerStep, RunDecision, ExperimentOutcome, JobOutcome,
+    OperationProgress, JobControl, Decision, RunnerStep, RunDecision, ExperimentOutcome, EvaluationOutcome, JobOutcome,
     ExperienceRecord, Memory, HistoryEntry, DecisionContext, OperationSpec,
     _PendingOperationRecord, DecisionTrainingRequest,
     ArtifactRef, Candidate, Feedback, FeedbackDelivery, JobRef, ModelRef, TokenUsage,

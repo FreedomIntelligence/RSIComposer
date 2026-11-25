@@ -4,15 +4,16 @@ from rsicomposer.runtime.capabilities import optional_method
 
 import fcntl
 import json
+import os
 from copy import deepcopy
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
 from rsicomposer.assembly import AssemblyContext, ModuleAssembly, read_saved_module_layout
 from rsicomposer.loops.contracts.model_service import BackendBinding, ModelRef
-from rsicomposer.loops.decision_making.action_space.access import ActionPermissions
+from rsicomposer.loops.decision_making.action_space.access import ActionPermissions, restore_action_permissions
 from rsicomposer.runtime.evidence.retrieval import BasicEvidenceRepository
 from rsicomposer.runtime.evidence.sqlite import SQLiteExperienceStore
 from rsicomposer.runtime.execution.local_process import LocalProcessBackend
@@ -105,7 +106,10 @@ class Application:
                  action_permissions: ActionPermissions | None = None, run_policy: RunPolicy | None = None,
                  cleanup_timeout_seconds: float = 30, durable: bool = False,
                  recovery_contract=None, _restore: bool = False, _resume: bool = False, _delegated_models=None,
-                 _host_budget=None, _initial_controller_version=None, _inherited_controller_history=()):
+                 _host_budget=None, _initial_controller_version=None, _inherited_controller_history=(),
+                 _cli_launch: bytes | None = None, _initial_literature: tuple[Path, ...] = ()):
+        if (_cli_launch is not None or _initial_literature) and (not durable or _restore or _resume):
+            raise ValueError('CLI launch metadata requires a new durable run')
         if not isinstance(modules, ModuleAssembly):
             raise TypeError('modules must be a ModuleAssembly')
         has_lab = modules.has_port('lab')
@@ -128,6 +132,15 @@ class Application:
             raise TypeError('Lab execution requires explicit recovery integration; durable execution is unsupported')
         if recovery_contract is not None and not durable:
             raise ValueError('recovery_contract requires durable=True')
+        if _resume and action_permissions is not None:
+            raise ValueError('Cannot replace recovered action permissions')
+        permissions = action_permissions if action_permissions is not None else ActionPermissions()
+        if durable and not _resume:
+            # Do not build a durable assembly that cannot reproduce its admission policy.
+            permissions.to_dict()
+        root = Path(config.data_dir).resolve()
+        if root != config.data_dir:
+            config = replace(config, data_dir=root)
         self.config = config
         self.modules = modules
         self.recovery = None
@@ -136,7 +149,6 @@ class Application:
         self._closed = False
         self.store = None
         self.sandbox = None
-        root = config.data_dir
         try:
             # Validate transports before touching storage. Keys are read only at call time.
             from rsicomposer.backends.serving import build_serving_backend, is_native_serving_kind
@@ -165,12 +177,22 @@ class Application:
                 from rsicomposer.runtime.state.recovery import DurableRecovery
                 if _resume:
                     checkpoint = DurableRecovery.read(root)
+                    DurableRecovery.validate_workspace(checkpoint, config)
+                    permissions = restore_action_permissions(checkpoint)
+            self._action_permissions = permissions
             if _restore:
                 if (root / 'lab_execution.json').exists() and (
                         not has_lab or (recovery_contract is None and modules.state_factory is None)):
                     raise TypeError('Lab execution requires explicit recovery integration; automatic restore is unsupported')
                 if (root / 'research_assembly.json').exists() and memory is None:
-                    raise ValueError('Supply the original Controller Memory when restoring this workspace')
+                    # Registered Controllers construct Memory only after the
+                    # restored workspace and permissions are established.
+                    selection = (_initial_controller_version.config if _initial_controller_version is not None
+                                 else modules.controller_selection)
+                    definition = modules.controller_catalog.get(selection['name']) if selection is not None else None
+                    if (definition is None or definition.memory is None
+                            or (modules.registry_source is None and modules.method_identity is None)):
+                        raise ValueError('Supply the original Controller Memory when restoring this workspace')
                 modules.validate_saved(root)
                 existing = json.loads((root / 'run.json').read_text())
                 if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
@@ -190,7 +212,7 @@ class Application:
                 sandbox=self.sandbox, roles=dict(config.roles), data_dir=root, execution=config.execution,
                 with_learning=config.learning == 'mock', experience_limit=config.experience_limit,
                 memory_limit=config.memory_limit, restoring=_restore, resuming=_resume,
-                action_permissions=action_permissions if action_permissions is not None else ActionPermissions(),
+                action_permissions=self._action_permissions,
             )
             self.assembly._delegated_models = _delegated_models
             self.assembly.budget = _host_budget
@@ -210,9 +232,11 @@ class Application:
             declared = profile_identity() if profile_identity is not None else {}
             if declared:
                 module_layout['lab_profiles'] = declared
+            if self.runner._declared_evaluations:
+                module_layout['evaluation_operations'] = sorted(self.runner._declared_evaluations)
             saved_layout = read_saved_module_layout(root) if _restore else None
             if saved_layout is not None and saved_layout != module_layout:
-                raise ValueError('Lab profile or primary metric differs from saved method identity')
+                raise ValueError('Lab profile, primary metric or evaluation operations differ from saved method identity')
             atomic_write(root / 'module_assembly.json', json_bytes(module_layout))
             if self.assembly.lab_execution is not None:
                 atomic_write(root / 'lab_execution.json', json_bytes({'restore': 'requires_explicit_integration'}))
@@ -224,6 +248,12 @@ class Application:
                 if _resume:
                     self.recovery.load(checkpoint, run_policy)
                 else:
+                    # Publish the CLI's reconstruction input under the workspace
+                    # lock, before the first checkpoint can advertise a valid run.
+                    for path in _initial_literature:
+                        self.artifacts.put_file(path, kind='literature')
+                    if _cli_launch is not None:
+                        atomic_write(root / 'framework.json', _cli_launch)
                     self.recovery.initialize()
                 self.runner.recovery = self.recovery
                 execution = self.assembly.host_execution
@@ -244,9 +274,14 @@ class Application:
         lock is acquired before checkpoint state is read/applied by the constructor.
         """
         root = Path(data_dir).resolve()
-        config = ApplicationConfig.load(root / 'config.json')
-        if config.data_dir.resolve() != root:
-            raise ValueError('Resume uses the original workspace; recovery is not a portable snapshot')
+        raw = json.loads((root / 'config.json').read_text())
+        config = ApplicationConfig.from_dict(raw, base_dir=root)
+        if config.data_dir != root:
+            if Path(raw['data_dir']).is_absolute():
+                raise ValueError('Resume uses the original workspace; recovery is not a portable snapshot')
+            # Older applications saved relative paths from their launch directory.
+            # The locked checkpoint verifies the original absolute path before assembly.
+            config = replace(config, data_dir=root)
         return cls(config, modules=modules, recovery_contract=recovery_contract, run_policy=run_policy,
                    durable=True, _restore=True, _resume=True)
 
@@ -272,6 +307,17 @@ class Application:
         if not isinstance(value, dict):
             raise TypeError('Controller report must return a JSON object')
         return json.loads(json.dumps(value, allow_nan=False))
+
+    @contextmanager
+    def _hold_workspace_lock(self):
+        """Let the CLI publish the cleanup outcome under the original lock."""
+        # flock is attached to the open file description. Keep a reference
+        # through close() without reacquiring the lock in a race with resume.
+        fd = os.dup(self._lock.fileno())
+        try:
+            yield
+        finally:
+            os.close(fd)
 
     def close(self):
         self._closed = True

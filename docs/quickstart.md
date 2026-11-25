@@ -23,6 +23,19 @@ environment and use `rsicomposer` for commands and `rsicomposer.api` for
 plugin imports. Keep the original checkout and environment for resuming existing
 checkpoints or restoring snapshots made before the package migration.
 
+## Verify a checkout
+
+Run the core integration and fault-injection checks without model credentials, GPUs, or optional extras:
+
+```sh
+PYTHONPATH=src python -m unittest discover -s verification -v
+```
+
+CI also installs the wheel into a fresh environment and runs the ReST^EM CPU fixture through
+the installed console script from a temporary working directory. It pauses after four decisions
+and resumes the durable workspace, checking packaged resources and real CLI behavior rather than
+only imports from the source tree.
+
 ## Run without a GPU
 
 This run executes the ReST^EM loop on a few fixture problems: evaluate, then

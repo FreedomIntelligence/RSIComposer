@@ -204,6 +204,19 @@ Run commands from the repository root. Built-in presets and documentation follow
 
 ## Command-line options
 
+Run `rsicomposer explain --config path/to/run.json` to inspect the selected Controller and Labs (or method),
+their registered versions, the destination, and effective run limits without opening a workspace.
+It takes the same `--data-dir`, `--plugin`, `--permissions`, `--rounds`, and `--max-decision-steps` inputs as `run`.
+The preview validates configuration only: operations and Lab profiles are checked by the Host at startup,
+and a successful preview is not a backend readiness check. Passing `--plugin` still executes trusted
+registration code and its configuration hooks; preview is not a sandbox. Plugin config values and
+backend settings are not echoed.
+
+For a fresh CLI run, `--max-decision-steps` overrides the config; if neither is set, the CLI uses 64.
+The preview reports the source as `flag`, `config`, or `cli_default`. `result.json` also records the
+effective limits for that invocation (a resume can use `saved_config` or `runner_default`). The Python API retains its
+separate fallback of `rounds * 8` when no explicit decision cap is supplied.
+
 | Command | Option | Meaning |
 | --- | --- | --- |
 | `rsicomposer run` | `--config` | TOML or JSON run config file |
@@ -218,9 +231,8 @@ Run commands from the repository root. Built-in presets and documentation follow
 | | `--probe` | Load an observation plugin for RSIMonitor; repeatable |
 | | `--no-monitor` | Run without publishing RSIMonitor snapshots |
 | `rsicomposer resume` | `--data-dir` | Continue a durable run in this directory |
-| | `--snapshot` | Restore a snapshot into a new `--data-dir` instead |
-| | `--run-id` | Fork a snapshot under a new run ID |
-| | `--plugin` | Trusted plugin paths for resuming (defaults to those recorded at launch); repeatable |
+| | `--snapshot` | Restore into a new `--data-dir` while preserving the run ID |
+| | `--plugin` | Trusted plugin paths; durable resume uses those recorded at launch by default, snapshots require explicit paths. Repeatable. |
 | | `--max-decision-steps`, `--rounds` | Override the config values |
 | | `--probe` | Load an observation plugin for RSIMonitor; repeatable |
 | | `--no-monitor` | Run without publishing RSIMonitor snapshots |

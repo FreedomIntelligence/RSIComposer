@@ -9,6 +9,7 @@ for your task.
 | Understand Controllers, Labs, operations, receipts, and splits | [Concepts](concepts.md) |
 | See which methods, Controllers, Labs, and components ship with RSIComposer | [Components](components.md) |
 | Pair an existing Controller with a different Lab, or load my own code as a plugin | [Compose a system](compose.md) |
+| Implement or verify an extension against the Python library | [Framework contracts](framework-contracts.md) |
 | Look up a run-config field | [Run configuration](config.md) |
 | Write a new Controller or a new method | [Method template](../src/rsicomposer/algorithms/_template/README.md) |
 | Choose a Lab or connect a dataset or benchmark | [Lab catalog](components.md#labs) |

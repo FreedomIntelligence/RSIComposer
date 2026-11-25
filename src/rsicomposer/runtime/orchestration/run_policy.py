@@ -17,6 +17,42 @@ class ExperimentOutcome:
     receipt: OperationResult
 
 
+def _input_refs(refs):
+    if (not isinstance(refs, (list, tuple)) or not refs
+            or any(not isinstance(ref, str) or not ref.strip() for ref in refs)
+            or len(set(refs)) != len(refs)):
+        return None
+    return tuple(refs)
+
+
+@dataclass(frozen=True)
+class EvaluationOutcome(ExperimentOutcome):
+    """A delivered receipt tied to a Host-classified evaluation call."""
+    operation: str
+    candidate_id: str
+    protocol_ref: str
+    input_refs: tuple[str, ...]
+
+    @classmethod
+    def from_call(cls, call, receipt):
+        data = receipt.data
+        candidate = data.get('candidate_id')
+        protocol = data.get('protocol_ref')
+        inputs = _input_refs(data.get('input_refs'))
+        args = call.arguments
+        if (not isinstance(candidate, str) or not candidate.strip()
+                or not isinstance(protocol, str) or not protocol.strip() or inputs is None):
+            return None
+        if any(key in args and args[key] != value for key, value in (
+                ('candidate_id', candidate), ('protocol_ref', protocol))):
+            return None
+        if 'input_refs' in args and _input_refs(args['input_refs']) != inputs:
+            return None
+        if 'split' in args and 'split' in data and args['split'] != data['split']:
+            return None
+        return cls(receipt, call.name, candidate, protocol, inputs)
+
+
 @dataclass(frozen=True)
 class RunContext:
     objective: str
@@ -113,14 +149,17 @@ class GoalRunPolicy:
 class MetricGoal:
     """A completed evaluation threshold, not automatic candidate application.
 
-    The latest evaluation for each candidate/protocol/input set supersedes its
-    older result. Configure a distinct protocol for each validation dataset.
+    Only outcomes tied to a declared evaluation operation count. A result must
+    carry a candidate, versioned protocol reference and exact input references.
+    Prefer distinct protocol references per validation dataset, or set input_refs
+    to select the precise inputs for this goal.
     """
     metric: str
     threshold: float
     protocol_ref: str
     higher_is_better: bool = True
     allow_simulated: bool = False
+    input_refs: tuple[str, ...] | None = None
 
     def __post_init__(self):
         if not isinstance(self.metric, str) or not self.metric or not isinstance(self.protocol_ref, str) or not self.protocol_ref:
@@ -129,21 +168,29 @@ class MetricGoal:
             raise ValueError('threshold must be finite')
         if type(self.higher_is_better) is not bool or type(self.allow_simulated) is not bool:
             raise TypeError('MetricGoal flags must be boolean')
+        if self.input_refs is not None:
+            refs = _input_refs(self.input_refs)
+            if refs is None:
+                raise ValueError('MetricGoal input_refs must be distinct nonempty references')
+            object.__setattr__(self, 'input_refs', refs)
 
     def __call__(self, context):
         seen = set()
         for outcome in reversed(context.outcomes):
-            receipt = outcome.receipt
-            data = receipt.data
-            if data.get('protocol_ref') != self.protocol_ref:
+            if not isinstance(outcome, EvaluationOutcome) or outcome.protocol_ref != self.protocol_ref:
                 continue
-            key = (data.get('candidate_id'), repr(data.get('input_refs')))
+            if self.input_refs is not None and outcome.input_refs != self.input_refs:
+                continue
+            key = (outcome.operation, outcome.candidate_id, outcome.input_refs)
             if key in seen:
                 continue
             seen.add(key)
+            receipt = outcome.receipt
             if receipt.status != ExecutionStatus.COMPLETED or (receipt.simulated and not self.allow_simulated):
                 continue
-            value = data.get('quality_metrics', {}).get(self.metric)
+            if receipt.data.get('valid') is False or receipt.data.get('scored') is False:
+                continue
+            value = receipt.data.get('quality_metrics', {}).get(self.metric)
             if type(value) not in (int, float) or not math.isfinite(value):
                 continue
             if (value >= self.threshold if self.higher_is_better else value <= self.threshold):

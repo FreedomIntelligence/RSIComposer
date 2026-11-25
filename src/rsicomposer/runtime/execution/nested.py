@@ -463,7 +463,8 @@ class NestedRun:
         return all(job['phase'] == 'terminal' for job in self._jobs.values())
 
     def close(self):
-        self.shutdown('cancel')
+        if not self.shutdown('cancel'):
+            raise RuntimeError('Nested worker cancellation is not yet confirmed')
 
     @_serialized
     def state(self):

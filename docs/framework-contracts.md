@@ -1,0 +1,147 @@
+# RSIComposer framework contracts
+
+This is the reference for extending the Python library. The [composition guide](compose.md)
+shows how to choose components; this page specifies what the Host guarantees and what
+each component must implement. Import public types from `rsicomposer.api`.
+
+| Boundary | Public interfaces | Who owns it? |
+| --- | --- | --- |
+| Assembly | `Application`, `ApplicationConfig`, `Registry`, `MethodDefinition`, `ModuleAssembly`, `ComponentDefinition`, `ComponentGraph` | The caller selects implementations; the Host validates bindings and owns acquired resources. |
+| Decision and execution | `ControllerDefinition`, `DecisionPolicy`, `ControllerHarness`, `LabExecution`, `OperationSpec`, `OperationCall`, `OperationResult` | The Controller chooses operations; the Host authorizes and dispatches them; the Lab validates domain inputs and executes. |
+| Authorization | `ActionPermissions`, `AccessRequest`, `SensitivePolicy` | The Host policy applies in addition to endpoint-local rules. |
+| Run control and background work | `RunPolicy`, `RunContext`, `RunDecision`, `RunResult`, `JobRef`, `JobOutcome`, `JobStatus`, `ExecutionLifecycle` | The Host controls admission and waits for owners to confirm settlement. Owners must expose and stop their work. |
+| State and evidence | `RecoveryContract`, `SnapshotContract`, `RecoveryRequired`, `LocalSnapshotCapture`, `restore_snapshot`, `MetricGoal` | The Host owns run identity, recorded effects, and goal admission. Components own explicit state and Lab evidence. |
+
+## Assemble components without starting work
+
+- Select one complete method or a Controller and a set of named Labs through
+  `Registry.build(selection)`. For Python composition, pass an explicit `ModuleAssembly`
+  or use `ModuleAssembly.from_components(graph, decision=..., lab=...)`. A graph
+  decision slot supplies `decision-factory/v1`; a graph Lab slot supplies
+  `lab-execution/v1`. These IDs identify compatibility, not authority.
+- For a registered Controller, `ControllerDefinition(policy, harness=..., memory=...)`
+  takes a Policy factory `(context, config)`, an optional Harness factory with that
+  signature, and an optional Memory factory `(config)`. A Policy implements
+  `decide(window) -> Decision` (or is a callable with that signature). A custom
+  Harness implements `window`, `observe`, `tools`, and `execute_tool`.
+- For direct composition, the decision factory takes `(context, lab_execution)`;
+  `build_default_decision(context, lab_execution, policy=...)` is the standard
+  factory helper. For `ControllerDefinition(endpoint=True)`, the factory takes
+  `(context, lab_execution, config)` and supplies its own Harness. Keep the
+  supplied Host and Lab routing; do not borrow a live endpoint from another run.
+- A Lab implements `describe() -> tuple[OperationSpec, ...]` and
+  `execute(call) -> OperationResult | JobRef`. A registered Lab uses local names
+  without dots; the Host publishes them as `<alias>.<operation>`. Direct
+  `LabExecution` supplies its own installed operation names. Declare optional
+  `required_operations()` or `required_profiles()` on the Controller where applicable;
+  profiles are stronger than matching operation names.
+- Keep selection factories and config validators free of resource acquisition.
+  Construct resources at launch, but do not start research or re-submit effects
+  from a factory. Make owned `close()` methods retryable. A trusted Python
+  registration module is executable code: `catalog` and `explain` can still import
+  and run its registration code. `explain` is not a live Lab/provider check.
+
+## Keep authorization at the Host boundary
+
+Pass `ActionPermissions` to `Application(..., action_permissions=...)`, or use the
+CLI `run --permissions` input. `operations=None` leaves the operation-name filter
+open; an empty collection permits none. The Host filters discovery and validates
+normalized calls, intersecting its policy with endpoint restrictions. Schemas,
+component contracts, model proposals and run-control hints do not grant access.
+An `AccessRequest` has no action during discovery, so an argument-dependent rule
+can reject a concrete call even if its operation is visible.
+
+This protects the Controller action route provided by the framework; it is **not**
+a process sandbox for host-supplied Python. The host-only sealed evaluation phase
+is separate: it is driven by the Lab’s declared final plan after researcher finish,
+not a grant for Controller calls. Sealed feedback is not returned to the Controller
+or its Memory.
+
+## Own background work through settlement
+
+`JobRef(job_id, backend)` identifies unresolved work. For `JobOutcome`, only
+`SUCCEEDED`, `FAILED`, and `CANCELLED` are terminal. A request to cancel, a running
+observation, and a terminal receipt are different facts. For a Controller's
+explicit wait, the Host uses the cancellation hook to send the request once.
+If it receives a valid nonterminal acknowledgement, it uses `poll_job(ref)` on subsequent ticks until the job is
+terminal or cleanup times out. After the acknowledgement has been checkpointed,
+durable resume polls the same job instead of submitting the request again.
+
+| Work owner | Extension points | Settlement rule |
+| --- | --- | --- |
+| Lab operation | Return a terminal `OperationResult`, or return a `JobRef` with a Lab `poll_job(job)` that reports `JobOutcome`/progress through the registered Lab adapter. Implement `cancel_job(job)` or checkpoint control when supported, and `reattach_job(job)` for jobs a durable workspace can reconnect to. Direct executors implement the call-aware Host-facing ports instead. | Preserve call and job identity; do not return a terminal outcome before work exits. |
+| Controller Policy | Return `Decision("wait", job=ref)` with `can_poll_job(ref)` and `poll_job(ref)`, plus `cancel_job(ref)` for cancellation. Background work that can coexist with other decisions also needs `pending_research_job()` and appropriate `drain_research()`/`cancel_research()` hooks. | A ready Controller wait lets the Policy continue; it is not a Lab receipt. Keep unresolved work visible until it settles and stop admitting new work when stopping. |
+| Lab-owned resources | Optional `ExecutionLifecycle.shutdown(mode) -> bool` and `close()`. | Shutdown closes admission and returns `True` only after owned work exits. Keep dependencies usable if cleanup must be retried. |
+
+A `RunPolicy.evaluate(context) -> RunDecision` may continue, restart, or stop the
+run. A hard stop prevents **new** dispatch, an uncommitted Controller adoption, and
+new sealed evaluation. It cannot preempt a synchronous callback already entered.
+`Application.close()` can outlast the Runner’s cleanup window. Check
+`RunResult.shutdown_complete` for the latter; CLI `cleanup.status` reports the
+separate close outcome.
+
+`max_decision_steps` caps new decisions, not the number of Lab receipts. The
+standard Host can settle already-admitted, independently pollable Lab work with
+`wait_for_jobs=True` without sampling a new decision or adopting a Controller.
+Opaque or checkpoint-held work can still return `waiting`. Requesting a timeout
+or reaching a cap does not authorize retrying dispatch with an unknown outcome.
+
+## Restore state without widening permissions or repeating effects
+
+- `Application.resume(data_dir, ...)` continues the original durable workspace.
+  It requires matching framework source, Python major/minor, and run/component
+  identity. A portable snapshot instead restores a supported, quiescent bundle
+  into a new directory with `restore_snapshot(...)`. It preserves the run ID, does
+  not fork, and needs explicit plugin paths or the original Python assembly for
+  custom components. Do not treat a copied live workspace as a portable snapshot.
+  For a new CLI durable run, the first checkpoint commits startup after the
+  launch metadata, initial literature, and recovery journal have been written.
+  An interrupted launch without that checkpoint is not resumable.
+- Supply explicit state adapters or `RecoveryContract` (`contract_id`, `capture`,
+  `restore`); the portable contract additionally implements `validate_snapshot`.
+  The convenience `restore_snapshot` API uses the bundled assembly recovery
+  contract; implementing a custom capture contract does not add a custom restore
+  entrypoint. Capture detached data; restore identities without re-submitting work.
+  Saved Host permissions are restored before component construction. Supported
+  older state without saved permissions denies Controller operations; arbitrary
+  Python permission callbacks are not durable or portable.
+- A stable `call_id` ties together dispatch and receipt. Treat it as an opaque
+  identifier, not a filename: stored receipt names are derived from a digest,
+  and the receipt itself keeps the original ID. Mark an operation
+  `idempotent=True` only if repeating the same call ID is safe. Even a matching
+  terminal receipt does not prove the enclosing interrupted step committed.
+  `RecoveryRequired` means stop and use verified reconciliation, not automatic
+  replay or journal deletion. Local record deduplication is not an exactly-once
+  guarantee for external observers.
+
+## Declare evaluation evidence explicitly
+
+Use `GoalRunPolicy(MetricGoal(...))` for a threshold on measurements. The Host
+checks the delivered operation against the installed Lab declaration, then checks
+its candidate, `protocol_ref` and exact `input_refs` against the original request
+where present. Built-in profiles declare their evaluation operations; a custom
+Lab can expose `evaluation_operations()` with catalog names (local for registered
+Labs, full names for direct execution). A receipt needs those identity fields and
+finite numeric `quality_metrics`. A simulated receipt is excluded by default; an
+explicitly invalid or unscored receipt is not a qualifying measurement. Use a
+distinct protocol reference for each dataset or pin `MetricGoal.input_refs`.
+A threshold does not by itself apply the candidate or replace a sealed evaluation.
+
+## Check a new extension
+
+- Assemble the same minimal Policy/Lab pair through each supported entrypoint.
+- Verify the same allow/deny rules before and after supported recovery.
+- Exercise normal completion, cancellation acknowledgement, late settlement,
+  and timeout with a blocked fake provider. No keys or accelerators are needed.
+- Check both a valid evaluation and a receipt that has metric fields but comes
+  from a non-evaluation operation.
+
+The repository’s [library contracts](../verification/test_library_contracts.py),
+[resource boundaries](../verification/test_resource_boundaries.py),
+[run control](../verification/test_run_control.py), and
+[durable recovery](../verification/test_durable_recovery.py) tests are executable
+examples. Run them from the repository root:
+
+```sh
+PYTHONPATH=src python -m unittest discover -s verification -v
+```
