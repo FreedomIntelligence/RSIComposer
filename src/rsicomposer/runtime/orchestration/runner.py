@@ -299,7 +299,7 @@ class Runner:
         if self._decision_step_budget is not None and self._decision_step_budget['remaining'] == 0:
             self._update_run_hints(context)
             return self._settle_admitted_step(objective)
-        if self._researcher_finished and not self._finishing_complete:
+        if self._should_finish(decision):
             finished = self._finish_step(objective)
             if finished is not None:
                 return finished
@@ -342,7 +342,7 @@ class Runner:
         if self._stop_before_finish(decision):
             self._begin_stop(decision)
             return self._stop_step(objective, result)
-        if self._researcher_finished and not self._finishing_complete:
+        if self._should_finish(decision):
             finished = self._finish_step(objective, result)
             if finished is not None:
                 return finished
@@ -355,12 +355,16 @@ class Runner:
             return replace(result, kind='waiting', event={**result.event, 'run_control': 'researcher_finished'})
         return result
 
+    def _should_finish(self, decision):
+        # Only the default researcher's terminal finish authorizes sealed work.
+        # A parked or restarting run may still make research decisions later;
+        # budget exhaustion and other hard stops never open the sealed split.
+        return (not self._finishing_complete and decision.action == 'stop'
+                and type(self.run_policy) is ResearcherRunPolicy
+                and decision.reason == 'researcher_finished')
+
     def _stop_before_finish(self, decision):
-        # Normal researcher completion still runs the Host's sealed evaluation
-        # while permitted. Host and time budget exhaustion never does.
-        return decision.action == 'stop' and not (
-            type(self.run_policy) is ResearcherRunPolicy and decision.reason == 'researcher_finished'
-            and not self._finishing_complete)
+        return decision.action == 'stop' and not self._should_finish(decision)
 
     def _guard_boundary(self, objective):
         decision = self._evaluate_run(self._run_context(objective))
@@ -461,14 +465,21 @@ class Runner:
     def _managed_wait(self, result):
         if result.kind != 'waiting' or result.event.get('reason') == _OPERATION_CHECKPOINT_WAIT:
             return False
+        stop = result.event.get('run_stop', {})
         if result.job is not None:
             can_poll = getattr(self.decision_making, 'can_poll_job', None)
-            return callable(can_poll) and can_poll(result.job)
+            if not callable(can_poll):
+                return False
+            if can_poll(result.job):
+                return True
+            # An opaque Lab job must not mask separately owned research work
+            # that can still progress toward shutdown.
+            research_job = self._research_job() if stop.get('unresolved_research_job') else None
+            return research_job is not None and can_poll(research_job)
         if result.event.get('reason') == _UNCERTAIN_OPERATION_WAIT:
             return 'run_stop' in result.event
         if result.event.get('reason') == _LOCAL_OPERATION_WAIT:
             return True
-        stop = result.event.get('run_stop', {})
         return bool((stop.get('unresolved_execution') or stop.get('unresolved_checkpoint'))
                     and not stop.get('unresolved_operations') and not stop.get('unresolved_research_job'))
 

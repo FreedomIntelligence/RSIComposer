@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -119,7 +120,7 @@ def operation(call_id='first'):
 
 
 class RunControlTest(unittest.TestCase):
-    def setup_application(self, lab, policy, run_policy=None, *, timeout=1., capacity=1, durable=False):
+    def setup_application(self, lab, policy, run_policy=None, *, timeout=1., capacity=1, durable=False, budget_seconds=None):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.candidates = []
@@ -135,12 +136,16 @@ class RunControlTest(unittest.TestCase):
         registry.register_lab('fixture', lambda context, config: lab, version='1')
         modules = registry.build({'controller': {'name': 'original'},
                                   'labs': {'fixture': {'name': 'fixture', 'config': {'max_concurrent': capacity}}}})
-        self.app = Application(ApplicationConfig('fixture objective', Path(temporary.name), {}, {}),
+        self.clock = Clock()
+        budget = {}
+        if budget_seconds is not None:
+            budget = {'seconds': budget_seconds}
+            self.enterContext(patch('rsicomposer.runtime.execution.budget.time', SimpleNamespace(time=self.clock)))
+        self.app = Application(ApplicationConfig('fixture objective', Path(temporary.name), {}, {}, budget=budget),
                                modules=modules, run_policy=run_policy, cleanup_timeout_seconds=timeout,
                                durable=durable)
         self.addCleanup(self.app.close)
         self.addCleanup(lab.release.set)
-        self.clock = Clock()
         self.app.runner._clock = self.clock
         return self.app
 
@@ -641,14 +646,14 @@ class RunControlTest(unittest.TestCase):
 
     def test_hard_time_checks_before_each_sealed_call(self):
         lab = Lab(sealed=True)
-        self.setup_application(lab, Policy(), TimeRunPolicy(1.))
+        self.setup_application(lab, Policy(), ResearcherRunPolicy(), budget_seconds=1.)
         first = self.step()
         self.assertEqual((first.event['phase'], first.decision_steps), ('host_finish', 1))
         self.assertEqual(first.event['receipt']['summary'], 'Sealed evaluation receipt')
         self.clock.now = 2.
         final = self.step()
         self.assertEqual(final.kind, 'finished')
-        self.assertEqual(final.event['run_stop']['reason'], 'budget_exhausted')
+        self.assertEqual(final.event['run_stop']['reason'], 'Host budget exhausted: seconds')
         self.assertEqual(lab.calls, ['final-one'])
 
     def test_normal_researcher_finish_still_runs_all_sealed_calls(self):
@@ -671,7 +676,7 @@ class RunControlTest(unittest.TestCase):
 
     def test_hard_stop_before_pending_swap_construction(self):
         lab = Lab(sealed=True)
-        self.setup_application(lab, Policy(), TimeRunPolicy(1.))
+        self.setup_application(lab, Policy(), ResearcherRunPolicy(), budget_seconds=1.)
         self.assertEqual(self.step().event['phase'], 'host_finish')
         host = self.queue_swap()
         original = host.active

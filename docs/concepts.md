@@ -66,9 +66,10 @@ what the Controller may see.
 | `dev` | yes | yes | yes | any time; use for candidate selection |
 | `sealed` | no | no | no | only after the Controller finishes |
 
-Select candidates on `dev`. To report a final score, declare a `sealed` split.
-The host evaluates it after the Controller finishes, so the result cannot
-affect selection.
+Select candidates on `dev`. To report a final score, install a grouped Lab that
+both declares a `sealed` split and supplies a `final_evaluations()` plan. The Host
+runs that plan on normal final completion, not between research restarts. Even
+aggregate final scores are Host-only, so they cannot affect selection.
 
 ## Research and exploration roles
 

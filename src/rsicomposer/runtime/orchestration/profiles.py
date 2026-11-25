@@ -103,6 +103,7 @@ class ProfileBinding:
             raise TypeError(f'Lab {alias} invariants() must return an Invariant tuple')
         self.rules = tuple(dict.fromkeys((*self.rules, *rules)))
         self.baseline = False
+        self.baseline_candidates = set()
         self.candidates = set()
         self.once = set()
         self.measured = set()
@@ -120,19 +121,32 @@ class ProfileBinding:
                 'invariants': [{**asdict(rule), 'key': list(rule.key)} for rule in self.rules]}
 
     def state(self):
-        return {'baseline': self.baseline, 'candidates': sorted(self.candidates), 'once': sorted(self.once),
+        return {'baseline': self.baseline, 'baseline_candidates': sorted(self.baseline_candidates),
+                'candidates': sorted(self.candidates), 'once': sorted(self.once),
                 'measured': sorted(self.measured), 'selected': self.selected}
 
     def restore(self, state):
-        if (not isinstance(state, dict) or set(state) != {'baseline', 'candidates', 'once', 'measured', 'selected'}
+        required = {'baseline', 'candidates', 'once', 'measured', 'selected'}
+        if (not isinstance(state, dict) or set(state) - {'baseline_candidates'} != required
                 or type(state['baseline']) is not bool
                 or any(not isinstance(keys, list) or any(not isinstance(key, str) for key in keys)
-                       for keys in (state['candidates'], state['once'], state['measured']))
+                       for keys in (state['candidates'], state['once'], state['measured'],
+                                    state.get('baseline_candidates', [])))
                 or (state['selected'] is not None and state['selected'] not in state['measured'])):
             raise ValueError('Invalid Lab profile history')
-        self.baseline = state['baseline']
-        self.candidates, self.once = set(state['candidates']), set(state['once'])
-        self.measured, self.selected = set(state['measured']), state['selected']
+        measured, candidates = set(state['measured']), set(state['candidates'])
+        baseline = state['baseline']
+        if 'baseline_candidates' in state:
+            baseline_candidates = set(state['baseline_candidates'])
+        else:
+            # Old state tracked only a boolean. Recover the bundled Labs' named
+            # comparator only when its identity was measured as a baseline.
+            baseline_candidates = ({json.dumps('baseline')} & (measured - candidates)) if baseline else set()
+        if not baseline_candidates <= measured or (baseline_candidates and not baseline):
+            raise ValueError('Invalid Lab profile baseline history')
+        self.baseline, self.baseline_candidates = baseline, baseline_candidates
+        self.candidates, self.once = candidates, set(state['once'])
+        self.measured, self.selected = measured, state['selected']
 
     def role(self, call):
         split = call.arguments.get('split')
@@ -157,8 +171,12 @@ class ProfileBinding:
         for rule in sorted(self.rules, key=lambda rule: rule.kind != 'min_candidates'):
             if rule.kind == 'min_candidates' and len(self.candidates) < rule.count:
                 raise ValueError(f'Final evaluation requires at least {rule.count} measured candidates')
-            if rule.kind == 'measured_selection' and (self.selected is None or not plan):
-                raise ValueError('Controller finish requires a measured selection and sealed evaluation plan')
+            if rule.kind == 'measured_selection':
+                keys = {self._candidate_key(call) for call in plan}
+                if self.selected is None or self.selected not in keys:
+                    raise ValueError('Final evaluation plan must include the measured selection')
+                if keys - {self.selected} - self.baseline_candidates:
+                    raise ValueError('Final evaluation plan may only measure the selection and measured baselines')
 
     def check(self, call, *, finishing=False, history=True):
         role = self.role(call)
@@ -204,12 +222,16 @@ class ProfileBinding:
     def observe(self, call, result):
         if not isinstance(result, OperationResult) or result.status != ExecutionStatus.COMPLETED:
             return
-        if call.name == 'evaluate' and result.data.get('scored', True):
+        role = self.role(call)
+        if (call.name == 'evaluate' and (role is None or not role.after_finish_only)
+                and result.data.get('valid') is not False and result.data.get('scored', True)):
             candidate = self._candidate_key(call)
             if candidate is not None:
                 self.measured.add(candidate)
             if result.data.get('baseline', call.arguments.get('baseline')) is True:
                 self.baseline = True
+                if candidate is not None:
+                    self.baseline_candidates.add(candidate)
             elif candidate is not None:
                 self.candidates.add(candidate)
         if call.name == 'select' and any(rule.kind == 'measured_selection' for rule in self.rules):

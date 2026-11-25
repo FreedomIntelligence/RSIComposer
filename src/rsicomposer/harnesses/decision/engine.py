@@ -10,6 +10,8 @@ from rsicomposer.harnesses.decision.state import DecisionContext, ControllerHarn
 from rsicomposer.harnesses.decision.public_policy import DecisionInputAdapter
 from rsicomposer.loops.contracts.decision import OperationSpec
 from rsicomposer.runtime.capabilities import optional_method
+from rsicomposer.runtime.evidence.records import is_host_final_event
+from rsicomposer.runtime.evidence.retrieval import controller_experience
 
 class ResearchControllerHarness:
     def __init__(self, *, local_tools, experience, experience_limit=32, memory=None,
@@ -17,7 +19,7 @@ class ResearchControllerHarness:
                  research_agenda=None, attempt_contract=None):
         if type(experience_limit) is not int or experience_limit < 1 or type(memory_limit) is not int or memory_limit < 1:
             raise ValueError('Experience and memory limits must be positive integers')
-        self.local_tools, self.experience = local_tools, experience
+        self.local_tools, self.experience = local_tools, controller_experience(experience)
         self.experience_limit, self.memory_limit = experience_limit, memory_limit
         self.memory = memory if memory is not None else DecisionMemory()
         self.research_agenda = research_agenda if research_agenda is not None else ResearchAgenda()
@@ -121,6 +123,8 @@ class ResearchControllerHarness:
         return self.evidence_observer is not None and event_id in self._state.observed_event_ids
 
     def observe(self, event):
+        if is_host_final_event(event):
+            return
         if event.kind == 'history':
             from rsicomposer.harnesses.memory import HistoryEntry
             raw = deepcopy(event.output['history_entry'])

@@ -3,6 +3,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType, SimpleNamespace
 
+from rsicomposer.runtime.evidence.retrieval import controller_experience
+
 
 class LabCatalog:
     def __init__(self, group):
@@ -74,8 +76,8 @@ def decision_wiring(context):
     """Supply the built-in Harness with only the runtime ports it consumes."""
     owner = controller_wiring(context)
     return DecisionWiring(owner.lab_execution, owner.host_execution, getattr(owner, '_host_capabilities', None),
-                          owner.action_permissions, owner.experience, owner.experience_limit, owner.memory_limit,
-                          owner.project_context)
+                          owner.action_permissions, controller_experience(owner.experience),
+                          owner.experience_limit, owner.memory_limit, owner.project_context)
 
 
 def controller_model_access(context):

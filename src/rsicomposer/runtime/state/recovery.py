@@ -267,17 +267,38 @@ class DurableRecovery:
         or the Lab declared the operation idempotent for a repeated call_id. Otherwise
         the run stays blocked until reconcile(), exactly as for any interrupted step.
         """
+        from rsicomposer.loops.contracts.jobs import JobRef
         from rsicomposer.runtime.capabilities import optional_method
+        from rsicomposer.runtime.orchestration.lab_group import LabGroup
         if not isinstance(in_flight, list):
             raise ValueError('In-flight operations must be a list')
-        resolve = optional_method(self.app.assembly.lab_execution, 'in_flight_resolution')
-        reopen = optional_method(self.app.assembly.host_execution, 'reopen_in_flight')
+        lab, host = self.app.assembly.lab_execution, self.app.assembly.host_execution
+        resolve = optional_method(lab, 'in_flight_resolution')
+        reopen = optional_method(host, 'reopen_in_flight')
+        read = optional_method(host, 'in_flight_operations')
+        restored = {row['operation'].call_id: row for row in read()} if read is not None else None
         resolutions, unsafe = [], []
         for item in in_flight:
             call = item['operation']
             host_finish = item.get('owner') == 'host_finish'
-            resolution = ('queued' if item['status'] == 'queued' else
-                          resolve(call) if resolve is not None and (host_finish or reopen is not None) else None)
+            current = restored.get(call.call_id) if restored is not None and not host_finish else None
+            job = item.get('job')
+            resolution = None
+            if restored is not None and not host_finish and (current is None
+                    or any(item[key] != current[key] for key in ('decision_id', 'operation', 'status'))
+                    or ('job' in item and job != current.get('job'))):
+                pass  # The saved intent has no matching execution owner.
+            elif item['status'] == 'queued':
+                resolution = 'queued'
+            elif resolve is not None and (host_finish or reopen is not None):
+                if item['status'] == 'waiting' and type(lab) is LabGroup:
+                    # Older checkpoints omitted job from the in-flight summary;
+                    # the restored Host queue retains that same full JobRef.
+                    job = current.get('job') if current is not None else job
+                    if isinstance(job, JobRef):
+                        resolution = resolve(call, job=job)
+                else:
+                    resolution = resolve(call)
             resolutions.append(resolution)
             if resolution is None:
                 unsafe.append({'decision_id': item['decision_id'], 'operation': call.name, 'call_id': call.call_id})

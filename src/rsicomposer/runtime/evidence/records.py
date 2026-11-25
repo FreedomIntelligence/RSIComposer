@@ -24,3 +24,20 @@ class ExperienceRecord:
             raise ValueError("Unknown feedback source")
         if not self.record_id:
             raise ValueError("Feedback record identity is required")
+
+
+def is_host_final_payload(payload):
+    """Recognize the Host final phase and its reserved durable identities."""
+    return isinstance(payload, dict) and (payload.get('phase') == 'host_finish' or any(
+        isinstance(payload.get(key), str) and payload[key].startswith('sealed-')
+        for key in ('record_id', 'event_id')))
+
+
+def is_host_final_record(record):
+    return (record.record_id.startswith('sealed-') or is_host_final_payload(record.details)
+            or is_host_final_payload(record.details.get('event')))
+
+
+def is_host_final_event(event):
+    return (event.event_id.startswith('sealed-') or event.kind == 'host_finish'
+            or is_host_final_payload(event.identity) or is_host_final_payload(event.output))

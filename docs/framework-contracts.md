@@ -24,20 +24,27 @@ each component must implement. Import public types from `rsicomposer.api`.
   signature, and an optional Memory factory `(config)`. A Policy implements
   `decide(window) -> Decision` (or is a callable with that signature). A custom
   Harness implements `window`, `observe`, `tools`, and `execute_tool`.
-- For direct composition, the decision factory takes `(context, lab_execution)`;
-  `build_default_decision(context, lab_execution, policy=...)` is the standard
-  factory helper. For `ControllerDefinition(endpoint=True)`, the factory takes
+- For direct composition, the decision factory takes `(context, lab_execution)`.
+  Use `build_default_decision(..., policy=...)` or, with a custom Harness,
+  `build_harness_decision(..., policy=..., harness=...)`. For a registered
+  `ControllerDefinition(endpoint=True)` the factory takes
   `(context, lab_execution, config)` and supplies its own Harness. Keep the
   supplied Host and Lab routing; do not borrow a live endpoint from another run.
 - A Lab implements `describe() -> tuple[OperationSpec, ...]` and
   `execute(call) -> OperationResult | JobRef`. A registered Lab uses local names
   without dots; the Host publishes them as `<alias>.<operation>`. Direct
-  `LabExecution` supplies its own installed operation names. Declare optional
-  `required_operations()` or `required_profiles()` on the Controller where applicable;
-  profiles are stronger than matching operation names.
+  `LabExecution` supplies its own installed operation names. A Host-wired
+  Controller can declare `required_operations()`; the check is against installed
+  operations, not permission to call them. Nonempty `required_profiles()` also need
+  a profile-aware Lab provider, such as the Registry's grouped Labs. Bare
+  `LabExecution` providers cannot advertise sealed splits; use the grouped Lab
+  route for Host-enforced split roles.
 - Keep selection factories and config validators free of resource acquisition.
   Construct resources at launch, but do not start research or re-submit effects
-  from a factory. Make owned `close()` methods retryable. A trusted Python
+  from a factory. Make owned `close()` methods retryable. The registered path owns
+  the Policy it constructs. For direct composition, register cleanup for a
+  resource-owning Policy with the assembly context, unless the graph owns it.
+  A trusted Python
   registration module is executable code: `catalog` and `explain` can still import
   and run its registration code. `explain` is not a live Lab/provider check.
 
@@ -53,9 +60,11 @@ can reject a concrete call even if its operation is visible.
 
 This protects the Controller action route provided by the framework; it is **not**
 a process sandbox for host-supplied Python. The host-only sealed evaluation phase
-is separate: it is driven by the Lab’s declared final plan after researcher finish,
-not a grant for Controller calls. Sealed feedback is not returned to the Controller
-or its Memory.
+is separate: a grouped Lab must supply both the sealed split and a
+`final_evaluations()` plan. The built-in `ResearcherRunPolicy` runs that plan on
+normal final completion. A resumable research round or a hard stop does not
+start it. Host reports can retain sealed aggregates; Controller feedback,
+Memory, archives, and learning references do not include them.
 
 ## Own background work through settlement
 
@@ -102,6 +111,10 @@ or reaching a cap does not authorize retrying dispatch with an unknown outcome.
   The convenience `restore_snapshot` API uses the bundled assembly recovery
   contract; implementing a custom capture contract does not add a custom restore
   entrypoint. Capture detached data; restore identities without re-submitting work.
+  A registered Lab's optional `validate_snapshot()` can veto portable capture or
+  restore; it does not veto writing durable checkpoints. For explicit Python
+  factories the supplied assembly and its adapters must validate external
+  component identity; the framework source hash alone cannot do so.
   Saved Host permissions are restored before component construction. Supported
   older state without saved permissions denies Controller operations; arbitrary
   Python permission callbacks are not durable or portable.
@@ -122,7 +135,11 @@ its candidate, `protocol_ref` and exact `input_refs` against the original reques
 where present. Built-in profiles declare their evaluation operations; a custom
 Lab can expose `evaluation_operations()` with catalog names (local for registered
 Labs, full names for direct execution). A receipt needs those identity fields and
-finite numeric `quality_metrics`. A simulated receipt is excluded by default; an
+finite numeric `quality_metrics`. An evaluation declaration or a built-in profile
+alone is not sufficient: a Lab that emits benchmark metadata but not the
+canonical candidate, protocol and input references (for example, the reusable
+Math Lab) does not drive a `MetricGoal` without an explicit evidence integration.
+A simulated receipt is excluded by default; an
 explicitly invalid or unscored receipt is not a qualifying measurement. Use a
 distinct protocol reference for each dataset or pin `MetricGoal.input_refs`.
 A threshold does not by itself apply the candidate or replace a sealed evaluation.

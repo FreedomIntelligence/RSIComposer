@@ -124,7 +124,7 @@ class LabGroupState:
 
     def capture(self):
         with self.group._lock:
-            self.validate_snapshot()
+            self._validate_state_ports()
             return {'labs': self.group.capture_lab_states(),
                     'receipts': self.group.receipt_state(), 'profiles': self.group.profile_state()}
 
@@ -137,9 +137,16 @@ class LabGroupState:
         self.group.restore_receipt_state(state['receipts'])
         self.group.restore_profile_state(state['profiles'])
 
-    def validate_snapshot(self):
+    def _validate_state_ports(self):
         for alias, lab in self.group.labs.items():
             _ports(lab, f'Lab {alias}')
+
+    def validate_snapshot(self):
+        self._validate_state_ports()
+        for alias, lab in self.group.labs.items():
+            validate = optional_method(lab, 'validate_snapshot')
+            if validate is not None and validate() is not None:
+                raise TypeError(f'Lab {alias} validate_snapshot must return None')
 
 
 def validate_feedback_journal(learning, journal):

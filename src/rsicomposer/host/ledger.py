@@ -171,16 +171,22 @@ class OperationLedger:
         self.host = execution
 
     def _record_operation(self, call: OperationCall | None, result: OperationResult,
-                          *, elapsed_seconds: float | None = None) -> None:
+                          *, decision_id: str, elapsed_seconds: float | None = None) -> None:
         if self.host.state.pending_operation_record is not None:
             raise RuntimeError('Record the pending operation before starting another')
-        ident = self.host.state.pending_operation_decision_id
-        suffix = 'authorization' if self.host.state.decision_records.get(ident, {}).get('authorization_rejected') else 'operation'
-        plural = len(self.host.state.decision_records.get(ident, {}).get('proposal', {}).get('operations', ())) > 1
+        ident = decision_id
+        row = self.host.state.decision_records.get(ident)
+        if row is None or row['kind'] != 'invoke' or (call is not None and (
+                result.call_id != call.call_id or not any(issued['call_id'] == call.call_id
+                    for issued in row['proposal']['operations']))):
+            raise ValueError('Lab receipt must match a call issued by its decision')
+        suffix = 'authorization' if row.get('authorization_rejected') else 'operation'
+        plural = len(row['proposal']['operations']) > 1
         record_id = (f'{ident}:{suffix}:' + call.call_id) if plural and call else f'{ident}:{suffix}'
         self.host.state.pending_operation_record = _PendingOperationRecord(
-            record_id if ident else str(uuid4()), deepcopy(call), deepcopy(result), elapsed_seconds, ident,
+            record_id, deepcopy(call), deepcopy(result), elapsed_seconds, ident,
         )
+        self.host.state.pending_operation_decision_id = ident
         self.host.state.pending_decision = None
         self._flush_operation_record()
 

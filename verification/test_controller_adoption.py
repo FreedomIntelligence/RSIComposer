@@ -5,7 +5,11 @@ from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
 
+from rsicomposer.api import LocalSnapshotCapture, RunDecision, TimeRunPolicy
 from rsicomposer.application import Application, ApplicationConfig
+from rsicomposer.loops.contracts.candidate import Candidate
+from rsicomposer.loops.contracts.model_service import ModelRef
+from rsicomposer.loops.contracts.training import ModelActivationPending, TrainingResult
 from rsicomposer.harnesses.defaults import build_harness_decision
 from rsicomposer.loops.contracts.controller_version import ControllerVersion
 from rsicomposer.loops.contracts.coordination import LoopStepResult, OperationResult
@@ -120,6 +124,45 @@ class ControllerAdoptionTests(unittest.TestCase):
         ref = save_controller_version(app.artifacts, version)
         self.assertEqual(host.request_version(ref).data['status'], 'pending')
         return version
+
+    def test_pending_model_activation_blocks_snapshot_and_clean_shutdown(self):
+        calls = []
+
+        class Activator:
+            def activate(self, result, *, idempotency_key):
+                calls.append((result.model, idempotency_key))
+                raise ModelActivationPending('fixture deployment still in flight')
+
+        app, host = self.application(ControllerDefinition(lambda *_: Policy()), durable=True)
+        host.activator = Activator()
+        old = host.active
+        base = ModelRef('fixture', 'original', 'v1')
+        model = ModelRef('fixture', 'candidate', 'v2')
+        version = replace(make_version(), model=model)
+        ref = save_controller_version(app.artifacts, version)
+        training = TrainingResult(base, model, Candidate('candidate', base.revision, {}, ('decision_maker',)))
+        host.request_version(ref, training_result=training)
+        self.assertFalse(app.runner.decision_making.pending_stop_checkpoint())
+        result = app.runner.step(app.config.objective)
+        self.assertEqual(result.event['reason'], 'Controller model activation pending')
+        self.assertTrue(app.runner.decision_making.pending_stop_checkpoint())
+        self.assertTrue(host.capture()['pending']['activation_pending'])
+        with self.assertRaisesRegex(RuntimeError, 'quiescent|activation'):
+            LocalSnapshotCapture(app).capture('pending')
+
+        now = 0.
+        app.runner._clock = lambda: now
+        app.runner.cleanup_timeout_seconds = 1.
+        app.runner._begin_stop(RunDecision('stop', 'fixture stop', 'cancel'))
+        waiting = app.runner.step(app.config.objective)
+        self.assertEqual(waiting.kind, 'waiting')
+        self.assertTrue(waiting.event['run_stop']['unresolved_checkpoint'])
+        now = 1.
+        stopped = app.runner.step(app.config.objective)
+        self.assertFalse(stopped.event['run_stop']['shutdown_complete'])
+        self.assertTrue(stopped.event['run_stop']['cleanup_timed_out'])
+        self.assertEqual(calls, [(model, 'controller-version:' + version.version_id)])
+        self.assertIs(host.active, old)
 
     def test_bind_failure_preserves_active_delivery_and_can_retry(self):
         seen = []

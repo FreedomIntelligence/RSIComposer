@@ -21,6 +21,7 @@ from rsicomposer.loops.decision_making.action_space.capabilities import (
     Capabilities,
     Capability,
 )
+from rsicomposer.runtime.evidence.retrieval import controller_experience
 from rsicomposer.runtime.storage.json_tools import EvidencePathError, evidence_value
 
 
@@ -76,7 +77,7 @@ class ResearchTools:
 
     def __init__(self, agenda: ResearchAgenda, memory, *, experience=None):
         self.agenda, self.memory = agenda, memory
-        self.experience = experience
+        self.experience = controller_experience(experience)
         self.decision_graph = None  # Bound to the owning harness's live ledger, never a frozen copy.
         text = {'type': 'string', 'minLength': 1, 'maxLength': 128, 'pattern': r'\S'}
         refs = {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512,

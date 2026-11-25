@@ -1,12 +1,18 @@
 """Public assembly and scientific evidence contracts, exercised without a model backend."""
+from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event, Thread
 import unittest
+from unittest.mock import patch
 
 from rsicomposer.api import (
-    Application, ApplicationConfig, ComponentDefinition, ComponentGraph, ControllerDefinition,
-    Decision, GoalRunPolicy, JobRef, MetricGoal, ModuleAssembly, OperationCall, OperationResult, OperationSpec,
-    Registry, RunDecision, RunResult, TimeRunPolicy, build_default_decision,
+    Application, ApplicationConfig, BackendBinding, ComponentDefinition, ComponentGraph, ControllerDefinition,
+    Decision, GoalRunPolicy, JobRef, LocalSnapshotCapture, MetricGoal, ModelRef, ModuleAssembly, NullHarness,
+    OperationCall, OperationResult, OperationSpec, Registry, RunDecision, RunResult, TimeRunPolicy,
+    build_default_decision, build_harness_decision, restore_snapshot,
 )
 from rsicomposer.loops.contracts.profiles import SEALED, Invariant
 from rsicomposer.runtime.orchestration.lab_group import LabGroup
@@ -50,6 +56,169 @@ class LibraryContractTests(unittest.TestCase):
                 self.assertEqual(result.stop_reason, 'researcher_finished')
                 self.assertEqual(result.decision_steps, 1)
 
+    def test_controller_operation_requirements_are_checked_in_all_assemblies(self):
+        class Policy(ScriptedPolicy):
+            def required_operations(self):
+                return ('fixture.missing',)
+
+        class Lab:
+            def describe(self):
+                return (OperationSpec('available', 'Fixture', {'type': 'object'}),)
+
+            def execute(self, call):
+                raise AssertionError('Fixture must fail before dispatch')
+
+        def group_factory(_):
+            group = LabGroup()
+            group.add('fixture', Lab())
+            return group
+
+        def decision(context, lab):
+            return build_harness_decision(context, lab, policy=Policy(()), harness=NullHarness())
+
+        graph = ComponentGraph({
+            'decision': ComponentDefinition(lambda *_: decision, '1', ('decision-factory/v1',)),
+            'lab': ComponentDefinition(lambda ctx, *_: group_factory(ctx), '1', ('lab-execution/v1',)),
+        }, {'decision': {'component': 'decision'}, 'lab': {'component': 'lab'}})
+        registry = Registry(builtins=False)
+        registry.register_controller('fixture', lambda *_: Policy(()), version='1')
+        registry.register_lab('fixture', lambda *_: Lab(), version='1')
+        for name, modules in (
+            ('direct', ModuleAssembly(decision_factory=decision, lab_factory=group_factory)),
+            ('graph', ModuleAssembly.from_components(graph, decision='decision', lab='lab')),
+            ('registry', registry.build({'controller': {'name': 'fixture'}, 'labs': {'fixture': {'name': 'fixture'}}})),
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'requires missing Lab operations'):
+                Application(self.config(name), modules=modules)
+
+    def test_direct_and_graph_close_join_workers_before_releasing_lab_dependencies(self):
+        for entry in ('direct', 'graph'):
+            with self.subTest(entry=entry):
+                entered, joining, release, worker_exited = (Event() for _ in range(4))
+                order, errors = [], []
+
+                class Lab:
+                    def describe(self):
+                        return (OperationSpec('fixture.work', 'Fixture', {'type': 'object'}),)
+
+                    def execute(self, call):
+                        entered.set()
+                        if not release.wait(5):
+                            raise RuntimeError('test did not release the worker')
+                        order.append('worker exited')
+                        worker_exited.set()
+                        return OperationResult('finished', (), False)
+
+                    def close(self):
+                        order.append('Lab closed')
+
+                class JoiningExecutor(ThreadPoolExecutor):
+                    def shutdown(self, *args, **kwargs):
+                        joining.set()
+                        return super().shutdown(*args, **kwargs)
+
+                def decision(context, lab):
+                    harness = NullHarness()
+                    harness.close = lambda: order.append('Harness closed')
+                    return build_harness_decision(context, lab, harness=harness,
+                                                  policy=ScriptedPolicy((OperationCall('fixture.work', {}),)))
+
+                if entry == 'direct':
+                    modules = ModuleAssembly(decision_factory=decision, lab_factory=lambda _: Lab())
+                else:
+                    graph = ComponentGraph({
+                        'decision': ComponentDefinition(lambda *_: decision, '1', ('decision-factory/v1',)),
+                        'lab': ComponentDefinition(lambda *_: Lab(), '1', ('lab-execution/v1',), owned=True),
+                    }, {'decision': {'component': 'decision'}, 'lab': {'component': 'lab'}})
+                    modules = ModuleAssembly.from_components(graph, decision='decision', lab='lab')
+                app = Application(self.config(entry), modules=modules)
+
+                def close():
+                    try:
+                        app.close()
+                    except Exception as error:
+                        errors.append(error)
+
+                closer = Thread(target=close)
+                with patch('rsicomposer.host.execution.ThreadPoolExecutor', JoiningExecutor):
+                    try:
+                        app.runner.step(app.config.objective)
+                        self.assertTrue(entered.wait(2))
+                        closer.start()
+                        self.assertTrue(joining.wait(2))
+                        self.assertEqual(order, [])
+                    finally:
+                        release.set()
+                        if closer.ident is not None:
+                            closer.join(5)
+                        else:
+                            app.close()
+                self.assertFalse(closer.is_alive())
+                self.assertEqual(errors, [])
+                self.assertTrue(worker_exited.is_set())
+                self.assertEqual(order, ['worker exited', 'Harness closed', 'Lab closed'])
+
+    def test_registered_lab_snapshot_veto_is_portable_only(self):
+        veto = False
+        calls = []
+
+        class Policy(ScriptedPolicy):
+            def state(self):
+                return {}
+
+            def restore(self, state):
+                pass
+
+        class Lab(Policy):
+            def describe(self):
+                return ()
+
+            def execute(self, call):
+                raise AssertionError('No fixture operations')
+
+            def validate_snapshot(self):
+                calls.append('portable validation')
+                if veto:
+                    raise RuntimeError('Lab still owns an external job')
+
+        registry = Registry(builtins=False)
+        registry.register_controller('fixture', lambda *_: Policy(()), version='1')
+        registry.register_lab('fixture', lambda *_: Lab(()), version='1')
+        modules = registry.build({'controller': {'name': 'fixture'}, 'labs': {'fixture': {'name': 'fixture'}}})
+        cfg = self.config('durable')
+        with Application(cfg, modules=modules, durable=True) as app:
+            self.assertEqual(calls, [])
+            snapshot = LocalSnapshotCapture(app)
+            manifest = snapshot.capture('portable')
+            source = cfg.data_dir / 'snapshots' / manifest.snapshot_id
+            self.assertEqual(calls, ['portable validation'])
+            veto = True
+            with self.assertRaisesRegex(RuntimeError, 'still owns an external job'):
+                snapshot.capture('blocked')
+            self.assertEqual(calls, ['portable validation'] * 2)
+        with self.assertRaisesRegex(RuntimeError, 'still owns an external job'):
+            restore_snapshot(source, self.root / 'restored', modules=modules)
+        self.assertEqual(calls, ['portable validation'] * 3)
+        with Application.resume(cfg.data_dir, modules=modules):
+            pass
+        self.assertEqual(calls, ['portable validation'] * 3)
+
+    def test_raw_lab_cannot_advertise_an_unenforced_sealed_split(self):
+        class Lab:
+            def describe(self):
+                return (OperationSpec('fixture.evaluate', 'Fixture', {'type': 'object'}),)
+
+            def execute(self, call):
+                raise AssertionError('No work at assembly time')
+
+            def split_roles(self):
+                return {'heldout': SEALED}
+
+        modules = ModuleAssembly(decision_factory=lambda ctx, lab: build_default_decision(ctx, lab,
+            policy=ScriptedPolicy(())), lab_factory=lambda _: Lab())
+        with self.assertRaisesRegex(ValueError, 'Sealed splits require a Lab composed through LabGroup or the Registry'):
+            Application(self.config('sealed'), modules=modules)
+
     def test_direct_lab_evaluation_declaration_supports_metric_goal(self):
         args = {'candidate_id': 'one', 'protocol_ref': 'fixture/v1', 'input_refs': ['dataset:a']}
         call = OperationCall('direct.measure', args, call_id='measure')
@@ -77,6 +246,43 @@ class LibraryContractTests(unittest.TestCase):
             result = app.run(max_decision_steps=2, wait_for_jobs=True)
         self.assertEqual(result.stop_reason, 'goal_reached')
         self.assertEqual(result.decision_steps, 1)
+
+        class UndeclaredLab(LabExecution):
+            def evaluation_operations(self):
+                return ()
+
+            def is_evaluation(self, name):
+                return True
+
+        raw = ModuleAssembly(decision_factory=decision, lab_factory=lambda _: UndeclaredLab())
+        with Application(self.config('undeclared-goal'), modules=raw, run_policy=GoalRunPolicy(goal)) as app:
+            result = app.run(max_decision_steps=1, wait_for_jobs=True)
+        self.assertNotEqual(result.stop_reason, 'goal_reached')
+
+    def test_builtin_math_benchmark_receipt_is_not_implicitly_metric_goal_evidence(self):
+        data = json.dumps({'id': 'q', 'prompt': 'What is one plus one?', 'answer': '2'}).encode() + b'\n'
+        (self.root / 'tasks.jsonl').write_bytes(data)
+        manifest = self.root / 'datasets.json'
+        manifest.write_text(json.dumps({'schema_version': 1, 'splits': {'dev': {
+            'file': 'tasks.jsonl', 'sha256': sha256(data).hexdigest(), 'count': 1,
+        }}}), encoding='utf-8')
+        registry = Registry()
+        call = OperationCall('math.evaluate', {'split': 'dev', 'instruction': 'Return a marked answer.'})
+        registry.register_controller('fixture', lambda *_: ScriptedPolicy((call,)), version='1')
+        modules = registry.build({'controller': {'name': 'fixture'}, 'labs': {'math': {'name': 'math', 'config': {
+            'manifest': str(manifest), 'split_roles': {'dev': 'dev'}, 'max_output_tokens': 64,
+        }}}})
+        config = ApplicationConfig('Built-in Math evidence', self.root / 'math',
+                                   {'mock': BackendBinding('mock', 'mock')},
+                                   {'actor': ModelRef('mock', 'fixture', 'v1')})
+        with Application(config, modules=modules) as app:
+            app.run(max_decision_steps=1, wait_for_jobs=True)
+            [receipt] = app.assembly.host_execution.state.operation_results
+            self.assertIn('accuracy', receipt.data['quality_metrics'])
+            protocol = receipt.data['benchmarks']['math']
+            goal = MetricGoal('accuracy', 0, protocol, allow_simulated=True)
+            self.assertIsNone(EvaluationOutcome.from_call(call, receipt))
+            self.assertFalse(goal(app.runner._run_context(config.objective)))
 
     def test_direct_lab_evaluation_identity_is_checked_on_durable_resume(self):
         class Lab:
@@ -130,6 +336,22 @@ class LibraryContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'belongs to another run execution'):
                 Application(self.config('borrower'), modules=borrower)
             self.assertEqual(closed, [])
+            initial_version = foreign.controller_version
+            registry = Registry(builtins=False)
+            registry.register_controller('fixture', ControllerDefinition(lambda *_: foreign, endpoint=True), version='1')
+            class BorrowerLab:
+                def describe(self):
+                    return ()
+
+                def execute(self, call):
+                    raise AssertionError('No fixture operations')
+
+            registry.register_lab('fixture', lambda *_: BorrowerLab(), version='1')
+            registered = registry.build({'controller': {'name': 'fixture'}, 'labs': {'fixture': {'name': 'fixture'}}})
+            with self.assertRaisesRegex(ValueError, 'belongs to another run execution'):
+                Application(self.config('registered-borrower'), modules=registered)
+            self.assertEqual(closed, [])
+            self.assertEqual(foreign.controller_version, initial_version)
             self.assertEqual(app.run().stop_reason, 'researcher_finished')
         self.assertEqual(closed, ['owner'])
 

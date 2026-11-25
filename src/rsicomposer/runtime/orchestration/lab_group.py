@@ -39,6 +39,14 @@ def _read_receipt(path):
         return stream.read()
 
 
+def _bind_receipt(call, result):
+    if not isinstance(result, OperationResult):
+        raise TypeError('Lab job completion must contain OperationResult')
+    if result.call_id is not None and result.call_id != call.call_id:
+        raise ValueError('Operation receipt call_id does not match the issued call')
+    return replace(result, call_id=call.call_id)
+
+
 class LabGroup:
     """Expose multiple Labs as alias.operation through the existing Lab port."""
     def __init__(self, *, receipts=None, artifacts=None, experience=None, artifact_access=None):
@@ -285,7 +293,7 @@ class LabGroup:
                     access.restrict_result(outcome, owner='lab:' + alias, split=local_call.arguments.get('split'))
             with self._lock:
                 if isinstance(outcome, OperationResult):
-                    outcome = replace(outcome, call_id=call.call_id)
+                    outcome = _bind_receipt(local_call, outcome)
                 outcome = binding.validate_result(local_call, outcome)
                 binding.observe(local_call, outcome)
                 outcome = binding.aggregate(local_call, outcome, self._artifacts)
@@ -333,8 +341,12 @@ class LabGroup:
             yield self._labs[alias], local, self._bindings[alias]
 
     def can_poll_job(self, call, job):
-        lab, _ = self._operations[call.name]
-        return optional_method(lab, 'poll_job') is not None
+        operation = self._operations.get(call.name)
+        return operation is not None and optional_method(operation[0], 'poll_job') is not None
+
+    def can_cancel_job(self, call, job):
+        operation = self._operations.get(call.name)
+        return operation is not None and optional_method(operation[0], 'cancel_job') is not None
 
     def poll_job(self, call, job, *, decision_id, after):
         with self._state_boundary(call.name.rsplit('.', 1)[0], wait=False) as available:
@@ -354,7 +366,7 @@ class LabGroup:
 
     def _record_job_result(self, call, local, binding, result):
         with self._lock:
-            result = binding.validate_result(local, replace(result, call_id=call.call_id))
+            result = binding.validate_result(local, _bind_receipt(local, result))
             binding.observe(local, result)
             result = binding.aggregate(local, result, self._artifacts)
             self._store(call, result, self.receipt_elapsed(call))
@@ -368,6 +380,10 @@ class LabGroup:
         outcome = poll(job)
         if not isinstance(outcome, JobOutcome) or outcome.job != job:
             raise TypeError('Lab poll_job must return the matching JobOutcome')
+        outcome.__post_init__()
+        result = outcome.result
+        if result is not None:
+            result = _bind_receipt(call, result)
         events = optional_method(lab, 'job_events')
         progress = events(job, after=after) if events is not None else ()
         if (not isinstance(progress, tuple) or any(not isinstance(row, OperationProgress)
@@ -377,13 +393,10 @@ class LabGroup:
             raise ValueError('Lab job events must be increasing, call-correlated OperationProgress observations')
         if not outcome.terminal:
             return None, progress
-        result = outcome.result
         if result is None:
             result = OperationResult('Lab job ' + outcome.status.value, (), outcome.simulated,
                 ExecutionStatus.FAILED if outcome.status == JobStatus.FAILED else ExecutionStatus.CANCELLED,
                 outcome.error if outcome.status == JobStatus.FAILED else None)
-        if not isinstance(result, OperationResult):
-            raise TypeError('Lab job completion must contain OperationResult')
         return result, progress
 
     def control_job(self, call, job, control, *, decision_id):
@@ -401,6 +414,9 @@ class LabGroup:
             outcome = cancel(job)
             if not isinstance(outcome, JobOutcome) or outcome.job != job:
                 raise TypeError('Lab cancellation must return the matching JobOutcome')
+            outcome.__post_init__()
+            if outcome.result is not None:
+                _bind_receipt(call, outcome.result)
 
     def reattach_job(self, call, job):
         lab, name = self._operations[call.name]
@@ -432,6 +448,17 @@ class LabGroup:
             raise ValueError('Invalid host final evaluation plan')
         if type(index) is not int or not 0 <= index <= len(calls or ()):
             raise ValueError('Invalid final evaluation cursor')
+        if calls is not None:
+            plans = {alias: [] for alias in self._bindings}
+            for call in calls:
+                alias, _, name = call.name.rpartition('.')
+                if call.name not in self._operations or name not in ('evaluate', 'execute'):
+                    raise ValueError('Invalid host final evaluation operation')
+                local = replace(call, name=name)
+                self._bindings[alias].check(local, finishing=True, history=False)
+                plans[alias].append(local)
+            for alias, plan in plans.items():
+                self._bindings[alias].check_finish(plan)
         self._final_calls, self._final_index = deepcopy(calls), index
 
     def finish_step(self, before_execute=None):
@@ -585,14 +612,18 @@ class LabGroup:
         for _, _, call in sorted(saved, key=lambda item: item[:2]):
             self._execute(call, finishing=False)
 
-    def in_flight_resolution(self, call):
-        """How an interrupted call can continue: 'receipt', 'idempotent', or None (needs review)."""
+    def in_flight_resolution(self, call, *, job=None):
+        """Find a replay/reattach proof, without changing any Lab state."""
         saved = self.stored_receipt(call)
         if isinstance(saved, JobRef):
+            if job is not None and saved != job:
+                return None
             lab, _ = self._operations[call.name]
             return 'job' if optional_method(lab, 'reattach_job') is not None else None
         if saved is not None:
             return 'receipt'
+        if job is not None:
+            return None  # A known submission is not safe to launch again.
         spec = next((s for s in self._specs if s.name == call.name), None)
         return 'idempotent' if spec is not None and spec.idempotent else None
 

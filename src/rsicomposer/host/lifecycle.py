@@ -77,8 +77,9 @@ class ControllerEndpoint:
         return self.host.advance(before_adoption=guard)
 
     def pending_stop_checkpoint(self):
-        """Report unsettled cleanup or publication, not an uncommitted swap."""
-        return bool(self.host._retired or self.host._pending_adoption_event is not None)
+        """Report unsettled owned work, not a swap that has yet to start."""
+        return bool(self.host._retired or self.host._pending_adoption_event is not None
+                    or self.host._activation_pending())
 
     def stop_checkpoint_boundary(self):
         return self.host.stop_checkpoint()
@@ -105,6 +106,8 @@ class ControllerHostState:
 
 
 def _context(owner, version, *, initial, endpoint):
+    from rsicomposer.runtime.evidence.retrieval import controller_experience
+
     root = owner.data_dir
     if not initial and root is not None:
         # IDs are data, never filesystem paths.
@@ -114,7 +117,7 @@ def _context(owner, version, *, initial, endpoint):
     if version.model is not None:
         validate_model_route(owner, version.model)
         roles['decision_maker'] = version.model
-    local = replace(owner, data_dir=root, roles=roles,
+    local = replace(owner, data_dir=root, roles=roles, experience=controller_experience(owner.experience),
                     restoring=owner.restoring or not initial)
     local._artifact_access, local._model_access = owner._artifact_access, owner._model_access
     local._controller_version = version.version_id
@@ -151,6 +154,35 @@ def _discard_borrowed_cleanups(local, protected):
                         if not any(getattr(callback, '__self__', None) is part for part in protected)]
 
 
+def validate_controller_requirements(endpoint, lab):
+    """Check installed Lab compatibility independent of operation permissions."""
+    from collections.abc import Mapping
+
+    policy = _policy(endpoint)
+    validate = optional_method(lab, 'validate_controller')
+    operations = set()
+    for owner in (policy,) if endpoint is policy else (policy, endpoint):
+        if validate is not None:
+            validate(owner)
+        elif (required := optional_method(owner, 'required_profiles')) is not None:
+            profiles = required()
+            if not isinstance(profiles, Mapping):
+                raise TypeError('required_profiles() must map Lab aliases to profile IDs')
+            if profiles:
+                raise ValueError('Controller requires a Lab provider that validates profiles')
+        required = optional_method(owner, 'required_operations')
+        if required is not None:
+            names = required()
+            if (not isinstance(names, tuple) or any(not isinstance(name, str) or not name.strip() for name in names)
+                    or len(set(names)) != len(names)):
+                raise TypeError('required_operations must return distinct operation names')
+            operations.update(names)
+    if operations:
+        available = {spec.name for spec in lab.describe()} if lab is not None else set()
+        if missing := operations - available:
+            raise ValueError('Controller requires missing Lab operations: ' + ', '.join(sorted(missing)))
+
+
 def build_controller(owner, definition, options, version, *, initial=False, memory=None):
     """Rebuild a catalog-selected policy, harness and Memory with local ownership."""
     from rsicomposer.assembly import build_default_decision
@@ -164,6 +196,8 @@ def build_controller(owner, definition, options, version, *, initial=False, memo
     try:
         if definition.endpoint:
             endpoint = definition.policy(scoped, owner.lab_execution, deepcopy(options))
+            if getattr(endpoint, 'host_execution', None) is not owner.host_execution:
+                raise ValueError('Controller endpoint belongs to another run execution')
             _require_independent(endpoint, protected, 'endpoint')
             _require_independent(endpoint.harness, protected, 'harness')
             _own_close(local, endpoint.harness)
@@ -193,18 +227,7 @@ def build_controller(owner, definition, options, version, *, initial=False, memo
         if definition.endpoint:
             endpoint.action_space = enforce_host_permissions(endpoint.action_space, owner.action_permissions)
         local.controller_report = optional_method(required_policy, 'report')
-        owner.lab_execution.validate_controller(required_policy)
-        if definition.endpoint and endpoint is not required_policy:
-            owner.lab_execution.validate_controller(endpoint)
-        required = optional_method(required_policy, 'required_operations')
-        if required is not None:
-            names = required()
-            if (not isinstance(names, tuple) or any(not isinstance(name, str) or not name for name in names)
-                    or len(set(names)) != len(names)):
-                raise TypeError('required_operations must return distinct operation names')
-            available = {spec.name for spec in owner.lab_execution.describe()}
-            if set(names) - available:
-                raise ValueError('Controller requires missing Lab operations: ' + ', '.join(sorted(set(names) - available)))
+        validate_controller_requirements(endpoint, owner.lab_execution)
         if memory is None and definition.memory is not None:
             memory = definition.memory(deepcopy(options))
         if (memory is None and initial and local.restoring and local.data_dir is not None
@@ -378,6 +401,9 @@ class ControllerHost:
             bool(training_result and training_result.simulated),
             data={'controller_version': version.version_id, 'status': 'pending'})
 
+    def _activation_pending(self):
+        return self.pending is not None and self.pending.get('activation_pending', False)
+
     def stop_checkpoint(self):
         """Finish committed adoption bookkeeping without starting a pending swap."""
         self._close_retired()
@@ -423,7 +449,9 @@ class ControllerHost:
                 ready = prepare_model_activation(training, self.activator,
                     idempotency_key='controller-version:' + version.version_id)
             except ModelActivationPending:
+                self.pending['activation_pending'] = True
                 return LoopStepResult('waiting', reason='Controller model activation pending', decision_steps=0)
+            self.pending.pop('activation_pending', None)
             if ready != version.model:
                 raise ValueError('Prepared Controller model differs from the candidate version')
             self._grant_prepared_model(ready, training)
@@ -592,7 +620,10 @@ class ControllerHost:
             raise ValueError('Invalid active Controller version')
         pending = state['pending']
         if pending is not None:
-            if (not isinstance(pending, dict) or set(pending) != {'ref', 'version', 'plan', 'training_result', 'adoption_id', 'delivery'}
+            pending_fields = {'ref', 'version', 'plan', 'training_result', 'adoption_id', 'delivery'}
+            if (not isinstance(pending, dict) or set(pending) not in (pending_fields, pending_fields | {'activation_pending'})
+                    or ('activation_pending' in pending and (pending['activation_pending'] is not True
+                        or pending['training_result'] is None))
                     or not isinstance(pending['version'], ControllerVersion)
                     or not isinstance(pending['adoption_id'], str) or not pending['adoption_id']
                     or not isinstance(pending['plan'], dict)
@@ -673,6 +704,8 @@ class ControllerHost:
         self.active.validate_snapshot()
         if self._retired:
             raise RuntimeError('Controller cleanup must finish before a portable snapshot')
+        if self._activation_pending():
+            raise RuntimeError('Pending Controller model activation forbids a portable snapshot')
 
     def _close_retired(self):
         failed, errors = [], []
@@ -711,7 +744,8 @@ class ControllerLearning:
             raise RuntimeError('Controller learning is closing; new training jobs are not admitted')
         if not isinstance(request, DecisionTrainingRequest):
             raise TypeError('Expected DecisionTrainingRequest')
-        available = {row.record_id for row in self.host.context.experience.retrieve()}
+        from rsicomposer.runtime.evidence.retrieval import controller_experience
+        available = {row.record_id for row in controller_experience(self.host.context.experience).retrieve()}
         if any(ref not in available for ref in request.experience_refs):
             raise ValueError('Training references must identify visible experience records')
         return self.training.submit(request, idempotency_key=idempotency_key)

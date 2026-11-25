@@ -144,8 +144,9 @@ def _call(alias, value):
     return OperationCall(f'{alias}.act', {'value': value}, call_id=f'call-{alias}')
 
 
-def _modules(*, managed=False, idempotent=False, batch=False, fault=None, on_build=None):
-    calls = (_call('a', 1), _call('b', 2)) if batch else (_call('a', 1),)
+def _modules(*, managed=False, idempotent=False, batch=False, fault=None, on_build=None, calls=None):
+    if calls is None:
+        calls = (_call('a', 1), _call('b', 2)) if batch else (_call('a', 1),)
 
     def lab_factory(context):
         if on_build is not None:
@@ -475,6 +476,30 @@ class RecoveryPermissionsTests(unittest.TestCase):
         with restore_snapshot(snapshot, target, modules=_modules(batch=True, on_build=built_with.append)) as app:
             self.assertEqual(app.config.data_dir, target)
             self.assert_recovered_policy(app, built_with)
+
+    def test_restored_permissions_guard_actual_dispatch(self):
+        for restore in ('durable', 'portable'):
+            for allowed in (True, False):
+                with self.subTest(restore=restore, allowed=allowed):
+                    source = self.directory / f'{restore}-{allowed}'
+                    config = ApplicationConfig(_OBJECTIVE, source, {}, {})
+                    modules = _modules(calls=(_call('a', 2 if allowed else 1),))
+                    with Application(config, modules=modules, action_permissions=self.permissions,
+                                     durable=restore == 'durable') as app:
+                        if restore == 'portable':
+                            capture = LocalSnapshotCapture(app)
+                            snapshot = capture.store.directory(capture.capture('permission fixture').snapshot_id)
+                    if restore == 'durable':
+                        reopened = Application.resume(source, modules=modules)
+                    else:
+                        reopened = restore_snapshot(snapshot, self.directory / f'target-{allowed}', modules=modules)
+                    with reopened as app:
+                        if allowed:
+                            app.run(max_decision_steps=1, wait_for_jobs=True)
+                        else:
+                            with self.assertRaises(PermissionError):
+                                app.run(max_decision_steps=1, wait_for_jobs=True)
+                        self.assertEqual(_lines(app.config.data_dir, 'invocations'), ['call-a'] if allowed else [])
 
     def test_legacy_checkpoint_without_permissions_is_closed_before_assembly(self):
         with Application(self.config, durable=True, modules=_modules()):

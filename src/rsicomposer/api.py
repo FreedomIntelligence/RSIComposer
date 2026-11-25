@@ -88,6 +88,7 @@ _EXPORTS = {
     'Registry': ('rsicomposer.registry', 'Registry'),
     'ResearchAssembly': ('rsicomposer.research', 'ResearchAssembly'),
     'build_default_decision': ('rsicomposer.assembly', 'build_default_decision'),
+    'build_harness_decision': ('rsicomposer.harnesses.defaults', 'build_harness_decision'),
     # Host authorization and run-control contracts.
     'AccessRequest': ('rsicomposer.loops.decision_making.action_space.access', 'AccessRequest'),
     'ActionPermissions': ('rsicomposer.loops.decision_making.action_space.access', 'ActionPermissions'),
@@ -296,6 +297,7 @@ if _TYPE_CHECKING:
         ModuleAssembly as ModuleAssembly,
         build_default_decision as build_default_decision,
     )
+    from rsicomposer.harnesses.defaults import build_harness_decision as build_harness_decision
     from rsicomposer.backends.serving.chat import ChatPool as ChatPool
     from rsicomposer.backends.serving.vllm import VLLMBackend as VLLMBackend
     from rsicomposer.backends.serving import build_serving_backend as build_serving_backend

@@ -9,7 +9,7 @@ from time import perf_counter
 from types import SimpleNamespace
 from uuid import uuid4
 
-from rsicomposer.harnesses.decision.tools import execute_operation
+from rsicomposer.harnesses.decision.tools import bind_operation_result, execute_operation
 from rsicomposer.harnesses.memory import HistoryEntry
 from rsicomposer.loops.contracts.coordination import LoopStepResult, OperationResult
 from rsicomposer.loops.contracts.decision import Decision, DecisionInput, _host_decision_id
@@ -46,6 +46,21 @@ class HostExecutionState:
     pending_operation_decision_id: str | None = None
     pending_decision: Decision | None = None
     decision_results: dict[str, LoopStepResult] = field(default_factory=dict)
+
+    def pending_wait_decision_id(self):
+        # The saved decision outcome already carries this link. Keep the
+        # checkpoint schema unchanged and don't alias the Lab recording slot.
+        pending = [ident for ident, row in self.decision_records.items()
+                   if row.get('kind') == 'wait' and row['status'] == 'pending'
+                   and ident in self.decision_results]
+        if self.pending_job is None and not pending:
+            return None
+        if (not isinstance(self.pending_job, JobRef) or len(pending) != 1
+                or self.decision_results[pending[0]].job != self.pending_job
+                or self.decision_results[pending[0]].kind != 'waiting'
+                or self.decision_records[pending[0]].get('proposal', {}).get('job') != asdict(self.pending_job)):
+            raise ValueError('Pending Controller wait must match exactly one issued wait decision')
+        return pending[0]
 
     def __post_init__(self):
         if (not isinstance(self.history_entries, tuple)
@@ -103,6 +118,27 @@ class HostExecutionState:
         if not isinstance(self.decision_results, dict) or any(k not in self.decision_records
                 or not isinstance(v, LoopStepResult) or v.decision_id != k for k, v in self.decision_results.items()):
             raise ValueError('Decision results must reference their ledger identity')
+        wait_id = self.pending_wait_decision_id()
+        if wait_id is not None and self.pending_operation_decision_id == wait_id:
+            if self.pending_operation_record is not None:
+                raise ValueError('A Controller wait cannot own a Lab receipt')
+            # A prior checkpoint could still point at this wait using the old
+            # shared slot. Only an unambiguous legacy wait is migrated.
+            self.pending_operation_decision_id = None
+        if (self.pending_operation_decision_id is not None
+                and self.decision_records[self.pending_operation_decision_id]['kind'] == 'wait'):
+            raise ValueError('A Controller wait cannot own a Lab receipt')
+        if self.pending_operation_record is not None and (
+                not isinstance(self.pending_operation_record, _PendingOperationRecord)
+                or self.pending_operation_record.decision_id != self.pending_operation_decision_id
+                or (self.pending_operation_record.call is not None and
+                    self.pending_operation_record.result.call_id != self.pending_operation_record.call.call_id)):
+            raise ValueError('Pending Lab receipt does not match its issued identity')
+        for task in self.operation_tasks.values():
+            if task['status'] == 'waiting' and not isinstance(task.get('job'), JobRef):
+                raise ValueError('Waiting Lab operation requires its saved JobRef')
+            if 'cancel_requested' in task and (task['cancel_requested'] is not True or task['status'] != 'waiting'):
+                raise ValueError('Invalid Lab job cancellation marker')
 
 
 @dataclass
@@ -296,15 +332,38 @@ class HostExecution:
         """Replace external running hints without changing research state or objectives."""
         self.state.run_control = self._copy_run_control(context)
 
+    def _native_research_job(self):
+        read = optional_method(self.policy, 'pending_research_job')
+        return read() if read is not None else None
+
+    def _native_wait_job(self):
+        # An ordinary wait with no readiness contract is an external handoff,
+        # even if the owner advertises hooks for eventual shutdown.
+        if (optional_method(self.policy, 'can_decide') is not None
+                or optional_method(self.policy, 'inference_ready') is not None):
+            return self._native_research_job()
+        return None
+
+    def _research_poll(self, job):
+        can_poll = optional_method(self.policy, 'can_poll_job')
+        poll = optional_method(self.policy, 'poll_job')
+        return poll if poll is not None and can_poll is not None and can_poll(job) is True else None
+
     def can_poll_job(self, job):
+        if job is None:
+            return False
         if self.operation_scheduler.can_poll_job(job):
             return True
-        can_poll = optional_method(self.policy, 'can_poll_job')
-        return (job is not None and self.pending_research_job() == job
-                and can_poll is not None and can_poll(job) is True)
+        if job == self.state.pending_job:
+            return self._research_poll(job) is not None
+        # Ordinary steps expose native JobRefs only when readiness can advance
+        # them; stop steps can also advance policies with native teardown alone.
+        return (job == self._native_wait_job() or (job == self._native_research_job()
+                and any(optional_method(self.policy, port) is not None
+                        for port in ('drain_research', 'cancel_research'))))
 
     def _complete_policy_wait(self, outcome):
-        job, ident = self.state.pending_job, self.state.pending_operation_decision_id
+        job, ident = self.state.pending_job, self.state.pending_wait_decision_id()
         if not isinstance(outcome, JobOutcome) or outcome.job != job:
             raise TypeError('Controller polling requires a matching JobOutcome')
         outcome.__post_init__()
@@ -319,7 +378,6 @@ class HostExecution:
                                 decision_id=ident, decision_steps=0)
         self.state.decision_results[ident] = deepcopy(result)
         self.state.pending_job = None
-        self.state.pending_operation_decision_id = None
         return result
 
     def poll_research(self):
@@ -327,75 +385,52 @@ class HostExecution:
         job = self.state.pending_job
         if job is None:
             return None
-        can_poll = optional_method(self.policy, 'can_poll_job')
-        poll = optional_method(self.policy, 'poll_job')
-        if can_poll is None or poll is None or can_poll(job) is not True:
+        poll = self._research_poll(job)
+        if poll is None:
             return LoopStepResult('waiting', job=job,
-                                  decision_id=self.state.pending_operation_decision_id, decision_steps=0)
+                                  decision_id=self.state.pending_wait_decision_id(), decision_steps=0)
         return self._complete_policy_wait(poll(job))
 
+    def _drive_native_research(self, mode):
+        action = optional_method(self.policy, mode + '_research')
+        if action is None:
+            return
+        action()
+        usages = optional_method(self.policy, 'drain_usage')
+        if usages is not None:
+            for usage in usages():
+                self._record_usage(usage)
+
     def drain_research(self):
-        job = self.state.pending_job
-        drain = optional_method(self.policy, 'drain_research')
-        native_job = optional_method(self.policy, 'pending_research_job')
-        # An explicit wait can refer to the same policy-owned research. Signal
-        # drain before polling that wait so the owner can stop admitting work.
-        if drain is not None and (job is None or (native_job is not None and native_job() == job)):
-            drain()
-            usages = optional_method(self.policy, 'drain_usage')
-            if usages is not None:
-                for usage in usages():
-                    self._record_usage(usage)
-        if job is None:
-            return None
-        can_poll = optional_method(self.policy, 'can_poll_job')
-        poll = optional_method(self.policy, 'poll_job')
-        if job is None or can_poll is None or poll is None or can_poll(job) is not True:
-            return None
-        outcome = poll(job)
-        if not isinstance(outcome, JobOutcome) or outcome.job != job:
-            raise TypeError('Controller polling requires a matching JobOutcome')
-        if outcome.terminal:
-            close = optional_method(self.policy, 'close')
-            if close is not None:
-                close()
-        return self._complete_policy_wait(outcome)
+        if self._native_research_job() is not None:
+            self._drive_native_research('drain')
+        return self.poll_research()
 
     def cancel_research(self):
-        native_cancel = optional_method(self.policy, 'cancel_research')
-        if self.state.pending_job is None and native_cancel is not None:
-            complete = native_cancel()
-            drain = optional_method(self.policy, 'drain_usage')
-            if drain is not None:
-                for usage in drain():
-                    self._record_usage(usage)
-            return complete
-        job = self.state.pending_job
-        if job is None:
-            return False
-        row = self.state.decision_records[self.state.pending_operation_decision_id]
+        job, native = self.state.pending_job, self._native_research_job()
+        row = self.state.decision_records[self.state.pending_wait_decision_id()] if job is not None else None
         cancel = optional_method(self.policy, 'cancel_job')
-        if row.get('research_cancel_requested') or cancel is None:
-            # The request was already issued, or there is no cancellation port.
-            # Only a terminal observation clears the pending wait.
-            self.poll_research()
-        else:
-            can_poll = optional_method(self.policy, 'can_poll_job')
-            if can_poll is None or can_poll(job) is not True:
-                return False
-            result = self._complete_policy_wait(cancel(job))
-            if result.kind == 'waiting':
-                # Store this on the decision, so durable resume polls the same
-                # job rather than reissuing a committed cancel request.
-                row['research_cancel_requested'] = True
-        return self.state.pending_job is None
+        poll = self._research_poll(job) if job is not None else None
+        # Distinct native work must receive its own shutdown signal even while
+        # an explicit wait is outstanding. For one shared job, prefer its
+        # explicit cancellation to avoid sending the request via both ports.
+        if native is not None and (native != job or cancel is None or poll is None):
+            self._drive_native_research('cancel')
+        if self.state.pending_job is not None:
+            if cancel is None or row.get('research_cancel_requested'):
+                self.poll_research()
+            elif poll is not None:
+                result = self._complete_policy_wait(cancel(job))
+                if result.kind == 'waiting':
+                    # Once an acknowledgement is committed, resume polls rather
+                    # than repeating its potentially effectful cancel request.
+                    row['research_cancel_requested'] = True
+        return self.pending_research_job() is None
 
     def pending_research_job(self) -> JobRef | None:
         """Report work awaiting external resume, without polling or cancelling it."""
-        if self.state.pending_job is not None:
-            return self.state.pending_job
-        read = optional_method(self.policy, 'pending_research_job')
-        return read() if read is not None else None
+        native, job = self._native_research_job(), self.state.pending_job
+        return job if job is not None and (native is None or self._research_poll(job) is not None) else native
 
     def pending_records(self) -> bool:
         """Include unfinished reviews even when their tool receipts are recorded."""
@@ -511,7 +546,8 @@ class HostExecution:
             if drain is not None:
                 for usage in drain():
                     self._record_usage(usage)
-            return LoopStepResult('waiting', reason='Controller inference is generating', decision_steps=0)
+            return LoopStepResult('waiting', job=self._native_wait_job(),
+                                  reason='Controller inference is generating', decision_steps=0)
         context = self._context(objective, action_space)
         saved_pending = self.state.pending_decision
         sample = optional_method(self.policy, 'decide')
@@ -555,10 +591,11 @@ class HostExecution:
                     self.state.pending_decision = None
                     return replace(advance(interrupt=self._inference_ready),
                                    decision_steps=1)
+                if decision.job is not None and not isinstance(decision.job, JobRef):
+                    raise TypeError('Controller wait requires a JobRef')
                 self.state.pending_job = decision.job
-                self.state.pending_operation_decision_id = ident if decision.job else None
                 row['status'] = 'pending' if decision.job else 'completed'
-                result = LoopStepResult("waiting", job=decision.job, decision_id=ident)
+                result = LoopStepResult("waiting", job=decision.job or self._native_wait_job(), decision_id=ident)
             else:
                 row['status'] = 'completed'
                 result = LoopStepResult("finished", reason=decision.reason, decision_id=ident)
@@ -633,7 +670,8 @@ class OperationScheduler:
 
     def in_flight(self):
         return [dict(decision_id=task['decision_id'], operation=deepcopy(task['call']),
-                     status=task['status']) for task in self.tasks.values()]
+                     status=task['status'], **({'job': task['job']} if task['status'] == 'waiting' else {}))
+                for task in self.tasks.values()]
 
     def capacity(self, name):
         lab = getattr(self.host.tools, 'lab', None)
@@ -674,9 +712,9 @@ class OperationScheduler:
             except PermissionError as denied:
                 row = self.host.state.decision_records[decision.decision_id]
                 row['authorization_rejected'] = True
-                self.host.state.pending_operation_decision_id = decision.decision_id
                 self.host.ledger._record_operation(call, OperationResult('Decision operation failed', (),
-                    decision.simulated, ExecutionStatus.FAILED, f'PermissionError: {denied}', call_id=call.call_id))
+                    decision.simulated, ExecutionStatus.FAILED, f'PermissionError: {denied}', call_id=call.call_id),
+                    decision_id=decision.decision_id)
                 raise
             except (TypeError, ValueError):
                 pass  # The shared executor returns the exact validation failure.
@@ -781,13 +819,16 @@ class OperationScheduler:
         poll = optional_method(lab, 'poll_job')
         if poll is None:
             return None
+        check = optional_method(lab, 'can_poll_job')
         progressed = False
         for ident, task in list(self.tasks.items()):
             if call_ids is not None and ident not in call_ids:
                 continue
-            if task['status'] != 'waiting':
+            if task['status'] != 'waiting' or (check is not None and not check(task['call'], task['job'])):
                 continue
             result, events = poll(task['call'], task['job'], decision_id=task['decision_id'], after=task['last_event'])
+            if result is not None:
+                result = bind_operation_result(task['call'], result)
             for event in events:
                 self.host.observe(EvidenceEvent(f'{ident}:progress:{event.sequence}', 'lab', event.kind,
                     task_id=ident, status='running', output=asdict(event), request=asdict(task['call']),
@@ -803,9 +844,11 @@ class OperationScheduler:
         return LoopStepResult('progressed', reason='Lab job progress', decision_steps=0) if progressed else None
 
     def can_poll_job(self, job):
-        check = optional_method(getattr(self.host.tools, 'lab', None), 'can_poll_job')
-        return check is not None and any(task['job'] == job and check(task['call'], job)
-                                         for task in self.tasks.values())
+        lab = getattr(self.host.tools, 'lab', None)
+        check = optional_method(lab, 'can_poll_job')
+        return optional_method(lab, 'poll_job') is not None and any(
+            task['status'] == 'waiting' and task['job'] == job and (check is None or check(task['call'], job))
+            for task in self.tasks.values())
 
     def advance(self, action_space, call_ids=None, *, observe_also=(), interrupt=None,
                 launch=True, before_launch=None):
@@ -897,13 +940,25 @@ class OperationScheduler:
             if task['checkpoint'] is not None:
                 self.control(JobControl(ident, task['checkpoint'], 'stop' if mode == 'cancel' else 'continue'),
                              before_launch=before_launch)
-            elif mode == 'cancel' and task['job'] is not None:
-                cancel = optional_method(getattr(self.host.tools, 'lab', None), 'cancel_job')
+            elif mode == 'cancel' and task['job'] is not None and not task.get('cancel_requested'):
+                lab = getattr(self.host.tools, 'lab', None)
+                cancel = optional_method(lab, 'cancel_job')
+                can_cancel = optional_method(lab, 'can_cancel_job')
+                supported = can_cancel(task['call'], task['job']) if can_cancel is not None else cancel is not None
+                if type(supported) is not bool:
+                    raise TypeError('Lab can_cancel_job must return bool')
+                if not supported:
+                    poll = optional_method(lab, 'poll_job')
+                    can_poll = optional_method(lab, 'can_poll_job')
+                    if poll is None or (can_poll is not None and not can_poll(task['call'], task['job'])):
+                        raise TypeError('Operation cancellation requires a Lab cancel_job, poll_job, or checkpoint contract')
+                    continue  # A poll-only Lab can settle, but its job is not cancelled.
                 if cancel is None:
-                    raise TypeError('Operation cancellation requires a Lab cancel_job contract or a job checkpoint')
+                    raise TypeError('Lab advertises cancellation without a cancel_job contract')
                 if before_launch is not None:
                     before_launch()
                 cancel(task['call'], task['job'], decision_id=task['decision_id'])
+                task['cancel_requested'] = True
         call_ids = self.tasks.keys() & plan.keys()
         if not call_ids:
             return None
@@ -932,15 +987,14 @@ class OperationScheduler:
             saved_elapsed = read_elapsed(task['call'])
             if saved_elapsed is not None:
                 elapsed = saved_elapsed
-        result = replace(result, call_id=ident, simulated=result.simulated or task['simulated'])
+        result = bind_operation_result(task['call'], result, simulated=task['simulated'])
         try:
             self.host.ledger._adoption(task['decision_id'], result)
         except (TypeError, ValueError) as invalid:
             error = invalid
             result = OperationResult('Invalid executor adoption receipt', (), result.simulated,
                                      ExecutionStatus.FAILED, str(invalid), call_id=ident)
-        self.host.state.pending_operation_decision_id = task['decision_id']
-        self.host.ledger._record_operation(task['call'], result, elapsed_seconds=elapsed)
+        self.host.ledger._record_operation(task['call'], result, decision_id=task['decision_id'], elapsed_seconds=elapsed)
         self.tasks.pop(ident, None)
         if error is not None:
             raise error
@@ -955,12 +1009,18 @@ class OperationScheduler:
                 raise ValueError('Interrupted call is absent from the restored operation queue')
         lab = getattr(self.host.tools, 'lab', None)
         stored = optional_method(lab, 'stored_receipt')
-        for call in calls:
-            saved = stored(call) if stored is not None else None
+        receipts = [stored(call) if stored is not None else None for call in calls]
+        for call, saved in zip(calls, receipts):
+            task = self.tasks[call.call_id]
+            if task['status'] == 'waiting' and not (isinstance(saved, OperationResult) or
+                    (isinstance(saved, JobRef) and saved == task['job'])):
+                raise ValueError('Journaled Lab job does not match the interrupted JobRef')
+        for call, saved in zip(calls, receipts):
             if isinstance(saved, JobRef) and lab.reattach_job(call, saved) is None:
                 self.tasks[call.call_id].update(status='waiting', job=saved)
             else:
                 self.tasks[call.call_id].update(status='queued', job=None, checkpoint=None)
+                self.tasks[call.call_id].pop('cancel_requested', None)
             self.host.state.decision_records[self.tasks[call.call_id]['decision_id']]['status'] = 'executing'
 
     def close(self):

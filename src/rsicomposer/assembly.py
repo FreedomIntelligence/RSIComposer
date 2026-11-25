@@ -538,7 +538,9 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         if host_loop:
             if decision.operation_router.lab is not context.lab_execution:
                 raise ValueError('Controller endpoint must retain the assembled Lab routing')
+            from rsicomposer.host.lifecycle import validate_controller_requirements
             from rsicomposer.loops.decision_making.action_space.access import enforce_host_permissions
+            validate_controller_requirements(decision, context.lab_execution)
             decision.action_space = enforce_host_permissions(decision.action_space, context.action_permissions)
             if context.host_execution.endpoint is not decision:
                 context.host_execution.activate(decision, getattr(decision, 'controller_version', None))
@@ -610,8 +612,14 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         context.state_adapters = adapters
         context._state_bindings = assembly_bindings(context, decision)
         context._state_port_bindings = dict(context.state_adapters)
-    return AssemblyRunner(decision, context, run_policy=run_policy,
-                          cleanup_timeout_seconds=cleanup_timeout_seconds)
+    runner = AssemblyRunner(decision, context, run_policy=run_policy,
+                            cleanup_timeout_seconds=cleanup_timeout_seconds)
+    if not hasattr(context, '_initial_controller_instance'):
+        # On direct and graph paths, join Host workers before any dependency
+        # (including graph-owned Lab/Harness resources) is released. Keep the
+        # original Host close for cleanup callbacks and partial assembly failure.
+        context.add_owned_cleanup(context.host_execution.operation_scheduler.close)
+    return runner
 
 
 def _assemble_loops(context: AssemblyContext, *, decision_factory, lab_factory=None):
@@ -637,15 +645,26 @@ class AssemblyRunner(Runner):
 
     def __init__(self, decision: DecisionMakingLoop, assembly: AssemblyContext,
                  *, run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
+        from rsicomposer.runtime.orchestration.lab_group import LabGroup
+        lab = assembly.lab_execution
+        if not isinstance(lab, LabGroup) and (split_roles := optional_method(lab, 'split_roles')) is not None:
+            from collections.abc import Mapping
+            from rsicomposer.loops.contracts.profiles import SplitRole
+            roles = split_roles()
+            if not isinstance(roles, Mapping) or any(not isinstance(role, SplitRole) for role in roles.values()):
+                raise TypeError('Lab split_roles() must map split names to SplitRole')
+            if any(role.after_finish_only for role in roles.values()):
+                raise ValueError('Sealed splits require a Lab composed through LabGroup or the Registry')
         super().__init__(decision, run_policy=run_policy,
                          cleanup_timeout_seconds=cleanup_timeout_seconds,
-                         execution_shutdown=optional_method(assembly.lab_execution, 'shutdown'),
-                         finish_execution=optional_method(assembly.lab_execution, 'finish_step'))
+                         execution_shutdown=optional_method(lab, 'shutdown'),
+                         finish_execution=optional_method(lab, 'finish_step'))
         self.assembly = assembly
-        self._evaluation_operations = optional_method(assembly.lab_execution, 'is_evaluation')
+        self._evaluation_operations = None
         self._declared_evaluations = None
-        declared = optional_method(assembly.lab_execution, 'evaluation_operations')
-        if self._evaluation_operations is None and declared is not None:
+        if isinstance(assembly.lab_execution, LabGroup):
+            self._evaluation_operations = assembly.lab_execution.is_evaluation
+        elif optional_method(assembly.lab_execution, 'evaluation_operations') is not None:
             from rsicomposer.runtime.orchestration.profiles import evaluation_operations
             self._declared_evaluations = evaluation_operations(assembly.lab_execution,
                                                                assembly.lab_execution.describe(), 'execution')

@@ -9,6 +9,8 @@ from rsicomposer.loops.contracts.artifacts import ArtifactRef
 from rsicomposer.loops.contracts.controller_version import EvidenceScope
 from rsicomposer.loops.contracts.feedback_context import EvidenceEvent
 from rsicomposer.runtime.storage.codec import decode
+from .records import is_host_final_payload
+from .retrieval import controller_experience
 
 
 _REF_FIELDS = {'artifact_id', 'kind', 'uri', 'version', 'digest'}
@@ -44,7 +46,7 @@ class ReadOnlyEvidenceView:
                  checkpoints=None, secret_values=()):
         if not isinstance(scope, EvidenceScope):
             raise TypeError('Evidence view scope must be an EvidenceScope')
-        self._experience = experience
+        self._experience = controller_experience(experience)
         self._store = artifact_authority.store
         self.scope, self._run_id = scope, run_id
         self._checkpoints = dict(checkpoints or {})
@@ -104,9 +106,7 @@ class ReadOnlyEvidenceView:
         if is_dataclass(value):
             return self._walk(asdict(value), strict=strict, found=found, sealed=sealed)
         if isinstance(value, dict):
-            if (value.get('phase') == 'host_finish' or any(
-                    isinstance(value.get(key), str) and value[key].startswith('sealed-')
-                    for key in ('event_id', 'record_id'))):
+            if is_host_final_payload(value):
                 if strict:
                     raise PermissionError('Host final evidence is unavailable')
                 return _HIDDEN
@@ -190,8 +190,7 @@ class ReadOnlyEvidenceView:
         for record in rows[start:]:
             # Memory delivery/rebuild journals track notification attempts for
             # canonical evidence; they are not new observations of that fact.
-            if (record.kind == 'memory_observation' or record.record_id.startswith('sealed-')
-                    or record.details.get('phase') == 'host_finish'):
+            if record.kind == 'memory_observation':
                 continue
             if self._run_id is not None and record.run_id not in (None, self._run_id):
                 continue

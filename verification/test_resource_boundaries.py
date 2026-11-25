@@ -78,16 +78,25 @@ class ResourceBoundariesTest(unittest.TestCase):
 
     def test_explicit_endpoint_permissions_intersect_host_permissions(self):
         names = ('allowed', 'host_restricted', 'endpoint_restricted')
+        executed = []
+        proposed = []
 
         class Lab:
             def describe(self):
                 return tuple(OperationSpec(name, 'Fixture operation', {'type': 'object'}) for name in names)
 
             def execute(self, call):
-                raise AssertionError('Permission inspection must not execute fixture tools')
+                executed.append((call.name, call.arguments))
+                return OperationResult('Fixture invoked', (), True)
 
         def endpoint(context, lab, config):
-            loop = build_harness_decision(context, lab, policy=lambda _: Decision('finish'), harness=NullHarness())
+            def policy(_):
+                if proposed:
+                    name, arguments = proposed.pop(0)
+                    return Decision('invoke', operations=(OperationCall('fixture.' + name, arguments),))
+                return Decision('finish')
+
+            loop = build_harness_decision(context, lab, policy=policy, harness=NullHarness())
             loop.action_space.permissions = ActionPermissions(['fixture.allowed', 'fixture.host_restricted'])
             return loop
 
@@ -115,7 +124,9 @@ class ResourceBoundariesTest(unittest.TestCase):
             'direct': ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory),
             'graph': ModuleAssembly.from_components(graph, decision='decision', lab='tools'),
         }
-        permissions = ActionPermissions(['fixture.allowed', 'fixture.endpoint_restricted'])
+        permissions = ActionPermissions(['fixture.allowed', 'fixture.endpoint_restricted'],
+                                        check=lambda request: request.action is None
+                                        or request.action.arguments.get('blocked') is not True)
         with TemporaryDirectory() as temp:
             for entry, selection in entries.items():
                 config = ApplicationConfig('Check both permission boundaries', Path(temp) / entry, {}, {})
@@ -127,6 +138,16 @@ class ResourceBoundariesTest(unittest.TestCase):
                     for name in names[1:]:
                         with self.subTest(name=name), self.assertRaises(PermissionError):
                             space.validate(OperationCall('fixture.' + name, {}))
+                    executed.clear()
+                    proposed.append(('allowed', {}))
+                    app.run(max_decision_steps=1, wait_for_jobs=True)
+                    self.assertEqual(executed, [('allowed', {})])
+                    for name, arguments in [('allowed', {'blocked': True}), *((name, {}) for name in names[1:])]:
+                        with self.subTest(denied=name, arguments=arguments):
+                            proposed.append((name, arguments))
+                            with self.assertRaises(PermissionError):
+                                app.run(max_decision_steps=1, wait_for_jobs=True)
+                            self.assertEqual(executed, [('allowed', {})])
 
     def test_rebinding_same_permission_does_not_duplicate_checks(self):
         spec = OperationSpec('fixture.inspect', 'Fixture operation', {'type': 'object'}, read_only=True)

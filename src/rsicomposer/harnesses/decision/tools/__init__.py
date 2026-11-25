@@ -9,7 +9,7 @@ from typing import Protocol
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationArgumentError, OperationCall
 from rsicomposer.loops.contracts.execution import LabInfrastructureError
-from rsicomposer.loops.contracts.jobs import JobRef, JobStatus
+from rsicomposer.loops.contracts.jobs import JobRef
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
 from rsicomposer.runtime.execution.sandbox import ExecRequest, SandboxBackend, SandboxSpec
 from rsicomposer.runtime.storage.artifacts import ArtifactStore
@@ -17,6 +17,15 @@ from rsicomposer.runtime.storage.artifacts import ArtifactStore
 
 class DecisionTools(Protocol):
     def execute(self, call: OperationCall) -> OperationResult | JobRef: ...
+
+
+def bind_operation_result(call: OperationCall, result: OperationResult, *, simulated=False) -> OperationResult:
+    """Fill an unspecified receipt ID, never claim a receipt from another call."""
+    if not isinstance(result, OperationResult):
+        raise TypeError('Operation receipt must be an OperationResult')
+    if result.call_id is not None and result.call_id != call.call_id:
+        raise ValueError('Operation receipt call_id does not match the issued call')
+    return replace(result, call_id=call.call_id, simulated=result.simulated or simulated)
 
 
 @dataclass(frozen=True)
@@ -32,7 +41,7 @@ class OperationExecution:
         if isinstance(self.outcome, JobRef):
             return OperationResult('Operation submitted; backend job is not yet complete', (),
                 self.simulated, data={'job': asdict(self.outcome), 'status': 'submitted'}, call_id=self.call.call_id)
-        return replace(deepcopy(self.outcome), call_id=self.call.call_id)
+        return bind_operation_result(self.call, deepcopy(self.outcome))
 
 
 def execute_operation(tools, action_space, call: OperationCall, *, simulated=False,
@@ -61,17 +70,19 @@ def execute_operation(tools, action_space, call: OperationCall, *, simulated=Fal
         if not isinstance(outcome, (OperationResult, JobRef)):
             raise TypeError('Tool must return OperationResult or JobRef')
         if isinstance(outcome, OperationResult):
-            outcome.__post_init__()
-            outcome = replace(outcome, simulated=outcome.simulated or simulated)
+            outcome = bind_operation_result(call, outcome, simulated=simulated)
         outcome = deepcopy(outcome)
     except Exception as exc:
         error = exc
-        outcome = (replace(exc.result, simulated=exc.result.simulated or simulated)
-                   if isinstance(exc, LabInfrastructureError) else
-                   OperationResult('Decision operation failed', (), simulated,
-                       ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}'))
-    if isinstance(outcome, OperationResult):
-        outcome = replace(outcome, call_id=call.call_id)
+        if isinstance(exc, LabInfrastructureError):
+            try:
+                outcome = bind_operation_result(call, exc.result, simulated=simulated)
+            except (TypeError, ValueError) as invalid:
+                error = invalid
+            else:
+                return OperationExecution(call, outcome, clock() - started, simulated, error)
+        outcome = OperationResult('Decision operation failed', (), simulated,
+            ExecutionStatus.FAILED, f'{type(error).__name__}: {error}', call_id=call.call_id)
     return OperationExecution(call, outcome, clock() - started, simulated, error)
 
 
