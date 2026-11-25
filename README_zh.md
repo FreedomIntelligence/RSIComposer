@@ -1,4 +1,4 @@
-<h1 align="center">RSIComposer</h1>
+<h1 align="center">RSIComposer：整个自我改进循环都可模块化</h1>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="许可证：Apache 2.0"></a>
@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv 论文：Coming soon">
 </p>
 
-<p align="center"><strong>通用的递归自改进框架：自由选择改进对象，用可替换组件构建你的 RSI 系统</strong></p>
+<p align="center"><strong>一个递归自改进（RSI）框架：改进对象、改进方法，甚至决定下一步改什么的 Controller，都可以组合与替换。</strong></p>
 
 <p align="center"><a href="README.md">English</a> · 简体中文</p>
 

@@ -1,4 +1,4 @@
-<h1 align="center">RSIComposer</h1>
+<h1 align="center">RSIComposer: Everything in the RSI loop is modular.</h1>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-009688.svg" alt="License: Apache 2.0"></a>
@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/arXiv-Coming%20soon-B31B1B?logo=arxiv" alt="arXiv paper: Coming soon">
 </p>
 
-<p align="center"><strong>A general framework for recursive self-improvement: choose what to improve and build your own RSI system from interchangeable components</strong></p>
+<p align="center"><strong>An RSI framework for composing and swapping the target to improve, the method used to improve it, and even the controller that decides what to improve next.</strong></p>
 
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 
