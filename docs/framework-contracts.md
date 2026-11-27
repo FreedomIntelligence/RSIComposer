@@ -6,7 +6,7 @@ each component must implement. Import public types from `rsicomposer.api`.
 
 | Boundary | Public interfaces | Who owns it? |
 | --- | --- | --- |
-| Assembly | `Application`, `ApplicationConfig`, `Registry`, `MethodDefinition`, `ModuleAssembly`, `ComponentDefinition`, `ComponentGraph` | The caller selects implementations; the Host validates bindings and owns acquired resources. |
+| Assembly | `Application`, `ApplicationConfig`, `Registry`, `MethodDefinition`, `ModuleAssembly`, `ControllerPort`, `ComponentDefinition`, `ComponentGraph` | The caller selects implementations; the Host validates bindings and owns acquired resources. |
 | Decision and execution | `ControllerDefinition`, `DecisionPolicy`, `ControllerHarness`, `LabExecution`, `OperationSpec`, `OperationCall`, `OperationResult` | The Controller chooses operations; the Host authorizes and dispatches them; the Lab validates domain inputs and executes. |
 | Authorization | `ActionPermissions`, `AccessRequest`, `SensitivePolicy` | The Host policy applies in addition to endpoint-local rules. |
 | Run control and background work | `RunPolicy`, `RunContext`, `RunDecision`, `RunResult`, `JobRef`, `JobOutcome`, `JobStatus`, `ExecutionLifecycle` | The Host controls admission and waits for owners to confirm settlement. Owners must expose and stop their work. |
@@ -30,6 +30,16 @@ each component must implement. Import public types from `rsicomposer.api`.
   `ControllerDefinition(endpoint=True)` the factory takes
   `(context, lab_execution, config)` and supplies its own Harness. Keep the
   supplied Host and Lab routing; do not borrow a live endpoint from another run.
+- A run has a replaceable Controller only when its assembly supplies
+  `controller_factory`, returning a `ControllerPort` that names the initial
+  instance and its version. That port is what makes the Controller Host exist,
+  and the Host is what serves `host.adopt_controller` and rebuilds a catalog
+  entry, so `controller_catalog` is rejected without it: a catalog no port can
+  build from would list Controllers nothing could ever activate. Without the
+  port the decision factory's loop is the Controller for the whole run, and
+  adoption is unavailable by construction rather than failing at call time. The
+  port's instance must be the loop the decision factory returns, because that
+  instance is what the Host activates.
 - A Lab implements `describe() -> tuple[OperationSpec, ...]` and
   `execute(call) -> OperationResult | JobRef`. A registered Lab uses local names
   without dots; the Host publishes them as `<alias>.<operation>`. Direct

@@ -201,6 +201,38 @@ LabExecutionFactory = Callable[[AssemblyContext], LabExecution]
 
 
 @dataclass(frozen=True)
+class ControllerPort:
+    """The Controller a run starts with, and enough identity to replace it later.
+
+    Supplying this is what makes a run's Controller replaceable: the Host wraps
+    the instance in a ControllerHost, so a run-control request or a trained
+    candidate can swap the active Controller at a checkpoint boundary. A run
+    that supplies only a decision factory keeps the single Controller that
+    factory returns for its whole life.
+
+    instance is a trusted BuiltController exposing endpoint, context,
+    capture/restore and close. The assembly takes ownership of it once
+    returned, so the factory must not close it.
+    """
+    instance: object
+    version: object
+
+    def __post_init__(self):
+        if getattr(self.instance, 'endpoint', None) is None:
+            raise TypeError('ControllerPort instance must expose its endpoint')
+        if getattr(self.instance, 'context', None) is None:
+            raise TypeError('ControllerPort instance must expose the context it was built in')
+        for name in ('capture', 'restore', 'close'):
+            if optional_method(self.instance, name) is None:
+                raise TypeError(f'ControllerPort instance must provide {name}()')
+        if getattr(self.version, 'version_id', None) is None:
+            raise TypeError('ControllerPort requires the initial ControllerVersion')
+
+
+ControllerFactory = Callable[[AssemblyContext, LabExecution | None], ControllerPort | None]
+
+
+@dataclass(frozen=True)
 class ModuleAssembly:
     """Replaceable modules, shared by every launcher; factories only construct.
 
@@ -217,6 +249,7 @@ class ModuleAssembly:
 
     decision_factory: DecisionFactory | None = None
     lab_factory: LabExecutionFactory | None = None
+    controller_factory: ControllerFactory | None = None
     memory: object = None
     state_factory: Callable | None = None
     components: ComponentGraph | None = None
@@ -232,8 +265,12 @@ class ModuleAssembly:
     observation_probes: tuple = field(default=(), repr=False, compare=False)
 
     def __post_init__(self):
-        if self.decision_factory is None and 'decision' not in self.component_bindings:
-            raise ValueError('ModuleAssembly requires an explicit decision_factory or decision component binding')
+        if (self.decision_factory is None and self.controller_factory is None
+                and 'decision' not in self.component_bindings):
+            raise ValueError('ModuleAssembly requires a decision_factory, a controller_factory '
+                             'or a decision component binding')
+        if self.controller_factory is not None and 'decision' in self.component_bindings:
+            raise ValueError('Choose a controller_factory or a decision component binding, not both')
         if self.model_session is not None:
             from rsicomposer.runtime.models.model_session import HostModelSession
             if not isinstance(self.model_session, HostModelSession):
@@ -260,6 +297,14 @@ class ModuleAssembly:
             raise ValueError('Initial Controller selection must name an explicit catalog entry')
         if catalog and selection is None:
             raise ValueError('Controller catalog requires its initial selection')
+        if self.controller_factory is not None and not catalog:
+            raise ValueError('controller_factory requires the controller_catalog it builds from')
+        if catalog and self.controller_factory is None:
+            # A catalog with no port is inert: nothing would construct the Host
+            # that serves adopt_controller or rebuilds a listed entry, so a
+            # declaration would silently mean "listed but unreachable".
+            raise ValueError('controller_catalog requires controller_factory: a catalog without a '
+                             'Controller Host cannot adopt or rebuild Controllers')
         object.__setattr__(self, 'controller_catalog', MappingProxyType(catalog))
         object.__setattr__(self, 'controller_validators', MappingProxyType(validators))
         object.__setattr__(self, 'controller_selection', selection)
@@ -275,7 +320,7 @@ class ModuleAssembly:
             if getattr(self, role + '_factory') is not None:
                 raise ValueError(f'Choose a factory or a graph binding for {role}, not both')
         object.__setattr__(self, 'component_bindings', MappingProxyType(bindings))
-        for name in ('decision_factory', 'lab_factory', 'state_factory'):
+        for name in ('decision_factory', 'lab_factory', 'state_factory', 'controller_factory'):
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f'{name} must be callable')
@@ -304,15 +349,17 @@ class ModuleAssembly:
         return cls(components=components, component_bindings=bindings, **options)
 
     def has_port(self, role):
-        """Whether a loop/Lab factory is supplied directly or through the graph."""
+        """Whether a loop/Lab/Controller factory is supplied directly or through the graph."""
         if role not in ('decision', 'lab'):
             raise ValueError(f'Unknown assembly role: {role}')
+        if role == 'decision':
+            return self.decision_factory is not None or 'decision' in self.component_bindings
         return getattr(self, role + '_factory') is not None or role in self.component_bindings
 
     def _factories(self, context):
         """Adapt graph outputs once, then use the same factory assembly path."""
         factories = {role: getattr(self, role + '_factory')
-                     for role in ('decision', 'lab')}
+                     for role in ('decision', 'lab', 'controller')}
         for role, name in self.component_bindings.items():
             value = context.components[name]
             if role == 'lab':
@@ -323,6 +370,9 @@ class ModuleAssembly:
                 if not callable(value):
                     raise TypeError(f'Component {name} must return a {role} factory')
                 factories[role] = value
+        if factories['controller'] is not None and factories['decision'] is None:
+            raise ValueError('controller_factory requires decision_factory: the decision factory '
+                             'reports which Controller instance the Host activates')
         return factories
 
     def build(self, context: AssemblyContext, *, run_policy=None, cleanup_timeout_seconds=30):
@@ -351,7 +401,8 @@ class ModuleAssembly:
     def configuration(self):
         """Stable assembly identity, shared by durable and portable restore."""
         layout = {'schema_version': _MODULE_ASSEMBLY_SCHEMA,
-                  **{role + '_factory': self.has_port(role) for role in ('decision', 'lab')}}
+                  **{role + '_factory': self.has_port(role) for role in ('decision', 'lab')},
+                  'controller_port': self.controller_factory is not None}
         selected = (self.controller_catalog.get(self.controller_selection['name'])
                     if self.controller_selection else None)
         layout.update(memory=self.memory is not None or bool(selected is not None and selected.memory is not None),
@@ -398,18 +449,19 @@ def _build_policy_assembly(controller, options, selected_labs):
                       declare_roles=scoped.resources.declare)
         return group
 
+    # The registered pair shares one construction through this cell rather than
+    # through a context attribute: the Controller is built before the loop that
+    # reports it, and nothing outside these two factories needs to see it.
+    built = []
+
     def decision_factory(context, execution):
+        """Report the loop of the Controller that controller_factory built."""
+        if not built or built[0][0] is not context:
+            raise RuntimeError('controller_factory must build the Controller before decision_factory')
+        return built[0][1].instance.endpoint
+
+    def controller_factory(context, execution):
         from rsicomposer.host.lifecycle import build_controller, initial_controller_version
-        from rsicomposer.host.lifecycle import controller_capabilities
-        # This factory is the only path that constructs a ControllerHost, so it is the
-        # only path that may advertise host.adopt_controller. Advertising it from a
-        # bare controller_catalog would expose a capability nothing can serve.
-        def request_controller_host(arguments):
-            host = getattr(context, 'controller_host', None)
-            if host is None:
-                raise RuntimeError('host.adopt_controller requires an assembled Controller Host')
-            return host.request(arguments)
-        context._host_capabilities = controller_capabilities(request_controller_host)
         definition = ControllerDefinition(controller.factory, memory=controller.memory,
                                           endpoint=controller.endpoint, harness=controller.harness)
         selection = {'name': 'current', 'config': deepcopy(options)}
@@ -429,13 +481,14 @@ def _build_policy_assembly(controller, options, selected_labs):
                 initial_memory = None
         instance = build_controller(context, definition, params, version, initial=True, memory=initial_memory)
         context.add_owned_cleanup(instance.close)
-        context._initial_controller_instance = instance
-        context._initial_controller_version = version
-        return instance.endpoint
+        # One ModuleAssembly may build several contexts (a run and its resume),
+        # so the cell keys on the context it belongs to instead of accumulating.
+        built[:] = [(context, ControllerPort(instance, version))]
+        return built[0][1]
 
     from rsicomposer.method_state import method_state_factory
-    return ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory,
-                          state_factory=method_state_factory,
+    return ModuleAssembly(decision_factory=decision_factory, controller_factory=controller_factory,
+                          lab_factory=lab_factory, state_factory=method_state_factory,
                           controller_catalog={'current': ControllerDefinition(controller.factory,
                               memory=controller.memory, endpoint=controller.endpoint,
                               harness=controller.harness)},
@@ -563,7 +616,11 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
                                      inherited_history=inherited)
     context.nested_manifest = nested_manifest
     factories = modules._factories(context)
-    decision = _assemble_loops(context, decision_factory=factories['decision'], lab_factory=factories['lab'])
+    decision, port = _assemble_loops(context, factories)
+    # Whether this run has a replaceable Controller is decided by whether the
+    # assembly supplied a Controller port, and never by an attribute some
+    # factory happened to set. Every branch below selects the whole Controller
+    # lifecycle from this, so a run cannot end up half-hosted.
     # Resolve the current harness at close, including domain configuration before
     # the first step. Owned close retains its dependencies if cleanup must retry.
     def close_decision():
@@ -571,7 +628,7 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         close = optional_method(harness, 'close')
         if close is not None and not (context.components is not None and context.components.owns(decision.harness)):
             close()
-    if not hasattr(context, '_initial_controller_instance'):
+    if port is None:
         host_loop = isinstance(decision, DecisionMakingLoop) and isinstance(decision.host_execution, HostExecution)
         if host_loop and decision.host_execution is not context.host_execution:
             raise ValueError('Controller endpoint belongs to another run execution')
@@ -586,6 +643,13 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
             if context.host_execution.endpoint is not decision:
                 context.host_execution.activate(decision, getattr(decision, 'controller_version', None))
             context.controller_report = optional_method(decision.policy, 'report')
+    else:
+        # The Host owns the initial instance and every replacement, so their
+        # cleanup belongs to it; a harness close here would outlive its owner.
+        if decision is not port.instance.endpoint:
+            raise ValueError('The Controller port instance must be the decision loop its factory '
+                             'reports: the Host activates that instance')
+        context.controller_report = optional_method(decision.policy, 'report')
     context.resources.validate_roles()
     validate_weight_sync_roles(context.weight_sync, context.resources)
     profiles = optional_method(context.lab_execution, 'profile_identity')
@@ -596,13 +660,13 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     if context.method_identity is not None:
         from rsicomposer.methods import validate_method_ports
         validate_method_ports(decision, context.lab_execution)
-    if modules.memory is not None and not hasattr(context, '_initial_controller_instance'):
+    if modules.memory is not None and port is None:
         modules.memory.install(decision, owner=context, path=context.data_dir / 'feedback_learning.json'
                                           if context.data_dir is not None else None)
-    if hasattr(context, '_initial_controller_instance'):
+    if port is not None:
         from rsicomposer.host.lifecycle import ControllerEndpoint, build_controller
         from rsicomposer.host.lifecycle import ControllerHost
-        initial = context._initial_controller_instance
+        initial = port.instance
         def construct_version(version):
             name, options = version.config['name'], version.config['config']
             if name not in context._controller_catalog:
@@ -617,8 +681,8 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
                               activator=modules.controller_activator, learner=modules.controller_learner)
         context.add_owned_cleanup(host.close)
         context.controller_host = host
-        if getattr(context, '_initial_controller_version', None) is not None:
-            version = context._initial_controller_version
+        if port.version is not None:
+            version = port.version
             policy = initial.policy
             if version.policy_state is not None:
                 restore = optional_method(policy, 'restore')
@@ -655,24 +719,65 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         context._state_port_bindings = dict(context.state_adapters)
     runner = AssemblyRunner(decision, context, run_policy=run_policy,
                             cleanup_timeout_seconds=cleanup_timeout_seconds)
-    if not hasattr(context, '_initial_controller_instance'):
+    if port is None:
         # On direct and graph paths, join Host workers before any dependency
         # (including graph-owned Lab/Harness resources) is released. Keep the
         # original Host close for cleanup callbacks and partial assembly failure.
+        # A host-owned run needs none of this: ControllerHost.close() reaches the
+        # same execution, and it is registered where the Host is built.
         context.add_owned_cleanup(context.host_execution.operation_scheduler.close)
     return runner
 
 
-def _assemble_loops(context: AssemblyContext, *, decision_factory, lab_factory=None):
-    """Construct only explicitly supplied Controller/Lab ports."""
-    if lab_factory is not None:
-        context.lab_execution = lab_factory(context)
+def _assemble_loops(context: AssemblyContext, factories):
+    """Construct the Lab, then the Controller ports, in dependency order.
+
+    A Lab must exist before a Controller can be built against it, and a
+    Controller port reports the loop the Host will activate. Both facts are
+    returned so the caller decides the lifecycle from the port itself.
+    """
+    if factories['lab'] is not None:
+        context.lab_execution = factories['lab'](context)
         if context.lab_execution is None:
             raise TypeError('lab_factory must return a LabExecution provider')
         close = optional_method(context.lab_execution, 'close')
         if close is not None and not (context.components is not None and context.components.owns(context.lab_execution)):
             context.add_owned_cleanup(close)
-    return decision_factory(context, context.lab_execution)
+    port = None
+    if factories['controller'] is not None:
+        # Advertise before construction: the Controller being built is the first
+        # thing that may need to request its own replacement, and the handler
+        # resolves the Host lazily, so nothing has to exist yet.
+        _advertise_controller_host(context)
+        port = factories['controller'](context, context.lab_execution)
+        if not isinstance(port, ControllerPort):
+            raise TypeError('controller_factory must return a ControllerPort')
+        # Recorded by the assembly, from the port it was given. A factory that
+        # set these itself could make an unhosted run look hosted.
+        context._initial_controller_instance = port.instance
+        context._initial_controller_version = port.version
+    decision = factories['decision'](context, context.lab_execution)
+    if port is not None and decision is not port.instance.endpoint:
+        raise ValueError('The Controller port instance must be the decision loop its factory reports: '
+                         'the Host activates that instance')
+    return decision, port
+
+
+def _advertise_controller_host(context):
+    """Expose host.adopt_controller only where a Controller Host can serve it.
+
+    The first Controller is built before the Host exists, and it still has to
+    see the capability in its own action space. Rebuilding with the same
+    definition and a ready Host produces the identical catalog entry.
+    """
+    from rsicomposer.host.lifecycle import controller_capabilities
+
+    def request_controller_host(arguments):
+        host = getattr(context, 'controller_host', None)
+        if host is None:
+            raise RuntimeError('host.adopt_controller requires an assembled Controller Host')
+        return host.request(arguments)
+    context._host_capabilities = controller_capabilities(request_controller_host)
 
 
 def build_default_decision(context: AssemblyContext, execution: LabExecution, *, policy=None) -> DecisionMakingLoop:

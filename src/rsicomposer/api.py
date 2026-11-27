@@ -84,6 +84,7 @@ _EXPORTS = {
     'StatefulLab': ('rsicomposer.method_state', 'StatefulLab'),
     'MemoryAssembly': ('rsicomposer.research', 'MemoryAssembly'),
     'ModuleAssembly': ('rsicomposer.assembly', 'ModuleAssembly'),
+    'ControllerPort': ('rsicomposer.assembly', 'ControllerPort'),
     'RSIMethod': ('rsicomposer.methods', 'RSIMethod'),
     'Registry': ('rsicomposer.registry', 'Registry'),
     'ResearchAssembly': ('rsicomposer.research', 'ResearchAssembly'),
@@ -295,6 +296,7 @@ if _TYPE_CHECKING:
     from rsicomposer.application import Application as Application, ApplicationConfig as ApplicationConfig
     from rsicomposer.assembly import (
         AssemblyContext as AssemblyContext,
+        ControllerPort as ControllerPort,
         ModuleAssembly as ModuleAssembly,
         build_default_decision as build_default_decision,
     )
