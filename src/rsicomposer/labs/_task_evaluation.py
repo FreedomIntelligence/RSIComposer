@@ -131,6 +131,10 @@ class TaskEvaluationLab:
         return MetricSpec(f'{self.primary}/{self.adapters[self.primary][0]}', 'maximize',
                           f'{self.adapters[self.primary][1]}/{benchmark.protocol_id}')
 
+    def evaluation_operations(self):
+        """`evaluate` is this Lab's measurement; see describe()."""
+        return ('evaluate',)
+
     def state(self):
         return {'protocol': self.protocol_version, 'primary': self.primary,
                 'bindings': [binding.identity for binding in self.bindings]}

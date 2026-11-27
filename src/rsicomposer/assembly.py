@@ -3,6 +3,8 @@
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+import inspect
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -24,7 +26,7 @@ from rsicomposer.runtime.orchestration.runner import Runner
 from rsicomposer.runtime.storage.artifacts import ArtifactStore
 
 
-_MODULE_ASSEMBLY_SCHEMA = 1
+_MODULE_ASSEMBLY_SCHEMA = 2
 
 
 def read_saved_module_layout(directory):
@@ -40,8 +42,36 @@ def read_saved_module_layout(directory):
 
 
 def _factory_identity(value):
+    """Name a factory by importable location plus its definition, never by captured state.
+
+    A qualified name alone is not an identity: every closure built by one
+    ``from_factories`` call reports the same ``<locals>.build``. Hashing the code
+    and source tells two different factories apart while staying stable across
+    processes, so a resume still matches the assembly that wrote the workspace.
+    Captured values are deliberately excluded: callbacks and paths differ between
+    a run and its resume without the architecture having changed.
+    """
     target = value if hasattr(value, '__qualname__') else type(value)
-    return str(getattr(target, '__module__', '')) + ':' + target.__qualname__
+    module = str(getattr(target, '__module__', ''))
+    qualname = str(getattr(target, '__qualname__', ''))
+    if not module or not qualname:
+        raise TypeError('Assembly identities need an importable factory or class')
+    digest = sha256()
+    code = getattr(target, '__code__', None)
+    if code is not None:
+        digest.update(repr((code.co_code, code.co_consts, code.co_names)).encode())
+    try:
+        # The definition's own text, so an unrelated edit elsewhere in the module
+        # does not invalidate every workspace that uses this factory.
+        digest.update(inspect.getsource(target).encode())
+    except (OSError, TypeError):
+        source = inspect.getsourcefile(target)
+        if source is not None:
+            digest.update(Path(source).read_bytes())
+        elif code is None:
+            raise TypeError('Assembly identities need a verifiable factory definition: '
+                            + module + ':' + qualname)
+    return module + ':' + qualname + ':' + digest.hexdigest()[:16]
 
 
 @dataclass
@@ -370,6 +400,16 @@ def _build_policy_assembly(controller, options, selected_labs):
 
     def decision_factory(context, execution):
         from rsicomposer.host.lifecycle import build_controller, initial_controller_version
+        from rsicomposer.host.lifecycle import controller_capabilities
+        # This factory is the only path that constructs a ControllerHost, so it is the
+        # only path that may advertise host.adopt_controller. Advertising it from a
+        # bare controller_catalog would expose a capability nothing can serve.
+        def request_controller_host(arguments):
+            host = getattr(context, 'controller_host', None)
+            if host is None:
+                raise RuntimeError('host.adopt_controller requires an assembled Controller Host')
+            return host.request(arguments)
+        context._host_capabilities = controller_capabilities(request_controller_host)
         definition = ControllerDefinition(controller.factory, memory=controller.memory,
                                           endpoint=controller.endpoint, harness=controller.harness)
         selection = {'name': 'current', 'config': deepcopy(options)}
@@ -444,6 +484,10 @@ def _ray_service_binding(config, nodes, node_ip):
 
 def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_seconds=30):
     """Construct loops, integrations, state and cleanup once for a run."""
+    # Every assembled run may checkpoint, so the built-in state registry has to be
+    # populated here rather than only in the application composition root: a caller
+    # that composes ModuleAssembly from rsicomposer.api never imports Application.
+    import rsicomposer.snapshot.codec  # noqa: F401  registers built-in checkpoint state types
     if context._closed:
         raise RuntimeError('Assembly is closed')
     if context._assembled:
@@ -507,9 +551,6 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     context._controller_catalog = dict(modules.controller_catalog)
     context._controller_validators = dict(modules.controller_validators)
     context._initial_memory = modules.memory
-    if modules.controller_catalog:
-        from rsicomposer.host.lifecycle import controller_capabilities
-        context._host_capabilities = controller_capabilities(lambda arguments: context.controller_host.request(arguments))
     from rsicomposer.runtime.models.delegation import prepare_nested_models
     context.prepare_nested_models = lambda child_budget, call_id, host_config, version, labs: prepare_nested_models(
         context._model_access, child_budget, call_id, host_config, version, labs)

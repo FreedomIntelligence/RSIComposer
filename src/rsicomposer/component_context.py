@@ -10,15 +10,24 @@ class LabCatalog:
     def __init__(self, group):
         self.aliases = group.aliases
         self._specs = group.describe()
-        self._metrics = {alias: group.primary_metric(alias) for alias in self.aliases}
+        self._metrics = {}
+        for alias in self.aliases:
+            try:
+                self._metrics[alias] = group.primary_metric(alias)
+            except KeyError:
+                # A Lab may legitimately declare no metric; the error belongs at
+                # lookup, where the message can name what is actually mounted.
+                continue
 
     def describe(self):
         return deepcopy(self._specs)
 
     def primary_metric(self, alias):
-        return self._metrics[alias]
-
-
+        try:
+            return self._metrics[alias]
+        except KeyError:
+            mounted = ', '.join(sorted(self.aliases)) or 'none'
+            raise KeyError(f'Lab alias {alias!r} declares no primary metric; mounted aliases: {mounted}') from None
 class _ComponentContext:
     def __init__(self, owner, name):
         from rsicomposer.runtime.execution.weight_sync import component_weight_sync

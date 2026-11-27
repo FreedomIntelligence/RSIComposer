@@ -32,10 +32,24 @@ class RunSource:
         return asdict(self)
 
 
+_REVISION_SUFFIXES = ('.py', '.json', '.jsonl', '.txt', '.toml', '.yml', '.yaml', '.md')
+_REVISION_SKIP = {'__pycache__', 'build', 'dist'}
+
+
 def code_revision() -> str:
+    """Hash the shipped package source, including the data a run actually reads.
+
+    Python-only hashing let a prompt, dataset manifest or profile table change
+    without invalidating snapshots, so a restore could silently pair old
+    checkpoints with new packaged data.
+    """
     root = Path(__file__).resolve().parents[2]
     digest = sha256()
-    for path in sorted(root.rglob('*.py')):
+    for path in sorted(root.rglob('*')):
+        if not path.is_file() or path.suffix not in _REVISION_SUFFIXES:
+            continue
+        if _REVISION_SKIP.intersection(path.relative_to(root).parts):
+            continue
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()

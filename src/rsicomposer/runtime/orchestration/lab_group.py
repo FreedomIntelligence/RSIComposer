@@ -10,6 +10,7 @@ from stat import S_ISREG
 from threading import RLock
 from time import perf_counter
 from pathlib import Path
+import warnings
 
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationCall, OperationSpec
@@ -107,6 +108,14 @@ class LabGroup:
         self._bindings[alias] = ProfileBinding(alias, lab, catalog)
         if optional_method(lab, 'state') is not None and getattr(lab, 'concurrent_state_safe', False) is not True:
             self._state_locks[alias] = RLock()
+            if max_concurrent > 1:
+                # The Lab holds mutable state and never promised concurrent safety,
+                # so calls are serialized. Say so: a silent drop to one turns a
+                # configured parallelism setting into a mystery slowdown.
+                warnings.warn(
+                    f'Lab {alias!r} keeps state and does not set concurrent_state_safe = True; '
+                    f'running it with max_concurrent=1 instead of {max_concurrent}',
+                    RuntimeWarning, stacklevel=3)
         self._capacities[alias] = 1 if alias in self._state_locks else max_concurrent
         self._labs[alias] = lab
         self._model_scopes[alias] = model_scope

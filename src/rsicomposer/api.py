@@ -175,6 +175,7 @@ _EXPORTS = {
     'CodingArtifact': ('rsicomposer.labs.coding.artifacts', 'CodingArtifact'),
     'HarborAgentRuntime': ('rsicomposer.labs.coding.agents', 'HarborAgentRuntime'),
     'Benchmark': ('rsicomposer.loops.contracts.benchmark', 'Benchmark'),
+    'mount_benchmarks': ('rsicomposer.loops.contracts.benchmark', 'mount_benchmarks'),
     'DomainAgentRuntime': ('rsicomposer.loops.contracts.domain_agent', 'DomainAgentRuntime'),
     'DomainAgent': ('rsicomposer.loops.contracts.domain_agent', 'DomainAgent'),
     'DomainAgentRejected': ('rsicomposer.loops.contracts.domain_agent', 'DomainAgentRejected'),
@@ -286,7 +287,7 @@ if _TYPE_CHECKING:
     from rsicomposer.labs.search.lab import SearchLab as SearchLab
     from rsicomposer.labs.coding.artifacts import CodingArtifact as CodingArtifact
     from rsicomposer.labs.coding.agents import HarborAgentRuntime as HarborAgentRuntime
-    from rsicomposer.loops.contracts.benchmark import Benchmark as Benchmark
+    from rsicomposer.loops.contracts.benchmark import Benchmark as Benchmark, mount_benchmarks as mount_benchmarks
     from rsicomposer.loops.contracts.domain_agent import (
         DomainAgentRuntime as DomainAgentRuntime, DomainAgent as DomainAgent, DomainAgentRejected as DomainAgentRejected,
         DomainAgentSpec as DomainAgentSpec,

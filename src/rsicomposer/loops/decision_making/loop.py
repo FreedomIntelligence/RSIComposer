@@ -9,13 +9,13 @@ from .action_space.access import authorized_space
 
 class DecisionMakingLoop:
     def __init__(self, policy, harness: ControllerHarness, action_space: DecisionActionSpace,
-                 *, host_execution, model=None, model_scope=None, lab_execution=None):
+                 *, host_execution, model=None, model_scope=None, lab_execution=None, host_bindings=None):
         harness = NullHarness() if harness is None else harness
         self.policy, self.harness, self.action_space = policy, harness, action_space
         self.integration = None
         self.host_execution = host_execution
         self.model_binding, self.model_scope = model, model_scope
-        self.operation_router = _ControllerToolRouter(harness, lab_execution)
+        self.operation_router = _ControllerToolRouter(harness, lab_execution, host_bindings)
 
     def current_model(self):
         from rsicomposer.loops.contracts.model_service import ModelRef
@@ -155,20 +155,25 @@ class _GuardedActionSpace:
 
 
 class _ControllerToolRouter:
-    """Dispatch Lab operations and Controller local tools through explicit ports."""
-    def __init__(self, harness, lab):
+    """Dispatch trusted Host, Lab, and Controller-local tools through explicit ports."""
+    def __init__(self, harness, lab, host_bindings=None):
         self.harness, self.lab = harness, lab
+        self.host_bindings = dict(host_bindings or {})
 
     def execute(self, call):
         from rsicomposer.loops.contracts.execution import LabToolError
         from rsicomposer.loops.contracts.coordination import OperationResult
         from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
         if self.lab is not None and call.name in {spec.name for spec in self.lab.describe()}:
+            from rsicomposer.loops.contracts.evaluation import tag_evaluation_identity
             try:
-                return self.lab.execute(call)
+                result = self.lab.execute(call)
             except LabToolError as error:
                 return OperationResult('Lab tool failed; use this feedback to choose the next action', (),
                     False, ExecutionStatus.FAILED, f'{type(error).__name__}: {error}', data=error.data)
+            return tag_evaluation_identity(self.lab, call.name, call, result)
+        if call.name in self.host_bindings:
+            return self.host_bindings[call.name](call.arguments)
         return self.harness.execute_tool(call)
 
     def retry(self, call, *, after_sequence=None):

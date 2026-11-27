@@ -59,7 +59,14 @@ class Benchmark:
 
     @property
     def protocol_id(self):
-        """Hash of exactly what decides how this benchmark is scored."""
+        """Identity of how this benchmark is scored, deliberately not of which tasks it holds.
+
+        Two mounts of the same name, kind and protocol share this value even when
+        they read different files, because a Lab must have one scoring rule per
+        benchmark no matter how many sources it mounts. Task-set identity is the
+        Lab's own: a Lab records its content digest alongside this value, so a
+        changed dataset is caught by that digest rather than by this hash.
+        """
         return sha256(canonical_json({'name': self.name, 'kind': self.kind,
                                       'protocol': self.protocol}).encode()).hexdigest()
 

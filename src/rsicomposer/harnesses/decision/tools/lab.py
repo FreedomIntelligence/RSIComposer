@@ -7,6 +7,7 @@ from functools import partial
 from rsicomposer.harnesses.decision.tools import BoundDecisionTools
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationCall, OperationSpec
+from rsicomposer.loops.contracts.evaluation import tag_evaluation_identity
 from rsicomposer.loops.contracts.execution import LabExecution, LabToolError
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
 from rsicomposer.loops.decision_making.action_space.capabilities import (
@@ -66,10 +67,11 @@ class LabExecutionTools(BoundDecisionTools):
         if call_id is not None:
             call = replace(call, call_id=call_id)
         try:
-            return self.lab.execute(call)
+            result = self.lab.execute(call)
         except LabToolError as exc:
             return OperationResult('Lab tool failed; use this feedback to choose the next action', (),
                 False, ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}', data=exc.data)
+        return tag_evaluation_identity(self.lab, name, call, result)
 
     def runtime_context(self):
         read = optional_method(self.lab, 'runtime_context')
