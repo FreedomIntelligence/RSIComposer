@@ -54,7 +54,23 @@ def main():
 
         assert train_receipt(paused) != train_receipt(result), 'the original training operation was replayed'
         assert json.loads((root / 'run' / 'result.json').read_text(encoding='utf-8')) == result
-    print('Installed CLI wheel: catalog, explain, and durable ReST^EM run/resume passed')
+
+        assert 'meta_rsi' in command('catalog')['methods']
+        meta_fixture = fixture.parents[1].parent / 'meta_rsi' / 'configs' / 'cpu'
+        meta = json.loads((meta_fixture / 'meta_rsi.json').read_text(encoding='utf-8'))
+        options = meta['framework']['method']['config']
+        options['labs']['math']['manifest'] = str(meta_fixture / 'data' / 'manifest.json')
+        options['controller']['trial_lab']['manifest'] = str(meta_fixture / 'data' / 'meta-manifest.json')
+        options['controller']['meta_targets'] = ['schedule']
+        meta['data_dir'] = 'meta-run'
+        meta_path = root / 'meta.json'
+        meta_path.write_text(json.dumps(meta), encoding='utf-8')
+        result = command('run', '--config', str(meta_path), '--no-monitor')
+        assert result['stop_reason'] == 'researcher_finished', result
+        report = result['controller_report']
+        assert report['simulated'] and report['meta'][0]['decision'] == 'adopted', report
+        assert not report['attempts'][2]['training_performed'], report
+    print('Installed CLI wheel: durable ReST^EM run/resume and MetaRSI adoption passed')
 
 
 if __name__ == '__main__':

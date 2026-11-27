@@ -1,0 +1,91 @@
+{
+  "objective": "MetaRSI reconstruction: prompt-only Harness and matched multi-term adaptation on sealed AIME 2025/2026",
+  "data_dir": "../../../../../runs/meta-rsi-aime",
+  "max_decision_steps": 360,
+  "budget": {
+    "seconds": 21600,
+    "model_calls": 20000,
+    "gpu_seconds": 21600
+  },
+  "framework": {
+    "method": {
+      "name": "meta_rsi",
+      "config": {
+        "controller": {
+          "order": [
+            "data",
+            "harness",
+            "model"
+          ],
+          "profiles": {
+            "harness": "compact"
+          },
+          "warmup": 1,
+          "steps": 5,
+          "meta_targets": [
+            "data_policy",
+            "harness_policy",
+            "model_policy",
+            "schedule"
+          ],
+          "trial_steps": 5,
+          "trial_budget": {
+            "seconds": 1800,
+            "model_calls": 2000,
+            "gpu_seconds": 1800
+          },
+          "campaign": {
+            "protocol": "aime",
+            "terms": 2,
+            "track": "adaptive",
+            "routing": "ordered"
+          },
+          "trial_lab": {
+            "engine": "transformers",
+            "base_model": "models/qwen2.5-math-1.5b-aafeb0f",
+            "model_options": {
+              "device": "cpu",
+              "seed": 23,
+              "max_length": 2048,
+              "max_new_tokens": 512,
+              "generation_batch_size": 2,
+              "train_batch_size": 1,
+              "steps": 1
+            },
+            "manifest": "data/meta-rsi-aime/meta-manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "meta_search",
+              "validation": "meta_validation"
+            },
+            "aime": {}
+          }
+        },
+        "labs": {
+          "math": {
+            "engine": "transformers",
+            "base_model": "models/qwen2.5-math-1.5b-aafeb0f",
+            "model_options": {
+              "device": "cpu",
+              "seed": 23,
+              "max_length": 2048,
+              "max_new_tokens": 512,
+              "generation_batch_size": 2,
+              "train_batch_size": 1,
+              "steps": 1
+            },
+            "manifest": "data/meta-rsi-aime/manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "search",
+              "validation": "validation",
+              "test": "test"
+            },
+            "aime": {}
+          },
+          "reflect": {}
+        }
+      }
+    }
+  }
+}

@@ -61,8 +61,8 @@ def build_default_decision(context, execution, *, policy=None):
 def build_harness_decision(context, execution, *, policy, harness):
     """Run a Policy with a user-supplied ControllerHarness.
 
-    The action space is the Lab operations plus the Harness's own tools. Lab
-    calls go to the Lab; every other name goes to harness.execute_tool().
+    Compose Lab operations, trusted Host capabilities and Harness-local tools.
+    The normal Host authorization still applies to all three.
     """
     from rsicomposer.loops.decision_making.action_space.capabilities import Capability
     ports = decision_wiring(context)
@@ -73,9 +73,12 @@ def build_harness_decision(context, execution, *, policy, harness):
     tools = LabExecutionTools(execution, extra_definitions=tuple(
         Capability.from_spec(spec, lambda arguments, name=spec.name: _local_call(name, arguments),
                              lambda arguments: None).definition for spec in local))
-    space = ModularDecisionActionSpace(tools.definitions, permissions=ports.action_permissions)
+    trusted = ports.host_capabilities
+    definitions = (*tools.definitions, *(trusted.definitions if trusted is not None else ()))
+    space = ModularDecisionActionSpace(definitions, permissions=ports.action_permissions)
     return DecisionMakingLoop(policy, harness, space, host_execution=ports.host_execution,
-                              lab_execution=execution, model=context.roles.get('decision_maker'))
+                              lab_execution=execution, model=context.roles.get('decision_maker'),
+                              host_bindings=trusted.bindings if trusted is not None else None)
 
 
 def _local_call(name, arguments):

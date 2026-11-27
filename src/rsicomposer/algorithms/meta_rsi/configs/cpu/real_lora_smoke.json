@@ -1,0 +1,68 @@
+{
+  "objective": "Mechanism-only real CPU LoRA smoke with three verifier-checked arithmetic train trajectories",
+  "data_dir": "../../../../../../runs/meta-rsi-real-lora",
+  "budget": {
+    "seconds": 420,
+    "model_calls": 64,
+    "gpu_seconds": 200
+  },
+  "max_decision_steps": 24,
+  "framework": {
+    "method": {
+      "name": "meta_rsi",
+      "config": {
+        "controller": {
+          "order": [
+            "model"
+          ],
+          "warmup": 0,
+          "steps": 1
+        },
+        "labs": {
+          "math": {
+            "engine": "transformers",
+            "base_model": "models/smollm2-135m-instruct-12fd25f",
+            "manifest": "src/rsicomposer/algorithms/meta_rsi/configs/cpu/data/manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "search",
+              "validation": "validation",
+              "test": "test"
+            },
+            "model_options": {
+              "max_length": 256,
+              "max_new_tokens": 32,
+              "seed": 23,
+              "steps": 1
+            },
+            "initial_snapshot": {
+              "schema_version": 1,
+              "harness": {
+                "instruction": "seed",
+                "few_shot": false
+              },
+              "data": [
+                {
+                  "id": "meta-rsi-train-1",
+                  "prompt": "Compute 2 + 4.",
+                  "completion": "\\boxed{6}"
+                },
+                {
+                  "id": "meta-rsi-train-2",
+                  "prompt": "Compute 19 - 2.",
+                  "completion": "\\boxed{17}"
+                },
+                {
+                  "id": "meta-rsi-train-3",
+                  "prompt": "Compute 3 * 7.",
+                  "completion": "\\boxed{21}"
+                }
+              ]
+            }
+          },
+          "reflect": {}
+        }
+      }
+    }
+  }
+}

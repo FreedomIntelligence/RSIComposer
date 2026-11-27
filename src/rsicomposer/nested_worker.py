@@ -217,7 +217,8 @@ def main(path):
         events, artifacts = _export_evidence(evidence, app.artifacts)
         output.update(status='succeeded', evidence=events, artifacts=artifacts,
             validation={'status': result.status, 'rounds_completed': result.rounds_completed,
-                        'decision_steps': result.decision_steps, 'shutdown_complete': result.shutdown_complete})
+                        'decision_steps': result.decision_steps, 'shutdown_complete': result.shutdown_complete,
+                        'stop_reason': result.stop_reason, 'allocated_budget': bootstrap['budget']})
     finally:
         # Publication is proof of successful close, not just a returned run().
         if app is not None:

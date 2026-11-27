@@ -36,6 +36,10 @@ class _LocalAttachment:
             return json.loads(result.read_text())['returncode']
         if process_identity(self.pid) == self.identity:
             return None
+        # The supervisor may publish and exit between the first lookup and
+        # the identity probe. A missing/reused PID alone still proves nothing.
+        if result.exists():
+            return json.loads(result.read_text())['returncode']
         raise RuntimeError('Nested supervisor disappeared before cleanup publication; effects remain uncertain')
 
     def terminate(self, grace_seconds=10):
@@ -44,6 +48,8 @@ class _LocalAttachment:
         publication_deadline = time.monotonic() + min(5, grace_seconds)
         while not (self.directory / 'child.json').exists() and not (self.directory / 'result.json').exists():
             if process_identity(self.pid) != self.identity:
+                if (self.directory / 'result.json').exists():
+                    return
                 raise RuntimeError('Nested supervisor exited before publishing child identity; cleanup is uncertain')
             if time.monotonic() >= publication_deadline:
                 raise RuntimeError('Nested supervisor has not published child identity; cleanup is uncertain')

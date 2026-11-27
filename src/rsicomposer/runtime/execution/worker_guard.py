@@ -15,6 +15,7 @@ def main():
     # Host runtime path is independent of the candidate's sanitized environment.
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from rsicomposer.runtime.execution.budget import HostBudget
+    from rsicomposer.runtime.storage.files import atomic_write, json_bytes
     from rsicomposer.runtime.execution.process_identity import process_identity, process_group_alive
     budget = HostBudget(spec['budget_root'], json.loads(
         (Path(spec['budget_root']) / 'budget.json').read_text())['limits'], restoring=True)
@@ -72,7 +73,9 @@ def main():
         # Locks close only after the owned process group has exited.
         for fd in spec['fds']:
             os.close(fd)
-        (path.parent / 'result.json').write_text(json.dumps({'returncode': code, 'timed_out': timed_out}))
+        # The parent polls this path while the guard is live: the terminal
+        # marker must become visible only as a complete JSON document.
+        atomic_write(path.parent / 'result.json', json_bytes({'returncode': code, 'timed_out': timed_out}))
     return code if 0 <= code <= 255 else 1
 
 

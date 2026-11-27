@@ -1,0 +1,69 @@
+{
+  "objective": "Keyless AIME-protocol campaign smoke on arithmetic fixture data (not an AIME score)",
+  "data_dir": "../../../../../../runs/meta-rsi-aime-fixture",
+  "max_decision_steps": 220,
+  "budget": {
+    "seconds": 450,
+    "model_calls": 700,
+    "gpu_seconds": 480
+  },
+  "framework": {
+    "method": {
+      "name": "meta_rsi",
+      "config": {
+        "controller": {
+          "order": [
+            "data",
+            "harness",
+            "model"
+          ],
+          "warmup": 1,
+          "steps": 5,
+          "meta_targets": [
+            "data_policy",
+            "harness_policy",
+            "model_policy",
+            "schedule"
+          ],
+          "trial_steps": 2,
+          "trial_budget": {
+            "seconds": 24,
+            "model_calls": 32,
+            "gpu_seconds": 12
+          },
+          "allow_simulated_trials": true,
+          "trial_lab": {
+            "engine": "fixture",
+            "manifest": "src/rsicomposer/algorithms/meta_rsi/configs/cpu/data/meta-manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "meta_search",
+              "validation": "meta_validation"
+            },
+            "aime": {}
+          },
+          "campaign": {
+            "protocol": "aime",
+            "terms": 2,
+            "track": "adaptive",
+            "routing": "ordered"
+          }
+        },
+        "labs": {
+          "math": {
+            "engine": "fixture",
+            "manifest": "src/rsicomposer/algorithms/meta_rsi/configs/cpu/data/manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "search",
+              "validation": "validation",
+              "test": "test"
+            },
+            "aime": {}
+          },
+          "reflect": {}
+        }
+      }
+    }
+  }
+}

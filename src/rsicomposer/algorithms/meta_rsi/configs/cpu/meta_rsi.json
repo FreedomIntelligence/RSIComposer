@@ -1,0 +1,60 @@
+{
+  "objective": "Verify the MetaRSI operator and controller-adoption workflow (simulated, keyless)",
+  "data_dir": "../../../../../../runs/meta-rsi-fixture",
+  "max_decision_steps": 120,
+  "budget": {
+    "seconds": 240,
+    "model_calls": 512,
+    "gpu_seconds": 240
+  },
+  "framework": {
+    "method": {
+      "name": "meta_rsi",
+      "config": {
+        "controller": {
+          "order": [
+            "data",
+            "harness",
+            "model"
+          ],
+          "warmup": 1,
+          "steps": 4,
+          "meta_targets": [
+            "schedule",
+            "proposal_policy",
+            "controller_harness"
+          ],
+          "trial_steps": 1,
+          "trial_budget": {
+            "seconds": 24,
+            "model_calls": 32,
+            "gpu_seconds": 12
+          },
+          "allow_simulated_trials": true,
+          "trial_lab": {
+            "engine": "fixture",
+            "manifest": "src/rsicomposer/algorithms/meta_rsi/configs/cpu/data/meta-manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "meta_search",
+              "validation": "meta_validation"
+            }
+          }
+        },
+        "labs": {
+          "math": {
+            "engine": "fixture",
+            "manifest": "src/rsicomposer/algorithms/meta_rsi/configs/cpu/data/manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "search",
+              "validation": "validation",
+              "test": "test"
+            }
+          },
+          "reflect": {}
+        }
+      }
+    }
+  }
+}

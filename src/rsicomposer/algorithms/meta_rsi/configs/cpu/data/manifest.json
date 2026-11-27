@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "splits": {
+    "train": {
+      "file": "train.jsonl",
+      "sha256": "ab4d43ad0c7210cb6b5c1d3bdab649ed8079a197646da8245974eaab7645ac85",
+      "count": 3,
+      "verifier": "strict_numeric"
+    },
+    "search": {
+      "file": "search.jsonl",
+      "sha256": "5ae5b59e65eebe28b77aa233e54f5b62dc293cf332c4464bb0111449fec30e41",
+      "count": 3,
+      "verifier": "strict_numeric"
+    },
+    "validation": {
+      "file": "validation.jsonl",
+      "sha256": "81d6544ba9ba1bc7a726c47f4b9ec1637c2a3397ae76eb874da42cf13fbf4010",
+      "count": 3,
+      "verifier": "strict_numeric"
+    },
+    "test": {
+      "file": "test.jsonl",
+      "sha256": "d55376f6f4cdbde879b05ebd0d276f100140dd97f07011a7745d9a78164f3b9e",
+      "count": 3,
+      "verifier": "strict_numeric"
+    }
+  }
+}

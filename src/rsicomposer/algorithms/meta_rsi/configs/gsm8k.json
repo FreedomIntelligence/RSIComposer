@@ -1,0 +1,73 @@
+{
+  "objective": "MetaRSI-derived small real GSM8K run; fixed public input and local SmolLM2 with optional LoRA proposal",
+  "data_dir": "../../../../../runs/meta-rsi-gsm8k",
+  "max_decision_steps": 120,
+  "budget": {
+    "seconds": 5400,
+    "model_calls": 256,
+    "gpu_seconds": 1200
+  },
+  "framework": {
+    "method": {
+      "name": "meta_rsi",
+      "config": {
+        "controller": {
+          "order": [
+            "data",
+            "harness",
+            "model"
+          ],
+          "warmup": 1,
+          "steps": 4,
+          "meta_targets": [
+            "schedule",
+            "proposal_policy",
+            "controller_harness"
+          ],
+          "trial_steps": 1,
+          "trial_budget": {
+            "seconds": 480,
+            "model_calls": 24,
+            "gpu_seconds": 120
+          },
+          "trial_lab": {
+            "engine": "transformers",
+            "base_model": "models/smollm2-135m-instruct-12fd25f",
+            "model_options": {
+              "device": "cpu",
+              "max_length": 512,
+              "max_new_tokens": 80,
+              "seed": 23
+            },
+            "manifest": "data/meta-rsi-gsm8k/meta-manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "meta_search",
+              "validation": "meta_validation"
+            }
+          }
+        },
+        "labs": {
+          "math": {
+            "engine": "transformers",
+            "base_model": "models/smollm2-135m-instruct-12fd25f",
+            "model_options": {
+              "device": "cpu",
+              "max_length": 512,
+              "max_new_tokens": 80,
+              "seed": 23
+            },
+            "manifest": "data/meta-rsi-gsm8k/manifest.json",
+            "split_roles": {
+              "train": "train",
+              "search": "search",
+              "validation": "validation",
+              "test": "test"
+            }
+          },
+          "reflect": {}
+        }
+      }
+    }
+  }
+}
