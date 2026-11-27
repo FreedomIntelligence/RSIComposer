@@ -18,8 +18,10 @@ from rsicomposer.runtime.capabilities import optional_method
 
 
 def _arguments(name, arguments):
-    # Only the transport envelope is standardized. Domain/schema validation is
-    # the Lab's responsibility, immediately before effects inside execute().
+    # Only the transport envelope is standardized. input_schema describes the
+    # arguments to the Controller and is not enforced here: domain/schema
+    # validation is the Lab's responsibility, immediately before effects inside
+    # execute(), where it can reject a call with OperationArgumentError.
     if not isinstance(arguments, dict) or any(not isinstance(key, str) for key in arguments):
         raise TypeError('Lab arguments must be a JSON object with string keys')
     json.dumps(arguments, allow_nan=False)

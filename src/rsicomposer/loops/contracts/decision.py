@@ -22,6 +22,15 @@ def _new_decision_id():
 class OperationSpec:
     """One operation a Lab offers.
 
+    input_schema is a JSON Schema for the arguments this operation accepts. It is
+    a description, not a gate: the Host checks the transport envelope (an object
+    with string keys) and forwards the call, and the Lab is what enforces the
+    schema. That split is deliberate, because the Host cannot know that a value is
+    meaningless in the domain while the Lab can. A Lab that rejects arguments
+    raises OperationArgumentError, which the Host records as failed feedback the
+    Controller may correct; an ordinary exception keeps normal error semantics.
+    Whatever the Lab does not enforce, the Controller is free to send.
+
     idempotent=True declares that executing the same OperationCall.call_id again,
     after an interruption, is safe: the Lab returns the earlier outcome or redoes
     the work without duplicating its effects. The host then resumes an interrupted

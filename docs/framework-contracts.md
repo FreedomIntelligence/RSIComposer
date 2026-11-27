@@ -39,6 +39,14 @@ each component must implement. Import public types from `rsicomposer.api`.
   a profile-aware Lab provider, such as the Registry's grouped Labs. Bare
   `LabExecution` providers cannot advertise sealed splits; use the grouped Lab
   route for Host-enforced split roles.
+- `OperationSpec.input_schema` describes the arguments to the Controller; it is
+  not enforced at dispatch. The Host checks only the transport envelope — an
+  object with string keys — and forwards the call. The Lab enforces the schema
+  inside `execute()`, immediately before effects, and rejects a hopeless call
+  with `OperationArgumentError` so the Host can record it as correctable
+  feedback instead of a failure. An operation whose schema nothing enforces is
+  the Lab's own gap, so a Lab that accepts structured arguments should check
+  `properties` and `required` against them at entry.
 - Keep selection factories and config validators free of resource acquisition.
   Construct resources at launch, but do not start research or re-submit effects
   from a factory. Make owned `close()` methods retryable. The registered path owns

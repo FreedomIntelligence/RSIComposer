@@ -146,7 +146,11 @@ Things to know when writing a Controller:
   rules at dispatch. Local operation names cannot contain dots: the host uses
   the dot to separate the Lab alias from the local name. The Lab validates
   domain-specific arguments; an operation
-  name passing the startup check does not guarantee valid arguments.
+  name passing the startup check does not guarantee valid arguments. Your
+  `input_schema` is not enforced for you either: check `properties` and
+  `required` at the top of `execute()` and raise `OperationArgumentError` for a
+  call the Controller could have got right, so it comes back as feedback rather
+  than a failed run.
 - **Keep `model` free.** If a Policy has a `model` attribute, the host treats
   it as the Policy's own decision model and requires a `ModelRef`.
 - **For durable runs**, add `state()` and `restore(state)`; see the
