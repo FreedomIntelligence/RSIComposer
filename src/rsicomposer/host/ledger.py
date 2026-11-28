@@ -341,14 +341,16 @@ class OperationLedger:
                 row = self.host.state.decision_records[pending.decision_id]
                 objective = row.get('objective')
                 if objective is not None:
+                    outcome = self.host.evaluation_outcome(pending.call, pending.result) if pending.call else None
                     receipt = ExecutionReceipt.from_operation(pending.record_id, objective,
                         pending.call, pending.result, decision_id=pending.decision_id,
+                        measured_evaluation=outcome is not None and outcome.measured,
                         read_only=row.get('operation_read_only', {}).get(pending.call.call_id, False) if pending.call else False,
                         issuing_model=ModelRef(**row['decision_model']) if row.get('decision_model') else None)
                     # If observation persistence fails, the existing pending
                     # record retries the same receipt, without executing again.
                     for listener in listeners:
-                        listener(receipt)
+                        listener(deepcopy(receipt))
 
 
     def _flush_operation_record(self) -> OperationResult:

@@ -1,29 +1,63 @@
 """Validate feedback proposals and accounting before journal publication."""
 from copy import deepcopy
+from dataclasses import dataclass
+from types import MappingProxyType
 
-from .attempts import attempt_schema, validate_attempt_updates
+from .attempts import validate_attempt_updates
 from .evidence import admitted_candidate_evidence, claim_schema, validate_claims
-from .knowledge import SUBJECTS
 from rsicomposer.runtime.storage.files import json_bytes
-from rsicomposer.runtime.storage.json_tools import encoded, load_object as _load_object
+from rsicomposer.runtime.storage.json_tools import encoded
 
-LEGACY_KINDS = ('memory', 'training_data', 'harness_change', 'system_change')
-KINDS = (*LEGACY_KINDS, 'policy_training')
-FIELDS = ('kind', 'content', 'applicability', 'source_refs', 'validation_plan')
-CANDIDATE_INSTRUCTIONS = (
-    'candidate_evidence binds evaluations to full candidate IDs, separately from the current receipt. '
-    'Every proposal/attempt update requires evaluation_claims: [] for hypotheses or observations without metric claims; '
-    'otherwise enumerate every factual candidate metric claim with candidate_id, evaluation_ref, protocol_ref, '
-    'metrics (exact names/values), simulated, and cite evaluation_ref in source_refs. '
-    'Use completed supplied evaluations only. Never transfer metrics between candidates or protocols. '
-    'Training completion, parents, adjacency and prior interpretations prove no candidate quality. '
-    'not_observed_in_snapshot is snapshot-scoped absence; not_supplied is omitted evidence. '
-    'Keep prose consistent with claims; structural validation does not verify prose or claim completeness. ')
+FIELDS = ('kind', 'subject', 'content', 'applicability', 'source_refs', 'validation_plan')
 
-def proposal_schema(refs, grouping_context=None, candidate_evidence=None, *, kinds=LEGACY_KINDS):
+
+@dataclass(frozen=True, slots=True)
+class ProposalTarget:
+    """A trusted proposer declaration, not an execution or deployment capability."""
+    kind: str
+    target: str  # Query category; subject names the component to which a row is attributed.
+    subjects: tuple[str, ...]
+
+    def __post_init__(self):
+        if not isinstance(self.subjects, tuple) or not self.subjects:
+            raise ValueError('Proposal targets need a nonempty tuple of subjects')
+        for name in (self.kind, self.target, *self.subjects):
+            if not isinstance(name, str) or not name.strip() or name != name.strip() or len(name) > 128:
+                raise ValueError('Proposal kinds, targets and subjects must be bounded nonempty names')
+        if 'unspecified' in self.subjects or len(set(self.subjects)) != len(self.subjects):
+            raise ValueError('Proposal subjects must be explicit and distinct')
+
+    def configuration(self):
+        return {'kind': self.kind, 'target': self.target, 'subjects': list(self.subjects)}
+
+
+HARNESS_CHANGE = ProposalTarget('harness_change', 'harness', ('meta_agent', 'lab'))
+POLICY_TRAINING = ProposalTarget('policy_training', 'weights', ('meta_agent',))
+BUILTIN_IMPROVEMENTS = (HARNESS_CHANGE, POLICY_TRAINING)
+
+
+def bind_targets(declared):
+    """Freeze the installed processor's target rules; never read declarations from a result."""
+    if not isinstance(declared, (tuple, list)) or not declared:
+        raise ValueError('An installed proposer must declare nonempty proposal_targets')
+    by_kind = {}
+    for rule in declared:
+        if not isinstance(rule, ProposalTarget):
+            raise TypeError('proposal_targets must contain ProposalTarget declarations')
+        if rule.kind in by_kind:
+            raise ValueError('Duplicate proposal kind: ' + rule.kind)
+        if rule.kind in ('training_data', 'memory', 'system_change'):
+            raise ValueError('Memory, training records and system edits are not improvement task proposals')
+        for builtin in BUILTIN_IMPROVEMENTS:
+            if rule.kind == builtin.kind and (rule.target != builtin.target
+                    or not set(rule.subjects) <= set(builtin.subjects)):
+                raise ValueError('Cannot redefine a built-in improvement target: ' + rule.kind)
+        by_kind[rule.kind] = rule
+    return MappingProxyType(by_kind)
+
+
+def proposal_schema(refs, *, targets, candidate_evidence=None):
     properties = {
-        'kind': {'enum': list(KINDS)},
-        'subject': {'enum': list(SUBJECTS)},
         'content': {'type': 'string', 'minLength': 1, 'maxLength': 2400},
         'applicability': {'type': 'string', 'minLength': 1, 'maxLength': 1000},
         'source_refs': {'type': 'array', 'minItems': 1, 'maxItems': 16,
@@ -33,46 +67,28 @@ def proposal_schema(refs, grouping_context=None, candidate_evidence=None, *, kin
     if candidate_evidence is not None:
         properties['evaluation_claims'] = claim_schema(candidate_evidence)
     branches = []
-    for kind in kinds:
-        fields = {**properties, 'kind': {'const': kind}}
-        if kind == 'training_data':
-            fields['training_example'] = {'type': 'object', 'properties': {
-                'input': {'type': 'string', 'minLength': 1, 'maxLength': 4000},
-                'target': {'type': 'string', 'minLength': 1, 'maxLength': 4000},
-                'target_status': {'const': 'unverified'}},
-                'required': ['input', 'target', 'target_status'], 'additionalProperties': False}
+    for rule in targets.values():
+        fields = {**properties, 'kind': {'const': rule.kind}, 'subject': {'enum': list(rule.subjects)}}
         branches.append({'type': 'object', 'properties': fields, 'required': list(fields),
                          'additionalProperties': False})
     fields = {'proposals': {'type': 'array', 'maxItems': 6, 'items': {'oneOf': branches}}}
-    if grouping_context is not None:
-        fields['attempt_updates'] = attempt_schema(grouping_context, refs, candidate_evidence)
     return {'type': 'object', 'properties': fields, 'required': list(fields), 'additionalProperties': False}
 
 
-def validate_proposals(text, refs, *, candidate_evidence=None, maximum=6):
-    payload = _load_object(text)
-    if (set(payload) != {'proposals'} or not isinstance(payload['proposals'], list)
-            or (maximum is not None and len(payload['proposals']) > maximum)):
+def validate_proposals(payload, refs, *, targets, candidate_evidence=None):
+    if (not isinstance(payload, dict) or set(payload) != {'proposals'} or not isinstance(payload['proposals'], list)
+            or len(payload['proposals']) > 6):
         raise ValueError('Expected at most six learning proposals')
     for row in payload['proposals']:
-        if not isinstance(row, dict) or row.get('kind') not in KINDS:
+        if not isinstance(row, dict) or not isinstance(row.get('kind'), str) or row['kind'] not in targets:
             raise ValueError('Invalid learning proposal fields or kind')
-        fields = set(FIELDS) | ({'training_example'} if row['kind'] == 'training_data' else set())
-        if 'subject' in row:
-            fields.add('subject')
-            if row['subject'] not in SUBJECTS:
-                raise ValueError('Invalid feedback proposal subject')
+        fields = set(FIELDS)
+        if row.get('subject') not in targets[row['kind']].subjects:
+            raise ValueError('Invalid feedback proposal subject for ' + row['kind'])
         if candidate_evidence is not None:
             fields.add('evaluation_claims')
         if set(row) != fields:
             raise ValueError('Invalid learning proposal fields')
-        if row['kind'] == 'training_data':
-            sample = row['training_example']
-            if (not isinstance(sample, dict) or set(sample) != {'input', 'target', 'target_status'}
-                    or sample['target_status'] != 'unverified'
-                    or any(not isinstance(sample[k], str) or not sample[k].strip()
-                           or len(sample[k]) > 4000 for k in ('input', 'target'))):
-                raise ValueError('Training example must be a bounded, unverified input/target pair')
         for key, maximum in (('content', 2400), ('applicability', 1000), ('validation_plan', 1200)):
             if not isinstance(row[key], str) or not row[key].strip() or len(row[key]) > maximum:
                 raise ValueError(f'Invalid proposal {key}')
@@ -86,15 +102,17 @@ def validate_proposals(text, refs, *, candidate_evidence=None, maximum=6):
     return payload['proposals']
 
 
-def validate_publication(row):
+def validate_publication(row, targets):
     """Recheck saved output against admitted raw evidence before exposing it.
 
     Structured attribution is checked; free text is still an unverified model
-    interpretation. Legacy candidate-related outputs require the new contract.
+    interpretation. Target rules are pinned by the installed method, not the saved output.
     """
     evidence = admitted_candidate_evidence(row)
-    validate_proposals(encoded({'proposals': row['proposals']}), row['input']['source_refs'],
-                       candidate_evidence=evidence, maximum=None)
+    product = {'proposals': row['proposals']}
+    validate_proposals(product, row['input']['source_refs'], candidate_evidence=evidence, targets=targets)
+    if encoded(row.get('outputs', {}).get('proposals', {'proposals': []})) != encoded(product):
+        raise ValueError('Published proposals differ from the processor output')
     validate_attempt_updates(row.get('attempt_updates', []), row['input'].get('grouping_context', {}),
                              row['input']['source_refs'], evidence)
     if evidence is not None:
@@ -132,5 +150,3 @@ def checked_processor_result(result, reserved):
     if value['status'] != 'completed':
         value.update(proposals=[], attempt_updates=[])
     return value
-
-

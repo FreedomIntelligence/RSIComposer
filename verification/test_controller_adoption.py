@@ -504,6 +504,16 @@ class ControllerAdoptionTests(unittest.TestCase):
                     host.request_version(ref)
                 self.assertEqual(app.run(wait_for_jobs=True).status, 'finished')
 
+    def test_non_durable_context_only_memory_runs_without_advertising_adoption(self):
+        from rsicomposer.harnesses.decision.feedback.context_memory import CallbackContextMemory
+        memory = lambda _: MemoryAssembly(ResearchAssembly(context_memory=CallbackContextMemory(lambda query: '')))
+        app, host = self.application(ControllerDefinition(lambda *_: Policy()), old_memory=memory,
+                                     model=ModelRef('mock', 'fixture', 'v1'))
+        self.assertNotIn('host.adopt_controller', {spec.name for spec in host.active.endpoint.action_space.describe()})
+        with self.assertRaisesRegex(ValueError, 'archivable'):
+            host.request_version(save_controller_version(app.artifacts, make_version()))
+        self.assertEqual(app.run(wait_for_jobs=True).status, 'finished')
+
     def test_durable_adoption_does_not_require_portable_snapshot(self):
         class DurableOnly(Policy):
             def validate_snapshot(self):
@@ -531,6 +541,43 @@ class ControllerAdoptionTests(unittest.TestCase):
         self.assertIs(app.assembly.host_execution.endpoint, old.endpoint)
         self.assertEqual((harness.binds, harness.closes, candidate.closes, old.policy.closes), (1, 1, 1, 0))
         self.assertEqual(adopted_events(app), [])
+
+    def test_feedback_listeners_release_on_rejected_build_retirement_and_failed_close(self):
+        class Memory:
+            def context(self, query): return ''
+            def export(self): return {}
+            def restore(self, state): pass
+
+        class InstalledMemory(MemoryAssembly):
+            def install(self, endpoint, **kwargs):
+                service = super().install(endpoint, **kwargs)
+                if fail_build.pop(0):
+                    raise ValueError('failed after listener installation')
+                return service
+
+        fail_build = [False, True, False]
+        definition = ControllerDefinition(lambda *_: Policy(), harness=lambda *_: Harness(),
+            memory=lambda _: InstalledMemory(ResearchAssembly(context_memory=Memory())))
+        app, host = self.application(definition, model=ModelRef('mock', 'fixture', 'v1'), durable=True)
+        listeners = app.assembly.host_execution._receipt_listeners
+        self.queue(app, host)
+        host.advance()
+        old = host.active
+        self.assertEqual([owner for owner, _ in listeners], [old.endpoint.harness])
+        self.queue(app, host, replace(make_version(), version_id='again'))
+        result = app.runner.step(app.config.objective)
+        self.assertIn('candidate construction failed', result.event['reason'])
+        self.assertIsNone(host.pending)
+        self.assertIsNone(app.recovery.intervention)
+        self.assertEqual([owner for owner, _ in listeners], [old.endpoint.harness])
+        self.queue(app, host, replace(make_version(), version_id='again'))
+        with patch.object(old.endpoint.integration.learning, 'close', side_effect=RuntimeError('cleanup failure')):
+            with self.assertRaisesRegex(ExceptionGroup, 'Retired Controller cleanup failed'):
+                host.advance()
+        self.assertEqual([owner for owner, _ in listeners], [host.active.endpoint.harness])
+        host.stop_checkpoint()
+        app.close()
+        self.assertEqual(listeners, [])
 
     def test_adopted_versions_retire_local_scope_but_share_live_run_services(self):
         from rsicomposer.assembly import AssemblyContext

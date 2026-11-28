@@ -7,7 +7,7 @@ establish evaluation metrics for a candidate.
 from copy import deepcopy
 from math import isfinite
 
-from rsicomposer.loops.contracts.receipts import receipt_facts, receipt_task
+from rsicomposer.loops.contracts.receipts import receipt_task
 from rsicomposer.runtime.storage.json_tools import result_id
 
 
@@ -18,36 +18,25 @@ def candidate_evidence(raw, indices):
     omitted evaluation is distinguished from one absent from that snapshot.
     Neither status claims anything about an artifact's unread contents.
     """
-    directive, feedback = receipt_task(raw['receipt']), receipt_facts(raw['receipt'])
-    current = [c['candidate_id'] for c in feedback.get('candidates', ())]
-    payload = directive.get('payload')
-    payload = payload if isinstance(payload, dict) else {}
-    target = payload.get('candidate_id')
-    if isinstance(payload.get('candidate'), dict):
-        target = payload['candidate'].get('candidate_id')
-    if directive['mode'] == 'evaluate' and isinstance(target, str) and target:
-        current.append(target)
-    current = list(dict.fromkeys(current))
+    receipt = raw['receipt']
+    task = receipt_task(receipt)
+    current = []
     records = raw.get('evaluations', ())
     sources = []
     for index in indices:
         record = records[index]
         sources.append({**deepcopy(record), 'source_ref': 'evaluation:' + result_id(record),
                         'raw_ref': '/evaluations/' + str(index)})
-    # Some independent adapters supply only the current evaluation receipt.
-    # Its identity comes from the explicit evaluation payload, never a returned
-    # training candidate, parent_system, prose, or list position.
-    if (directive['mode'] == 'evaluate' and isinstance(target, str) and target
-            and isinstance(payload.get('protocol_ref'), str) and payload['protocol_ref']
-            and not any(s['candidate_id'] == target and s['directive_id'] == directive['directive_id']
-                        for s in sources)):
-        sources.append({'candidate_id': target, 'directive_id': directive['directive_id'],
-            'protocol_ref': payload['protocol_ref'], 'input_refs': deepcopy(directive.get('input_refs', ())),
-            'status': feedback['status'], 'quality_metrics': deepcopy(feedback['quality_metrics']),
-            'simulated': bool(directive['simulated'] or feedback['simulated']),
-            'evidence_refs': deepcopy(feedback['evidence_refs']),
-            'source_ref': 'feedback:' + result_id(raw['receipt']),
-            'raw_ref': '/receipt'})
+    # Only the delivering Host marks a measured operation. The same fields in
+    # an ordinary tool result or in a Lab's opaque native output carry no claim.
+    if task.get('measured_evaluation') is True:
+        data = receipt['result']['data']
+        current.append(data['candidate_id'])
+        sources.append({'candidate_id': data['candidate_id'], 'call_id': receipt['operation']['call_id'],
+            'operation': receipt['operation']['name'], 'protocol_ref': data['protocol_ref'],
+            'input_refs': list(data['input_refs']), 'status': receipt['result']['status'],
+            'quality_metrics': deepcopy(data['quality_metrics']), 'simulated': task['simulated'],
+            'source_ref': 'feedback:' + result_id(receipt), 'raw_ref': '/receipt'})
     if not current and not records and not sources:
         return None
     known = {r['candidate_id'] for r in records}
@@ -59,7 +48,7 @@ def candidate_evidence(raw, indices):
             'evaluation_coverage': 'supplied' if refs else (
                 'not_supplied' if ident in known else 'not_observed_in_snapshot')})
     return {'version': 1, 'scope': 'captured_evaluation_snapshot',
-            'receipt_mode': directive['mode'], 'current_candidate_ids': current,
+            'receipt_mode': task['mode'], 'current_candidate_ids': current,
             'candidates': candidates, 'evaluations': sources}
 
 
@@ -130,7 +119,7 @@ def admitted_candidate_evidence(row):
     evidence = candidate_evidence(raw, indices)
     if result_id(packet.get('evaluations', ())) != result_id([raw['evaluations'][i] for i in indices]):
         raise ValueError('Admitted evaluations differ from captured records')
-    if evidence != packet.get('candidate_evidence'):
+    if result_id(evidence) != result_id(packet.get('candidate_evidence')):
         raise ValueError('Missing or changed candidate evidence requires fresh validation')
     if evidence is not None and any(s['source_ref'] not in packet['source_refs']
                                    for s in evidence['evaluations']):

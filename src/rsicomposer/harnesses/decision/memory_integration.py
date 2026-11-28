@@ -1,91 +1,59 @@
-"""Tool/context integration owned by the default harness, not by ResearchAssembly."""
+"""Run-local bindings for agent-authored Memory; no Policy or Harness mutation."""
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationArgumentError, OperationCall
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
-from rsicomposer.runtime.memory import memory_host
+from rsicomposer.loops.decision_making.action_space.capabilities import Capability
+from rsicomposer.runtime.capabilities import optional_method
 
 
-class MemoryActionSpace:
-    def __init__(self, base, memory):
-        self.names = frozenset(spec.name for spec in memory.specifications())
-        if self.names.intersection(spec.name for spec in base.describe()):
-            raise ValueError('Memory tools conflict with the installed action catalog')
-        self.base, self.memory = base, memory
-
-    @property
-    def permissions(self):
-        return self.base.permissions
-
-    def __getattr__(self, name):
-        return getattr(self.base, name)
-
-    def describe(self):
-        return (*self.base.describe(), *self.memory.specifications())
-
-    def validate(self, call):
-        return self.memory.validate(call) if call.name in self.names else self.base.validate(call)
-
-
-class MemoryTools:
-    def __init__(self, base, memory):
-        self.base, self.memory = base, memory
-        self.names = frozenset(spec.name for spec in memory.specifications())
-
-    def __getattr__(self, name):
-        return getattr(self.base, name)
-
-    @property
-    def definitions(self):
-        from types import SimpleNamespace
-        return (*self.base.definitions, *(SimpleNamespace(spec=spec,
-            validate=lambda arguments, name=spec.name: self.memory.validate(OperationCall(name, arguments)))
-            for spec in self.memory.specifications()))
-
-    def execute(self, call):
-        if call.name not in self.names:
-            return self.base.execute(call)
+def memory_capabilities(memory):
+    def execute(call):
         try:
-            data = self.memory.execute(call)
+            data = memory.execute(call)
         except OperationArgumentError as exc:
             return OperationResult('Memory/task arguments rejected; correct the next decision', (), False,
                                    ExecutionStatus.FAILED, str(exc))
         return OperationResult('Meta-agent memory/task operation completed', (), False, data=data)
 
-
-class DefaultMemoryHost:
-    def __init__(self, harness):
-        self.harness = harness
-
-    def history(self):
-        return self.harness.memory.history()
-
-    def install(self, loop, memory):
-        if loop.harness is not self.harness:
-            raise ValueError('Memory host belongs to another loop')
-        space = MemoryActionSpace(loop.action_space, memory)
-        policy = getattr(loop.policy, 'implementation', loop.policy)
-        parser = getattr(policy, 'parser', policy)
-        if hasattr(parser, 'space'):
-            parser.space = space
-        loop.action_space = space
-        self.harness.install_memory(memory)
+    return tuple(Capability.from_spec(spec,
+        lambda arguments, name=spec.name: memory.validate(OperationCall(name, arguments)),
+        lambda arguments, name=spec.name: execute(OperationCall(name, arguments)))
+        for spec in memory.specifications())
 
 
 class AgentMemoryLifecycle:
-    """Adapter for agent-authored memory; other providers own their own lifecycle."""
     def __init__(self, configuration):
         self.configuration = configuration
 
     def prepare(self):
         self.configuration.prepare()
 
+    @staticmethod
+    def _history(loop):
+        local = optional_method(loop.harness, 'history')
+        if local is not None:
+            return local
+        execution = loop.host_execution
+        history = optional_method(getattr(execution, 'memory', None), 'history')
+        if history is None:
+            raise TypeError('AgentMemory requires a read-only history provider')
+
+        def version_history():
+            # Four-port Harnesses need not keep a second archive. Never use a
+            # previous version's records as the new Controller's working memory.
+            version = getattr(loop, 'controller_version', None)
+            records = execution.state.decision_records
+            return tuple(entry for entry in history() if version is None or
+                         records.get(entry.details.get('decision_id', entry.record_id), {}).get('controller_version') == version)
+        return version_history
+
     def validate_host(self, loop):
-        memory_host(loop.harness)
+        self._history(loop)
 
     def for_run(self, loop, path):
         memory = self.configuration.clone()
-        memory.bind(loop.harness, path)
+        memory.bind(self._history(loop), path)
         return memory
 
     def install(self, loop, memory, *, path=None):
-        memory_host(loop.harness).install(loop, memory)
+        pass  # The shared assembly installs capabilities; no provider-specific side effects.

@@ -55,7 +55,7 @@ from .reader import FeedbackReader
 _DEFAULT_COMPONENT = object()
 
 
-def validate_journal_captures(journal):
+def validate_journal_captures(journal, proposal_targets):
     rows = journal['jobs']
     if any(not isinstance(row, dict) or row.get('job_id') != ident
             or type(row.get('capture_index')) is not int
@@ -63,6 +63,12 @@ def validate_journal_captures(journal):
             or type(row.get('capture_archive_only')) is not bool
             for ident, row in rows.items()) or sorted(row['capture_index'] for row in rows.values()) != list(range(len(rows))):
         raise ValueError('Invalid learning journal capture fields')
+    # Previously published rows will not pass through _publish again on restore.
+    for row in rows.values():
+        if row['status'] == 'completed':
+            validate_publication(row, proposal_targets)
+        elif row['proposals']:
+            raise ValueError('Only a completed feedback job can contain proposals')
 
 
 def bind_feedback_processor(processor):
@@ -99,6 +105,7 @@ class FeedbackLearning(FeedbackReader):
         self._context_memory, self._trajectory_archive = context_memory, trajectory_archive
         self.context_observer = None  # host write-ahead delivery hook for rebuildable Memory
         self._processor_binding = binding
+        self.proposal_targets = getattr(binding, 'proposal_targets', {})  # A plain product is opaque.
         self.processor = processor
         processor_config = self._processor_binding.configuration()
         self.scheduler = FifoFeedbackScheduler() if scheduler is None else scheduler
@@ -126,7 +133,7 @@ class FeedbackLearning(FeedbackReader):
         self._executor = executor
         self._owns_executor = executor is None
         self._futures = {}
-        self.state = {'version': 5, 'limits': self.limits, 'attempted': 0, 'jobs': {}}
+        self.state = {'version': 6, 'limits': self.limits, 'attempted': 0, 'jobs': {}}
         self.state['runtime'] = runtime_config
         if assembly_configuration is not None:
             json_bytes(assembly_configuration)
@@ -135,14 +142,14 @@ class FeedbackLearning(FeedbackReader):
             self.state['processor'] = processor_config
         if self.path is not None and self.path.exists():
             loaded = json.loads(self.path.read_text())
-            if (loaded.get('version') != 5 or loaded.get('limits') != self.limits
+            if (loaded.get('version') != self.state['version'] or loaded.get('limits') != self.limits
                     or loaded.get('processor') != processor_config
                     or loaded.get('runtime') != runtime_config
                     or loaded.get('assembly') != assembly_configuration
                     or not isinstance(loaded.get('jobs'), dict)
                     or type(loaded.get('attempted')) is not int or loaded['attempted'] < 0):
                 raise ValueError('Invalid learning journal or changed limits')
-            validate_journal_captures(loaded)
+            validate_journal_captures(loaded, self.proposal_targets)
             self.state = loaded
             recovered = deepcopy(loaded)
             for row in sorted(recovered['jobs'].values(), key=lambda r: r['capture_index']):
@@ -309,13 +316,12 @@ class FeedbackLearning(FeedbackReader):
         row.update(result)
         row['simulated'] = simulated
 
-    @staticmethod
-    def _finalize_job(state, row):
+    def _finalize_job(self, state, row):
         """Identical validation/revision transition for live completion and recovery."""
         if row['status'] != 'completed':
             return
         try:
-            validate_publication(row)
+            validate_publication(row, self.proposal_targets)
         except (ValueError, TypeError, KeyError) as exc:
             row.update(status='failed', proposals=[], attempt_updates=[], attempt_revisions=[],
                        error='Evidence validation failed: ' + str(exc))

@@ -165,7 +165,7 @@ def validate_feedback_journal(learning, journal):
             or type(journal.get('attempted')) is not int or journal['attempted'] < 0):
         raise ValueError('Invalid feedback journal or changed configuration')
     from rsicomposer.harnesses.decision.feedback.learning import validate_journal_captures
-    validate_journal_captures(journal)
+    validate_journal_captures(journal, learning.proposal_targets)
 
 
 class FeedbackJournalState:
@@ -175,7 +175,7 @@ class FeedbackJournalState:
     ahead because feedback is derived asynchronously; it must retain every
     captured job and at least the recorded attempted count.
     """
-    state_id = 'rsicomposer-feedback-journal/v5'
+    state_id = 'rsicomposer-feedback-journal/v6'
 
     def __init__(self, service):
         self.service, self.learning = service, service.learning

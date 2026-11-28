@@ -27,13 +27,14 @@ def component_configuration(component):
 
 class CallbackFeedbackProcessor:
     """Adapt a product function; model allowance belongs to deployment settings."""
-    def __init__(self, process, *, max_model_calls=0, recover=None, configuration=None):
+    def __init__(self, process, *, max_model_calls=0, recover=None, configuration=None, proposal_targets=()):
         if not callable(process) or (recover is not None and not callable(recover)):
             raise TypeError('Feedback process and optional recovery must be callable')
         if type(max_model_calls) is not int or max_model_calls < 0:
             raise ValueError('Feedback call allowance must be a nonnegative integer')
         self.process, self.recover = process, recover
         self.max_model_calls = max_model_calls
+        self.proposal_targets = tuple(proposal_targets)
         self._configuration = deepcopy(configuration or {})
 
     def configuration(self):

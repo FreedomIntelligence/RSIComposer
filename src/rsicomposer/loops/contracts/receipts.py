@@ -9,7 +9,8 @@ import json
 from typing import Literal
 
 from .lifecycle import ExecutionStatus
-from .metrics import validated_metrics
+from .metrics import has_scored_metrics, validated_metrics
+from .evaluation import canonical_refs
 from .model_service import ModelRef
 from .jobs import JobRef
 from .delivery import FeedbackDelivery
@@ -30,8 +31,11 @@ class ExecutionReceipt:
     read_only: bool = False
     job: JobRef | None = None
     feedback_delivery: FeedbackDelivery | None = None
+    measured_evaluation: bool = False  # Delivery metadata, never read from the operation result.
 
     def __post_init__(self):
+        if type(self.measured_evaluation) is not bool:
+            raise TypeError('measured_evaluation must be boolean')
         if self.feedback_delivery is not None:
             if not isinstance(self.feedback_delivery, FeedbackDelivery):
                 raise TypeError('feedback_delivery must be FeedbackDelivery or None')
@@ -73,6 +77,12 @@ class ExecutionReceipt:
         metrics = self.result.get('data', {})
         for name in ('quality_metrics', 'training_metrics', 'execution_metrics'):
             validated_metrics(metrics.get(name, {}), name)
+        if self.measured_evaluation and (self.source != 'operation' or not has_scored_metrics(status, metrics)
+                or not self.request.get('call_id') or self.result.get('call_id') != self.request['call_id']
+                or not self.request.get('name') or canonical_refs(metrics.get('input_refs')) is None
+                or any(not isinstance(metrics.get(k), str) or not metrics[k].strip()
+                       for k in ('candidate_id', 'protocol_ref'))):
+            raise ValueError('Measured evaluations require a matching scored operation, candidate, protocol and inputs')
         json.dumps({'request': self.request, 'result': self.result}, allow_nan=False)
         object.__setattr__(self, 'request', deepcopy(self.request))
         object.__setattr__(self, 'result', deepcopy(self.result))
@@ -113,6 +123,8 @@ class ExecutionReceipt:
                           'job': asdict(self.job) if self.job else None}}
         if self.source == 'lab':
             value['task']['source'] = 'lab'
+        if self.measured_evaluation:
+            value['task']['measured_evaluation'] = True
         if any(item is not None for item in (self.lab_id, self.run_id, self.agent_id)):
             value['identity'] = {name: getattr(self, name) for name in
                                  ('lab_id', 'run_id', 'agent_id', 'decision_id')}

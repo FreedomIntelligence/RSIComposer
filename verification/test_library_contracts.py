@@ -1066,6 +1066,180 @@ else:
         self.assertEqual(result.decision_steps, 5)
 
 
+class MemoryAssemblyContractTests(unittest.TestCase):
+    def setUp(self):
+        root = TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        self.root = Path(root.name)
+
+    def config(self, name):
+        return ApplicationConfig('Check Memory composition', self.root / name,
+            {'mock': BackendBinding('mock', 'mock')}, {'decision_maker': ModelRef('mock', 'model', 'v1')})
+
+    def test_template_policy_receives_only_search_options(self):
+        from rsicomposer.algorithms import _template as template
+        options = {'max_evaluations': 1, 'harness': 'scoreboard', 'scoreboard_rows': 3, 'memory': 'best_score'}
+        template.validate_config(options)
+        with patch.object(template, 'PromptSearchController') as policy:
+            template.policy_factory('context', options)
+            policy.assert_called_once_with('context', {'max_evaluations': 1})
+        self.assertEqual(template.harness_factory(None, options).limit, 3)
+        for name, invalid in [('harness', 'unknown'), ('memory', 'unknown'), ('scoreboard_rows', 0),
+                              ('max_evaluations', 100)]:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                template.validate_config({**options, name: invalid})
+
+    def test_optional_memory_tools_and_context_work_with_either_harness(self):
+        from types import SimpleNamespace
+        from rsicomposer.api import Capability, MemoryAssembly, ResearchAssembly
+        from rsicomposer.harnesses.decision.feedback.service import FeedbackLearningService
+
+        class Memory:
+            def context(self, query):
+                queries.append(query.objective)
+                return 'window-memory-marker'
+
+            def observe(self, event):
+                if event.kind == 'receipt':
+                    receipts.append(event)
+
+            def capabilities(self):
+                name = 'memory_echo'
+                return (Capability.from_spec(OperationSpec(name, 'Echo a note', {'type': 'object'}),
+                    lambda args: OperationCall(name, {'text': args['text'].strip()}),
+                    lambda args: OperationResult('Memory handler', (), False, data=args)),)
+
+        class ForeignPolicy(ScriptedPolicy):
+            def decide(self, window):
+                windows.append(window)
+                return super().decide(window)
+
+        close = FeedbackLearningService.close
+        for custom in (False, True):
+            queries, receipts, windows, closed = [], [], [], []
+            memory = Memory()
+            marker = object()
+            policy = ForeignPolicy((OperationCall('memory_echo', {'text': '  saved  '}),
+                                    OperationCall('feedback_learning_read', {})))
+            policy.implementation = SimpleNamespace(parser=SimpleNamespace(space=marker))
+            harness = NullHarness()
+
+            def endpoint(ctx, lab):
+                if custom:
+                    return build_harness_decision(ctx, lab, policy=policy, harness=harness)
+                return build_default_decision(ctx, lab, policy=policy)
+
+            modules = ModuleAssembly(decision_factory=endpoint, lab_factory=lambda _: LabGroup(),
+                memory=MemoryAssembly(ResearchAssembly(context_memory=memory, trajectory_archive=None)))
+            with self.subTest(custom=custom), patch.object(FeedbackLearningService, 'close',
+                    lambda service: (closed.append(service), close(service))[-1]):
+                with Application(self.config(str(custom)), modules=modules) as app:
+                    loop = app.runner.decision_making
+                    self.assertIs(policy.implementation.parser.space, marker)
+                    if custom:
+                        self.assertIs(loop.harness, harness)
+                    self.assertEqual(len(loop.host_execution._receipt_listeners), 1)
+                    app.run(max_decision_steps=3, wait_for_jobs=True)
+                    self.assertEqual(len(queries), len(windows))
+                    self.assertEqual(len(windows), 3)
+                    for window in windows:
+                        self.assertEqual(window.context.count('window-memory-marker'), 1)
+                        names = [row['name'] for row in window.capabilities]
+                        self.assertEqual(names.count('memory_echo'), 1)
+                        self.assertEqual(names.count('feedback_learning_read'), 1)
+                    self.assertEqual(windows[1].feedbacks[0].data, {'text': 'saved'})
+                    self.assertEqual(windows[2].feedbacks[0].summary, 'Feedback learning proposals; validation still required')
+                    self.assertEqual(sum(event.request.get('name') == 'memory_echo' for event in receipts), 1)
+                    self.assertEqual(len({event.event_id for event in receipts}), len(receipts))
+                self.assertEqual(closed, [loop.integration])
+                self.assertEqual(loop.host_execution._receipt_listeners, [])
+
+    def test_four_port_harness_can_use_builtin_agent_memory(self):
+        from rsicomposer.api import MemoryAssembly, ResearchAssembly
+        windows = []
+
+        def policy(window):
+            windows.append(window)
+            if len(windows) == 1:
+                return Decision.invoke(OperationCall('memory_search', {}))
+            return Decision('finish')
+
+        modules = ModuleAssembly(decision_factory=lambda ctx, lab: build_harness_decision(
+            ctx, lab, policy=policy, harness=NullHarness()), lab_factory=lambda _: LabGroup(),
+            memory=MemoryAssembly(ResearchAssembly.single_meta()))
+        with Application(self.config('four-ports'), modules=modules) as app:
+            app.run(max_decision_steps=2, wait_for_jobs=True)
+            self.assertEqual(json.loads(windows[0].context)['provider'], 'agent_managed')
+            self.assertEqual(windows[1].feedbacks[0].summary, 'Meta-agent memory/task operation completed')
+
+    def test_failed_install_preserves_existing_bindings_and_subscriptions(self):
+        from rsicomposer.api import ActionPermissions, ResearchAssembly
+        from rsicomposer.research import assemble_research
+
+        class ConflictingHarness(NullHarness):
+            def tools(self):
+                return (OperationSpec('memory_search', 'Private Harness tool', {'type': 'object'}),)
+
+        for conflict in (True, False):
+            def endpoint(ctx, lab):
+                if conflict:
+                    return build_harness_decision(ctx, lab, policy=ScriptedPolicy(()), harness=ConflictingHarness())
+                return build_default_decision(ctx, lab, policy=ScriptedPolicy(()))
+
+            modules = ModuleAssembly(decision_factory=endpoint, lab_factory=lambda _: LabGroup())
+            with self.subTest(conflict=conflict), Application(self.config('rollback-' + str(conflict)),
+                    modules=modules, action_permissions=ActionPermissions([])) as app:
+                loop = app.runner.decision_making
+                space, bindings = loop.action_space, loop.operation_router.host_bindings
+                self.assertEqual(space.describe(), ())
+                if conflict:
+                    with self.assertRaisesRegex(ValueError, 'unique'):
+                        assemble_research(loop, assembly=ResearchAssembly.single_meta())
+                else:
+                    # Failure after the service, its projected window and all tools were attached.
+                    with patch('rsicomposer.research.atomic_write', side_effect=OSError('manifest write failed')), \
+                            self.assertRaisesRegex(OSError, 'manifest write failed'):
+                        assemble_research(loop, assembly=ResearchAssembly.single_meta(),
+                                          path=self.root / 'feedback.json')
+                    self.assertIsNone(loop.harness.feedback_service)
+                    self.assertEqual(loop.harness._context_processors, [])
+                self.assertIsNone(loop.integration)
+                self.assertIs(loop.action_space, space)
+                self.assertIs(loop.operation_router.host_bindings, bindings)
+                self.assertEqual(loop.host_execution._receipt_listeners, [])
+
+    def test_native_parser_and_agent_memory_share_authorized_catalog(self):
+        from rsicomposer.api import ActionPermissions, MemoryAssembly, ResearchAssembly
+        from rsicomposer.backends.serving.chat_completions import MockModelBackend
+        from rsicomposer.loops.contracts.model_service import GenerationResponse
+        requests = []
+
+        def generate(backend, request):
+            requests.append(request)
+            payload = ({'kind': 'invoke', 'operation': 'memory_search', 'arguments': {}} if len(requests) == 1
+                       else {'kind': 'finish'})
+            return GenerationResponse(json.dumps(payload), request.model, simulated=True)
+
+        modules = ModuleAssembly(decision_factory=build_default_decision, lab_factory=lambda _: LabGroup(),
+            memory=MemoryAssembly(ResearchAssembly.single_meta()))
+        with patch.object(MockModelBackend, 'supports_response_schema', True, create=True), \
+                patch.object(MockModelBackend, 'generate', generate), Application(self.config('native'),
+                modules=modules, action_permissions=ActionPermissions(['memory_search'])) as app:
+            app.run(max_decision_steps=2, wait_for_jobs=True)
+            self.assertEqual(len(requests), 2)
+            for request in requests:
+                context = json.loads(request.prompt)
+                self.assertEqual([row['name'] for row in context['operations']], ['memory_search'])
+                self.assertEqual([row['properties']['operation']['const'] for row in request.response_schema['oneOf']
+                                  if 'operation' in row['properties']], ['memory_search'])
+                self.assertEqual(json.loads(context['memory_context'])['provider'], 'agent_managed')
+            receipt, = app.runner.decision_making.host_execution.state.operation_results
+            self.assertEqual(receipt.data['revision'], 0)
+            self.assertEqual(receipt.summary, 'Meta-agent memory/task operation completed')
+            with self.assertRaises(PermissionError):
+                app.runner.decision_making.action_space.validate(OperationCall('feedback_learning_read', {}))
+
+
 def registry_modules(lab, actions, *, memory=None):
     registry = Registry()
     registry.register_controller('test', ControllerDefinition(lambda ctx, cfg: ScriptedPolicy(actions),

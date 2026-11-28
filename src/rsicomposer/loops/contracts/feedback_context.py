@@ -68,6 +68,8 @@ class ControllerMemory(Protocol):
     Optional methods:
       observe(event: EvidenceEvent) -> None   receives Lab receipts on a later host
                                               tick and Controller events as recorded;
+      capabilities() -> Iterable[Capability]  contributes tools with validators and handlers;
+                                              the Host enforces ordinary operation permissions.
       query(request: dict) -> dict            typed retrieval for policies that need
                                               more than text;
       rebuild(events) -> None                 replays evidence into an empty memory.

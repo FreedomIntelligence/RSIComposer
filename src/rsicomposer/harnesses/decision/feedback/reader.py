@@ -52,7 +52,7 @@ class FeedbackReader:
                 if research_attempt_id is not None:
                     value = [a for a in value if a['attempt_id'] == research_attempt_id]
             else:
-                value = proposal_records(self.ordered_jobs(), target=target,
+                value = proposal_records(self.ordered_jobs(), targets=self.proposal_targets, target=target,
                                          research_attempt_id=research_attempt_id)
             metadata = {'view': view, 'total': len(value),
                         'target': target, 'research_attempt_id': research_attempt_id}
@@ -181,4 +181,3 @@ class FeedbackReader:
                            'grouping_error': r.get('grouping_error'),
                            'kinds': [p['kind'] for p in r['proposals']]} for r in rows[offset:offset+limit]],
                 'next_offset': offset+limit if offset+limit < len(rows) else None}
-
