@@ -3,6 +3,7 @@
 The service knows receipts, model identities, learning proposals and publication;
 it never accesses a harness policy, state layout or context compactor.
 """
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -25,14 +26,21 @@ class FeedbackEvidence:
 class FeedbackAdapter(Protocol):
     """Explicit host integration; evidence and projection hooks are optional."""
     def model(self) -> ModelRef: ...
-    def install(self, service): ...
+    def install(self, service) -> Callable[[], None] | None: ...
 
 
 class FeedbackLearningService:
     def __init__(self, learning, adapter: FeedbackAdapter):
         self.learning, self.adapter = learning, adapter
+        self._detach_adapter = None
         from rsicomposer.method_state import ResearchMemoryState
         self.memory_state = ResearchMemoryState(learning.context_memory)
+
+    def install_adapter(self):
+        detach = self.adapter.install(self)
+        if detach is not None and not callable(detach):
+            raise TypeError('FeedbackAdapter.install must return a detach callback or None')
+        self._detach_adapter = detach
 
     @property
     def memory(self):
@@ -41,7 +49,18 @@ class FeedbackLearningService:
     def project_window(self, window):
         from rsicomposer.runtime.capabilities import optional_method
         project = optional_method(self.adapter, 'project_window')
-        return project(window) if project is not None else window
+        return project(window) if project is not None else self.memory_window(window)
+
+    def memory_window(self, window):
+        """Default projection for a public Policy window; preserve Harness-owned fields."""
+        from dataclasses import replace
+        from rsicomposer.loops.contracts.feedback_context import ContextQuery
+        self.refresh()
+        text = self.context(ContextQuery(objective=window.objective))
+        return replace(window, context='\n\n'.join(part for part in (window.context, text) if part))
+
+    def can_archive(self):
+        return self.memory_state.can_archive()
 
     def state(self):
         from rsicomposer.method_state import FeedbackJournalState
@@ -176,8 +195,8 @@ class FeedbackLearningService:
         row.pop('publication_delivery', None)
         self.learning._commit(state)
 
-    def proposals(self, *, target='harness'):
-        records = proposal_records(self.learning.ordered_jobs(), target=target)
+    def proposals(self, *, target=None):
+        records = proposal_records(self.learning.ordered_jobs(), targets=self.learning.proposal_targets, target=target)
         provider = getattr(self.adapter, 'proposal_decisions', None)
         decisions = provider() if callable(provider) else ()
         for record in records:
@@ -185,25 +204,15 @@ class FeedbackLearningService:
                 if record['proposal_id'] in d.get('feedback_proposal_ids', ())]
         return records
 
-    def resolve_harness_proposals(self, proposal_ids):
+    def resolve_proposals(self, proposal_ids):
         records = {r['proposal_id']: r for r in self.proposals()}
-        return self._resolve_proposals(proposal_ids, records)
-
-    def resolve_improvement_proposals(self, proposal_ids):
-        records = {r['proposal_id']: r for r in self.proposals(target=None)
-                   if r['kind'] in ('harness_change', 'policy_training')}
-        return self._resolve_proposals(proposal_ids, records)
-
-    @staticmethod
-    def _resolve_proposals(proposal_ids, records):
         resolved = []
         for ident in proposal_ids:
-            if ident not in records or records[ident]['subject'] not in ('meta_agent', 'lab'):
-                raise ValueError('Unknown or untargeted improvement proposal: ' + ident)
+            if ident not in records:
+                raise ValueError('Unknown improvement proposal: ' + ident)
             row = records[ident]
             resolved.append({key: deepcopy(row[key]) for key in
-                ('proposal_id', 'job_id', 'subject', 'source_snapshot')})
-            resolved[-1]['kind'] = row['kind']
+                 ('proposal_id', 'job_id', 'kind', 'target', 'subject', 'source_snapshot')})
             resolved[-1]['proposal_digest'] = result_id(row['proposal'])
         return tuple(resolved)
 
@@ -214,7 +223,7 @@ class FeedbackLearningService:
             if row.get('publication_delivery', {}).get('status') in ('failed', 'interrupted', 'running'):
                 continue
             try:
-                validate_publication(row)
+                validate_publication(row, self.learning.proposal_targets)
             except (ValueError, TypeError, KeyError) as exc:
                 # Preserve the original response for audit. Rejected prose must
                 # not leak through proposal/attempt views while publication is
@@ -249,6 +258,10 @@ class FeedbackLearningService:
                 raise RuntimeError('Portable snapshots require settled feedback publication')
 
     def close(self, *, timeout=30):
+        # A failing archive/worker close is retryable, but no longer owns new receipts.
+        if self._detach_adapter is not None:
+            self._detach_adapter()
+            self._detach_adapter = None
         self.learning.notify_archive()
         self.learning.close(timeout=timeout)
         self._publish()

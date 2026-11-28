@@ -2,6 +2,7 @@
 import argparse
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from rsicomposer.algorithms.meta_rsi.aime_results import optimizer_evidence, summarize_development
@@ -20,7 +21,7 @@ def host_adoptions(run, controller):
     source = Path(run).resolve() / 'experience.sqlite3'
     if source.is_symlink() or not source.is_file():
         raise ValueError('Missing owned Host adoption journal')
-    with sqlite3.connect(source.as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as connection:
         events = [dict(adoption_id=ident, version_id=version) for ident, version in connection.execute(
             "SELECT json_extract(payload, '$.details.event.output.adoption_id'), "
             "json_extract(payload, '$.details.event.output.controller_version') "
@@ -43,7 +44,7 @@ def host_releases(run, controller):
     if source.is_symlink() or not source.is_file():
         raise ValueError('Missing Host release journal')
     receipts = []
-    with sqlite3.connect(source.as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as connection:
         rows = connection.execute("SELECT json_extract(payload, '$.details.event') FROM experience "
             "WHERE kind='runtime_feedback' AND json_extract(payload, '$.details.operation') "
             "IN ('math.select','math.evaluate') ORDER BY seq")
@@ -161,7 +162,7 @@ def _nested_execution(run, train, old_gaps, base_digest):
         request = MetaRSILab._read_owned(path, 'request.json')
         descriptor = MetaRSILab._read_owned(path, 'descriptor.json')
         manifest = request['manifest']
-        child_roles = manifest['labs']['math']['config']['split_roles']
+        child_roles = manifest['selection']['labs']['math']['config']['split_roles']
         if set(child_roles) != {'train', 'search', 'validation'}:
             raise ValueError('Unexpected nested trial cohorts')
         version = decode(manifest['version'])
@@ -361,7 +362,7 @@ def report_progress(run, config):
     source = run / 'experience.sqlite3'
     if source.is_symlink() or not source.is_file():
         raise ValueError('Missing owned Host journal')
-    with sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)) as connection:
         recent_operations = [dict(operation=op, status=status) for op, status in connection.execute(
             "SELECT json_extract(payload, '$.details.operation'), json_extract(payload, '$.details.status') "
             "FROM experience WHERE kind='runtime_feedback' ORDER BY seq DESC LIMIT 12")][::-1]

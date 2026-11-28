@@ -54,7 +54,7 @@ def _load_launch(args):
         config = replace(config, data_dir=args.data_dir.resolve())
     permissions = (ActionPermissions.from_dict(json.loads(args.permissions.read_text()))
                    if args.permissions is not None else None)
-    return config, selection, modules, permissions, limit_source
+    return config, modules, permissions, limit_source
 
 def _effective_limits(args, config, limit_source):
     rounds = config.rounds if args.rounds is None else args.rounds
@@ -87,7 +87,7 @@ def _explain_launch(args, config, modules, limit_source):
     }
 
 
-def _run_output(app, args, selection, limit_source):
+def _run_output(app, args, limit_source):
     if args.command == 'run' and not args.durable:
         for path in args.literature:
             app.artifacts.put_file(path, kind='literature')
@@ -95,8 +95,9 @@ def _run_output(app, args, selection, limit_source):
     if args.no_monitor:
         result = app.run(**limits, wait_for_jobs=True)
     else:
+        selection = app.modules.registration.framework if not getattr(args, 'snapshot', None) else None
         result = run_monitored(app, **limits,
-                               framework=selection if args.command == 'run' or args.snapshot is None else None,
+                               framework=selection,
                                experiment_name=getattr(args, 'experiment_name', None), probe_paths=args.probe,
                                continue_history=args.command == 'resume' and args.snapshot is None)
     output = {'mode': app.config.resources.get('executor', 'local'), **app.config.source.to_dict(),
@@ -142,14 +143,14 @@ def _add_run_exports(app, output):
     return snapshot_error
 
 
-def _run_and_save(app, args, selection, limit_source):
+def _run_and_save(app, args, limit_source):
     path = app.config.data_dir / 'result.json'
     pending = None
     export_error = None
     with ExitStack() as finalization:
         try:
             with app:
-                output = _run_output(app, args, selection, limit_source)
+                output = _run_output(app, args, limit_source)
                 output['cleanup'] = {'status': 'pending'}
                 finalization.enter_context(app._hold_workspace_lock())
                 atomic_write(path, json_bytes(output))
@@ -241,16 +242,14 @@ def main() -> None:
                 raise ValueError('max-decision-steps must be positive')
             limit_source = 'saved_config'
             if args.command in ('run', 'explain'):
-                config, selection, modules, permissions, limit_source = _load_launch(args)
+                config, modules, permissions, limit_source = _load_launch(args)
                 if args.command == 'explain':
                     print(json.dumps(_explain_launch(args, config, modules, limit_source),
                                      ensure_ascii=False, indent=2))
                     return
                 if args.parent_run_id is not None:
                     config = replace(config, parent_run_id=args.parent_run_id)
-                launch = (json_bytes({'framework': selection,
-                                      'plugins': [str(path.resolve()) for path in args.plugin]})
-                          if args.durable else None)
+                launch = json_bytes({'plugins': list(modules.plugin_paths)}) if args.durable else None
                 app = Application(config, modules=modules, action_permissions=permissions,
                                   durable=args.durable, _cli_launch=launch,
                                   _initial_literature=tuple(args.literature) if args.durable else ())
@@ -267,13 +266,8 @@ def main() -> None:
                     raise ValueError(f'Durable startup did not commit an initial checkpoint in {root}; '
                                      'start a new run in a fresh directory')
                 launch = json.loads(saved.read_text())
-                selection = launch['framework']
-                registry = Registry()
-                for path in args.plugin or [Path(p) for p in launch['plugins']]:
-                    registry.load_plugin(path)
-                modules = registry.build(selection)
-                app = Application.resume(root, modules=modules)
-            output = _run_and_save(app, args, selection, limit_source)
+                app = Application.resume(root, plugins=args.plugin or launch['plugins'])
+            output = _run_and_save(app, args, limit_source)
         print(json.dumps(output, ensure_ascii=False, indent=2))
     except (TypeError, ValueError, OSError, RuntimeError, ImportError) as exc:
         parser.exit(2, f'rsicomposer: {exc}\n')

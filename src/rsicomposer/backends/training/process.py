@@ -281,8 +281,7 @@ class ProcessTrainingBackend:
                     if result.base != ModelRef(**request['base']):
                         raise ValueError('Training result base mismatch')
                     role = 'decision_maker' if payload['request_type'] == 'DecisionTrainingRequest' else 'actor'
-                    if role not in result.candidate.affected_roles:
-                        raise ValueError('Training result role mismatch')
+                    result.require_target(role)
                     origin = request.get('origin')
                     if origin and result.candidate.parent_system != origin['parent_system']:
                         raise ValueError('Training result parent_system mismatch')

@@ -71,6 +71,16 @@ The alias is what the Controller uses to call it. Before swapping Labs, check th
 the new Lab accepts the operations and arguments the Controller sends and returns
 the receipt fields it reads. See [Compose a system](compose.md#pair-a-registered-controller-with-a-lab).
 
+Publish a Lab once with `registry.register_lab(name, factory, version=..., validate_config=...)`.
+A method can bind the same definition in `MethodDefinition.from_factories`, for example
+`labs={'math': registry.lab('math')}`. Both paths record each mounted alias with its
+registered name, version, and effective options. Durable resume, portable restore,
+and nested workers check those bindings before constructing the Labs. Changing an
+independent Lab version requires a new run even when the method version is unchanged.
+Both paths run the registered validator at selection and construct the Lab only at
+launch. To keep a Lab private, pass its factory directly to the method; the method
+owns its version and it does not become available for standalone pairing.
+
 Choose the domain Lab by what the benchmark grades. The same tool, such as a
 browser or terminal, can appear in several domains.
 
@@ -193,8 +203,8 @@ synchronously or as a background job.
 ## Reusable components
 
 A method resolves components with
-`registry.resolve_component(kind, name, context, config)`. Supported kinds are
-`backend`, `harness`, `memory`, and `lab` (`scene` is kept as a legacy alias for `lab`).
+`registry.resolve_component(kind, name, context, config)`. The kinds are
+`backend`, `harness`, and `memory`. Public [Labs](#labs) have their own catalog.
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
@@ -221,6 +231,61 @@ OpenAI Chat Completions or Anthropic Messages. For training, the method selects
 a registered backend: see [ReST^EM's SFT options](../src/rsicomposer/algorithms/rest_em/README.md#select-a-trainer)
 or [MathLab GRPO](config.md#online-grpo-with-verl), where the training strategy
 and in-job rollout engine are configured separately.
+
+### State in a component graph
+
+`ModuleAssembly.from_components(graph, decision='policy', lab='work', ...)`
+binds the `work` instance itself as the top-level Lab. A `state_factory` must
+supply **one** `lab_execution` adapter for it, including any portable snapshot
+checks or files; do not also supply `component:work`. The graph manifest still
+records the slot, implementation version, dependencies and binding. In contrast,
+the `policy` slot holds a decision *factory*, not the decision endpoint. It and
+all other independent slots keep their `component:<slot>` ports (automatic only
+when declared stateless); the endpoint keeps its own `decision` adapter.
+
+### Feedback proposals
+
+A trusted method can install one improvement proposer in `ResearchAssembly`. The
+processor declares the kinds it can suggest, the category used to query each kind,
+and the subjects to which that kind can be attributed. For example:
+
+```python
+from rsicomposer.api import ResearchAssembly
+from rsicomposer.harnesses.decision.feedback import CallbackFeedbackProcessor, ProposalTarget
+
+def review_retrieval(event, model):
+    return {"proposals": [{
+        "kind": "retrieval_change", "subject": "index",
+        "content": "Compare the current index with a rebuilt index.",
+        "applicability": "Use the same corpus and queries.",
+        "validation_plan": "Measure both on the frozen development queries.",
+        "source_refs": [event.source_refs[0]],
+        **({"evaluation_claims": []} if event.candidate_evidence is not None else {}),
+    }]}
+
+research = ResearchAssembly(proposer=CallbackFeedbackProcessor(
+    review_retrieval, proposal_targets=(ProposalTarget("retrieval_change", "retrieval", ("index",)),)))
+```
+
+The `feedback_learning_read` operation with `view="proposals", target="retrieval"`
+returns published suggestions in that category. A later decision may cite a
+`proposal_id` for attribution; the reference grants no operation, budget, or
+permission to update an index. The host still validates the cited evidence,
+candidate claims, and validation plan. Declarations are pinned for resume and
+snapshot restore. Old dual-slot journals are not migrated.
+
+For a Host-confirmed development measurement, `event.candidate_evidence` names
+the measured candidate and supplies its `source_ref`, protocol, exact input
+refs, quality metrics and simulation flag. Cite that `source_ref` in both
+`source_refs` and the claim's `evaluation_ref`. A tool that merely returns
+similar fields is not a measured evaluation; Host-only final evaluations are
+not delivered to this processor.
+
+For model-authored proposals use `ModelImprovementProposer(path)` from the same
+feedback package. Its defaults are `HARNESS_CHANGE` (subjects `meta_agent`, `lab`)
+and `POLICY_TRAINING` (subject `meta_agent` only). Pass
+`proposal_targets=(HARNESS_CHANGE,)` for harness-only work. Memory and training
+data are separate products, not proposal kinds accepted by this slot.
 
 ## Verifiers
 

@@ -70,6 +70,11 @@ class TrainingResult:
         if self.model == self.base:
             raise ValueError("Training must produce a new model version")
 
+    def require_target(self, role):
+        """A single-role training request or adoption cannot apply a multi-role change."""
+        if self.candidate.affected_roles != (role,):
+            raise ValueError(f'Training result must target only {role}')
+
 
 class ModelActivationPending(RuntimeError):
     """Deployment is not confirmed ready; retry the same activation key later."""

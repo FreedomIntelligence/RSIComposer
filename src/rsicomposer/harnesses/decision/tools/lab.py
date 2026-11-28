@@ -5,11 +5,8 @@ from dataclasses import replace
 from functools import partial
 
 from rsicomposer.harnesses.decision.tools import BoundDecisionTools
-from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationCall, OperationSpec
-from rsicomposer.loops.contracts.evaluation import tag_evaluation_identity
-from rsicomposer.loops.contracts.execution import LabExecution, LabToolError
-from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
+from rsicomposer.loops.contracts.execution import LabExecution, execute_lab_call
 from rsicomposer.loops.decision_making.action_space.capabilities import (
     Capabilities,
     Capability,
@@ -21,7 +18,7 @@ def _arguments(name, arguments):
     # Only the transport envelope is standardized. input_schema describes the
     # arguments to the Controller and is not enforced here: domain/schema
     # validation is the Lab's responsibility, immediately before effects inside
-    # execute(), where it can reject a call with OperationArgumentError.
+    # execute(), where it can reject a call with LabToolError.
     if not isinstance(arguments, dict) or any(not isinstance(key, str) for key in arguments):
         raise TypeError('Lab arguments must be a JSON object with string keys')
     json.dumps(arguments, allow_nan=False)
@@ -68,12 +65,7 @@ class LabExecutionTools(BoundDecisionTools):
         call = _arguments(name, arguments)
         if call_id is not None:
             call = replace(call, call_id=call_id)
-        try:
-            result = self.lab.execute(call)
-        except LabToolError as exc:
-            return OperationResult('Lab tool failed; use this feedback to choose the next action', (),
-                False, ExecutionStatus.FAILED, f'{type(exc).__name__}: {exc}', data=exc.data)
-        return tag_evaluation_identity(self.lab, name, call, result)
+        return execute_lab_call(self.lab, call)
 
     def runtime_context(self):
         read = optional_method(self.lab, 'runtime_context')

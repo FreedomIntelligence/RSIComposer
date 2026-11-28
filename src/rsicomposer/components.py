@@ -98,6 +98,7 @@ class ComponentInstances(Mapping):
         self._values = MappingProxyType(dict(values))
         self._manifest = _json(manifest)
         self._owned = frozenset(owned)
+        self._lab_slot = manifest['bindings'].get('lab')
 
     def __getitem__(self, name):
         return self._values[name]
@@ -114,17 +115,23 @@ class ComponentInstances(Mapping):
     def owns(self, value):
         return id(value) in self._owned
 
-    def state_adapters(self):
+    def state_adapters(self, explicit, *, lab_execution):
         manifest = self.configuration()
         ports = {'component_manifest': _StaticState(manifest)}
         for name, entry in manifest['components'].items():
-            if entry['stateless']:
-                ports['component:' + name] = _StaticState(entry)
+            port = 'component:' + name
+            if name == self._lab_slot:
+                if self[name] is not lab_execution:
+                    raise TypeError('Graph-bound Lab differs from the assembled Lab execution')
+                if port in explicit:
+                    raise ValueError(f'{port} is already bound as lab_execution; supply only lab_execution')
+            elif entry['stateless']:
+                ports[port] = _StaticState(entry)
         return ports
 
     @property
     def required_state_adapters(self):
-        return {'component_manifest', *('component:' + name for name in self)}
+        return {'component_manifest', *('component:' + name for name in self if name != self._lab_slot)}
 
 
 class ComponentGraph:

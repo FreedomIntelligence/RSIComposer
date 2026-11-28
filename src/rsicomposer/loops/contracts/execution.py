@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 from .coordination import OperationResult
 from .decision import OperationCall, OperationSpec
 from .jobs import JobRef
+from .lifecycle import ExecutionStatus
 
 
 class LabToolError(ValueError):
@@ -54,6 +55,15 @@ class LabExecution(Protocol):
     """
     def describe(self) -> tuple[OperationSpec, ...]: ...
     def execute(self, call: OperationCall) -> OperationResult | JobRef: ...
+
+
+def execute_lab_call(lab: LabExecution, call: OperationCall) -> OperationResult | JobRef:
+    """Convert only a provider-declared rejection, at the point of invocation."""
+    try:
+        return lab.execute(call)
+    except LabToolError as error:
+        return OperationResult('Lab tool failed; use this feedback to choose the next action', (), False,
+            ExecutionStatus.FAILED, f'{type(error).__name__}: {error}', data=error.data, call_id=call.call_id)
 
 
 class ExecutionLifecycle(Protocol):

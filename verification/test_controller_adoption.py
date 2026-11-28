@@ -1,11 +1,15 @@
 """Keyless Controller adoption regressions using real Application and Host ports."""
 from dataclasses import replace
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
+from unittest.mock import patch
 
-from rsicomposer.api import LocalSnapshotCapture, RunDecision, TimeRunPolicy
+from rsicomposer.api import (
+    BackendBinding, ControllerPort, LocalSnapshotCapture, MemoryAssembly, ResearchAssembly, RunDecision, TimeRunPolicy,
+)
 from rsicomposer.application import Application, ApplicationConfig
 from rsicomposer.loops.contracts.candidate import Candidate
 from rsicomposer.loops.contracts.model_service import ModelRef
@@ -101,22 +105,35 @@ def make_version(*, policy_state=None):
     return ControllerVersion('replacement-v1', {'name': 'replacement', 'config': {}}, policy_state=policy_state)
 
 
+def replacement_checkpoint(app, host):
+    saved = host.capture()
+    saved['archives'] = [{'version': saved['current_version'], 'state': saved['active']}]
+    saved['current_version'] = version = make_version()
+    saved['adopted'] = {version.version_id: save_controller_version(app.artifacts, version)}
+    return saved
+
+
 def adopted_events(app):
     return [event for row in app.experience.retrieve(kinds=('controller_event',))
             if (event := row.details['event'])['kind'] == 'controller_adopted']
 
 
 class ControllerAdoptionTests(unittest.TestCase):
-    def application(self, definition, *, old_policy=None, old_harness=None, durable=False, lab_type=Lab):
+    def application(self, definition, *, old_policy=None, old_harness=None, old_memory=None, durable=False,
+                    lab_type=Lab, model=None, validator=None):
         old_policy = old_policy if old_policy is not None else Policy()
         old_harness = old_harness if old_harness is not None else Harness()
-        baseline = ControllerDefinition(lambda context, options: old_policy, harness=lambda context, options: old_harness)
+        baseline = ControllerDefinition(lambda context, options: old_policy, harness=lambda context, options: old_harness,
+                                        memory=old_memory)
         modules = MethodDefinition.from_factories(controller=baseline, labs={'work': lambda context, options: lab_type()},
                                                   version='1').factory({})
-        modules = replace(modules, controller_catalog={**modules.controller_catalog, 'replacement': definition})
+        modules = replace(modules, controller_catalog={**modules.controller_catalog, 'replacement': definition},
+                          controller_validators={'replacement': validator} if validator else {})
         root = Path(self.enterContext(TemporaryDirectory()))
-        app = self.enterContext(Application(ApplicationConfig('test adoption', root, {}, {}),
-                                            modules=modules, durable=durable))
+        config = ApplicationConfig('test adoption', root,
+            {model.backend_id: BackendBinding(model.backend_id, 'mock')} if model else {},
+            {'decision_maker': model} if model else {})
+        app = self.enterContext(Application(config, modules=modules, durable=durable))
         return app, app.assembly.controller_host
 
     def queue(self, app, host, version=None):
@@ -124,6 +141,106 @@ class ControllerAdoptionTests(unittest.TestCase):
         ref = save_controller_version(app.artifacts, version)
         self.assertEqual(host.request_version(ref).data['status'], 'pending')
         return version
+
+    def test_manual_list_state_round_trips_before_and_after_retirement(self):
+        class ListPort:
+            def __init__(self, instance):
+                self.instance = instance
+                self.endpoint, self.context = instance.endpoint, instance.context
+
+            def capture(self):
+                return [self.instance.capture()]
+
+            def restore(self, state):
+                [saved] = state
+                self.instance.restore(saved)
+                restored.append(self.instance.policy.decisions)
+
+            def close(self):
+                self.instance.close()
+
+        initial_decisions, restored = iter((17, 0, 0)), []
+
+        def baseline(ctx, opts):
+            policy = Policy()
+            policy.decisions = next(initial_decisions)
+            return policy
+
+        base = MethodDefinition.from_factories(controller=baseline, labs={'work': lambda *_: Lab()},
+                                               version='1').factory({})
+
+        def manual(ctx, lab):
+            port = base.controller_factory(ctx, lab)
+            return ControllerPort(ListPort(port.instance), port.version)
+
+        modules = replace(base, controller_factory=manual, controller_catalog={**base.controller_catalog,
+            'replacement': ControllerDefinition(lambda *_: Policy())})
+        root = Path(self.enterContext(TemporaryDirectory()))
+        with Application(ApplicationConfig('manual archive', root, {}, {}), modules=modules, durable=True) as app:
+            initial = app.assembly.controller_host.current_version
+        with Application.resume(root, modules=modules) as app:
+            host = app.assembly.controller_host
+            self.assertEqual(restored, [17])  # Restored the list payload rather than a fresh Policy.
+            self.assertEqual(host.active.instance.policy.decisions, 17)
+            initial_ref = save_controller_version(app.artifacts, initial)
+            self.assertEqual(host.request_version(initial_ref).data['status'], 'active')
+            archive = host.active.capture()
+            version = self.queue(app, host)
+            self.assertIn('Controller adopted:', app.runner.step(app.config.objective).event['reason'])
+            conflict = replace(version, version_id=initial.version_id)
+            with self.assertRaisesRegex(ValueError, 'cannot be reused'):
+                host.request_version(save_controller_version(app.artifacts, conflict))
+        with Application.resume(root, modules=modules) as app:
+            host = app.assembly.controller_host
+            self.assertEqual(host.current_version, version)
+            self.assertEqual(host.archives, [{'version': initial, 'state': archive}])
+            with self.assertRaisesRegex(ValueError, 'cannot be reused'):
+                host.version(version_id=initial.version_id)
+            for obsolete in (initial, conflict):
+                with self.assertRaisesRegex(ValueError, 'cannot be reused'):
+                    host.request_version(save_controller_version(app.artifacts, obsolete))
+            self.assertIsNone(host.pending)
+            self.assertEqual(app.run().status, 'finished')
+
+    def test_durable_candidate_validation_subclass_rejects_without_blocking(self):
+        def validate(options):
+            json.loads(options['json'])
+
+        app, host = self.application(ControllerDefinition(lambda *_: Policy()), durable=True, validator=validate)
+        old = host.active
+        version = replace(make_version(), config={'name': 'replacement', 'config': {'json': 'invalid'}})
+        self.queue(app, host, version)
+        self.assertIn('candidate construction failed', app.runner.step(app.config.objective).event['reason'])
+        self.assertIs(host.active, old)
+        self.assertIsNone(host.pending)
+        self.assertIsNone(app.recovery.intervention)
+        rejected, = [row.details['event']['output'] for row in app.experience.retrieve(kinds=('controller_event',))
+                     if row.details['event']['kind'] == 'controller_adoption_rejected']
+        self.assertEqual(rejected['error_type'], 'JSONDecodeError')
+        self.assertEqual(app.run().status, 'finished')
+
+    def test_candidate_infrastructure_and_control_faults_do_not_commit_rejection(self):
+        from rsicomposer.runtime.execution.errors import WorkerLostError
+        from rsicomposer.runtime.models.accounting import HostAdmissionStop
+
+        for error in (OSError('storage unavailable'), WorkerLostError('worker lost'),
+                      RecoveryRequired('reconciliation needed'), HostAdmissionStop('closed')):
+            with self.subTest(error=type(error).__name__):
+                class Fault(Policy):
+                    def restore(self, state):
+                        raise error
+
+                policy = Fault()
+                app, host = self.application(ControllerDefinition(lambda *_: policy), durable=True)
+                old = host.active
+                version = self.queue(app, host, make_version(policy_state={'decisions': 7}))
+                with self.assertRaises(type(error)) as caught:
+                    app.runner.step(app.config.objective)
+                self.assertIs(caught.exception, error)
+                self.assertEqual(policy.closes, 1)
+                self.assertIs(host.active, old)
+                self.assertEqual(host.pending['version'], version)
+                self.assertEqual(app.recovery.intervention['reason'], 'interrupted_mutation')
 
     def test_pending_model_activation_blocks_snapshot_and_clean_shutdown(self):
         calls = []
@@ -226,19 +343,343 @@ class ControllerAdoptionTests(unittest.TestCase):
         self.assertEqual(adopted_events(app), events)
 
     def test_policy_restore_failure_rejects_candidate_before_binding(self):
-        candidate, harness = Policy(fail_restore=True), Harness()
-        app, host = self.application(ControllerDefinition(lambda context, options: candidate,
-                                                           harness=lambda context, options: harness))
+        for durable in (False, True):
+            with self.subTest(durable=durable):
+                candidate, harness = Policy(fail_restore=True), Harness()
+                app, host = self.application(ControllerDefinition(lambda *_: candidate, harness=lambda *_: harness),
+                                             durable=durable)
+                old = host.active
+                version = self.queue(app, host, make_version(policy_state={'decisions': 3}))
+                if durable:
+                    result = app.runner.step(app.config.objective)
+                    self.assertIn('state could not be restored', result.event['reason'])
+                    self.assertIsNone(host.pending)
+                    self.assertIsNone(app.recovery.intervention)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'candidate restore failed'):
+                        host.advance()
+                    self.assertEqual(host.pending['version'], version)
+                self.assertIs(host.active, old)
+                self.assertIs(app.assembly.host_execution.endpoint, old.endpoint)
+                self.assertEqual((candidate.closes, harness.closes, harness.binds), (1, 1, 0))
+                self.assertEqual(old.policy.closes, 0)
+                self.assertEqual(adopted_events(app), [])
+
+    def test_durable_candidate_state_is_checked_before_publication(self):
+        class MissingState(Policy):
+            state = restore = None
+
+        class OpaqueState(Policy):
+            def state(self):
+                return {'opaque': object()}
+
+        class NonFiniteState(Policy):
+            def state(self):
+                return {'score': float('nan')}
+
+        for policy, error_type in ((MissingState, 'TypeError'), (OpaqueState, 'TypeError'),
+                                   (NonFiniteState, 'ValueError')):
+            with self.subTest(policy=policy.__name__):
+                candidate, harness = policy(), Harness()
+                app, host = self.application(ControllerDefinition(lambda *_: candidate, harness=lambda *_: harness),
+                                             durable=True)
+                old, version = host.active, self.queue(app, host)
+                result = app.runner.step(app.config.objective)
+                self.assertIn('state cannot be checkpointed', result.event['reason'])
+                self.assertEqual((result.decision_steps, harness.binds, harness.closes, candidate.closes), (0, 1, 1, 1))
+                self.assertIs(host.active, old)
+                self.assertIs(app.assembly.host_execution.endpoint, old.endpoint)
+                self.assertEqual((old.policy.closes, host.pending, host.archives, host._retired), (0, None, [], []))
+                self.assertIsNone(app.recovery.intervention)
+                self.assertEqual(adopted_events(app), [])
+                rejected, = [row.details['event']['output'] for row in app.experience.retrieve(kinds=('controller_event',))
+                             if row.details['event']['kind'] == 'controller_adoption_rejected']
+                self.assertEqual((rejected['controller_version'], rejected['error_type']), (version.version_id, error_type))
+                self.assertEqual(app.run(wait_for_jobs=True).status, 'finished')
+
+    def test_binding_is_checked_on_the_restored_policy_for_adoption_seed_and_resume(self):
+        class Ruler(Policy):
+            unit = 'cm'
+            def required_lab_bindings(self): return {'work': {'unit': self.unit}}
+            def state(self): return {'unit': self.unit}
+            def restore(self, state): self.unit = state['unit']
+
+        class Centimeters(Lab):
+            def validate_binding(self, requirement):
+                if requirement != {'unit': 'cm'}:
+                    raise ValueError('Only centimeters are measured')
+
+        app, host = self.application(ControllerDefinition(lambda *_: Ruler()), lab_type=Centimeters, durable=True)
         old = host.active
-        version = self.queue(app, host, make_version(policy_state={'decisions': 3}))
-        with self.assertRaisesRegex(RuntimeError, 'candidate restore failed'):
-            host.advance()
+        self.queue(app, host, make_version(policy_state={'unit': 'mm'}))
+        self.assertIn('incompatible with its Labs', app.runner.step(app.config.objective).event['reason'])
+        self.assertIs(host.active, old)
+        self.assertIsNone(host.pending)
+        self.assertEqual(adopted_events(app), [])
+        self.queue(app, host, make_version(policy_state={'unit': 'cm'}))
+        self.assertIn('Controller adopted:', app.runner.step(app.config.objective).event['reason'])
+
+        config, modules = app.config, app.modules
+        # Save an instance whose dynamic requirements no longer match its Lab.
+        host.active.policy.unit = 'mm'
+        app.runner.step(config.objective)
+        app.close()
+        with self.assertRaisesRegex(ValueError, 'Only centimeters'):
+            Application.resume(config.data_dir, modules=modules)
+        seed_config = replace(config, data_dir=Path(self.enterContext(TemporaryDirectory())))
+        with self.assertRaisesRegex(ValueError, 'Only centimeters'):
+            Application(seed_config, modules=modules, _initial_controller_version=make_version(policy_state={'unit': 'mm'}))
+
+    def test_resume_checks_fixed_endpoint_after_lab_and_policy_restore(self):
+        from rsicomposer.api import restore_snapshot
+        from rsicomposer.assembly import ModuleAssembly
+        from rsicomposer.method_state import method_state_factory
+
+        class Fixed(Policy):
+            def required_operations(self):
+                return ('work.other',) if self.decisions else ('work.start',)
+
+        root = Path(self.enterContext(TemporaryDirectory()))
+        lab = MethodDefinition.from_factories(controller=lambda *_: Fixed(), labs={'work': lambda *_: Lab()},
+                                             version='1').factory({}).lab_factory
+        modules = ModuleAssembly(lab_factory=lab, state_factory=method_state_factory,
+            decision_factory=lambda ctx, group: build_harness_decision(ctx, group, policy=Fixed(), harness=Harness()))
+        with Application(ApplicationConfig('fixed endpoint', root, {}, {}), modules=modules, durable=True) as app:
+            app.runner.step(app.config.objective)
+            capture = LocalSnapshotCapture(app)
+            snapshot = capture.store.directory(capture.capture('fixed Controller').snapshot_id)
+        with self.assertRaisesRegex(ValueError, 'missing Lab operations: work.other'):
+            Application.resume(root, modules=modules)
+        with self.assertRaisesRegex(ValueError, 'missing Lab operations: work.other'):
+            restore_snapshot(snapshot, root / 'restored', modules=modules)
+
+    def test_custom_adapter_restoring_lab_last_cannot_invalidate_hosted_controller(self):
+        from rsicomposer.method_state import method_state_factory
+
+        class Ruler(Policy):
+            def required_lab_bindings(self): return {'work': {'unit': 'cm'}}
+
+        class Scale(Lab):
+            unit = 'cm'
+            def validate_binding(self, requirement):
+                if requirement['unit'] != self.unit:
+                    raise ValueError('Restored Lab has mismatched units')
+            def state(self): return {'unit': self.unit}
+            def restore(self, state): self.unit = state['unit']
+
+        def adapters(ctx, decision):
+            bound = method_state_factory(ctx, decision)
+            return {key: bound[key] for key in ('execution', 'decision', 'lab_execution')}
+
+        root = Path(self.enterContext(TemporaryDirectory()))
+        standard = MethodDefinition.from_factories(controller=lambda *_: Ruler(), labs={'work': lambda *_: Scale()},
+                                                  version='1').factory({})
+        modules = replace(standard, state_factory=adapters)
+        with Application(ApplicationConfig('restore both sides', root, {}, {}), modules=modules, durable=True) as app:
+            app.assembly.lab_execution.labs['work'].unit = 'mm'
+            app.runner.step(app.config.objective)
+        with self.assertRaisesRegex(ValueError, 'Restored Lab has mismatched units'):
+            with Application.resume(root, modules=modules):
+                self.fail('A late Lab restore invalidated the already checked Controller')
+
+    def test_non_durable_controller_without_state_runs_without_advertising_adoption(self):
+        class NoArchive(Policy):
+            state = restore = None
+
+        for initial in (True, False):
+            with self.subTest(initial=initial):
+                app, host = self.application(ControllerDefinition(lambda *_: NoArchive()),
+                                             old_policy=NoArchive() if initial else Policy())
+                if not initial:
+                    self.queue(app, host)
+                    self.assertIn('Controller adopted:', host.advance().reason)
+                space = host.active.endpoint.action_space
+                visible = {spec.name for spec in space.describe()}
+                self.assertIn('work.start', visible)
+                self.assertNotIn('host.adopt_controller', visible)
+                ref = save_controller_version(app.artifacts, make_version())
+                with self.assertRaises(PermissionError):
+                    space.validate(OperationCall('host.adopt_controller', {'version': ref}))
+                with self.assertRaisesRegex(ValueError, 'archivable'):
+                    host.request_version(ref)
+                self.assertEqual(app.run(wait_for_jobs=True).status, 'finished')
+
+    def test_non_durable_context_only_memory_runs_without_advertising_adoption(self):
+        from rsicomposer.harnesses.decision.feedback.context_memory import CallbackContextMemory
+        memory = lambda _: MemoryAssembly(ResearchAssembly(context_memory=CallbackContextMemory(lambda query: '')))
+        app, host = self.application(ControllerDefinition(lambda *_: Policy()), old_memory=memory,
+                                     model=ModelRef('mock', 'fixture', 'v1'))
+        self.assertNotIn('host.adopt_controller', {spec.name for spec in host.active.endpoint.action_space.describe()})
+        with self.assertRaisesRegex(ValueError, 'archivable'):
+            host.request_version(save_controller_version(app.artifacts, make_version()))
+        self.assertEqual(app.run(wait_for_jobs=True).status, 'finished')
+
+    def test_durable_adoption_does_not_require_portable_snapshot(self):
+        class DurableOnly(Policy):
+            def validate_snapshot(self):
+                raise RuntimeError('not portable')
+
+        app, host = self.application(ControllerDefinition(lambda *_: DurableOnly()), durable=True)
+        version = self.queue(app, host)
+        self.assertEqual(app.runner.step(app.config.objective).event['reason'], 'Controller adopted: ' + version.version_id)
+        self.assertIsNone(app.recovery.intervention)
+        with self.assertRaisesRegex(RuntimeError, 'not portable'):
+            LocalSnapshotCapture(app).capture('unsupported')
+
+    def test_durable_restore_rejects_unencodable_reconstructed_state(self):
+        class Opaque(Policy):
+            def state(self):
+                return {'opaque': object()}
+
+        candidate, harness = Opaque(), Harness()
+        app, host = self.application(ControllerDefinition(lambda *_: candidate, harness=lambda *_: harness), durable=True)
+        old = host.active
+        saved = replacement_checkpoint(app, host)
+        with self.assertRaisesRegex(TypeError, 'Unsupported checkpoint state type'):
+            host.restore(saved)
         self.assertIs(host.active, old)
         self.assertIs(app.assembly.host_execution.endpoint, old.endpoint)
-        self.assertEqual(host.pending['version'], version)
-        self.assertEqual((candidate.closes, harness.closes, harness.binds), (1, 1, 0))
-        self.assertEqual(old.policy.closes, 0)
+        self.assertEqual((harness.binds, harness.closes, candidate.closes, old.policy.closes), (1, 1, 1, 0))
         self.assertEqual(adopted_events(app), [])
+
+    def test_feedback_listeners_release_on_rejected_build_retirement_and_failed_close(self):
+        class Memory:
+            def context(self, query): return ''
+            def export(self): return {}
+            def restore(self, state): pass
+
+        class InstalledMemory(MemoryAssembly):
+            def install(self, endpoint, **kwargs):
+                service = super().install(endpoint, **kwargs)
+                if fail_build.pop(0):
+                    raise ValueError('failed after listener installation')
+                return service
+
+        fail_build = [False, True, False]
+        definition = ControllerDefinition(lambda *_: Policy(), harness=lambda *_: Harness(),
+            memory=lambda _: InstalledMemory(ResearchAssembly(context_memory=Memory())))
+        app, host = self.application(definition, model=ModelRef('mock', 'fixture', 'v1'), durable=True)
+        listeners = app.assembly.host_execution._receipt_listeners
+        self.queue(app, host)
+        host.advance()
+        old = host.active
+        self.assertEqual([owner for owner, _ in listeners], [old.endpoint.harness])
+        self.queue(app, host, replace(make_version(), version_id='again'))
+        result = app.runner.step(app.config.objective)
+        self.assertIn('candidate construction failed', result.event['reason'])
+        self.assertIsNone(host.pending)
+        self.assertIsNone(app.recovery.intervention)
+        self.assertEqual([owner for owner, _ in listeners], [old.endpoint.harness])
+        self.queue(app, host, replace(make_version(), version_id='again'))
+        with patch.object(old.endpoint.integration.learning, 'close', side_effect=RuntimeError('cleanup failure')):
+            with self.assertRaisesRegex(ExceptionGroup, 'Retired Controller cleanup failed'):
+                host.advance()
+        self.assertEqual([owner for owner, _ in listeners], [host.active.endpoint.harness])
+        host.stop_checkpoint()
+        app.close()
+        self.assertEqual(listeners, [])
+
+    def test_adopted_versions_retire_local_scope_but_share_live_run_services(self):
+        from rsicomposer.assembly import AssemblyContext
+
+        contexts, retired = [], []
+
+        def build(ctx, options):
+            contexts.append(ctx)
+            ctx.add_cleanup(lambda: retired.append(ctx.data_dir))
+            return Policy()
+
+        app, host = self.application(ControllerDefinition(build), model=ModelRef('mock', 'fixture', 'v1'))
+        first = self.queue(app, host)
+        host.advance()
+        first_owner = host.active.context
+        [previous] = contexts
+        self.assertNotIsInstance(first_owner, AssemblyContext)
+        event = previous.record('interpretation', {'message': 'local scope'})
+        self.assertEqual(event.identity['controller_version'], first.version_id)
+        artifact = previous.artifacts.put(b'shared evidence', kind='note')
+
+        second = self.queue(app, host, replace(first, version_id='successor'))
+        host.advance()
+        current = contexts[1]
+        self.assertNotEqual(previous.data_dir, current.data_dir)
+        self.assertEqual(retired, [previous.data_dir])
+        with self.assertRaisesRegex(RuntimeError, 'closed'):
+            previous.record('stale')
+        with self.assertRaisesRegex(RuntimeError, 'closed'):
+            previous.add_cleanup(lambda: None)
+        self.assertIs(previous.models, current.models)
+        self.assertIs(previous.executor, current.executor)
+        self.assertEqual(current.models.direct_attribution()['component'], 'controller')
+        self.assertEqual(current.artifacts.read(artifact), b'shared evidence')
+        self.assertIn(event.event_id, [row.event_id for row in current.evidence_view().events()])
+        self.assertEqual(current.record('continuation').identity['controller_version'], second.version_id)
+        app.close()
+        self.assertEqual(retired, [previous.data_dir, current.data_dir])
+
+    def test_separate_factories_transfer_cleanup_once_and_leave_borrowed_resources_live(self):
+        policies, harnesses, order = [], [], []
+        run_resource, first_resource = Policy(), Policy()
+
+        class TrackedPolicy(Policy):
+            def close(self):
+                order.append(('policy', self))
+                super().close()
+
+        def policy(ctx, options):
+            item = TrackedPolicy()
+            policies.append(item)
+            ctx.add_cleanup(item.close)
+            ctx.add_owned_cleanup(run_resource.close)
+            # Only the first factory acquires this resource. The second factory
+            # cannot claim it even on a failed build before returning its Harness.
+            ctx.add_owned_cleanup(first_resource.close)
+            return item
+
+        def harness(ctx, options):
+            owning_policy = policies[-1]
+            ctx.add_cleanup(lambda: order.append(('dependency', owning_policy)))
+            ctx.add_owned_cleanup(owning_policy.close)
+            if options.get('fail'):
+                raise ValueError('failure before the candidate Harness was returned')
+            item = Harness()
+            harnesses.append(item)
+            ctx.add_owned_cleanup(item.close)
+            return item
+
+        app, host = self.application(ControllerDefinition(policy, harness=harness))
+        app.assembly.add_owned_cleanup(run_resource.close)
+        version = self.queue(app, host)
+        host.advance()
+        self.queue(app, host, replace(version, version_id='failed',
+            config={'name': 'replacement', 'config': {'fail': True}}))
+        with self.assertRaisesRegex(ValueError, 'before the candidate Harness'):
+            host.advance()
+        self.assertEqual([p.closes for p in policies], [0, 1])
+        self.assertEqual((run_resource.closes, first_resource.closes), (0, 0))
+        app.close()
+        self.assertEqual([p.closes for p in policies], [1, 1])
+        self.assertEqual([h.closes for h in harnesses], [1])
+        self.assertEqual((run_resource.closes, first_resource.closes), (1, 1))
+        self.assertEqual(order, [(kind, policy) for policy in reversed(policies) for kind in ('dependency', 'policy')])
+
+    def test_fresh_adapter_cannot_claim_borrowed_policy_on_rejection(self):
+        from rsicomposer.harnesses.decision.public_policy import ResearchPolicyAdapter
+
+        active = Policy()
+
+        def factory(ctx, options):
+            adapter = ResearchPolicyAdapter(active, None)
+            ctx.add_owned_cleanup(adapter.close)
+            return adapter
+
+        app, host = self.application(ControllerDefinition(factory), old_policy=active)
+        self.queue(app, host)
+        with self.assertRaisesRegex(TypeError, 'independently owned policy'):
+            host.advance()
+        self.assertEqual(active.closes, 0)
+        app.close()
+        self.assertEqual(active.closes, 1)
 
     def test_shared_policy_is_rejected_without_closing_active_policy(self):
         old_policy = Policy()
@@ -293,6 +734,80 @@ class ControllerAdoptionTests(unittest.TestCase):
             host.advance()
         self.assertEqual((old_policy.closes, new_harness.closes, new_harness.binds), (0, 1, 0))
         self.assertEqual(adopted_events(app), [])
+
+    def test_endpoint_owns_independent_parts_once_across_retirement_and_close(self):
+        from rsicomposer.harnesses.decision.public_policy import ResearchPolicyAdapter
+        from rsicomposer.harnesses.defaults import build_default_decision
+
+        class Both(Harness):
+            def decide(self, window):
+                return Decision('finish')
+
+        for mode in ('independent', 'shared', 'native-adapter'):
+            with self.subTest(mode=mode):
+                pairs, native_closes = [], []
+
+                def factory(context, lab, cfg):
+                    if mode == 'native-adapter':
+                        policy = Policy()
+                        policy.model = None
+                        loop = build_default_decision(context, lab, policy=policy)
+                        harness = loop.harness
+                        loop.policy = ResearchPolicyAdapter(policy, harness)
+                        harness.add_cleanup(lambda: native_closes.append(harness))
+                        harness.add_cleanup(policy.close)  # Existing native endpoint ownership.
+                        context.add_owned_cleanup(loop.policy.close)
+                    else:
+                        harness = Both() if mode == 'shared' else Harness()
+                        policy = harness if mode == 'shared' else Policy()
+                        loop = build_harness_decision(context, lab, policy=policy, harness=harness)
+                    context.add_owned_cleanup(harness.close)
+                    pairs.append((policy, harness))
+                    return loop
+
+                app, host = self.application(ControllerDefinition(factory, endpoint=True))
+                for ident in ('one', 'two'):
+                    self.queue(app, host, replace(make_version(), version_id=ident))
+                    host.advance()
+                app.close()
+                self.assertEqual([p.closes for p, _ in pairs], [1, 1])
+                if mode == 'native-adapter':
+                    self.assertEqual(native_closes, [h for _, h in pairs])
+                else:
+                    self.assertEqual([h.closes for _, h in pairs], [1, 1])
+
+    def test_endpoint_close_failure_retains_policy_until_harness_cleanup_succeeds(self):
+        policy, harness = Policy(), Harness(fail_close=1)
+
+        def factory(ctx, lab, cfg):
+            ctx.add_owned_cleanup(policy.close)
+            ctx.add_owned_cleanup(harness.close)
+            return build_harness_decision(ctx, lab, policy=policy, harness=harness)
+
+        app, host = self.application(ControllerDefinition(factory, endpoint=True))
+        self.queue(app, host)
+        host.advance()
+        with self.assertRaisesRegex(RuntimeError, 'harness close failed'):
+            app.close()
+        self.assertEqual((harness.closes, policy.closes), (1, 0))
+        app.close()
+        app.close()
+        self.assertEqual((harness.closes, policy.closes), (2, 1))
+
+    def test_endpoint_borrowing_harness_closes_only_its_fresh_policy(self):
+        new_policy, old_harness = Policy(), Harness()
+
+        def factory(context, lab, cfg):
+            context.add_owned_cleanup(old_harness.close)
+            return build_harness_decision(context, lab, policy=new_policy, harness=old_harness)
+
+        app, host = self.application(ControllerDefinition(factory, endpoint=True), old_harness=old_harness)
+        self.queue(app, host)
+        with self.assertRaisesRegex(TypeError, 'independently owned harness'):
+            host.advance()
+        self.assertEqual((new_policy.closes, old_harness.closes), (1, 0))
+        app.close()
+        self.assertEqual((new_policy.closes, old_harness.closes), (1, 1))
 
     def test_failed_memory_install_preserves_owned_close_for_application_close(self):
         candidate, harness = Policy(), Harness(fail_close=1)
@@ -358,8 +873,7 @@ class ControllerAdoptionTests(unittest.TestCase):
         app, host = self.application(definition)
         execution = app.assembly.host_execution
         old, old_version = host.active, host.version_id
-        saved = host.capture()
-        saved['current_version'] = make_version()
+        saved = replacement_checkpoint(app, host)
         execution.state.finished = True
         with self.assertRaisesRegex(RuntimeError, 'recovered bind failed'):
             host.restore(saved)

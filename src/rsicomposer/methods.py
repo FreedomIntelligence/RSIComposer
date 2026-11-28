@@ -4,7 +4,7 @@ A method builds a ModuleAssembly, either as a whole implementation or as an
 optional component graph. Selecting a method never runs its research lifecycle.
 """
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, fields, replace
 import json
 import re
 from copy import deepcopy
@@ -84,10 +84,10 @@ class ControllerDefinition:
     With endpoint=True, policy(context, execution, config) instead returns an
     assembled decision endpoint that owns its Harness; harness must be omitted.
     """
-    policy: Callable
-    memory: Callable | None = None
+    policy: Callable = field(metadata={'factory': True})
+    memory: Callable | None = field(default=None, metadata={'factory': True})
     endpoint: bool = False
-    harness: Callable | None = None
+    harness: Callable | None = field(default=None, metadata={'factory': True})
 
     def __post_init__(self):
         if not callable(self.policy):
@@ -100,19 +100,37 @@ class ControllerDefinition:
         if self.endpoint and self.harness is not None:
             raise ValueError('An endpoint factory builds its own Harness; omit harness')
 
+    def describe_factories(self, identify):
+        """Describe the same parts for assembly fingerprints and explicit Python references."""
+        def describe(item):
+            part = getattr(self, item.name)
+            return identify(part) if item.metadata.get('factory') and part is not None else part
+        return {item.name: describe(item) for item in fields(self)}
+
+    @classmethod
+    def from_factory_refs(cls, description, resolve):
+        parts = fields(cls)
+        if not isinstance(description, dict) or description.keys() != {part.name for part in parts}:
+            raise ValueError('Invalid explicit Controller definition')
+        return cls(**{part.name: resolve(description[part.name])
+                      if part.metadata.get('factory') and description[part.name] is not None
+                      else description[part.name] for part in parts})
+
+
+def _validate_options(validator, config):
+    if validator is not None and validator(deepcopy(config)) is not None:
+        raise TypeError('Configuration validators must return None')
+
 
 @dataclass(frozen=True)
 class _FactoryDefinition:
     factory: object
     version: str
     validate_config: object = None
-    endpoint: bool = False
-    memory: object = None
-    harness: object = None
+    registered_name: str | None = None
 
     def validate(self, config):
-        if self.validate_config is not None and self.validate_config(deepcopy(config)) is not None:
-            raise TypeError('Configuration validators must return None')
+        _validate_options(self.validate_config, config)
 
 
 @dataclass(frozen=True)
@@ -131,12 +149,12 @@ class MethodDefinition:
     @classmethod
     def from_factories(cls, *, controller, labs, version, validate_controller=None,
                        validate_labs=None, observation_probes=()):
-        """Bind private factories without registering each implementation.
+        """Bind private Lab factories or existing public Lab definitions.
 
         controller is a ControllerDefinition or a policy factory accepting
-        (context, config); Lab factories accept (context, config). Method config
-        contains optional controller options and Lab options keyed by the aliases
-        declared in ``labs``.
+        (context, config); Lab factories accept (context, config). A value from
+        registry.lab(name) keeps its registered name, factory, version and validator.
+        Method config contains optional Controller options and Lab options keyed by alias.
         Resources are only constructed at application launch. For custom
         assembly or component resolution use from_method() or a plain factory.
         """
@@ -152,11 +170,15 @@ class MethodDefinition:
         for alias, factory in labs.items():
             if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', alias):
                 raise ValueError('Lab aliases must be simple names without dots')
-            definitions[alias] = _FactoryDefinition(factory, version, validate_labs.get(alias))
-        policy = _FactoryDefinition(controller.policy, version, validate_controller,
-                                    endpoint=controller.endpoint, memory=controller.memory,
-                                    harness=controller.harness)
-        for definition in (policy, *definitions.values()):
+            if isinstance(factory, _FactoryDefinition):
+                if alias in validate_labs:
+                    raise ValueError(f'Registered Lab already owns its configuration validator: {alias}')
+                definitions[alias] = factory
+            else:
+                definitions[alias] = _FactoryDefinition(factory, version, validate_labs.get(alias))
+        if validate_controller is not None and not callable(validate_controller):
+            raise TypeError('Configuration validators must be callable')
+        for definition in definitions.values():
             if not callable(definition.factory):
                 raise TypeError('Method component factories must be callable')
             if definition.validate_config is not None and not callable(definition.validate_config):
@@ -172,7 +194,7 @@ class MethodDefinition:
                 raise TypeError('Method controller and labs options must be objects')
             if set(lab_options) - set(definitions):
                 raise ValueError('Unknown method Lab alias: ' + ', '.join(sorted(set(lab_options) - set(definitions))))
-            policy.validate(options)
+            _validate_options(validate_controller, options)
             selected = []
             for alias, definition in definitions.items():
                 params = lab_options.get(alias, {})
@@ -182,8 +204,8 @@ class MethodDefinition:
                 if type(capacity) is not int or capacity < 1:
                     raise ValueError("Lab max_concurrent must be a positive integer")
                 definition.validate({key: value for key, value in params.items() if key != "max_concurrent"})
-                selected.append((alias, definition, deepcopy(params)))
-            return _build_policy_assembly(policy, deepcopy(options), selected)
+                selected.append((alias, definition, _json(params)))
+            return _build_policy_assembly(controller, deepcopy(options), selected, validate_controller)
 
         return cls(build, version, observation_probes=observation_probes)
 

@@ -29,10 +29,15 @@ offers one local tool, `note`, that stores a line of text in that summary.
 from rsicomposer.api import DecisionInput, OperationResult, OperationSpec
 
 
+def validate_rows(rows):
+    if type(rows) is not int or rows < 1:
+        raise ValueError('scoreboard_rows must be a positive integer')
+
+
 class ScoreboardHarness:
-    def __init__(self, context, config):
-        # Called as factory(context, config), like Policy and Lab factories.
-        self.limit = config.get('scoreboard_rows', 20)
+    def __init__(self, rows=20):
+        validate_rows(rows)
+        self.limit = rows
         self.rows = []
 
     def window(self, objective, capabilities, feedback):

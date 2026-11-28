@@ -65,6 +65,7 @@ _EXPORTS = {
     'ComponentGraph': ('rsicomposer.components', 'ComponentGraph'),
     'LangMemMemory': ('rsicomposer.harnesses.decision.langmem', 'LangMemMemory'),
     'ControllerMemory': ('rsicomposer.loops.contracts.feedback_context', 'ControllerMemory'),
+    'Capability': ('rsicomposer.loops.decision_making.action_space.capabilities', 'Capability'),
     'ContextQuery': ('rsicomposer.loops.contracts.feedback_context', 'ContextQuery'),
     'EvidenceEvent': ('rsicomposer.loops.contracts.feedback_context', 'EvidenceEvent'),
     'RecoveryContract': ('rsicomposer.runtime.state.contracts', 'RecoveryContract'),
@@ -440,6 +441,7 @@ if _TYPE_CHECKING:
     from rsicomposer.components import ComponentDefinition as ComponentDefinition
     from rsicomposer.components import ComponentGraph as ComponentGraph
     from rsicomposer.loops.contracts.feedback_context import ControllerMemory as ControllerMemory
+    from rsicomposer.loops.decision_making.action_space.capabilities import Capability as Capability
     from rsicomposer.loops.contracts.feedback_context import ContextQuery as ContextQuery
     from rsicomposer.loops.contracts.feedback_context import EvidenceEvent as EvidenceEvent
     from rsicomposer.runtime.state.contracts import RecoveryContract as RecoveryContract

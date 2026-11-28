@@ -1,13 +1,13 @@
 """Explicit host-evidence adapter for the independent feedback service.
 
 Controller harnesses own context projection; the host owns execution facts.
-Other harnesses supply FeedbackAdapter rather than inheriting this implementation.
+Four-port Harnesses receive the public Memory projection without extra hooks.
 """
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import asdict, replace
 
 from rsicomposer.harnesses.decision.context import result_id
-from rsicomposer.harnesses.decision.engine import ResearchControllerHarness
 from rsicomposer.harnesses.decision.feedback import (
     FeedbackEvidence,
     FeedbackLearningService,
@@ -22,6 +22,7 @@ from rsicomposer.loops.contracts.decision import (
     OperationSpec,
 )
 from rsicomposer.loops.contracts.feedback_context import ContextQuery
+from rsicomposer.loops.decision_making.action_space.capabilities import Capability
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
 from rsicomposer.loops.contracts.model_service import ModelRef
 from rsicomposer.runtime.capabilities import optional_method
@@ -65,16 +66,19 @@ class HostFeedbackAdapter:
 
     def install(self, service):
         self.service = service
-        if isinstance(self.harness, ResearchControllerHarness):
-            self.harness.install_feedback(service, self)
-        self.execution.add_receipt_listener(self._receive_operation, owner=self.harness)
+        bind = optional_method(self.harness, 'bind_feedback')
+        self._projects_in_harness = bind is not None
+        self._delivered = optional_method(self.harness, 'receipt_context_delivered')
+        with ExitStack() as cleanup:
+            cleanup.callback(self.execution.add_receipt_listener(self._receive_operation, owner=self.harness))
+            if bind is not None:
+                cleanup.callback(bind(service))
+            return cleanup.pop_all().close
 
     def project_window(self, window):
-        if isinstance(self.harness, ResearchControllerHarness):
+        if self._projects_in_harness:
             return window
-        self.service.refresh()
-        text = self.service.context(ContextQuery(objective=window.objective))
-        return replace(window, context='\n\n'.join(part for part in (window.context, text) if part))
+        return self.service.memory_window(window)
 
     def _receive_operation(self, receipt):
         # Denied operations are absent from the authorized catalog, so their
@@ -82,7 +86,7 @@ class HostFeedbackAdapter:
         # feedback about reading feedback, including denied reads.
         if not receipt.read_only and receipt.request.get('name') != READ_SPEC.name:
             ident = self.service.observe(receipt, evidence=self.receipt_evidence(receipt))
-            if isinstance(self.harness, ResearchControllerHarness) and self.harness.receipt_context_delivered(receipt.task_id):
+            if self._delivered is not None and self._delivered(receipt.task_id):
                 self.service.learning.acknowledge_context_delivery(ident)
             return ident
         # Raw queries belong to the trajectory; reading feedback must not
@@ -164,7 +168,13 @@ class HostFeedbackAdapter:
         scope['controller_version'] = self._controller_version()
         return {**scope, 'snapshot_digest': result_id(scope)}
 
-    def project_context(self, context):
+
+class ResearchFeedbackProjection:
+    """The optional rich view owned by the native research Harness."""
+    def __init__(self, harness, service):
+        self.harness, self.service = harness, service
+
+    def __call__(self, context):
         self.service.refresh()
         context = replace(context, memories=self.harness.memory.recall(limit=self.harness.memory_limit))
         jobs = self.service.learning.ordered_jobs()
@@ -185,20 +195,12 @@ class HostFeedbackAdapter:
             'recent': [{key: deepcopy(row[key]) for key in
                        ('event_id', 'product', 'authority', 'applied', 'read_path')} for row in outputs[-6:]]}
         proposals = self.service.proposals()
-        navigation['harness_proposals'] = {'total': len(proposals),
-            'read_path': {'operation': 'feedback_learning_read', 'view': 'proposals', 'target': 'harness'},
-            'construction_owner': 'main_meta_agent_decision',
-            'recent': [{'proposal_id': p['proposal_id'], 'subject': p['subject'],
-                'content_preview': p['proposal']['content'][:200], 'read_path': p['read_path'],
-                'decision_links': p['decision_links'][-4:], 'applied': False} for p in proposals[-6:]]}
-        improvements = [p for p in self.service.proposals(target=None)
-                        if p['kind'] in ('harness_change', 'policy_training')]
-        navigation['improvement_proposals'] = {'total': len(improvements),
+        navigation['proposals'] = {'total': len(proposals),
             'read_path': {'operation': 'feedback_learning_read', 'view': 'proposals'},
             'decision_owner': 'main_meta_agent_decision', 'dataset_construction_owner': 'lab',
-            'recent': [{'proposal_id': p['proposal_id'], 'kind': p['kind'], 'subject': p['subject'],
+            'recent': [{'proposal_id': p['proposal_id'], 'kind': p['kind'], 'target': p['target'], 'subject': p['subject'],
                 'content_preview': p['proposal']['content'][:200], 'read_path': p['read_path'],
-                'decision_links': p['decision_links'][-4:], 'applied': False} for p in improvements[-6:]]}
+                'decision_links': p['decision_links'][-4:], 'applied': False} for p in proposals[-6:]]}
         context = replace(context, research_agenda={**context.research_agenda, 'feedback_learning': navigation})
         memory_context = self.service.context(ContextQuery(objective=context.objective))
         navigation['context_error'] = deepcopy(self.service.learning.state.get('context_error'))
@@ -222,9 +224,8 @@ READ_SPEC = OperationSpec('feedback_learning_read',
     'Trajectory archival defaults on but may be disabled/replaced; check trajectory.enabled before /trajectory. '
     'Read /trajectory_snapshot for an immutable raw capture. '
     'Dataset construction, filtering, labeling and policy training belong to an explicitly configured Lab. '
-    'Harness and policy_training task proposals can be referenced by feedback_proposal_ids in a later ordinary decision; '
+    'Published task proposals can be referenced by feedback_proposal_ids in a later ordinary decision; '
     'feedback does not construct datasets, train or activate changes. '
-    'Proposal targets are context_memory, harness, weights '
     'Attempt views return latest revisions; proposals stay unverified. '
     'These are unverified proposals, never applied changes or training-ready examples. '
     'Omit job_id to list jobs; use next_offset for the next page. '
@@ -236,8 +237,6 @@ READ_SPEC = OperationSpec('feedback_learning_read',
     'Knowledge views also return JSON-text pages; pass sha256 as expected_digest on subsequent pages.',
     {'type': 'object', 'properties': {
         'view': {'enum': ['jobs', 'attempts', 'proposals', 'trajectories']},
-        'target': {'enum': ['context_memory', 'harness', 'weights', 'system'],
-                   'description': 'Filter proposals only; requires view=proposals. Omit for job reads.'},
         'expected_digest': {'type': 'string', 'minLength': 64, 'maxLength': 64},
         'job_id': {'type': 'string', 'minLength': 1},
         'evidence_path': {'type': 'string', 'maxLength': 1000,
@@ -249,7 +248,7 @@ READ_SPEC = OperationSpec('feedback_learning_read',
      'additionalProperties': False}, read_only=True)
 
 
-def _read_arguments(arguments):
+def _read_arguments(arguments, targets):
     if not isinstance(arguments, dict) or set(arguments) - {'job_id', 'research_attempt_id', 'offset', 'limit',
                                                           'evidence_path', 'view', 'target', 'expected_digest'}:
         raise OperationArgumentError('Invalid feedback_learning_read arguments')
@@ -258,9 +257,8 @@ def _read_arguments(arguments):
         raise OperationArgumentError('Invalid feedback view')
     if view != 'jobs' and ('job_id' in arguments or 'evidence_path' in arguments):
         raise OperationArgumentError('Knowledge view cannot be combined with job evidence')
-    if 'target' in arguments and (view != 'proposals' or arguments['target'] not in
-                                ('context_memory', 'harness', 'weights', 'system')):
-        raise OperationArgumentError('target requires a proposals view')
+    if 'target' in arguments and (view != 'proposals' or arguments['target'] not in targets):
+        raise OperationArgumentError('target requires a proposals view and an installed proposal target')
     if 'expected_digest' in arguments and (not isinstance(arguments['expected_digest'], str)
             or len(arguments['expected_digest']) != 64):
         raise OperationArgumentError('Invalid expected_digest')
@@ -284,79 +282,67 @@ def _read_arguments(arguments):
     return deepcopy(arguments)
 
 
-class LearningActionSpace:
-    def __init__(self, base):
-        if any(spec.name == READ_SPEC.name for spec in base.describe()):
-            raise ValueError('feedback_learning_read is already installed')
-        self.base = base
+def feedback_read_capability(learning):
+    targets = sorted({rule.target for rule in learning.proposal_targets.values()})
+    schema = deepcopy(READ_SPEC.input_schema)
+    if targets:
+        schema['properties']['target'] = {'enum': targets, 'description': 'Filter by an installed target; requires view=proposals.'}
+    spec = replace(READ_SPEC, input_schema=schema)
 
-    @property
-    def permissions(self):
-        # Authorization intentionally ignores attributes fabricated by __getattr__.
-        return self.base.permissions
-
-    def __getattr__(self, name):
-        return getattr(self.base, name)
-
-    def describe(self):
-        return (*self.base.describe(), deepcopy(READ_SPEC))
-
-    def validate(self, call):
-        if call.name == READ_SPEC.name:
-            return OperationCall(call.name, _read_arguments(call.arguments))
-        return self.base.validate(call)
-
-
-class LearningTools:
-    def __init__(self, base, learning):
-        self.base, self.learning = base, learning
-
-    def __getattr__(self, name):
-        return getattr(self.base, name)
-
-    @property
-    def definitions(self):
-        return (*self.base.definitions, _FeedbackReadDefinition())
-
-    def execute(self, call):
-        if call.name != READ_SPEC.name:
-            return self.base.execute(call)
+    def execute(arguments):
         try:
-            arguments = _read_arguments(call.arguments)
-        except OperationArgumentError as exc:
-            return self._read_failure(call, exc)
-        try:
-            data = self.learning.read(**arguments)
+            data = learning.read(**arguments)
         except EvidencePathError as exc:
-            return self._read_failure(call, exc)
+            return OperationResult('Feedback read rejected', (), False, ExecutionStatus.FAILED, str(exc),
+                data={'view': arguments.get('view', 'jobs'), 'job_id': arguments.get('job_id'),
+                      'evidence_path': arguments.get('evidence_path'), 'read_operation': READ_SPEC.name})
         return OperationResult('Feedback learning proposals; validation still required', (),
                                bool(data.get('simulated', False)), data=data)
 
-    @staticmethod
-    def _read_failure(call, error):
-        arguments = call.arguments if isinstance(call.arguments, dict) else {}
-        return OperationResult('Feedback read rejected', (), False,
-            ExecutionStatus.FAILED, str(error), data={
-                'view': arguments.get('view', 'jobs'),
-                'job_id': arguments.get('job_id'),
-                'evidence_path': arguments.get('evidence_path'),
-                'read_operation': READ_SPEC.name})
+    return Capability.from_spec(spec, lambda args: OperationCall(spec.name, _read_arguments(args, targets)), execute)
 
 
-class _FeedbackReadDefinition:
-    spec = READ_SPEC
+def enable_feedback_learning(base_loop, **options):
+    """Standalone integration: an explicit Harness cleanup port or caller owns the service."""
+    service = build_feedback_service(base_loop, **options)
+    register = optional_method(base_loop.harness, 'add_cleanup')
+    rollback = None
+    try:
+        rollback = install_feedback_service(base_loop, service)
+        if register is not None:
+            register(service.close)
+    except BaseException as error:
+        if rollback is not None:
+            rollback()
+        close_failed_install(service, error, register=register)
+        raise
+    return base_loop.harness
 
-    def validate(self, arguments):
-        return OperationCall(self.spec.name, _read_arguments(arguments))
+
+def install_feedback_service(loop, service):
+    contribute = optional_method(service.memory, 'capabilities')
+    tools = (feedback_read_capability(service.learning), *(contribute() if contribute else ()))
+    rollback_tools = loop.install_capabilities(tools)
+    try:
+        service.install_adapter()
+    except BaseException:
+        rollback_tools()
+        raise
+    loop.integration = service
+
+    def rollback():
+        loop.integration = None
+        rollback_tools()
+    return rollback
 
 
-def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, adapter=None, model_provider=None,
+def build_feedback_service(base_loop, *, path=None, backend=None, model=None, adapter=None, model_provider=None,
                              **options):
-    """Attach once before execution, retaining harness and compactor identities.
+    """Build this version's feedback service without installing listeners or tools.
 
     An explicit backend may differ from the decision backend. It must enforce its
     host's shared admission/budget when that deployment has a global call limit.
-    Custom harnesses supply a FeedbackAdapter with lifecycle/context integration.
+    Four-port Harnesses use the public projection; a custom adapter may replace it.
     """
     from rsicomposer.harnesses.decision.feedback.learning import bind_feedback_processor
     base = base_loop.harness
@@ -394,14 +380,13 @@ def enable_feedback_learning(base_loop, *, path=None, backend=None, model=None, 
         raise ValueError('Feedback inference requires a model backend')
     backend = serialized(backend) if backend is not None else None
     learning = FeedbackLearning(backend, path=path, **options)
-    service = FeedbackLearningService(learning, adapter)
-    if isinstance(adapter, HostFeedbackAdapter) and isinstance(base, ResearchControllerHarness):
-        space = LearningActionSpace(base_loop.action_space)
-        implementation = getattr(policy, 'implementation', policy)
-        parser = getattr(implementation, 'parser', implementation)
-        if hasattr(parser, 'space'):
-            parser.space = space
-        base_loop.action_space = space
-    adapter.install(service)
-    base_loop.integration = service
-    return base
+    return FeedbackLearningService(learning, adapter)
+
+
+def close_failed_install(service, error, *, register):
+    try:
+        service.close()
+    except BaseException as cleanup:
+        error.add_note('Feedback installation cleanup failed: ' + str(cleanup))
+        if register is not None:
+            register(service.close)

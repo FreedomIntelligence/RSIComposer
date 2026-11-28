@@ -1,20 +1,38 @@
 """Keyless regressions for isolation and safe resource settlement."""
 import json
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
+import warnings
 
-from rsicomposer.api import (ActionPermissions, Application, ApplicationConfig, ArtifactRef,
-                             ComponentDefinition, ComponentGraph, ControllerDefinition, Decision, JobRef, JobStatus,
-                             ModuleAssembly, OperationCall, OperationResult, OperationSpec, Registry, SEALED)
-from rsicomposer.harnesses.defaults import build_harness_decision
+from rsicomposer.api import (ActionPermissions, Application, ApplicationConfig, ArtifactRef, BackendBinding,
+                             ComponentDefinition, ComponentGraph, ControllerDefinition, ControllerPort,
+                             ControllerVersion, Decision, JobRef, JobStatus, MemoryAssembly, ModelRef,
+                             ModuleAssembly, OperationCall, OperationResult, OperationSpec, Registry,
+                             ResearchAssembly, SEALED)
+from rsicomposer.harnesses.defaults import build_default_decision, build_harness_decision
 from rsicomposer.loops.contracts.harness import NullHarness
 from rsicomposer.loops.decision_making.action_space.access import (
     authorized_space, enforce_host_permissions,
 )
 from rsicomposer.runtime.execution.nested import NestedRun
+
+
+def manual_controller_assembly(endpoint, lab_factory, *, close=lambda: None):
+    selection = {'name': 'fixture', 'config': {}}
+
+    def controller(context, lab):
+        instance = SimpleNamespace(endpoint=endpoint(context, lab),
+            context=SimpleNamespace(controller_report=None, _memory_observer=None),
+            capture=lambda: {}, restore=lambda state: None, close=close)
+        return ControllerPort(instance, ControllerVersion('initial', selection))
+
+    return ModuleAssembly(controller_factory=controller, lab_factory=lab_factory,
+        controller_catalog={'fixture': ControllerDefinition(lambda ctx, cfg: lambda window: Decision('finish'))},
+        controller_selection=selection)
 
 
 class ResourceBoundariesTest(unittest.TestCase):
@@ -123,6 +141,7 @@ class ResourceBoundariesTest(unittest.TestCase):
             'registry': modules,
             'direct': ModuleAssembly(decision_factory=decision_factory, lab_factory=lab_factory),
             'graph': ModuleAssembly.from_components(graph, decision='decision', lab='tools'),
+            'manual-port': manual_controller_assembly(decision_factory, lab_factory),
         }
         permissions = ActionPermissions(['fixture.allowed', 'fixture.endpoint_restricted'],
                                         check=lambda request: request.action is None
@@ -148,6 +167,140 @@ class ResourceBoundariesTest(unittest.TestCase):
                             with self.assertRaises(PermissionError):
                                 app.run(max_decision_steps=1, wait_for_jobs=True)
                             self.assertEqual(executed, [('allowed', {})])
+
+    def test_fixed_endpoint_authorizes_memory_tools_after_install(self):
+        host_denied = OperationCall('research_task_read', {})
+        local_denied = OperationCall('memory_read', {'memory_id': 'sample'})
+        allowed = OperationCall('memory_search', {})
+
+        def decision(context, lab):
+            loop = build_default_decision(context, lab, policy=lambda _: Decision.invoke(host_denied))
+            loop.action_space.permissions = ActionPermissions([allowed.name, host_denied.name])
+            return loop
+
+        modules = ModuleAssembly(decision_factory=decision, lab_factory=lambda _: SimpleNamespace(
+            describe=lambda: (), execute=lambda call: None), memory=MemoryAssembly(ResearchAssembly.single_meta()))
+        with TemporaryDirectory() as temp:
+            config = ApplicationConfig('Check installed Memory tools', Path(temp),
+                {'mock': BackendBinding('mock', 'mock')}, {'decision_maker': ModelRef('mock', 'fixture', 'v1')})
+            with Application(config, modules=modules, action_permissions=ActionPermissions(
+                    [allowed.name, local_denied.name])) as app:
+                space = app.runner.decision_making.action_space
+                self.assertEqual([spec.name for spec in space.describe()], [allowed.name])
+                self.assertEqual(space.validate(allowed).name, allowed.name)
+                for call in (host_denied, local_denied):
+                    with self.subTest(operation=call.name), self.assertRaises(PermissionError):
+                        space.validate(call)
+                with self.assertRaises(PermissionError):
+                    app.run(max_decision_steps=1, wait_for_jobs=True)
+
+    def test_manual_port_rejects_miswiring_and_owns_rejected_instance(self):
+        events = []
+
+        class Lab:
+            def describe(self):
+                return ()
+
+            def execute(self, call):
+                raise AssertionError('Should fail before dispatch')
+
+            def close(self):
+                events.append('lab')
+
+        class Policy:
+            def decide(self, window):
+                raise AssertionError('Should fail before sampling')
+
+            def required_operations(self):
+                return ('missing',) if fault == 'operation' else ()
+
+            def required_profiles(self):
+                return {'fixture': 'required/v1'} if fault == 'profile' else {}
+
+        def endpoint(context, lab):
+            loop = build_harness_decision(context, lab, policy=Policy(), harness=NullHarness())
+            if fault == 'lab':
+                loop.operation_router.lab = object()
+            if fault == 'host':
+                loop.host_execution = object()
+            return loop
+
+        modules = manual_controller_assembly(endpoint, lambda _: Lab(), close=lambda: events.append('controller'))
+        with self.assertRaisesRegex(ValueError, 'not both'):
+            replace(modules, decision_factory=endpoint)
+        with TemporaryDirectory() as temp:
+            for fault, message in (('lab', 'Lab routing'), ('host', 'another run execution'),
+                                   ('operation', 'missing Lab operations'), ('profile', 'validates profiles')):
+                events.clear()
+                with self.subTest(fault=fault), self.assertRaisesRegex(ValueError, message):
+                    Application(ApplicationConfig('Check admission', Path(temp) / fault, {}, {}), modules=modules)
+                self.assertEqual(events, ['controller', 'lab'])
+
+    def test_manual_port_can_report_and_observe_on_the_assembly_context(self):
+        from rsicomposer.api import save_controller_version
+
+        class Next:
+            def decide(self, window):
+                return Decision('finish')
+
+            def report(self):
+                return {'owner': 'next'}
+
+        selection = {'name': 'initial', 'config': {}}
+
+        def controller(context, lab):
+            if configured:
+                context.controller_report = lambda: {'owner': 'initial'}
+                context._memory_observer = observed.append
+            endpoint = build_harness_decision(context, lab, policy=lambda _: Decision('finish'), harness=NullHarness())
+            return ControllerPort(SimpleNamespace(endpoint=endpoint, context=context,
+                capture=lambda: {}, restore=lambda _: None, close=lambda: None),
+                ControllerVersion('manual', selection))
+
+        modules = ModuleAssembly(controller_factory=controller,
+            lab_factory=lambda _: SimpleNamespace(describe=lambda: (), execute=lambda call: None),
+            controller_catalog={'initial': ControllerDefinition(lambda *_: lambda _: Decision('finish')),
+                                'next': ControllerDefinition(lambda *_: Next())}, controller_selection=selection)
+        with TemporaryDirectory() as temp:
+            for configured in (False, True):
+                observed = []
+                config = ApplicationConfig('manual report', Path(temp) / str(configured), {}, {})
+                with (self.subTest(configured=configured), warnings.catch_warnings(),
+                      Application(config, modules=modules) as app):
+                    warnings.simplefilter('error', RuntimeWarning)
+                    self.assertEqual(app.controller_report(), {'owner': 'initial'} if configured else {})
+                    initial = app.assembly.record('initial_report')
+                    self.assertEqual(observed, [initial] if configured else [])
+                    host = app.assembly.controller_host
+                    version = ControllerVersion('v2', {'name': 'next'})
+                    host.request_version(save_controller_version(app.artifacts, version))
+                    host.advance()
+                    self.assertEqual(app.controller_report(), {'owner': 'next'})
+                    app.assembly.record('next_report')
+                    self.assertEqual(observed, [initial] if configured else [])
+                    self.assertEqual(app.run().status, 'finished')
+
+    def test_manual_port_cleanup_retries_without_double_close(self):
+        closes = []
+
+        def close():
+            closes.append('controller')
+            if len(closes) == 1:
+                raise RuntimeError('Controller close not yet acknowledged')
+
+        def lab_factory(context):
+            return SimpleNamespace(describe=lambda: (), execute=lambda call: None, close=lambda: closes.append('lab'))
+
+        modules = manual_controller_assembly(lambda context, lab: build_harness_decision(context, lab,
+            policy=lambda _: Decision('finish'), harness=NullHarness()), lab_factory, close=close)
+        with TemporaryDirectory() as temp:
+            app = Application(ApplicationConfig('Check close', Path(temp), {}, {}), modules=modules)
+            with self.assertRaisesRegex(RuntimeError, 'not yet acknowledged'):
+                app.close()
+            self.assertEqual(closes, ['controller'])  # Dependencies are retained for retry.
+            app.close()
+            app.close()
+            self.assertEqual(closes, ['controller', 'controller', 'lab'])
 
     def test_rebinding_same_permission_does_not_duplicate_checks(self):
         spec = OperationSpec('fixture.inspect', 'Fixture operation', {'type': 'object'}, read_only=True)
@@ -180,6 +333,9 @@ class ResourceBoundariesTest(unittest.TestCase):
 
             def split_roles(self):
                 return {'sealed': SEALED}
+
+            def evaluation_operations(self):
+                return ('evaluate',)
 
             def final_evaluations(self):
                 return (OperationCall('evaluate', {'split': 'sealed'}, call_id='fixture-final'),)

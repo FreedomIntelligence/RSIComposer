@@ -75,6 +75,14 @@ class NativeChatBackend(RemoteModelBackend):
             except KeyError:
                 raise ValueError('Model revision requires an explicit serving binding') from None
 
+    def validate_activation_route(self, base, model, *, prepared):
+        if model.backend_id != self.binding.backend_id:
+            raise ValueError('Trained model does not use this backend')
+        if prepared:
+            # Deployment may create the binding. Once ready, use exactly the
+            # lookup that generation/tokenization use; never a model-id fallback.
+            self._alias(model)
+
     def native_response_schema(self, schema):
         """Explicit provider dialect; canonical schemas/validators stay unchanged.
 

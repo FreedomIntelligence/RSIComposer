@@ -56,6 +56,9 @@ class ModelMetaRSIController(MetaRSIController):
         return (*super().required_operations(), 'math.policy', 'reflect.build_candidate',
                 *(('math.compare',) if self.paper_kernel else ()))
 
+    def required_lab_bindings(self):
+        return {'math': {'operation_mode': 'paper_kernel' if self.paper_kernel else 'model', 'min_delta': self.margin}}
+
     def _open_term(self, index):
         super()._open_term(index)
         self.s['term'].update(order=list(self.scheduler['order']),

@@ -119,8 +119,7 @@ class AgentMemory:
         self.require_review = require_review
         self.configured_path = str(Path(path).resolve()) if path is not None else None
         self.path = None
-        self.harness = None
-        self._history_provider = lambda: ()
+        self._history_provider = None
         self._state = {'version': 2, 'revision': 0, 'memories': {}, 'tasks': {}, 'revisions': []}
 
     def configuration(self):
@@ -160,14 +159,17 @@ class AgentMemory:
                 for spec in specs)
         return specs
 
-    def bind(self, harness, journal_path=None):
-        if self.harness is not None:
+    def capabilities(self):
+        from .memory_integration import memory_capabilities
+        return memory_capabilities(self)
+
+    def bind(self, history, journal_path=None):
+        if self._history_provider is not None:
             raise ValueError('Agent memory is already bound to a run')
-        from rsicomposer.runtime.memory import memory_host
-        host = memory_host(harness)
+        if not callable(history):
+            raise TypeError('Agent memory requires a history callback')
         self.prepare()
-        self.harness = harness
-        self._history_provider = host.history
+        self._history_provider = history
         self.path = (Path(self.configured_path) if self.configured_path else
                      Path(journal_path).parent / 'agent-memory.json' if journal_path is not None else None)
         if self.path is not None and self.path.exists():
@@ -334,7 +336,7 @@ class AgentMemory:
 
     def seed(self, state):
         """Host continuation adapter only; ordinary decisions use revisioned CRUD."""
-        if self._state['revision'] or self.harness is None:
+        if self._state['revision'] or self._history_provider is None:
             raise ValueError('Memory seeding requires a fresh bound agent memory')
         candidate = self._validated(state)
         self._verify_acceptance(candidate)
@@ -363,7 +365,7 @@ class AgentMemory:
         self._state = candidate
 
     def _history(self):
-        return self._history_provider()
+        return self._history_provider() if self._history_provider is not None else ()
 
     def _sources(self):
         sources = {}

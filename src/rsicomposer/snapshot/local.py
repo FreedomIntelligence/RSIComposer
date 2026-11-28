@@ -54,7 +54,8 @@ def load_manifest(directory: Path) -> SnapshotManifest:
             raise ValueError('Snapshot file escapes its directory')
         if file_hash(directory / relative) != digest:
             raise ValueError(f'Snapshot digest mismatch: {name}')
-    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3', 'host_budget.json'}
+    required = {'state.json', 'config.json', 'run.json', 'runtime.json', 'experience.sqlite3',
+                'host_budget.json', 'module_assembly.json'}
     if not required <= files:
         raise ValueError('Snapshot is missing required local state')
     return manifest
@@ -87,27 +88,8 @@ def restore_snapshot(directory, target, *, run_id=None, modules=None, run_policy
         raise FileExistsError('Restore target must be a new directory')
     manifest = load_manifest(directory)
     if modules is None:
-        from rsicomposer.assembly import read_saved_module_layout
-        layout = read_saved_module_layout(directory) or {}
-        method = layout.get('method')
-        if method is None:
-            raise TypeError('Supply the original explicit ModuleAssembly for this snapshot')
         from rsicomposer.registry import Registry
-        registry = Registry()
-        for plugin in plugins:
-            registry.load_plugin(Path(plugin))
-        if method['method'] == 'registered_framework':
-            config = method['config']
-            if 'method' in config:
-                selected = config['method']
-                selection = {'method': {'name': selected['method'], 'config': selected['config']}}
-            else:
-                selection = {'controller': {k: v for k, v in config['controller'].items() if k != 'version'},
-                    'labs': {alias: {k: v for k, v in value.items() if k != 'version'}
-                             for alias, value in config['labs'].items()}}
-        else:
-            selection = {'method': {'name': method['method'], 'config': method['config']}}
-        modules = registry.build(selection)
+        modules = Registry.from_workspace(directory, plugins=plugins)
 
     from rsicomposer.runtime.state.component_state import AssemblyRecovery
     from .components import restore_components

@@ -139,37 +139,39 @@ class ResearchControllerHarness:
             self._state.observed_event_ids += (event.event_id,)
 
 
-    def install_feedback(self, service, adapter):
-        """Research-only integration, declared and owned by this Harness."""
-        from .learning_harness import LearningTools
+    def bind_feedback(self, service):
+        """Own one rich projection before rendering the public or native Policy window."""
+        from .learning_harness import ResearchFeedbackProjection
+        projection = ResearchFeedbackProjection(self, service)
+        project_memory = optional_method(service.memory, 'project_context')
+        processors = (projection, project_memory) if project_memory is not None else (projection,)
         self.feedback_service, self.feedback_learning = service, service.learning
-        self.feedback_proposal_resolver = service.resolve_improvement_proposals
+        self.research_memory = service.memory
+        self.feedback_proposal_resolver = service.resolve_proposals
         self.evidence_observer = lambda event: (service.learning.context_observer or
             service.learning.context_binding.observer)(event) if (
                 service.learning.context_observer or service.learning.context_binding.observer) is not None else None
-        self.local_tools = LearningTools(self.local_tools, service.learning)
-        self.add_context_processor(adapter.project_context)
-        self.add_cleanup(service.close)
+        self._context_processors.extend(processors)
 
-    def install_memory(self, memory):
-        from .memory_integration import MemoryTools
-        self.local_tools = MemoryTools(self.local_tools, memory)
-        self.research_memory = memory
-        self.add_context_processor(memory.project_context)
+        def detach():
+            for processor in processors:
+                self._context_processors.remove(processor)
+            self.feedback_service = self.feedback_learning = self.research_memory = None
+            self.feedback_proposal_resolver = self.evidence_observer = None
+        return detach
 
     def attempt_interpretations(self):
         return self.feedback_service.attempts() if self.feedback_service is not None else {'items': []}
-
-    def memory_host(self):
-        """Expose memory integration without requiring a concrete harness type."""
-        from .memory_integration import DefaultMemoryHost
-        return DefaultMemoryHost(self)
 
     def add_context_processor(self, processor):
         self._context_processors.append(processor)
 
     def add_cleanup(self, callback):
         self._cleanup_callbacks.append(callback)
+
+    def relinquish_cleanups(self, matches):
+        """Transfer closes claimed by the enclosing owner; keep Harness-local cleanup."""
+        self._cleanup_callbacks[:] = [close for close in self._cleanup_callbacks if not matches(close)]
 
     def _project_context(self, context):
         from rsicomposer.harnesses.decision.research_state import (

@@ -100,6 +100,9 @@ class HarnessResearchLab:
     def invariants(self):
         return (Invariant.baseline_before('select'), Invariant.measured_selection())
 
+    def candidate_identity_fields(self):
+        return {'select': ('candidate_id',)}  # evaluate is declared by artifact-search/v1.
+
     def final_evaluations(self):
         return tuple(OperationCall('evaluate', {'candidate_id': ident, 'split': 'heldout', 'indices': None})
             for ident in dict.fromkeys(('baseline', self.selected))) if self.selected is not None else ()

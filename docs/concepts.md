@@ -67,8 +67,9 @@ what the Controller may see.
 | `sealed` | no | no | no | only after the Controller finishes |
 
 Select candidates on `dev`. To report a final score, install a grouped Lab that
-both declares a `sealed` split and supplies a `final_evaluations()` plan. The Host
-runs that plan on normal final completion, not between research restarts. Even
+declares a `sealed` split and supplies a `final_evaluations()` plan naming its
+declared evaluation operations. The Host runs that plan on normal final
+completion, not between research restarts. Even
 aggregate final scores are Host-only, so they cannot affect selection.
 
 ## Research and exploration roles
@@ -93,7 +94,10 @@ candidate Controllers and tests them in nested runs. The current Controller then
 decides whether to adopt one. The host adopts only after the candidate has
 restored and bound its execution view. Controller factories must return their
 own Policy and Harness instances. The outgoing Policy and Harness need state
-ports for archiving, even when the workspace itself is not durable.
+ports for archiving, even when the workspace itself is not durable. Any installed
+Memory must also be restorable or rebuildable. A Controller that cannot archive
+its components can run but cannot offer adoption. In a durable run, the
+Host also checks that the candidate state can be saved before publishing it.
 
 Durable recovery distinguishes a terminal receipt from proof that the whole
 interrupted step committed. When the mutation journal is ahead of its

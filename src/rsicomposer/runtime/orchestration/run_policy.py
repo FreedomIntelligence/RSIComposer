@@ -4,7 +4,8 @@ import math
 from typing import Callable, Literal, Protocol
 
 from rsicomposer.loops.contracts.coordination import OperationResult
-from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
+from rsicomposer.loops.contracts.evaluation import candidate_id, canonical_refs, matches_cohort
+from rsicomposer.loops.contracts.metrics import has_scored_metrics
 
 
 def positive(value, name):
@@ -17,14 +18,6 @@ class ExperimentOutcome:
     receipt: OperationResult
 
 
-def _input_refs(refs):
-    if (not isinstance(refs, (list, tuple)) or not refs
-            or any(not isinstance(ref, str) or not ref.strip() for ref in refs)
-            or len(set(refs)) != len(refs)):
-        return None
-    return tuple(refs)
-
-
 @dataclass(frozen=True)
 class EvaluationOutcome(ExperimentOutcome):
     """A delivered receipt tied to a Host-classified evaluation call."""
@@ -33,22 +26,24 @@ class EvaluationOutcome(ExperimentOutcome):
     protocol_ref: str
     input_refs: tuple[str, ...]
 
+    @property
+    def measured(self):
+        return has_scored_metrics(self.receipt.status, self.receipt.data)
+
     @classmethod
-    def from_call(cls, call, receipt):
+    def from_call(cls, call, receipt, *, candidate_fields=()):
         data = receipt.data
         candidate = data.get('candidate_id')
         protocol = data.get('protocol_ref')
-        inputs = _input_refs(data.get('input_refs'))
+        inputs = canonical_refs(data.get('input_refs'))
         args = call.arguments
         if (not isinstance(candidate, str) or not candidate.strip()
                 or not isinstance(protocol, str) or not protocol.strip() or inputs is None):
             return None
-        if any(key in args and args[key] != value for key, value in (
-                ('candidate_id', candidate), ('protocol_ref', protocol))):
+        if (candidate_id(args, candidate_fields) != candidate or
+                ('protocol_ref' in args and args['protocol_ref'] != protocol)):
             return None
-        if 'input_refs' in args and _input_refs(args['input_refs']) != inputs:
-            return None
-        if 'split' in args and 'split' in data and args['split'] != data['split']:
+        if not matches_cohort(args, data, inputs):
             return None
         return cls(receipt, call.name, candidate, protocol, inputs)
 
@@ -169,7 +164,7 @@ class MetricGoal:
         if type(self.higher_is_better) is not bool or type(self.allow_simulated) is not bool:
             raise TypeError('MetricGoal flags must be boolean')
         if self.input_refs is not None:
-            refs = _input_refs(self.input_refs)
+            refs = canonical_refs(self.input_refs)
             if refs is None:
                 raise ValueError('MetricGoal input_refs must be distinct nonempty references')
             object.__setattr__(self, 'input_refs', refs)
@@ -186,9 +181,7 @@ class MetricGoal:
                 continue
             seen.add(key)
             receipt = outcome.receipt
-            if receipt.status != ExecutionStatus.COMPLETED or (receipt.simulated and not self.allow_simulated):
-                continue
-            if receipt.data.get('valid') is False or receipt.data.get('scored') is False:
+            if not outcome.measured or (receipt.simulated and not self.allow_simulated):
                 continue
             value = receipt.data.get('quality_metrics', {}).get(self.metric)
             if type(value) not in (int, float) or not math.isfinite(value):

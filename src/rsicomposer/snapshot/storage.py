@@ -13,8 +13,7 @@ from .manifest import SnapshotManifest
 
 
 def capture_bundle(app, store, *, label, config, state, runtime, loop_state_refs,
-                   component_refs, resume_policy, kind='component_quiescent', write_extra=None,
-                   include_assembly=False):
+                   component_refs, resume_policy, kind='component_quiescent', write_extra=None):
     """Stage, checksum, sync and publish once; state codecs belong to the adapter."""
     ident = uuid4().hex
     store.root.mkdir(parents=True, exist_ok=True)
@@ -22,13 +21,11 @@ def capture_bundle(app, store, *, label, config, state, runtime, loop_state_refs
     try:
         atomic_write(staging / 'state.json', json_bytes(state))
         atomic_write(staging / 'config.json', json_bytes(config.to_dict()))
-        atomic_write(staging / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
+        atomic_write(staging / 'run.json', app._run_record)
         atomic_write(staging / 'runtime.json', json_bytes(runtime))
-        if include_assembly:
-            app.modules.validate_saved(app.config.data_dir)
-            marker = app.config.data_dir / 'module_assembly.json'
-            if marker.exists():
-                shutil.copyfile(marker, staging / marker.name)
+        app.modules.validate_saved(app.config.data_dir)
+        marker = app.config.data_dir / 'module_assembly.json'
+        shutil.copyfile(marker, staging / marker.name)
         if write_extra is not None:
             write_extra(staging)
         accounts = app.config.data_dir / 'model_accounts'
@@ -78,7 +75,6 @@ def publish_restore(directory, target, config, manifest, files, construct, resto
         shutil.copytree(directory / 'artifacts', staging / 'artifacts')
         if (directory / 'model_accounts').exists():
             shutil.copytree(directory / 'model_accounts', staging / 'model_accounts')
-        atomic_write(staging / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
         atomic_write(staging / 'config.json', json_bytes(config.to_dict()))
         sync_tree(staging)
         staging.rename(target)

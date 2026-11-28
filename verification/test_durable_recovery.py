@@ -27,11 +27,12 @@ from rsicomposer.loops.decision_making.action_space.access import (
     ActionPermissions, SensitivePolicy, authorized_space,
 )
 from rsicomposer.method_state import method_state_factory
-from rsicomposer.methods import ControllerDefinition
+from rsicomposer.methods import ControllerDefinition, MethodDefinition
 from rsicomposer.registry import Registry
 from rsicomposer.research import MemoryAssembly, ResearchAssembly
 from rsicomposer.runtime.execution.errors import WorkerLostError
 from rsicomposer.runtime.orchestration.lab_group import LabGroup
+from rsicomposer.runtime.state.component_state import snapshot_integration
 from rsicomposer.runtime.state.recovery import DurableRecovery, RecoveryRequired
 from rsicomposer.runtime.storage.codec import decode, encode
 from rsicomposer.runtime.storage.files import json_bytes
@@ -438,6 +439,164 @@ class DurableRecoveryTests(unittest.TestCase):
                 self.assertEqual(_lines(root, 'observer'), _sqlite_ids(root))
 
 
+class ControllerBootstrapTests(unittest.TestCase):
+    def setUp(self):
+        from rsicomposer.harnesses.memory import HistoryEntry
+        from rsicomposer.loops.contracts.controller_version import ControllerVersion
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.seed = ControllerVersion('parent-candidate', {'name': 'current', 'config': {'tag': 'seed'}},
+                                      policy_state={'value': 'parent seed'})
+        self.row = HistoryEntry('approved-1', 'feedback', None, 'parent observation', True)
+        self.builds, self.restores = [], []
+
+        class Policy:
+            value = 'fresh'
+
+            def decide(inner, window):
+                return Decision('finish')
+
+            def state(inner):
+                return {'value': inner.value}
+
+            def restore(inner, state):
+                self.restores.append(state['value'])
+                inner.value = state['value']
+
+        def build(context, options):
+            self.builds.append((options.get('tag'), context.data_dir))
+            return Policy()
+
+        self.modules = MethodDefinition.from_factories(controller=build, version='1',
+            labs={'a': lambda ctx, _: _Lab(ctx.data_dir, idempotent=False, managed=False, fault=None)}).factory({})
+
+    def config(self, path):
+        return ApplicationConfig(_OBJECTIVE, path, {}, {}, parent_run_id='parent-run')
+
+    def test_seeded_child_rebuilds_original_scope_before_restoring_checkpoint(self):
+        from dataclasses import replace
+        from rsicomposer.runtime.state.controller_versions import save_controller_version
+        for adopt in (False, True):
+            with self.subTest(adopt=adopt):
+                root = self.directory / str(adopt)
+                current = replace(self.seed, version_id='adopted', config={'name': 'current', 'config': {'tag': 'next'}})
+                with Application(self.config(root), modules=self.modules, durable=True,
+                                 _initial_controller_version=self.seed, _inherited_controller_history=(self.row,),
+                                 _delegated_models={'backends': {}, 'routes': {}}) as source:
+                    host = source.assembly.controller_host
+                    self.assertTrue(snapshot_integration(source))
+                    self.assertEqual((host.current_version, host.active.policy.value), (self.seed, 'parent seed'))
+                    host.active.policy.value = 'after initial construction'
+                    if adopt:
+                        host.request_version(save_controller_version(source.artifacts, current))
+                        host.advance()
+                        host.active.policy.value = 'after adoption'
+                    source.recovery._checkpoint(source.recovery.generation)
+                    capture = LocalSnapshotCapture(source)
+                    bundle = capture.store.directory(capture.capture('seeded run').snapshot_id)
+                    run_record = (root / 'run.json').read_bytes()
+                    self.assertEqual((bundle / 'run.json').read_bytes(), run_record)
+                    self.assertNotIn(b'parent-candidate', (root / 'module_assembly.json').read_bytes())
+                for portable in (False, True):
+                    with self.subTest(portable=portable):
+                        target = self.directory / ('restored-' + str(adopt)) if portable else root
+                        self.builds.clear()
+                        self.restores.clear()
+                        app = (restore_snapshot(bundle, target, modules=self.modules) if portable
+                               else Application.resume(root, modules=self.modules))
+                        with app:
+                            host = app.assembly.controller_host
+                            self.assertEqual(host.current_version, current if adopt else self.seed)
+                            self.assertEqual((target / 'run.json').read_bytes(), run_record)
+                            expected = [('seed', target)]
+                            if adopt:
+                                path = target / 'controller_versions' / sha256(b'adopted').hexdigest() / 'workspace'
+                                expected.append(('next', path))
+                                self.assertEqual(host.archives[0]['version'], self.seed)
+                            self.assertEqual(self.builds, expected)
+                            self.assertEqual(self.restores, ['after adoption' if adopt else 'after initial construction'])
+                            evidence = {'format': 'rsicomposer-agent-memory-version/v1', 'memory': {}, 'history': (self.row,)}
+                            self.assertEqual(host.approve_memory_history(replace(self.seed, memory_state=evidence)), (self.row,))
+                            evidence['history'] = (replace(self.row, summary='unapproved edit'),)
+                            with self.assertRaisesRegex(ValueError, 'altered host evidence'):
+                                host.approve_memory_history(replace(self.seed, memory_state=evidence))
+
+    def test_explicit_seed_restores_memory_outside_the_default_controller(self):
+        from dataclasses import replace
+        root = self.directory / 'seed-with-memory'
+        alternate = replace(self.modules.controller_catalog['current'], memory=lambda _: MemoryAssembly(ResearchAssembly()))
+        modules = replace(self.modules, controller_catalog={**self.modules.controller_catalog, 'alternate': alternate})
+        config = replace(self.config(root), backends={'offline': BackendBinding('offline', 'mock')},
+                         roles={'decision_maker': ModelRef('offline', 'fixture', 'v1')})
+        envelope = {'format': 'rsicomposer-agent-memory-version/v1', 'memory': ResearchAssembly().context_memory.export(),
+                    'history': (self.row,)}
+        seed = replace(self.seed, config={'name': 'alternate', 'config': {'tag': 'seed-memory'}}, memory_state=envelope)
+        with self.assertRaisesRegex(ValueError, 'missing or altered host evidence'):
+            Application(replace(config, data_dir=self.directory / 'unapproved'), modules=modules,
+                        _initial_controller_version=seed)
+        self.builds.clear()
+        with Application(config, modules=modules, durable=True, _initial_controller_version=seed,
+                         _inherited_controller_history=(self.row,)) as app:
+            self.assertTrue((root / 'research_assembly.json').exists())
+            self.assertFalse(modules.configuration()['memory'])  # The default selection has no Memory.
+            memory = app.runner.decision_making.integration.memory
+            memory.execute(OperationCall('memory_write', {'expected_revision': 0, 'memory_id': 'note',
+                'content': 'child interpretation', 'source_refs': ['history:decision_maker:' + self.row.record_id],
+                'status': 'unverified'}))
+            evolved = memory.export()
+            app.recovery._checkpoint(app.recovery.generation)
+        with Application.resume(root, modules=modules) as app:
+            host = app.assembly.controller_host
+            self.assertEqual(host.current_version, seed)
+            self.assertEqual(host.active.endpoint.harness.history(), (self.row,))
+            self.assertEqual(app.runner.decision_making.integration.memory.export(), evolved)
+            self.assertEqual(self.builds, [('seed-memory', root)] * 2)
+
+    def test_resume_rejects_substituted_seed_or_approved_evidence_before_build(self):
+        root = self.directory / 'workspace'
+        with Application(self.config(root), modules=self.modules, durable=True, _initial_controller_version=self.seed,
+                         _inherited_controller_history=(self.row,)):
+            pass
+        run = root / 'run.json'
+        saved = json.loads(run.read_text())
+        self.builds.clear()
+        for key, value in (('version', None), ('approved_history', encode(()))):
+            with self.subTest(field=key):
+                run.write_bytes(json_bytes({**saved, 'controller_seed': {**saved['controller_seed'], key: value}}))
+                with self.assertRaisesRegex(ValueError, 'bootstrap digest'):
+                    Application.resume(root, modules=self.modules)
+        self.assertEqual(self.builds, [])
+
+    def test_invalid_seed_and_duplicate_approved_rows_fail_before_build(self):
+        for version, history, error in ((object(), (), TypeError), (self.seed, ('unapproved raw entry',), TypeError),
+                                        (self.seed, (self.row, self.row), ValueError)):
+            with self.subTest(history=history), self.assertRaises(error):
+                Application(self.config(self.directory / 'invalid'), modules=self.modules,
+                            _initial_controller_version=version, _inherited_controller_history=history)
+        self.assertFalse((self.directory / 'invalid').exists())
+        self.assertEqual(self.builds, [])
+
+    def test_parent_bound_runs_do_not_persist_or_export_delegation(self):
+        from rsicomposer.runtime.execution.budget import HostBudget
+        marker = 'parent-only-test-marker'
+        for name, grants in (('model', {'_delegated_models': {'backends': {}, 'routes': {'key': {'token': marker}}}}),
+                             ('budget', {'_host_budget': HostBudget(self.directory / 'allocation', {})})):
+            with self.subTest(grant=name):
+                root = self.directory / name
+                config = self.config(root)
+                with self.assertRaisesRegex(ValueError, 'Parent-bound'):
+                    Application(config, modules=self.modules, durable=True, **grants)
+                with Application(config, modules=self.modules, _initial_controller_version=self.seed, **grants) as live:
+                    self.assertFalse(snapshot_integration(live))
+                    with self.assertRaisesRegex(RuntimeError, 'Parent-bound'):
+                        LocalSnapshotCapture(live).capture('forbidden')
+                    self.assertFalse((root / 'snapshots').exists())
+                self.assertEqual(json.loads((root / 'run.json').read_text()),
+                                 {**config.source.to_dict(), 'objective': config.objective, 'requires_parent': True})
+                self.assertNotIn(marker, (root / 'config.json').read_text())
+                with self.assertRaisesRegex(RuntimeError, 'Parent-bound'):
+                    Application(config, modules=self.modules, _restore=True)
+
+
 class RecoveryPermissionsTests(unittest.TestCase):
     def setUp(self):
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
@@ -456,6 +615,22 @@ class RecoveryPermissionsTests(unittest.TestCase):
             with self.subTest(call=call), self.assertRaises(PermissionError):
                 space.validate(call)
         self.assertEqual(_lines(app.config.data_dir, 'invocations'), [])
+
+    def test_missing_or_old_assembly_identity_rejects_resume_before_factories(self):
+        with Application(self.config, durable=True, modules=_modules()):
+            pass
+        marker = self.root / 'module_assembly.json'
+        layout = json.loads(marker.read_bytes())
+        self.assertEqual(layout['schema_version'], 5)
+        marker.write_bytes(json_bytes({**layout, 'schema_version': 4}))
+        built_with = []
+        modules = _modules(on_build=built_with.append)
+        with self.assertRaisesRegex(ValueError, 'Unsupported module assembly schema'):
+            Application.resume(self.root, modules=modules)
+        marker.unlink()
+        with self.assertRaisesRegex(ValueError, 'Missing module assembly marker'):
+            Application.resume(self.root, modules=modules)
+        self.assertEqual(built_with, [])
 
     def test_durable_permissions_with_relative_workspace(self):
         with chdir(self.directory):
@@ -558,6 +733,107 @@ class RecoveryPermissionsTests(unittest.TestCase):
         with Application.resume(self.root, modules=modules) as app:
             self.assertIsNotNone(app.runner.decision_making.integration)
             self.assertEqual(calls, [{}, {}])
+
+    def test_resume_explicit_controller_memory_uses_the_assembly_not_registry_provenance(self):
+        def policy(ctx, _):
+            return _Policy(ctx.data_dir, ())
+
+        def lab(ctx, _):
+            return _Lab(ctx.data_dir, idempotent=False, managed=False, fault=None)
+
+        controller = ControllerDefinition(policy, memory=lambda _: MemoryAssembly(ResearchAssembly()))
+        modules = MethodDefinition.from_factories(controller=controller, labs={'a': lab}, version='1').factory({})
+        self.assertIs(modules.controller_catalog['current'], controller)
+        config = ApplicationConfig(_OBJECTIVE, self.root, {'offline': BackendBinding('offline', 'mock')},
+                                   {'decision_maker': ModelRef('offline', 'fixture', 'v1')})
+        with Application(config, durable=True, modules=modules) as app:
+            version = app.assembly.controller_host.version_id
+            self.assertIsNotNone(app.runner.decision_making.integration)
+        without_memory = MethodDefinition.from_factories(controller=policy, labs={'a': lab}, version='1').factory({})
+        with self.assertRaisesRegex(ValueError, 'original Controller Memory'):
+            Application.resume(self.root, modules=without_memory)
+        with Application.resume(self.root, modules=modules) as app:
+            self.assertEqual(app.assembly.controller_host.version_id, version)
+            self.assertIsNotNone(app.runner.decision_making.integration)
+
+    def test_portable_snapshot_preserves_retry_proof_but_never_dispatches_on_restore(self):
+        call = OperationCall('a.act', {'value': 1}, call_id='retry/portable')
+
+        class Counter:
+            def __init__(self):
+                self.count = 0
+
+            def state(self):
+                return {'count': self.count}
+
+            def restore(self, state):
+                self.count = state['count']
+
+        class RetryPolicy(Counter):
+            def decide(self, window):
+                self.count += 1
+                return Decision.invoke(call) if self.count <= 2 else Decision('finish')
+
+        class RetryLab(Counter):
+            def describe(self):
+                return (OperationSpec('act', 'Retry this request', {'type': 'object'}, idempotent=True),)
+
+            def execute(self, request):
+                self.count += 1
+                if self.count == 1:
+                    raise WorkerLostError('test worker is gone')
+                return OperationResult('recovered', (), False)
+
+        modules = MethodDefinition.from_factories(controller=lambda *_: RetryPolicy(),
+            labs={'a': lambda *_: RetryLab()}, version='1').factory({})
+        with Application(self.config, durable=True, modules=modules) as app:
+            self.assertEqual(_deliver(app)['status'], 'failed')
+            group = app.assembly.lab_execution
+            original = group.stored_receipt(call)
+            self.assertTrue(group.can_retry(call))
+            capture = LocalSnapshotCapture(app)
+            bundle = capture.store.directory(capture.capture('before retry').snapshot_id)
+            self.assertEqual(_deliver(app)['status'], 'completed')
+            self.assertFalse(group.can_retry(call))
+        with restore_snapshot(bundle, self.directory / 'portable', modules=modules) as app:
+            group = app.assembly.lab_execution
+            self.assertEqual(group.labs['a'].count, 1)
+            self.assertEqual(group.stored_receipt(call), original)
+            self.assertTrue(group.can_retry(call))
+            self.assertEqual(_deliver(app)['status'], 'completed')
+            self.assertEqual(group.labs['a'].count, 2)
+            self.assertFalse(group.can_retry(call))
+
+    def test_portable_receipt_import_preflights_the_whole_journal_before_writing(self):
+        dispatched = []
+
+        class Lab:
+            def describe(self):
+                return (OperationSpec('act', 'fixture', {'type': 'object'}),)
+
+            def execute(self, call):
+                dispatched.append(call.call_id)
+                return OperationResult('done', (), False)
+
+        source = LabGroup()
+        source.add('a', Lab())
+        calls = [OperationCall('a.act', {}, call_id=key) for key in ('a/b', 'z')]
+        results = [source.execute(call) for call in calls]
+        inventory = source.receipt_state()
+        source.export_receipt_files(self.directory, inventory)
+        journal = self.directory / 'receipts.jsonl'
+        good = journal.read_bytes()
+        journal.write_bytes(good.splitlines(keepends=True)[0])  # An intact first receipt, but no second.
+        target = LabGroup(receipts=self.directory / 'custom-journal')
+        target.add('a', Lab())
+        with self.assertRaisesRegex(ValueError, 'missing an applied receipt'):
+            target.restore_receipt_files(self.directory, inventory)
+        self.assertIsNone(target.stored_receipt(calls[0]))
+        journal.write_bytes(good)
+        target.restore_receipt_files(self.directory, inventory)
+        target.restore_receipt_state(inventory)
+        self.assertEqual([target.execute(call) for call in calls], results)
+        self.assertEqual(dispatched, ['a/b', 'z'])
 
     def test_malformed_saved_permissions_are_rejected_before_construction(self):
         with Application(self.config, durable=True, modules=_modules(),

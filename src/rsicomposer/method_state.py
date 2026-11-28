@@ -117,7 +117,7 @@ class HostExecutionStateAdapter:
 
 class LabGroupState:
     """Every Lab of a method, keyed by its alias."""
-    state_id = 'rsicomposer-method-labs/v24'
+    state_id = 'rsicomposer-method-labs/v26'
 
     def __init__(self, group):
         self.group = group
@@ -127,6 +127,12 @@ class LabGroupState:
             self._validate_state_ports()
             return {'labs': self.group.capture_lab_states(),
                     'receipts': self.group.receipt_state(), 'profiles': self.group.profile_state()}
+
+    def export_snapshot_files(self, directory, state):
+        self.group.export_receipt_files(directory, state['receipts'])
+
+    def import_snapshot_files(self, directory, state):
+        self.group.restore_receipt_files(directory, state['receipts'])
 
     def restore(self, state):
         labs = state['labs']
@@ -159,7 +165,7 @@ def validate_feedback_journal(learning, journal):
             or type(journal.get('attempted')) is not int or journal['attempted'] < 0):
         raise ValueError('Invalid feedback journal or changed configuration')
     from rsicomposer.harnesses.decision.feedback.learning import validate_journal_captures
-    validate_journal_captures(journal)
+    validate_journal_captures(journal, learning.proposal_targets)
 
 
 class FeedbackJournalState:
@@ -169,7 +175,7 @@ class FeedbackJournalState:
     ahead because feedback is derived asynchronously; it must retain every
     captured job and at least the recorded attempted count.
     """
-    state_id = 'rsicomposer-feedback-journal/v5'
+    state_id = 'rsicomposer-feedback-journal/v6'
 
     def __init__(self, service):
         self.service, self.learning = service, service.learning
@@ -205,6 +211,11 @@ class ResearchMemoryState:
         self.controller_version = controller_version
         self.rebuild = optional_method(memory, 'rebuild')
         self.restore_checkpoint = optional_method(memory, 'restore_checkpoint') if resuming else None
+
+    def can_archive(self):
+        if self.rebuild is not None:
+            return self.experience is not None
+        return all(optional_method(self.memory, name) is not None for name in ('export', 'restore'))
 
     def _events(self):
         from rsicomposer.loops.contracts.feedback_context import EvidenceEvent

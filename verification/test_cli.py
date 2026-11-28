@@ -11,6 +11,33 @@ import unittest
 SRC = Path(__file__).resolve().parents[1] / 'src'
 
 
+class PublicEntrypointTest(unittest.TestCase):
+    def test_version_save_and_load_in_fresh_interpreters(self):
+        script = '''
+import json, sys
+from dataclasses import asdict
+from rsicomposer.api import ControllerVersion, ModelRef, load_controller_version, save_controller_version
+from rsicomposer.runtime.storage.artifacts import FileArtifactStore
+
+assert 'rsicomposer.application' not in sys.modules
+version = ControllerVersion('v2', {'name': 'candidate'}, model=ModelRef('backend', 'model', 'revision'))
+store = FileArtifactStore(sys.argv[1])
+if len(sys.argv) == 2:
+    print(json.dumps(asdict(save_controller_version(store, version))))
+else:
+    assert load_controller_version(store, json.loads(sys.argv[2])) == version
+'''
+        with TemporaryDirectory() as root:
+            def run(*args):
+                result = subprocess.run([sys.executable, '-c', script, root, *args], cwd=root,
+                                        env={**os.environ, 'PYTHONPATH': str(SRC)},
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout
+            reference = run()
+            run(reference)
+
+
 class ExplainTest(unittest.TestCase):
     def setUp(self):
         temp = TemporaryDirectory()
@@ -170,6 +197,19 @@ cli.main()
         resume = self.cli('resume', '--data-dir', str(self.workspace))
         self.assertEqual(resume.returncode, 2, resume.stderr)
         self.assertIn('Durable startup did not commit an initial checkpoint', resume.stderr)
+
+    def test_snapshot_cli_resolves_only_caller_supplied_plugins(self):
+        launch = self.cli('run', '--config', str(self.config), '--plugin', str(self.plugin))
+        self.assertEqual(launch.returncode, 0, launch.stderr)
+        source = json.loads(launch.stdout)
+        self.assertIsNotNone(source['snapshot'])
+        args = ('resume', '--snapshot', source['snapshot'], '--data-dir', str(self.root / 'restored'))
+        denied = self.cli(*args)
+        self.assertEqual(denied.returncode, 2, denied.stderr)
+        self.assertFalse((self.root / 'restored').exists())
+        reopened = self.cli(*args, '--plugin', str(self.plugin))
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        self.assertEqual(json.loads(reopened.stdout)['run_id'], source['run_id'])
 
     def test_first_checkpoint_is_resumable_even_after_immediate_process_exit(self):
         launch = self.interrupted_launch('after-checkpoint')

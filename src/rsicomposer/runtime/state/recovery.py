@@ -173,6 +173,7 @@ class DurableRecovery:
                    'source': code_revision(), 'python': list(sys.version_info[:2]),
                    'run_id': self.app.config.run_id, 'objective': self.app.config.objective,
                    'config': _config_identity(self.app.config), 'saved_at': self.wall_clock(),
+                   'run_bootstrap_sha256': sha256(self.app._run_record).hexdigest(),
                    'policy': policy_state(self.app.runner.run_policy, external=True),
                    'action_permissions': self.app._action_permissions.to_dict(),
                    'runner': capture_runner(self.app.runner), 'components': self.contract.capture(self.app),

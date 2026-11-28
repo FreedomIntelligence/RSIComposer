@@ -14,6 +14,7 @@ import warnings
 
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import OperationCall, OperationSpec
+from rsicomposer.loops.contracts.execution import execute_lab_call
 from rsicomposer.runtime.capabilities import optional_method
 from rsicomposer.runtime.execution.errors import WorkerLostError
 from rsicomposer.runtime.observation import suppress_observations
@@ -24,7 +25,7 @@ from rsicomposer.runtime.storage.files import atomic_write, json_bytes
 
 
 _LEGACY_RECEIPT_SCHEMA = 24
-_RECEIPT_SCHEMA = 25
+_RECEIPT_SCHEMA = 26
 _RECEIPT_FIELDS = {'schema', 'name', 'arguments', 'outcome', 'lab_state', 'profile_state',
                    'sequence', 'elapsed_seconds'}
 
@@ -75,6 +76,7 @@ class LabGroup:
         self._final_index = 0
         self._applied_receipts = set()
         self._receipts = Path(receipts) if receipts is not None else None
+        self._memory_receipts = {} if receipts is None else None
         if self._receipts is not None:
             self._receipts.mkdir(parents=True, exist_ok=True)
 
@@ -132,6 +134,15 @@ class LabGroup:
     def aliases(self):
         return tuple(self._labs)
 
+    def catalog_metrics(self):
+        """The detached per-alias metric declarations, including unscored Labs."""
+        return deepcopy({alias: binding.metric for alias, binding in self._bindings.items()})
+
+    def candidate_identity_fields(self):
+        """Qualified paths from the installed bindings, not a second provider query."""
+        return {f'{alias}.{name}': fields for alias, binding in self._bindings.items()
+                for name, fields in binding.candidate_fields.items()}
+
     def operation_capacity(self, name):
         return self._capacities.get(name.rsplit('.', 1)[0], 1)
 
@@ -141,7 +152,7 @@ class LabGroup:
     def profile_identity(self):
         return {alias: binding.identity() for alias, binding in self._bindings.items()
                 if (binding.profiles or binding.metric is not None or binding.model_roles or binding.data_bindings
-                    or binding.roles or binding.rules or binding.evaluations)}
+                    or binding.roles or binding.rules or binding.evaluations or binding.candidate_fields)}
 
     def is_evaluation(self, name):
         """Check the installed Lab catalog, not an operation receipt's claims."""
@@ -151,6 +162,15 @@ class LabGroup:
     def primary_metric(self, alias):
         """The declaration of this Lab instance; callers must not compare across aliases."""
         return self._bindings[alias].metric
+
+    def validate_bindings(self, requirements):
+        """Check method-specific requirements inside each mounted Lab, without exposing it to the Policy."""
+        for alias, requirement in requirements.items():
+            validate = optional_method(self._labs.get(alias), 'validate_binding')
+            if validate is None:
+                raise ValueError(f'Lab {alias!r} cannot validate the required Controller binding')
+            if validate(requirement) is not None:
+                raise TypeError('Lab binding validators must return None')
 
     def validate_controller(self, controller):
         required = optional_method(controller, 'required_profiles')
@@ -166,10 +186,6 @@ class LabGroup:
                 raise ValueError(f'Controller requires Lab {alias} profile {identity}')
 
     def execute(self, call):
-        if self._final_calls is not None and any(
-                final.name.rsplit('.', 1)[0] == call.name.rsplit('.', 1)[0] for final in self._final_calls):
-            return OperationResult('Lab search is sealed', (), False, ExecutionStatus.FAILED,
-                                   'Search cannot continue after host final evaluation has started', call_id=call.call_id)
         return self._execute(call, finishing=False)
 
     def can_retry(self, call):
@@ -191,18 +207,25 @@ class LabGroup:
             raise ValueError('Cannot retry after host final evaluation has started')
         return self._execute(call, finishing=False, retry=True, after_sequence=after_sequence)
 
-    def _execute(self, call, *, finishing, retry=False, after_sequence=None):
-        alias = call.name.rsplit('.', 1)[0]
+    @contextmanager
+    def _invocation(self, call):
         with self._lock:
-            if call.call_id in self._invocations:
-                raise ValueError('Operation call_id already has an active execution')
-            self._invocations.add(call.call_id)
+            available = call.call_id not in self._invocations
+            if available:
+                self._invocations.add(call.call_id)
         try:
-            with self._state_boundary(alias):
-                return self._execute_call(call, finishing=finishing, retry=retry, after_sequence=after_sequence)
+            yield available
         finally:
-            with self._lock:
-                self._invocations.remove(call.call_id)
+            if available:
+                with self._lock:
+                    self._invocations.remove(call.call_id)
+
+    def _execute(self, call, *, finishing, retry=False, after_sequence=None):
+        with self._invocation(call) as available:
+            if not available:
+                raise ValueError('Operation call_id already has an active execution')
+            with self._state_boundary(call.name.rsplit('.', 1)[0]):
+                return self._execute_call(call, finishing=finishing, retry=retry, after_sequence=after_sequence)
 
     @contextmanager
     def _state_boundary(self, alias, *, wait=True):
@@ -241,8 +264,13 @@ class LabGroup:
         lab, name = self._operations[call.name]
         alias = call.name.rsplit('.', 1)[0]
         binding = self._bindings[alias]
-        local_call = OperationCall(name, deepcopy(call.arguments), call_id=call.call_id)
+        local_call = replace(call, name=name)
         with self._lock:
+            if not finishing and self._final_calls is not None and any(
+                    final.name.rpartition('.')[0] == alias or final.call_id == call.call_id
+                    for final in self._final_calls):
+                return OperationResult('Lab search is sealed', (), False, ExecutionStatus.FAILED,
+                    'Search cannot continue after host final evaluation has started', call_id=call.call_id)
             saved = self._saved(call)
             if retry and after_sequence is not None:
                 if (type(after_sequence) is not int or after_sequence < 1 or saved is None
@@ -259,29 +287,20 @@ class LabGroup:
                 return OperationResult('Lab profile rejected the operation', (), False,
                                        ExecutionStatus.FAILED, str(error), call_id=call.call_id)
             if saved is not None:
-                sequence = saved['sequence']
-                if sequence > self._applied_sequences.get(alias, 0):
-                    if saved['lab_state'] is not None:
-                        restore = optional_method(lab, 'restore')
-                        if restore is None or restore(deepcopy(saved['lab_state'])) is not None:
-                            raise TypeError('A journaled Lab state needs restore(state) returning None')
-                    binding.restore(saved['profile_state'])
-                    self._applied_sequences[alias] = sequence
-                self._receipt_sequences[alias] = max(sequence, self._receipt_sequences.get(alias, 0))
-                self._applied_receipts.add(call.call_id)
-                if alias in self._before_operation:
-                    self._before_operation[alias] = deepcopy(lab.state())
+                self._apply_receipt(saved)
                 if not retry:
                     return saved['outcome']
-            keys = tuple((alias, binding._once_key(rule, local_call)) for rule in binding.rules
-                         if rule.kind == 'once_per' and (not rule.operation or rule.operation == name))
             try:
                 binding.check(local_call, finishing=finishing)
+                keys = tuple((alias, key) for key in binding.once_keys(local_call))
                 if any(key in self._reserved_once for key in keys):
                     raise ValueError('Operation conflicts with an in-flight once_per request')
             except ValueError as error:
-                return OperationResult('Lab profile rejected the operation', (), False,
-                                       ExecutionStatus.FAILED, str(error), call_id=call.call_id)
+                rejected = OperationResult('Lab profile rejected the operation', (), False,
+                                           ExecutionStatus.FAILED, str(error), call_id=call.call_id)
+                _, rejected = binding.settle_result(local_call, rejected, self._artifacts)
+                self._store(call, rejected, perf_counter() - started, finishing=finishing)
+                return rejected
             for key in keys:
                 self._reserved_once[key] = call.call_id
             self._active_calls.add(call.call_id)
@@ -295,7 +314,8 @@ class LabGroup:
                     if access is not None else nullcontext()), (
                     suppress_observations() if role is not None and not role.per_item_results else nullcontext()):
                 try:
-                    outcome = lab.execute(local_call)
+                    # A provider can normalize its own arguments, not the Host's admitted identity.
+                    outcome = execute_lab_call(lab, replace(local_call, arguments=deepcopy(local_call.arguments)))
                 except WorkerLostError as error:
                     outcome = self._worker_lost(call, error)
                 if access is not None and role is not None and not role.per_item_results:
@@ -303,16 +323,42 @@ class LabGroup:
             with self._lock:
                 if isinstance(outcome, OperationResult):
                     outcome = _bind_receipt(local_call, outcome)
-                outcome = binding.validate_result(local_call, outcome)
-                binding.observe(local_call, outcome)
-                outcome = binding.aggregate(local_call, outcome, self._artifacts)
-                self._store(call, outcome, perf_counter() - started)
-                return outcome
+                return self._commit_outcome(call, local_call, binding, outcome,
+                                            perf_counter() - started, finishing=finishing)
         finally:
             with self._lock:
                 self._active_calls.discard(call.call_id)
                 for key in keys:
                     self._reserved_once.pop(key, None)
+
+    def _apply_receipt(self, row):
+        """Apply a committed state once, under the caller's alias boundary and group lock."""
+        alias = row['name'].rpartition('.')[0]
+        sequence = row['sequence']
+        if sequence > self._applied_sequences.get(alias, 0):
+            if row['lab_state'] is not None:
+                restore = optional_method(self._labs[alias], 'restore')
+                if restore is None or restore(deepcopy(row['lab_state'])) is not None:
+                    raise TypeError('A journaled Lab state needs restore(state) returning None')
+            self._bindings[alias].restore(row['profile_state'])
+            self._applied_sequences[alias] = sequence
+            if alias in self._before_operation:
+                self._before_operation[alias] = deepcopy(self._labs[alias].state())
+        self._receipt_sequences[alias] = max(sequence, self._receipt_sequences.get(alias, 0))
+        self._applied_receipts.add(row['call_id'])
+
+    def _commit_outcome(self, call, local, binding, outcome, elapsed, **metadata):
+        # Publish the profile transition (including JobRef reservations) and
+        # its receipt together. A failed terminal write must not release a key.
+        outcome, result = binding.settle_result(local, outcome, self._artifacts)
+        previous = binding.state()
+        try:
+            binding.observe(local, outcome)
+            self._store(call, result, elapsed, **metadata)
+        except BaseException:
+            binding.restore(previous)
+            raise
+        return result
 
     def _worker_lost(self, call, error):
         spec = next(spec for spec in self._specs if spec.name == call.name)
@@ -320,19 +366,26 @@ class LabGroup:
             ExecutionStatus.FAILED, f'{type(error).__name__}: {error}', call_id=call.call_id,
             data={'effects_uncertain': True, 'retryable': spec.idempotent})
 
-    def _store(self, call, outcome, elapsed):
-        if self._receipts is None or not isinstance(outcome, (OperationResult, JobRef)):
+    def _write_receipt(self, row):
+        if self._receipts is None:
+            self._memory_receipts[row['call_id']] = deepcopy(row)
             return
         from rsicomposer.runtime.storage.codec import encode
+        atomic_write(self._receipt_path(row['call_id']), json_bytes(encode(row)))
+
+    def _store(self, call, outcome, elapsed, *, finishing=False, job=None, progress=()):
+        if not isinstance(outcome, (OperationResult, JobRef)):
+            return
         alias = call.name.rsplit('.', 1)[0]
         lab, _ = self._operations[call.name]
         binding = self._bindings[alias]
         capture = optional_method(lab, 'state')
         sequence = self._receipt_sequences.get(alias, 0) + 1
-        atomic_write(self._receipt_path(call), json_bytes(encode(
-            {'schema': _RECEIPT_SCHEMA, 'call_id': call.call_id, 'name': call.name,
-             'arguments': call.arguments, 'outcome': outcome, 'lab_state': capture() if capture is not None else None,
-             'profile_state': binding.state(), 'sequence': sequence, 'elapsed_seconds': elapsed})))
+        row = {'schema': _RECEIPT_SCHEMA, 'call_id': call.call_id, 'name': call.name,
+            'arguments': call.arguments, 'outcome': outcome, 'lab_state': capture() if capture is not None else None,
+            'profile_state': binding.state(), 'sequence': sequence, 'elapsed_seconds': elapsed,
+            'finishing': finishing, 'job': outcome if isinstance(outcome, JobRef) else job, 'progress': progress}
+        self._write_receipt(self._validate_receipt(row, call.call_id))
         self._receipt_sequences[alias] = self._applied_sequences[alias] = sequence
         self._applied_receipts.add(call.call_id)
         self._before_operation.pop(alias, None)
@@ -351,35 +404,62 @@ class LabGroup:
 
     def can_poll_job(self, call, job):
         operation = self._operations.get(call.name)
-        return operation is not None and optional_method(operation[0], 'poll_job') is not None
+        if operation is None:
+            return False
+        if optional_method(operation[0], 'poll_job') is not None:
+            return True
+        # A lost worker may have produced a terminal receipt on reattachment,
+        # even for a provider without a poll port. Only the journal is needed.
+        row = self._saved(call)
+        return row is not None and row['job'] == job and isinstance(row['outcome'], OperationResult)
 
     def can_cancel_job(self, call, job):
         operation = self._operations.get(call.name)
         return operation is not None and optional_method(operation[0], 'cancel_job') is not None
 
+    def _job_receipt(self, call, job):
+        row = self._saved(call)
+        if not isinstance(job, JobRef) or row is None or row['job'] != job:
+            raise ValueError('Job does not match the journaled Lab submission')
+        return row
+
     def poll_job(self, call, job, *, decision_id, after):
-        with self._state_boundary(call.name.rsplit('.', 1)[0], wait=False) as available:
+        if type(after) is not int or after < 0:
+            raise ValueError('Job progress cursor must be a nonnegative integer')
+        with self._invocation(call) as available:
             if not available:
                 return None, ()
-            return self._poll_job(call, job, decision_id=decision_id, after=after)
-
-    def _poll_job(self, call, job, *, decision_id, after):
-        with self._job_scope(call, decision_id) as (lab, local, binding):
-            try:
-                result, progress = self._job_observation(lab, call, job, after)
-            except WorkerLostError as error:
-                result, progress = self._worker_lost(call, error), ()
-            if result is None:
-                return None, progress
-            return self._record_job_result(call, local, binding, result), progress
-
-    def _record_job_result(self, call, local, binding, result):
-        with self._lock:
-            result = binding.validate_result(local, _bind_receipt(local, result))
-            binding.observe(local, result)
-            result = binding.aggregate(local, result, self._artifacts)
-            self._store(call, result, self.receipt_elapsed(call))
-        return result
+            row = self._job_receipt(call, job)
+            alias = call.name.rpartition('.')[0]
+            missing = tuple(event for event in row['progress'] if event.sequence > after)
+            terminal = row['outcome'] if isinstance(row['outcome'], OperationResult) else None
+            if ((terminal is not None or missing) and call.call_id in self._applied_receipts
+                    and row['sequence'] <= self._applied_sequences.get(alias, 0)):
+                return terminal, missing  # Normal delivery retry: no provider methods, even state().
+            with self._state_boundary(alias, wait=False) as available:
+                if not available:
+                    return None, ()
+                with self._lock:
+                    self._apply_receipt(row)
+                if terminal is not None or missing:
+                    return terminal, missing
+                with self._job_scope(call, decision_id) as (lab, local, binding):
+                    try:
+                        result, events = self._job_observation(lab, call, job, after)
+                    except WorkerLostError as error:
+                        result, events = self._worker_lost(call, error), ()
+                    if result is not None or events:
+                        # Journal observations before delivery. On a repeated poll
+                        # the Host's cursor, not the worker's lifetime, decides
+                        # which events still need to be observed.
+                        progress = (*row['progress'], *events)
+                        with self._lock:
+                            if result is None:
+                                self._store(call, job, row['elapsed_seconds'], progress=progress)
+                            else:
+                                result = self._commit_outcome(call, local, binding, _bind_receipt(local, result),
+                                    row['elapsed_seconds'], job=job, progress=progress)
+                    return result, events
 
     @staticmethod
     def _job_observation(lab, call, job, after):
@@ -395,11 +475,7 @@ class LabGroup:
             result = _bind_receipt(call, result)
         events = optional_method(lab, 'job_events')
         progress = events(job, after=after) if events is not None else ()
-        if (not isinstance(progress, tuple) or any(not isinstance(row, OperationProgress)
-                or row.job != job or row.call_id != call.call_id for row in progress)
-                or [row.sequence for row in progress] != sorted({row.sequence for row in progress})
-                or any(row.sequence <= after for row in progress)):
-            raise ValueError('Lab job events must be increasing, call-correlated OperationProgress observations')
+        LabGroup._validate_progress(progress, call.call_id, job, after=after)
         if not outcome.terminal:
             return None, progress
         if result is None:
@@ -408,8 +484,18 @@ class LabGroup:
                 outcome.error if outcome.status == JobStatus.FAILED else None)
         return result, progress
 
+    @staticmethod
+    def _validate_progress(progress, call_id, job, *, after):
+        if (not isinstance(progress, tuple) or any(not isinstance(row, OperationProgress)
+                or row.job != job or row.call_id != call_id for row in progress)
+                or [row.sequence for row in progress] != sorted({row.sequence for row in progress})
+                or any(row.sequence <= after for row in progress)):
+            raise ValueError('Lab job events must be increasing, call-correlated OperationProgress observations')
+
     def control_job(self, call, job, control, *, decision_id):
         with self._state_boundary(call.name.rsplit('.', 1)[0]), self._job_scope(call, decision_id) as (lab, _, _):
+            if isinstance(self._job_receipt(call, job)['outcome'], OperationResult):
+                return
             apply = optional_method(lab, 'control_job')
             if apply is None or apply(job, control) is not None:
                 raise TypeError('Checkpoint jobs require idempotent control_job(job, control) returning None')
@@ -417,6 +503,8 @@ class LabGroup:
     def cancel_job(self, call, job, *, decision_id):
         """Request cancellation; terminal delivery still uses the normal poll journal."""
         with self._state_boundary(call.name.rsplit('.', 1)[0]), self._job_scope(call, decision_id) as (lab, _, _):
+            if isinstance(self._job_receipt(call, job)['outcome'], OperationResult):
+                return
             cancel = optional_method(lab, 'cancel_job')
             if cancel is None:
                 raise TypeError('Lab does not implement cancel_job(job)')
@@ -428,6 +516,18 @@ class LabGroup:
                 _bind_receipt(call, outcome.result)
 
     def reattach_job(self, call, job):
+        with self._invocation(call) as available:
+            if not available:
+                raise ValueError('Operation call_id already has an active execution')
+            with self._state_boundary(call.name.rpartition('.')[0]):
+                return self._reattach_job(call, job)
+
+    def _reattach_job(self, call, job):
+        row = self._job_receipt(call, job)
+        with self._lock:
+            self._apply_receipt(row)
+        if isinstance(row['outcome'], OperationResult):
+            return row['outcome']
         lab, name = self._operations[call.name]
         reattach = optional_method(lab, 'reattach_job')
         if reattach is None:
@@ -436,39 +536,63 @@ class LabGroup:
             value = reattach(job)
         except WorkerLostError as error:
             binding = self._bindings[call.name.rsplit('.', 1)[0]]
-            return self._record_job_result(call, replace(call, name=name), binding, self._worker_lost(call, error))
+            with self._lock:
+                return self._commit_outcome(call, replace(call, name=name), binding, self._worker_lost(call, error),
+                    row['elapsed_seconds'], job=job, progress=row['progress'])
         if value is not None:
             raise TypeError('Journaled jobs require reattach_job(job) returning None')
         return None
 
     def profile_state(self):
-        return {'bindings': {alias: binding.state() for alias, binding in self._bindings.items()},
-                'final_calls': deepcopy(self._final_calls), 'final_index': self._final_index}
+        with self._lock:
+            return {'bindings': {alias: binding.state() for alias, binding in self._bindings.items()},
+                    'final_calls': deepcopy(self._final_calls), 'final_index': self._final_index}
 
     def restore_profile_state(self, state):
         if (not isinstance(state, dict) or set(state) != {'bindings', 'final_calls', 'final_index'}
-                or set(state['bindings']) != set(self._bindings)):
+                or not isinstance(state['bindings'], dict) or set(state['bindings']) != set(self._bindings)):
             raise ValueError('Invalid Lab profile state')
-        for alias, binding in self._bindings.items():
-            binding.restore(state['bindings'][alias])
         calls, index = state['final_calls'], state['final_index']
         if (calls is not None and (not isinstance(calls, tuple)
                 or any(not isinstance(call, OperationCall) for call in calls))):
             raise ValueError('Invalid host final evaluation plan')
         if type(index) is not int or not 0 <= index <= len(calls or ()):
             raise ValueError('Invalid final evaluation cursor')
-        if calls is not None:
-            plans = {alias: [] for alias in self._bindings}
-            for call in calls:
-                alias, _, name = call.name.rpartition('.')
-                if call.name not in self._operations or name not in ('evaluate', 'execute'):
-                    raise ValueError('Invalid host final evaluation operation')
-                local = replace(call, name=name)
-                self._bindings[alias].check(local, finishing=True, history=False)
-                plans[alias].append(local)
-            for alias, plan in plans.items():
-                self._bindings[alias].check_finish(plan)
-        self._final_calls, self._final_index = deepcopy(calls), index
+        with self._lock:
+            before = {alias: binding.state() for alias, binding in self._bindings.items()}
+            try:
+                for alias, binding in self._bindings.items():
+                    binding.restore(state['bindings'][alias])
+                if calls is not None:
+                    self._check_final_plan(calls, restored_index=index)
+            except Exception:
+                for alias, binding in self._bindings.items():
+                    binding.restore(before[alias])
+                raise
+            self._final_calls, self._final_index = deepcopy(calls), index
+
+    def _check_final_plan(self, calls, *, restored_index=None):
+        ids = {call.call_id for call in calls}
+        if len(ids) != len(calls):
+            raise ValueError('Host final evaluation plan contains duplicate call IDs')
+        if ids & self._invocations:
+            raise ValueError('A final evaluation call_id already has an active execution')
+        plans = {alias: [] for alias in self._bindings}
+        for position, call in enumerate(calls):
+            if call.name not in self._operations:
+                raise ValueError(f'Unknown final evaluation: {call.name}')
+            alias, _, name = call.name.rpartition('.')
+            plans[alias].append(replace(call, name=name))
+            row = self._saved(call)  # Also rejects earlier calls with different arguments or aliases.
+            if row is not None and (restored_index is None or not row['finishing']):
+                raise ValueError('Final evaluation call_id was already recorded: ' + call.call_id)
+            if row is None and (call.call_id in self._applied_receipts or position < (restored_index or 0)):
+                raise ValueError('Final evaluation call_id has a missing applied receipt: ' + call.call_id)
+        for alias, plan in plans.items():
+            binding = self._bindings[alias]
+            binding.check_finish(plan)
+            for local in plan:
+                binding.check(local, finishing=True, history=restored_index is None)
 
     def finish_step(self, before_execute=None):
         """One host-only sealed evaluation after Controller finish, or None.
@@ -484,16 +608,10 @@ class LabGroup:
                 plan = final() if final is not None else ()
                 if not isinstance(plan, tuple) or any(not isinstance(call, OperationCall) for call in plan):
                     raise TypeError('final_evaluations() must return an OperationCall tuple')
-                self._bindings[alias].check_finish(plan)
-                for call in plan:
-                    if call.name not in ('evaluate', 'execute'):
-                        raise ValueError('Final evaluations must be evaluate or execute measurements')
-                    name = f'{alias}.{call.name}'
-                    if name not in self._operations:
-                        raise ValueError(f'Unknown final evaluation: {name}')
-                    self._bindings[alias].check(call, finishing=True)
-                    calls.append(replace(call, name=name))
-            self._final_calls = tuple(calls)
+                calls.extend(replace(call, name=f'{alias}.{call.name}') for call in plan)
+            with self._lock:
+                self._check_final_plan(calls)
+                self._final_calls = tuple(calls)
         if self._final_index == len(self._final_calls):
             return None
         call = self._final_calls[self._final_index]
@@ -528,13 +646,13 @@ class LabGroup:
         self._applied_sequences = dict(state['sequences'])
         self._receipt_sequences = dict(state['sequences'])
 
-    def _receipt_path(self, call):
-        digest = sha256(call.call_id.encode('utf-8')).hexdigest()
+    def _receipt_path(self, call_id):
+        digest = sha256(call_id.encode('utf-8')).hexdigest()
         # Historical filenames ended in .json; keep new writes in a disjoint namespace.
         return self._receipts / f'sha256-{digest}.receipt'
 
-    def _legacy_receipt_path(self, call):
-        name = call.call_id + '.json'
+    def _legacy_receipt_path(self, call_id):
+        name = call_id + '.json'
         # Only probe a bounded, literal child filename, never a legacy path expression.
         if any(ch in name for ch in '/\\:\x00') or len(os.fsencode(name)) > 255:
             return None
@@ -554,35 +672,57 @@ class LabGroup:
         return path
 
     def _saved(self, call):
+        saved = self._saved_by_id(call.call_id)
+        # Python treats True == 1 == 1.0 even inside composite targets. A stored
+        # receipt belongs to the exact admitted JSON call, not Python equality.
+        if saved is not None and (saved['name'] != call.name or
+                json.dumps(saved['arguments'], sort_keys=True) != json.dumps(call.arguments, sort_keys=True)):
+            raise ValueError(f'call_id {call.call_id} was already used for a different operation')
+        return saved
+
+    def _saved_by_id(self, call_id):
         if self._receipts is None:
-            return None
+            return deepcopy(self._memory_receipts.get(call_id))
         legacy = False
         try:
-            raw = _read_receipt(self._receipt_path(call))
+            raw = _read_receipt(self._receipt_path(call_id))
         except FileNotFoundError:
-            path = self._legacy_receipt_path(call)
+            path = self._legacy_receipt_path(call_id)
             if path is None:
                 return None
             raw = _read_receipt(path)
             legacy = True
         from rsicomposer.runtime.storage.codec import decode
-        saved = decode(json.loads(raw))
+        return self._validate_receipt(decode(json.loads(raw)), call_id, legacy=legacy)
+
+    def _validate_receipt(self, saved, call_id, *, legacy=False):
         schema = _LEGACY_RECEIPT_SCHEMA if legacy else _RECEIPT_SCHEMA
         if not isinstance(saved, dict) or saved.get('schema') != schema:
             raise ValueError('Lab receipt uses an unsupported RSIComposer protocol; start a new run')
-        if set(saved) != (_RECEIPT_FIELDS if legacy else _RECEIPT_FIELDS | {'call_id'}):
+        if set(saved) != (_RECEIPT_FIELDS if legacy else _RECEIPT_FIELDS | {'call_id', 'job', 'progress', 'finishing'}):
             raise ValueError('Invalid Lab receipt fields')
-        if not legacy and saved['call_id'] != call.call_id:
+        if not legacy and saved['call_id'] != call_id:
             raise ValueError('Lab receipt call_id does not match')
-        if saved['name'] != call.name or saved['arguments'] != call.arguments:
-            raise ValueError(f'call_id {call.call_id} was already used for a different operation')
         outcome = saved['outcome']
+        if legacy:
+            saved = {**saved, 'schema': _RECEIPT_SCHEMA, 'call_id': call_id, 'finishing': False,
+                     'job': outcome if isinstance(outcome, JobRef) else None, 'progress': ()}
+        if (not isinstance(saved['name'], str) or saved['name'] not in self._operations
+                or not isinstance(saved['arguments'], dict) or type(saved['finishing']) is not bool):
+            raise ValueError('Invalid Lab receipt request')
         if isinstance(outcome, OperationResult):
-            if outcome.call_id != call.call_id:
+            if outcome.call_id != call_id:
                 raise ValueError('Terminal Lab receipt call_id does not match')
-        elif (not isinstance(outcome, JobRef) or not isinstance(outcome.job_id, str) or not outcome.job_id.strip()
-                or not isinstance(outcome.backend, str) or not outcome.backend.strip()):
+        elif not isinstance(outcome, JobRef) or saved['job'] != outcome:
             raise ValueError('Invalid Lab receipt outcome')
+        job = saved['job']
+        if job is not None and (not isinstance(job, JobRef) or not isinstance(job.job_id, str)
+                or not job.job_id.strip() or not isinstance(job.backend, str) or not job.backend.strip()
+                or saved['finishing']):
+            raise ValueError('Invalid Lab receipt job')
+        if saved['progress'] and job is None:
+            raise ValueError('Progress requires a Lab job receipt')
+        self._validate_progress(saved['progress'], call_id, job, after=0)
         if type(saved['sequence']) is not int or saved['sequence'] < 1:
             raise ValueError('Invalid Lab receipt sequence')
         return saved
@@ -605,6 +745,11 @@ class LabGroup:
         saved = self._saved(call)
         return saved['sequence'] if saved is not None else None
 
+    def receipt_job(self, call):
+        """The original managed JobRef, retained even after terminal settlement."""
+        saved = self._saved(call)
+        return saved['job'] if saved is not None else None
+
     def receipt_elapsed(self, call):
         saved = self._saved(call)
         return saved['elapsed_seconds'] if saved is not None else None
@@ -623,10 +768,11 @@ class LabGroup:
 
     def in_flight_resolution(self, call, *, job=None):
         """Find a replay/reattach proof, without changing any Lab state."""
-        saved = self.stored_receipt(call)
+        row = self._saved(call)
+        if job is not None and (row is None or row['job'] != job):
+            return None
+        saved = row['outcome'] if row is not None else None
         if isinstance(saved, JobRef):
-            if job is not None and saved != job:
-                return None
             lab, _ = self._operations[call.name]
             return 'job' if optional_method(lab, 'reattach_job') is not None else None
         if saved is not None:
@@ -635,6 +781,67 @@ class LabGroup:
             return None  # A known submission is not safe to launch again.
         spec = next((s for s in self._specs if s.name == call.name), None)
         return 'idempotent' if spec is not None and spec.idempotent else None
+
+    def _portable_receipt(self, row, sequences):
+        if row is None or row['name'] not in self._operations:
+            raise ValueError('Portable Lab journal is missing an applied operation')
+        if not isinstance(row['outcome'], OperationResult):
+            raise ValueError('Portable Lab journal requires terminal receipts')
+        alias = row['name'].rpartition('.')[0]
+        if row['sequence'] > sequences.get(alias, 0):
+            raise ValueError('Portable Lab receipt is newer than the captured state')
+        return row
+
+    def export_receipt_files(self, directory, inventory):
+        """Stream exactly the applied journal, not a plugin's workspace or filename layout."""
+        from rsicomposer.runtime.storage.codec import encode
+        with self._lock, (directory / 'receipts.jsonl').open('xb') as stream:
+            if inventory != self.receipt_state():
+                raise RuntimeError('Lab receipt inventory changed during snapshot capture')
+            for call_id in inventory['applied']:
+                row = self._portable_receipt(self._saved_by_id(call_id), self._applied_sequences)
+                stream.write(json_bytes(encode(row)) + b'\n')
+
+    def restore_receipt_files(self, directory, inventory):
+        """Reconstruct retry and replay evidence without executing or restoring a Lab."""
+        from rsicomposer.runtime.storage.codec import decode
+        if not isinstance(inventory, dict) or inventory.keys() != {'applied', 'sequences'}:
+            raise ValueError('Invalid portable Lab receipt inventory')
+        applied, sequences = inventory['applied'], inventory['sequences']
+        if (not isinstance(applied, list) or any(not isinstance(i, str) or not i.strip() for i in applied)
+                or applied != sorted(set(applied)) or not isinstance(sequences, dict)
+                or any(alias not in self._labs or type(n) is not int or n < 1 for alias, n in sequences.items())):
+            raise ValueError('Invalid portable Lab receipt inventory')
+
+        def rows(stream):
+            for call_id in applied:
+                line = stream.readline()
+                if not line:
+                    raise ValueError('Portable Lab journal is missing an applied receipt')
+                row = self._validate_receipt(decode(json.loads(line)), call_id)
+                yield call_id, self._portable_receipt(row, sequences)
+            if stream.read(1):
+                raise ValueError('Portable Lab journal contains an unlisted receipt')
+
+        # A component may use an external journal. Validate all rows and all
+        # pre-existing receipts before installing even the first missing row.
+        with self._lock, (directory / 'receipts.jsonl').open('rb') as stream:
+            missing, latest = set(), {}
+            for call_id, row in rows(stream):
+                alias = row['name'].rpartition('.')[0]
+                latest[alias] = max(row['sequence'], latest.get(alias, 0))
+                prior = self._saved_by_id(call_id)
+                if prior is None:
+                    missing.add(call_id)
+                elif prior != row:
+                    raise ValueError('Cannot overwrite a conflicting Lab receipt on restore')
+            if latest != sequences:
+                raise ValueError('Portable Lab receipt sequences do not match the captured inventory')
+            if missing:
+                stream.seek(0)
+                for call_id, row in rows(stream):
+                    if call_id in missing:
+                        self._write_receipt(row)
 
     def runtime_context(self):
         values = {}

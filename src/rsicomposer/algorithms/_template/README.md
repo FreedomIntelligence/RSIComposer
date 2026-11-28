@@ -11,7 +11,7 @@ changes the prompt configuration; the model weights stay fixed.
 | [`controller.py`](controller.py) | The Controller prototype. Its docstring lists the Policy contract. `decide()` sends `math.evaluate` (the first candidate synchronously, the rest as background jobs), matches each receipt by `call_id`, waits while a job runs, and finishes after the last candidate. `report()` selects from measured candidates. |
 | [`harness.py`](harness.py) | The Harness prototype. Its docstring lists the four required ports and the optional ones. It adds a receipt summary to `window.context` and one local tool, `note`. |
 | [`memory.py`](memory.py) | The Memory prototype. Its docstring lists the required and optional methods. It reports the best score seen per operation as context. |
-| [`__init__.py`](__init__.py) | `register()` binds the Controller and a Lab factory. It resolves the template Lab through the registry so the Lab can also be used independently. Replace the factory if your method needs a different environment. |
+| [`__init__.py`](__init__.py) | When the method is selected, it takes the public Lab definition from `registry.lab('template_math')`. The same factory and validator serve standalone pairing. Pass a private factory instead if your method needs its own environment. |
 | [`configs/run.json`](configs/run.json) | `framework.method` selects the registered method and passes the Controller and Lab options. `backends` and `roles.actor` select the GPU model. |
 
 Start the [GPU endpoint](../../labs/_template/README.md#connect-a-gpu-model). Then copy

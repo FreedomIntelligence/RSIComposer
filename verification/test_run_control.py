@@ -71,6 +71,9 @@ class Lab:
     def split_roles(self):
         return {'heldout': SEALED} if self.sealed else {}
 
+    def evaluation_operations(self):
+        return ('evaluate',) if self.sealed else ()
+
     def final_evaluations(self):
         return tuple(OperationCall('evaluate', {'split': 'heldout'}, call_id=call_id)
                      for call_id in ('final-one', 'final-two')) if self.sealed else ()

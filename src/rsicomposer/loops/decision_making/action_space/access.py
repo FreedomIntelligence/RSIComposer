@@ -1,6 +1,6 @@
 """External access configuration; operation semantics remain in definitions/handlers."""
 from collections.abc import Callable
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from inspect import getattr_static
 from typing import Literal
@@ -122,7 +122,7 @@ class ActionPermissions:
 
     def to_dict(self):
         if type(self) is not ActionPermissions or (self.check is not None and type(self.check) is not SensitivePolicy):
-            raise TypeError('Durable recovery and portable snapshots require serializable ActionPermissions; '
+            raise TypeError('Recovery, snapshots and nested workers require serializable ActionPermissions; '
                             'custom permission callbacks are unsupported')
         result = {'operations': sorted(self.operations) if self.operations is not None else None}
         if self.check is not None:
@@ -177,6 +177,12 @@ class AuthorizedActionSpace:
         if not isinstance(value, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         return value
+
+    def with_definitions(self, definitions):
+        # Check collisions in the full catalog, then retain every permission layer.
+        extended = copy(self)
+        extended.source = self.source.with_definitions(definitions)
+        return extended
 
     def _request(self, kind, name, *, read_only=False, action=None):
         return AccessRequest(self.phase, kind, name, read_only, action)

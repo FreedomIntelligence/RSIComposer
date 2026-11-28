@@ -282,6 +282,12 @@ class LLMFinetuneLab(MathLab):
     def primary_metric(self):
         return MetricSpec('accuracy', 'maximize', self.datasets['dev'][0].verifier.name)
 
+    def evaluation_operations(self):
+        return ('evaluate',)
+
+    def candidate_identity_fields(self):
+        return {'evaluate': ('iteration',)}
+
     def final_evaluations(self):
         if self.selected is None:
             return ()

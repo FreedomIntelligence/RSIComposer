@@ -3,27 +3,22 @@
 This is not a FeedbackProcessor: only its child components receive the public
 process(event, model) interface. Journal state and accounting stay in this host.
 """
-import json
 from copy import deepcopy
 from pathlib import Path
 
 from rsicomposer.harnesses.decision.feedback.evidence import admitted_candidate_evidence
-from rsicomposer.harnesses.decision.feedback.proposal_validation import checked_processor_result, validate_proposals
+from rsicomposer.harnesses.decision.feedback.proposal_validation import (
+    bind_targets, checked_processor_result, validate_proposals,
+)
 from rsicomposer.harnesses.decision.feedback.stages import FeedbackStageBinding
 
 
 class FeedbackPipeline:
     actual_exchanges_read_path = '/feedback_response/products'
 
-    def __init__(self, *, memory_processor=None, harness_proposals=None, improvement_proposals=None,
-                 proposal_requires_memory=False):
-        if harness_proposals is not None and improvement_proposals is not None:
-            raise ValueError('Select one improvement proposal stage')
-        self.memory_processor, self.harness_proposals = memory_processor, harness_proposals
-        self.improvement_proposals = improvement_proposals
-        self.proposer = improvement_proposals if improvement_proposals is not None else harness_proposals
-        self.proposal_product = 'improvement_proposals' if improvement_proposals is not None else 'harness_proposals'
-        self.proposal_kinds = ('harness_change', 'policy_training') if improvement_proposals is not None else ('harness_change',)
+    def __init__(self, *, memory_processor=None, proposer=None, proposal_requires_memory=False):
+        self.memory_processor, self.proposer = memory_processor, proposer
+        self.proposal_targets = bind_targets(getattr(proposer, 'proposal_targets', None)) if proposer is not None else {}
         if type(proposal_requires_memory) is not bool:
             raise TypeError('proposal_requires_memory must be a bool')
         self.proposal_requires_memory = proposal_requires_memory
@@ -34,36 +29,25 @@ class FeedbackPipeline:
     def configuration(self):
         return {'provider': 'feedback_pipeline',
             'memory': self.memory_binding.configuration() if self.memory_processor is not None else None,
-            'harness_proposals': self.proposal_binding.configuration() if self.harness_proposals is not None else None,
-            'improvement_proposals': self.proposal_binding.configuration() if self.improvement_proposals is not None else None,
+            'proposer': self.proposal_binding.configuration() if self.proposer is not None else None,
+            'proposal_targets': [rule.configuration() for rule in self.proposal_targets.values()],
             'proposal_requires_memory': self.proposal_requires_memory,
             'trajectory_mode': 'archive_only', 'dataset_construction_owner': 'lab',
             'construction_owner': 'main_meta_agent_decision'}
 
-    @staticmethod
-    def _checked(result, job, allowance, kind):
+    def _checked(self, result, job, allowance, binding):
         result = checked_processor_result(result, allowance)
         charged = result['charged_calls']
-        if result.get('status') == 'completed' and kind != 'memory':
+        if result.get('status') == 'completed' and binding is self.proposal_binding:
             try:
-                output = result.get('output')
-                if not isinstance(output, dict) or set(output) != {'proposals'}:
-                    raise ValueError('Proposal product must contain only proposals')
-                proposals = validate_proposals(json.dumps(output),
-                    job['input']['source_refs'], candidate_evidence=admitted_candidate_evidence(job))
-                kinds = (kind,) if isinstance(kind, str) else kind
-                if any(p['kind'] not in kinds for p in proposals):
-                    raise ValueError('Feedback stage produced a different product')
-                if any((p['kind'] == 'harness_change' and p.get('subject') not in ('meta_agent', 'lab'))
-                       or (p['kind'] == 'policy_training' and p.get('subject') != 'meta_agent') for p in proposals):
-                    raise ValueError('Improvement proposals must name the proper target')
-                result['proposals'] = proposals
+                result['proposals'] = validate_proposals(result.get('output'), job['input']['source_refs'],
+                    targets=self.proposal_targets, candidate_evidence=admitted_candidate_evidence(job))
             except (ValueError, TypeError, KeyError) as exc:
                 return {'status': 'failed', 'error': str(exc), 'charged_calls': charged,
                         'proposals': [], 'response': result}
         return result
 
-    def _run(self, binding, job, backend, limits, allowance, kind, product):
+    def _run(self, binding, job, backend, limits, allowance, product):
         if allowance == 0 and binding.max_calls > 0:
             return {'status': 'budget_exhausted', 'error': 'No host calls remain for this product',
                     'charged_calls': 0, 'proposals': []}
@@ -74,15 +58,13 @@ class FeedbackPipeline:
         except Exception as exc:
             result = {'status': 'failed', 'error': f'{type(exc).__name__}: {exc}',
                       'charged_calls': allowance, 'proposals': []}
-        return self._checked(result, job, allowance, kind)
+        return self._checked(result, job, allowance, binding)
 
-    def _combine(self, memory, harness, *, simulated=False):
+    def _combine(self, memory, proposal, *, simulated=False):
         products = {'context_memory': memory} if memory is not None else {}
-        if harness is not None:
-            products[self.proposal_product] = harness
-        proposals = deepcopy(memory.get('proposals', [])) if memory is not None and memory['status'] == 'completed' else []
-        if harness is not None and harness['status'] == 'completed':
-            proposals.extend(deepcopy(harness.get('proposals', [])))
+        if proposal is not None:
+            products['proposals'] = proposal
+        proposals = deepcopy(proposal['proposals']) if proposal is not None and proposal['status'] == 'completed' else []
         completed = not products or any(p['status'] == 'completed' for p in products.values())
         failed = next((p for p in products.values() if p['status'] != 'completed'), {})
         return {'status': 'completed' if completed else failed['status'], 'error': failed.get('error'),
@@ -97,42 +79,41 @@ class FeedbackPipeline:
 
     def run(self, job, backend, limits, *, path=None):
         allowance = min(self.memory_binding.max_calls, limits['max_calls'])
-        memory = (self._run(self.memory_binding, job, backend, limits, allowance, 'memory', 'context_memory')
+        memory = (self._run(self.memory_binding, job, backend, limits, allowance, 'context_memory')
                   if self.memory_processor is not None else None)
-        harness = None
+        proposal = None
         if self.proposer is not None:
             if self.proposal_requires_memory and (memory is None or memory['status'] != 'completed'):
-                harness = {'status': 'not_started', 'error': 'Memory processing did not complete',
+                proposal = {'status': 'not_started', 'error': 'Memory processing did not complete',
                            'charged_calls': 0, 'proposals': []}
             else:
                 remaining = limits['max_calls'] - (memory['charged_calls'] if memory is not None else 0)
                 allowance = min(self.proposal_binding.max_calls, remaining)
-                harness = self._run(self.proposal_binding, job, backend, limits, allowance,
-                                    self.proposal_kinds, self.proposal_product)
-        return self._combine(memory, harness, simulated=job['simulated'])
+                proposal = self._run(self.proposal_binding, job, backend, limits, allowance, 'proposals')
+        return self._combine(memory, proposal, simulated=job['simulated'])
 
     def recover_job(self, job, *, path=None):
         reserved = job['reserved_calls']
         allowance = min(self.memory_binding.max_calls, reserved)
-        memory = (self._recover(self.memory_binding, job, allowance, 'memory',
+        memory = (self._recover(self.memory_binding, job, allowance,
                                 path.with_name('context_memory.json') if path is not None else None)
                   if self.memory_processor is not None else None)
-        harness = None
+        proposal = None
         if self.proposer is not None:
             if self.proposal_requires_memory and (memory is None or memory['status'] != 'completed'):
-                harness = {'status': 'not_started', 'error': 'Memory processing did not complete',
+                proposal = {'status': 'not_started', 'error': 'Memory processing did not complete',
                            'charged_calls': 0, 'proposals': []}
             else:
                 allowance = min(self.proposal_binding.max_calls, reserved - (memory['charged_calls'] if memory is not None else 0))
-                harness = self._recover(self.proposal_binding, job, allowance, self.proposal_kinds,
-                    path.with_name(self.proposal_product + '.json') if path is not None else None)
-        result = self._combine(memory, harness, simulated=job['simulated'])
+                proposal = self._recover(self.proposal_binding, job, allowance,
+                    path.with_name('proposals.json') if path is not None else None)
+        result = self._combine(memory, proposal, simulated=job['simulated'])
         if any(p['status'] == 'interrupted' for p in result['products'].values()):
             result['charged_calls'] = reserved
             result['response']['accounting'] = 'unknown_stage_full_job_reservation_retained'
         return result
 
-    def _recover(self, binding, job, allowance, kinds, path):
+    def _recover(self, binding, job, allowance, path):
         if allowance == 0 and binding.max_calls > 0:
             return {'status': 'budget_exhausted', 'error': 'No host calls remain for this product',
                     'charged_calls': 0, 'proposals': []}
@@ -142,15 +123,13 @@ class FeedbackPipeline:
             error = f'{type(exc).__name__}: {exc}'
         else:
             if result is not None:
-                return self._checked(result, job, allowance, kinds)
+                return self._checked(result, job, allowance, binding)
             error = 'Product outcome unknown; no automatic replay'
         return {'status': 'interrupted', 'error': error, 'charged_calls': allowance, 'proposals': []}
 
 
-def enable_feedback_pipeline(loop, *, context_memory, memory_processor=None,
-                             harness_proposals=None, improvement_proposals=None, **options):
+def enable_feedback_pipeline(loop, *, context_memory, memory_processor=None, proposer=None, **options):
     """Explicit assembly: active memory, default extraction, optional proposals."""
     from rsicomposer.harnesses.decision.learning_harness import enable_feedback_learning
-    processor = FeedbackPipeline(memory_processor=memory_processor, harness_proposals=harness_proposals,
-                                 improvement_proposals=improvement_proposals)
+    processor = FeedbackPipeline(memory_processor=memory_processor, proposer=proposer)
     return enable_feedback_learning(loop, context_memory=context_memory, processor=processor, **options)

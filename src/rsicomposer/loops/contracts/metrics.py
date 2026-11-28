@@ -1,9 +1,17 @@
 """Shared measured-value validation; missing measurements remain absent."""
 import math
 
+from .lifecycle import ExecutionStatus
+
 
 class InvalidMetrics(ValueError):
     """A provider supplied values that cannot be recorded as measurements."""
+
+
+def has_scored_metrics(status, data):
+    """Use only on validated operation data; zero scores are measurements too."""
+    return (status == ExecutionStatus.COMPLETED and data.get('valid', True) is True
+            and data.get('scored', True) is True and bool(data.get('quality_metrics')))
 
 
 def validated_metrics(value, name='metrics'):

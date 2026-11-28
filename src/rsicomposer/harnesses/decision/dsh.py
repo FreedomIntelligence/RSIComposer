@@ -452,18 +452,18 @@ class DeepSeekResearchPolicy(_SessionPolicy):
 
 def dsh_decision_factory(config: DSHConfig, *, on_notification=None):
     def build(context, execution):
-        from rsicomposer.component_context import controller_wiring
+        from rsicomposer.component_context import decision_wiring
         from rsicomposer.harnesses.defaults import build_decision_parts
         from rsicomposer.harnesses.decision.engine import ResearchControllerHarness
         from rsicomposer.harnesses.decision.public_policy import ResearchPolicyAdapter
         from rsicomposer.loops.decision_making.loop import DecisionMakingLoop
         parts = build_decision_parts(context, execution)
-        owner = controller_wiring(context)
-        harness = ResearchControllerHarness(local_tools=parts.tools, experience=owner.experience,
-            memory=parts.memory, memory_limit=owner.memory_limit, research_agenda=parts.agenda,
-            experience_limit=owner.experience_limit, context_compactor=IdentityContextCompactor())
+        ports = decision_wiring(context)
+        harness = ResearchControllerHarness(local_tools=parts.tools, experience=ports.experience,
+            memory=parts.memory, memory_limit=ports.memory_limit, research_agenda=parts.agenda,
+            experience_limit=ports.experience_limit, context_compactor=IdentityContextCompactor())
         policy = DeepSeekResearchPolicy(config, harness, on_notification=on_notification)
         harness.add_cleanup(policy.close)
         return DecisionMakingLoop(ResearchPolicyAdapter(policy, harness), harness, parts.action_space,
-                                  host_execution=owner.host_execution, lab_execution=execution, model=policy.model)
+                                  host_execution=ports.host_execution, lab_execution=execution, model=policy.model)
     return build

@@ -6,7 +6,6 @@ are trusted host code explicitly loaded by the caller, not agent-written code.
 import hashlib
 import importlib.util
 import json
-import re
 import sys
 from copy import deepcopy
 from dataclasses import replace
@@ -16,16 +15,7 @@ from .components import _json, _name
 from .methods import ControllerDefinition, MethodCatalog, MethodDefinition, MethodIdentity
 from .methods import _FactoryDefinition as _Registration
 from .runtime.storage.files import file_hash
-
-
-def _selection(raw):
-    if not isinstance(raw, dict) or set(raw) - {'name', 'config'} or 'name' not in raw:
-        raise ValueError('Select a registered name with optional config')
-    _name(raw['name'], 'Registration')
-    config = raw.get('config', {})
-    if not isinstance(config, dict):
-        raise TypeError('Registration config must be an object')
-    return raw['name'], json.loads(_json(config))
+from .selection import RegistrySelection, load_factory
 
 
 class Registry:
@@ -39,18 +29,19 @@ class Registry:
     """
     def __init__(self, *, builtins=True):
         self._controllers, self._labs, self._methods = {}, {}, {}
+        self._builtins = bool(builtins)
         self._components = {}
         self._plugins = []
-        self._plugin_sources = []
+        self._plugin_paths = []
         if builtins:
             from .algorithms import register_builtins
             from .backends import register_components as register_backends
             from .harnesses import register_components as register_harnesses
             from .labs import register_builtins as register_labs
-            register_builtins(self)
             register_backends(self)
             register_harnesses(self)
             register_labs(self)
+            register_builtins(self)
 
     @staticmethod
     def _register(catalog, name, factory, version, validate_config):
@@ -61,7 +52,7 @@ class Registry:
             raise TypeError('Registration requires a factory and nonempty version')
         if validate_config is not None and not callable(validate_config):
             raise TypeError('validate_config must be callable')
-        catalog[name] = _Registration(factory, version, validate_config)
+        catalog[name] = _Registration(factory, version, validate_config, registered_name=name)
 
     def register_controller(self, name, controller, *, version, validate_config=None):
         """Register a Controller that a run config can pair with any registered Labs.
@@ -81,29 +72,23 @@ class Registry:
         self._controllers[name] = _Registration(controller, version, validate_config)
 
     def register_lab(self, name, factory, *, version, validate_config=None):
+        """Make a Lab available for explicit pairing and reuse inside methods."""
         self._register(self._labs, name, factory, version, validate_config)
 
-    def register_component(self, kind, name, factory, *, version, validate_config=None):
-        """Register a reusable method component by role and stable name.
+    def lab(self, name):
+        """Return the public Lab definition for a method, without constructing its resources."""
+        try:
+            return self._labs[name]
+        except KeyError:
+            raise ValueError(f'Unknown Lab: {name}') from None
 
-        Supported roles are harness, memory, backend and lab (with legacy alias
-        'scene'). Answer verifiers belong to the Lab whose answer format they
-        check, not to this catalog. The factory is intentionally opaque: the
-        method assembly supplies its context and configuration when it resolves
-        the component.
-        """
-        allowed = {'harness', 'memory', 'backend', 'lab', 'scene'}
-        if kind not in allowed:
+    def register_component(self, kind, name, factory, *, version, validate_config=None):
+        """Register a Harness, Memory or backend by role for use inside a method."""
+        if kind not in ('harness', 'memory', 'backend'):
             raise ValueError(f'Unknown component role: {kind}')
-        _name(name, 'Component')
-        if not callable(factory) or not isinstance(version, str) or not version.strip():
-            raise TypeError('Component requires a factory and nonempty version')
-        if validate_config is not None and not callable(validate_config):
-            raise TypeError('validate_config must be callable')
-        catalog = self._components.setdefault(kind, {})
-        if name in catalog:
-            raise ValueError(f'Duplicate {kind} component: {name}')
-        catalog[name] = _Registration(factory, version, validate_config)
+        catalog = self._components.get(kind, {})
+        self._register(catalog, name, factory, version, validate_config)
+        self._components[kind] = catalog
 
     def resolve_component(self, kind, name, context, config=None):
         """Construct one registered component for a method assembly."""
@@ -112,10 +97,7 @@ class Registry:
             raise TypeError('Component config must be a JSON object')
         config = json.loads(_json(config))
         try:
-            catalog = self._components.get(kind, {})
-            if name not in catalog and kind in ('lab', 'scene'):
-                catalog = self._components.get('scene' if kind == 'lab' else 'lab', {})
-            definition = catalog[name]
+            definition = self._components[kind][name]
         except KeyError as exc:
             raise ValueError(f'Unknown {kind} component: {name}') from exc
         definition.validate(config)
@@ -166,13 +148,13 @@ class Registry:
                         if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc']
             digest = hashlib.sha256(_json(identity).encode()).hexdigest()
         if expected_sha256 is not None and digest != expected_sha256:
-            raise ValueError('Nested registration plugin source changed after admission')
+            raise ValueError('Registration plugin source changed since selection: ' + (package_root or path).name)
         name = '_rsicomposer_registration_' + digest
         spec = importlib.util.spec_from_file_location(name, path,
             submodule_search_locations=[str(package_root)] if package_root is not None else None)
         module = importlib.util.module_from_spec(spec)
         prior = (dict(self._controllers), dict(self._labs), dict(self._methods),
-                 {kind: dict(catalog) for kind, catalog in self._components.items()}, list(self._plugins), list(self._plugin_sources))
+                 {kind: dict(catalog) for kind, catalog in self._components.items()}, list(self._plugins), list(self._plugin_paths))
         prior_modules = {key: value for key, value in sys.modules.items()
                          if key == name or key.startswith(name + '.')}
         sys.modules[name] = module
@@ -184,66 +166,119 @@ class Registry:
                 raise TypeError('Plugin must define register(registry) returning None')
             self._plugins.append({'name': package_root.name if package_root is not None else path.name,
                                   'sha256': digest})
-            self._plugin_sources.append({'path': str(package_root or path), 'sha256': digest})
+            self._plugin_paths.append(str(package_root or path))
         except BaseException:
-            self._controllers, self._labs, self._methods, self._components, self._plugins, self._plugin_sources = prior
+            self._controllers, self._labs, self._methods, self._components, self._plugins, self._plugin_paths = prior
             for loaded in tuple(sys.modules):
                 if loaded == name or loaded.startswith(name + '.'):
                     sys.modules.pop(loaded, None)
             sys.modules.update(prior_modules)
             raise
 
-    def _with_controller_catalog(self, modules, selection):
+    @classmethod
+    def reconstruct(cls, description, *, plugins=(), _nested=False):
+        """Resolve a recorded selection. Portable callers provide trusted plugin paths themselves."""
+        selection = RegistrySelection.parse(description)
+        return cls._rebuild(selection, plugins, nested=_nested)
+
+    @classmethod
+    def _rebuild(cls, selection, plugins, *, nested):
+        paths = tuple(Path(path).resolve(strict=True) for path in plugins)
+        if [path.name for path in paths] != [pin['name'] for pin in selection.plugins]:
+            raise ValueError('Supply the original registration plugins in order for this selection')
+        if not nested and any(isinstance(ref, dict) for ref in (selection.catalog or {}).values()):
+            raise TypeError('Supply the original explicit ModuleAssembly for a Python Controller definition')
+        registry = cls(builtins=selection.builtins)
+        for path, pin in zip(paths, selection.plugins, strict=True):
+            registry.load_plugin(path, expected_sha256=pin['sha256'])
+        return registry._resolve(selection)
+
+    @classmethod
+    def from_workspace(cls, directory, *, plugins=()):
+        from .assembly import read_saved_module_layout
+        selection = read_saved_module_layout(directory).get('registry_selection')
+        if selection is None:
+            raise TypeError('Supply the original explicit ModuleAssembly for this workspace')
+        return cls.reconstruct(selection, plugins=plugins)
+
+    def build(self, selection):
+        """Validate the root selection now; construct owned resources only at launch."""
+        if not isinstance(selection, dict):
+            raise TypeError('framework must be an object')
+        return self._resolve(RegistrySelection(selection, self._builtins, deepcopy(self._plugins)))
+
+    def _resolve(self, selection):
+        base = self._registered_root(selection.framework) if selection.framework is not None else None
+        slots = base.controller_catalog if base is not None else {}
+        origins = selection.catalog if selection.catalog is not None else {name: name for name in slots}
+        catalog, validators = {}, {}
+        for alias, ref in origins.items():
+            if isinstance(ref, dict):
+                catalog[alias] = ControllerDefinition.from_factory_refs(ref, load_factory)
+            else:
+                if ref not in slots:
+                    raise ValueError('Controller slot is absent from the registered assembly: ' + ref)
+                catalog[alias] = slots[ref]
+                if ref in base.controller_validators:
+                    validators[alias] = base.controller_validators[ref]
+        active = selection.controller
+        if selection.labs is not None:
+            name = active['name']
+            modules = self._bind_labs(catalog[name], active['config'], selection.labs,
+                version='nested-1', validate_controller=validators.get(name))
+        else:
+            if base is None:
+                raise ValueError('Nested composition has no Labs to inherit')
+            modules = base
+            if active is not None:
+                check = validators.get(active['name'])
+                if check is not None and check(deepcopy(active['config'])) is not None:
+                    raise TypeError('Controller validators must return None')
+        bindings = modules.registered_labs
+        if selection.lab_bindings is not None and _json(bindings) != _json(selection.lab_bindings):
+            raise ValueError('Resolved Lab bindings differ from the admitted registration')
+        return replace(modules, controller_catalog=catalog, controller_validators=validators,
+                       controller_selection=active if active is not None else modules.controller_selection,
+                       _registration=replace(selection, catalog=origins, lab_bindings=bindings),
+                       plugin_paths=tuple(self._plugin_paths),
+                       _registered_bindings=None)
+
+    def _with_controller_catalog(self, modules):
         if not modules.controller_catalog:
             return modules
         catalog = {name: item.factory for name, item in self._controllers.items()}
         catalog.update(modules.controller_catalog)
         validators = {name: item.validate_config for name, item in self._controllers.items()
-                      if item.validate_config is not None}
+                      if name not in modules.controller_catalog and item.validate_config is not None}
         validators.update(modules.controller_validators)
-        return replace(modules, controller_catalog=catalog, controller_validators=validators,
-                       registry_source={'framework': deepcopy(selection), 'plugins': deepcopy(self._plugin_sources)})
+        return replace(modules, controller_catalog=catalog, controller_validators=validators)
 
-    def build(self, selection):
-        """Validate selection now; construct owned resources only at launch."""
-        selection = json.loads(_json(selection))
-        if not isinstance(selection, dict):
-            raise TypeError('framework must be an object')
+    def _registered_root(self, selection):
         if set(selection) == {'method'}:
-            method_name, method_config = _selection(selection['method'])
-            modules = MethodCatalog(self._methods).select({'method': method_name, 'config': method_config})
+            method = selection['method']
+            modules = MethodCatalog(self._methods).select({'method': method['name'], 'config': method['config']})
             identity = MethodIdentity('registered_framework', '1', {
-                'method': modules.method_identity.configuration(), 'plugins': self._plugins})
-            return self._with_controller_catalog(replace(modules, method_identity=identity), selection)
-        if set(selection) != {'controller', 'labs'}:
-            raise ValueError('framework requires controller and labs, or one complete method selection')
-        name, options = _selection(selection['controller'])
+                'method': modules.method_identity.configuration(), 'labs': modules.registered_labs,
+                'plugins': self._plugins})
+            return self._with_controller_catalog(replace(modules, method_identity=identity))
+        name, options = selection['controller']['name'], selection['controller']['config']
         if name not in self._controllers:
             raise ValueError(f'Unknown controller: {name}')
         controller = self._controllers[name]
-        labs = selection['labs']
-        if not isinstance(labs, dict) or not labs:
-            raise ValueError('At least one named Lab is required')
-        selected_labs, manifest = [], {}
-        for alias, raw in labs.items():
-            if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', alias):
-                raise ValueError('Lab aliases must be simple names without dots')
-            lab_name, config = _selection(raw)
-            if lab_name not in self._labs:
-                raise ValueError(f'Unknown Lab: {lab_name}')
-            definition = self._labs[lab_name]
-            selected_labs.append((alias, definition, config))
-            manifest[alias] = {'name': lab_name, 'version': definition.version, 'config': config}
+        modules = self._bind_labs(controller.factory, options, selection['labs'],
+            version=controller.version, validate_controller=controller.validate_config)
         identity = MethodIdentity('registered_framework', '1', {
             'controller': {'name': name, 'version': controller.version, 'config': options},
-            'labs': manifest, 'plugins': self._plugins})
+            'labs': modules.registered_labs, 'plugins': self._plugins})
+        return self._with_controller_catalog(replace(modules, method_identity=identity))
 
-        # Controller/Lab composition builds through the same method path as whole methods.
+    def _bind_labs(self, controller, options, labs, *, version, validate_controller=None):
+        """Bind registered Labs to a resolved Controller, without granting additional Controllers."""
+        definitions, configs = {}, {}
+        for alias, raw in labs.items():
+            lab_name, config = raw['name'], raw['config']
+            definitions[alias] = self.lab(lab_name)
+            configs[alias] = config
         definition = MethodDefinition.from_factories(
-            controller=controller.factory, labs={alias: item.factory for alias, item, _ in selected_labs},
-            version=controller.version, validate_controller=controller.validate_config,
-            validate_labs={alias: item.validate_config for alias, item, _ in selected_labs
-                           if item.validate_config is not None})
-        modules = definition.factory({'controller': options,
-            'labs': {alias: config for alias, _, config in selected_labs}})
-        return self._with_controller_catalog(replace(modules, method_identity=identity), selection)
+            controller=controller, labs=definitions, version=version, validate_controller=validate_controller)
+        return definition.factory({'controller': options, 'labs': configs})

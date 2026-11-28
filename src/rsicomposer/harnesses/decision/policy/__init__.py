@@ -117,7 +117,7 @@ class ModelDecisionPolicy:
                 for name in ('depends_on_decision_ids', 'source_decision_ids')}}
             properties['feedback_proposal_ids'] = {'type': 'array', 'maxItems': 16, 'uniqueItems': True,
                 'items': {'type': 'string', 'minLength': 1, 'maxLength': 512},
-                'description': 'Optional harness or policy-training proposal IDs selected from feedback; not proof of execution or adoption.'}
+                'description': 'Optional published improvement proposal IDs selected from feedback; not proof of execution or adoption.'}
         return {'type': 'object', 'properties': {**properties, 'reason': {'type': 'string'}},
                 'required': list(required), 'additionalProperties': False}
 

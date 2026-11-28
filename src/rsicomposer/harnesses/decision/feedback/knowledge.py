@@ -2,18 +2,14 @@
 
 The learning journal is authoritative for interpretations and their revisions;
 execution receipts remain authoritative for facts. This module owns no second
-store and makes no model calls. A harness chooses a bounded resident view, while
-all three improvement targets remain available through explicit reads.
+store and makes no model calls. A harness chooses a bounded resident view; installed
+improvement targets remain available through explicit reads.
 """
 import json
 from copy import deepcopy
 
 from rsicomposer.loops.contracts.receipts import receipt_facts, receipt_task
 from rsicomposer.runtime.storage.json_tools import EvidencePathError, encoded, result_id
-
-TARGETS = {'memory': 'context_memory', 'harness_change': 'harness',
-           'training_data': 'weights', 'policy_training': 'weights', 'system_change': 'system'}
-SUBJECTS = ('meta_agent', 'lab', 'unspecified')
 
 
 def ordered_jobs(jobs):
@@ -80,17 +76,13 @@ def trajectory_snapshot(job):
         'dataset_construction_owner': 'lab'}))
 
 
-def proposal_records(jobs, *, target=None, research_attempt_id=None):
-    """Separate improvement targets without claiming validation or application.
-
-    system_change proposals stay explicitly separate: actor/system edits
-    must not silently become researcher harness changes or weight supervision.
-    """
-    if target is not None and target not in TARGETS.values():
+def proposal_records(jobs, *, targets, target=None, research_attempt_id=None):
+    """Project published interpretations into their installed query categories."""
+    if target is not None and target not in {rule.target for rule in targets.values()}:
         raise ValueError('Unknown feedback target')
     records = []
     for job in ordered_jobs(jobs):
-        if job['status'] != 'completed':
+        if job['status'] != 'completed' or not job.get('published'):
             continue
         scope = job['input'].get('research_context', {})
         attempt_ids = list(dict.fromkeys([*([scope['research_attempt_id']]
@@ -99,12 +91,12 @@ def proposal_records(jobs, *, target=None, research_attempt_id=None):
         if research_attempt_id is not None and research_attempt_id not in attempt_ids:
             continue
         for index, proposal in enumerate(job['proposals']):
-            lane = TARGETS[proposal['kind']]
+            lane = targets[proposal['kind']].target
             if target is not None and lane != target:
                 continue
             records.append({'proposal_id': job['job_id'] + ':' + str(index),
                 'target': lane, 'kind': proposal['kind'], 'status': 'proposed',
-                'subject': proposal.get('subject', 'unspecified'),
+                'subject': proposal['subject'],
                 'authority': 'unverified_interpretation', 'training_ready': False, 'applied': False,
                 'job_id': job['job_id'], 'research_attempt_ids': attempt_ids,
                 'feedback_model': deepcopy(job['model']),

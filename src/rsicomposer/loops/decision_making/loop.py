@@ -1,5 +1,6 @@
 """Decision loop lifecycle, composed from an independent harness and action space."""
 from rsicomposer.loops.contracts.coordination import LoopStepResult
+from rsicomposer.loops.contracts.execution import execute_lab_call
 from rsicomposer.loops.contracts.harness import ControllerHarness, DecisionRunResult, NullHarness
 from rsicomposer.loops.contracts.jobs import JobRef
 from rsicomposer.loops.decision_making.action_space import DecisionActionSpace
@@ -16,6 +17,25 @@ class DecisionMakingLoop:
         self.host_execution = host_execution
         self.model_binding, self.model_scope = model, model_scope
         self.operation_router = _ControllerToolRouter(harness, lab_execution, host_bindings)
+
+    def install_capabilities(self, capabilities):
+        """Install definitions and handlers together; return rollback for the assembly transaction."""
+        from .action_space.capabilities import Capabilities
+        from rsicomposer.runtime.capabilities import optional_method
+        tools = Capabilities(capabilities)
+        extend = optional_method(self.action_space, 'with_definitions')
+        if extend is None:
+            raise TypeError('Installing tools requires an action space with with_definitions()')
+        space = extend(tools.definitions)
+        router = self.operation_router
+        previous_space, previous_bindings = self.action_space, router.host_bindings
+        if previous_bindings.keys() & tools.bindings.keys():
+            raise ValueError('Contributed tool conflicts with an installed operation binding')
+        self.action_space, router.host_bindings = space, {**previous_bindings, **tools.bindings}
+
+        def rollback():
+            self.action_space, router.host_bindings = previous_space, previous_bindings
+        return rollback
 
     def current_model(self):
         from rsicomposer.loops.contracts.model_service import ModelRef
@@ -161,17 +181,8 @@ class _ControllerToolRouter:
         self.host_bindings = dict(host_bindings or {})
 
     def execute(self, call):
-        from rsicomposer.loops.contracts.execution import LabToolError
-        from rsicomposer.loops.contracts.coordination import OperationResult
-        from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
         if self.lab is not None and call.name in {spec.name for spec in self.lab.describe()}:
-            from rsicomposer.loops.contracts.evaluation import tag_evaluation_identity
-            try:
-                result = self.lab.execute(call)
-            except LabToolError as error:
-                return OperationResult('Lab tool failed; use this feedback to choose the next action', (),
-                    False, ExecutionStatus.FAILED, f'{type(error).__name__}: {error}', data=error.data)
-            return tag_evaluation_identity(self.lab, call.name, call, result)
+            return execute_lab_call(self.lab, call)
         if call.name in self.host_bindings:
             return self.host_bindings[call.name](call.arguments)
         return self.harness.execute_tool(call)
