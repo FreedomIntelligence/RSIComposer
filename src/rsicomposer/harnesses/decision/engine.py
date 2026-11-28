@@ -171,6 +171,10 @@ class ResearchControllerHarness:
     def add_cleanup(self, callback):
         self._cleanup_callbacks.append(callback)
 
+    def relinquish_cleanups(self, matches):
+        """Transfer closes claimed by the enclosing owner; keep Harness-local cleanup."""
+        self._cleanup_callbacks[:] = [close for close in self._cleanup_callbacks if not matches(close)]
+
     def _project_context(self, context):
         from rsicomposer.harnesses.decision.research_state import (
             bounded_evidence_view,

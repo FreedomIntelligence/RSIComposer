@@ -148,7 +148,7 @@ Things to know when writing a Controller:
   domain-specific arguments; an operation
   name passing the startup check does not guarantee valid arguments. Your
   `input_schema` is not enforced for you either: check `properties` and
-  `required` at the top of `execute()` and raise `OperationArgumentError` for a
+  `required` at the top of `execute()` and raise `LabToolError` for a
   call the Controller could have got right, so it comes back as feedback rather
   than a failed run.
 - **Keep `model` free.** If a Policy has a `model` attribute, the host treats
@@ -217,7 +217,10 @@ controller = ControllerDefinition(build_policy, harness=harness, memory=memory)
 working [Harness](../src/rsicomposer/algorithms/_template/harness.py) and
 [Memory](../src/rsicomposer/algorithms/_template/memory.py) that both run with it;
 select them with `"harness": "scoreboard"` and `"memory": "best_score"` in the
-Controller config.
+Controller config. The registration code validates those choices and passes only
+Policy options to the Policy factory. To contribute Memory tools, return public
+`Capability` objects from `capabilities()`; the endpoint exposes them in the
+authorized window and binds their handlers without editing the Policy's parser.
 
 Three things to know:
 
@@ -227,7 +230,7 @@ Three things to know:
 - **Memory needs a `decision_maker` role** in the run config, because the host
   attributes memory observations to it.
 - **Mark operations that call a model or change data as `read_only=False`.** The
-  host keeps read-only receipts out of Memory and the evidence journal.
+  generic feedback pipeline does not schedule learning work for read-only receipts.
 
 When using `MetricGoal`, only operations declared as evaluations by the Lab
 profile participate. A custom Lab can return the local operation names from

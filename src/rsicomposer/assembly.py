@@ -2,22 +2,25 @@
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from hashlib import sha256
 import inspect
 import json
+import marshal
 from pathlib import Path
 from types import MappingProxyType
-from uuid import uuid4
-import warnings
 
-from rsicomposer.components import ComponentGraph, ComponentInstances
-from rsicomposer.component_context import LabContext, controller_learning, nested_run
+from rsicomposer.components import ComponentGraph, ComponentInstances, config_json
+from rsicomposer.component_context import (
+    LabContext, NestedRunServices, ResourceScope, build_nested_services, controller_learning,
+    nested_run, record_controller_event, require_nested_services,
+)
 from rsicomposer.loops.contracts.execution import LabExecution
 from rsicomposer.loops.contracts.model_service import ModelBackend, ModelRef
 from rsicomposer.loops.decision_making.action_space.access import ActionPermissions
 from rsicomposer.loops.decision_making.loop import DecisionMakingLoop
 from rsicomposer.methods import ControllerDefinition, MethodIdentity
+from rsicomposer.selection import RegistrySelection
 from rsicomposer.runtime.capabilities import optional_method
 from rsicomposer.runtime.evidence.retrieval import EvidenceRepository
 from rsicomposer.runtime.execution.sandbox import SandboxBackend
@@ -26,19 +29,26 @@ from rsicomposer.runtime.orchestration.runner import Runner
 from rsicomposer.runtime.storage.artifacts import ArtifactStore
 
 
-_MODULE_ASSEMBLY_SCHEMA = 2
+_MODULE_ASSEMBLY_SCHEMA = 5
 
 
 def read_saved_module_layout(directory):
     """Read the assembly marker only after verifying its format."""
     marker = Path(directory) / 'module_assembly.json'
-    if not marker.exists():
-        return None
+    if not marker.is_file():
+        raise ValueError('Missing module assembly marker; cannot verify the saved assembly')
     layout = json.loads(marker.read_text())
     if (not isinstance(layout, dict) or type(layout.get('schema_version')) is not int
             or layout['schema_version'] != _MODULE_ASSEMBLY_SCHEMA):
         raise ValueError('Unsupported module assembly schema; start a new run')
     return layout
+
+
+def _definition_code(code):
+    # Locations do not identify the definition. Strip them recursively, including
+    # generators and comprehensions; their repr includes a process-local address.
+    return code.replace(co_filename='', co_firstlineno=1, co_linetable=b'', co_consts=tuple(
+        _definition_code(value) if inspect.iscode(value) else value for value in code.co_consts))
 
 
 def _factory_identity(value):
@@ -59,23 +69,22 @@ def _factory_identity(value):
     digest = sha256()
     code = getattr(target, '__code__', None)
     if code is not None:
-        digest.update(repr((code.co_code, code.co_consts, code.co_names)).encode())
+        # Format 2 encodes values without process-dependent shared-object references.
+        digest.update(marshal.dumps(_definition_code(code), 2))
     try:
         # The definition's own text, so an unrelated edit elsewhere in the module
         # does not invalidate every workspace that uses this factory.
         digest.update(inspect.getsource(target).encode())
     except (OSError, TypeError):
-        source = inspect.getsourcefile(target)
-        if source is not None:
-            digest.update(Path(source).read_bytes())
-        elif code is None:
+        if code is None:
             raise TypeError('Assembly identities need a verifiable factory definition: '
-                            + module + ':' + qualname)
+                            + module + ':' + qualname) from None
     return module + ':' + qualname + ':' + digest.hexdigest()[:16]
 
 
 @dataclass
-class AssemblyContext:
+class AssemblyContext(ResourceScope):
+    """The run owns long-lived services; a Controller version has its own ResourceScope."""
     experience: EvidenceRepository
     artifacts: ArtifactStore
     backends: Mapping[str, ModelBackend]
@@ -104,9 +113,10 @@ class AssemblyContext:
     state_adapters: dict = field(default_factory=dict, init=False, repr=False)
     _memory_observer: Callable | None = field(default=None, init=False, repr=False)
     _evidence_secrets: set[str] = field(default_factory=set, init=False, repr=False)
-    _cleanup: list[tuple[Callable[[], object], bool]] = field(default_factory=list, init=False, repr=False)
-    _closed: bool = field(default=False, init=False, repr=False)
     _assembled: bool = field(default=False, init=False, repr=False)
+    _nested_services: NestedRunServices | None = field(default=None, init=False, repr=False)
+    durable: bool = False
+    host_config: dict | None = None
 
     def record(self, kind: str, payload=None, *, references=(), decision_id: str | None = None):
         """Record a Controller-side fact as evidence, then offer it to the Controller's Memory.
@@ -117,83 +127,26 @@ class AssemblyContext:
         belongs in artifacts named by references. The evidence row is written first;
         a failing Memory.observe only warns, since Memory is a view rebuilt from evidence.
         """
-        from rsicomposer.loops.contracts.feedback_context import EvidenceEvent
-        from rsicomposer.runtime.evidence.records import ExperienceRecord
-        from rsicomposer.runtime.storage.files import json_bytes
-        if self._closed:
-            raise RuntimeError('Assembly is closed')
         host = getattr(self, 'controller_host', None)
-        version = getattr(self, '_controller_version', None) or (host.version_id if host is not None else None)
-        event = EvidenceEvent(event_id=str(uuid4()), source='controller', kind=kind,
-                              output=deepcopy(payload), references=deepcopy(tuple(references)),
-                              decision_id=decision_id, identity={'controller_version': version} if version else {})
-        details = {'event': asdict(event)}
-        json_bytes(details)
-        self.experience.record(ExperienceRecord(event.event_id, 'controller_event', 'decision_maker', None,
-                                                f'Controller {kind}', False, details=details))
-        if self._memory_observer is not None:
-            try:
-                self._memory_observer(deepcopy(event))
-            except Exception as exc:
-                warnings.warn(f'Memory.observe failed for controller event {event.event_id}: '
-                              f'{type(exc).__name__}: {exc}', RuntimeWarning, stacklevel=2)
-        return event
+        return record_controller_event(self, host.version_id if host is not None else None,
+                                       kind, payload, references, decision_id)
 
     def evidence_view(self, scope=None):
         from rsicomposer.loops.contracts.controller_version import EvidenceScope
         from rsicomposer.runtime.evidence.view import ReadOnlyEvidenceView
         from rsicomposer.runtime.evidence.credentials import host_secret_values
-        owner = getattr(self, '_evidence_owner', self)
-        return ReadOnlyEvidenceView(owner.experience, owner._artifact_access,
-            EvidenceScope() if scope is None else scope, run_id=getattr(owner, 'run_id', None),
-            secret_values=host_secret_values(owner))
+        return ReadOnlyEvidenceView(self.experience, self._artifact_access,
+            EvidenceScope() if scope is None else scope, run_id=getattr(self, 'run_id', None),
+            secret_values=host_secret_values(self))
 
     def nested_run(self):
         return nested_run(self, self)
 
+    def nested_manifest(self, controller, labs):
+        return require_nested_services(self).manifest(controller, labs)
+
     def controller_learning(self):
         return controller_learning(self)
-
-    def add_cleanup(self, callback: Callable[[], object]) -> None:
-        """Register cleanup immediately after acquiring a factory-owned resource."""
-        if self._closed:
-            raise RuntimeError("Assembly is closed")
-        if not callable(callback):
-            raise TypeError("Cleanup must be callable")
-        self._cleanup.append((callback, False))
-
-    def add_owned_cleanup(self, callback: Callable[[], object]) -> None:
-        """Register an idempotent owned-resource close, retaining dependencies on failure."""
-        self.add_cleanup(callback)
-        self._cleanup[-1] = (callback, True)
-
-    @property
-    def cleanup_pending(self) -> bool:
-        return bool(self._cleanup)
-
-    def close(self) -> None:
-        """Stop admission; retry only failed owned closes before releasing dependencies.
-
-        Ordinary callbacks run once in LIFO order, even on failure. An owned
-        close is a barrier: failure retains it and the earlier dependencies.
-        Successful callbacks, and ordinary callbacks with uncertain effects,
-        are never replayed by a later close.
-        """
-        self._closed = True
-        errors = []
-        while self._cleanup:
-            callback, owned = self._cleanup[-1]
-            try:
-                callback()
-            except BaseException as exc:
-                errors.append(exc)
-                if owned:
-                    break
-            self._cleanup.pop()
-        if len(errors) == 1:
-            raise errors[0]
-        if errors:
-            raise BaseExceptionGroup('Assembly cleanup failed', errors)
 
 
 DecisionFactory = Callable[[AssemblyContext, LabExecution | None], DecisionMakingLoop]
@@ -229,7 +182,7 @@ class ControllerPort:
             raise TypeError('ControllerPort requires the initial ControllerVersion')
 
 
-ControllerFactory = Callable[[AssemblyContext, LabExecution | None], ControllerPort | None]
+ControllerFactory = Callable[[AssemblyContext, LabExecution | None], ControllerPort]
 
 
 @dataclass(frozen=True)
@@ -259,7 +212,9 @@ class ModuleAssembly:
     controller_catalog: Mapping = field(default_factory=dict)
     controller_selection: dict | None = None
     controller_validators: Mapping = field(default_factory=dict, repr=False)
-    registry_source: dict | None = field(default=None, repr=False)
+    _registration: RegistrySelection | None = field(default=None, repr=False)
+    plugin_paths: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    _registered_bindings: tuple | None = field(default=None, repr=False, compare=False)
     controller_activator: object | None = field(default=None, repr=False)
     controller_learner: object | None = field(default=None, repr=False)
     observation_probes: tuple = field(default=(), repr=False, compare=False)
@@ -269,8 +224,9 @@ class ModuleAssembly:
                 and 'decision' not in self.component_bindings):
             raise ValueError('ModuleAssembly requires a decision_factory, a controller_factory '
                              'or a decision component binding')
-        if self.controller_factory is not None and 'decision' in self.component_bindings:
-            raise ValueError('Choose a controller_factory or a decision component binding, not both')
+        if self.controller_factory is not None and (
+                self.decision_factory is not None or 'decision' in self.component_bindings):
+            raise ValueError('Choose controller_factory or a fixed decision factory/binding, not both')
         if self.model_session is not None:
             from rsicomposer.runtime.models.model_session import HostModelSession
             if not isinstance(self.model_session, HostModelSession):
@@ -308,7 +264,7 @@ class ModuleAssembly:
         object.__setattr__(self, 'controller_catalog', MappingProxyType(catalog))
         object.__setattr__(self, 'controller_validators', MappingProxyType(validators))
         object.__setattr__(self, 'controller_selection', selection)
-        object.__setattr__(self, 'registry_source', deepcopy(self.registry_source))
+        self._check_registration(catalog, validators, selection)
         bindings = dict(self.component_bindings)
         if bindings and self.components is None:
             raise ValueError('Component bindings require a component graph')
@@ -328,6 +284,29 @@ class ModuleAssembly:
             from rsicomposer.research import MemoryAssembly
             if not isinstance(self.memory, MemoryAssembly):
                 raise TypeError('memory must be a MemoryAssembly')
+
+    def _check_registration(self, catalog, validators, selection):
+        if self._registration is None:
+            return
+        if not isinstance(self._registration, RegistrySelection):
+            raise TypeError('registration must be a RegistrySelection')
+        # A caller may dataclasses.replace a compiled assembly. Narrowing a catalog
+        # is replayable; swapping even two closures with identical code is not.
+        # These identities are checked only in this process, never written to disk.
+        ports = tuple(id(port) for port in (self.decision_factory, self.lab_factory, self.controller_factory,
+            self.state_factory, self.memory, self.components, self.method_identity, self.model_session,
+            self.controller_learner, self.controller_activator, *self.observation_probes))
+        shape = (ports, dict(self.component_bindings), config_json(selection))
+        slots = frozenset((name, id(item), id(validators.get(name))) for name, item in catalog.items())
+        previous = self._registered_bindings
+        if previous is not None and (shape != previous[0] or not slots <= previous[1]):
+            object.__setattr__(self, '_registration', None)
+            object.__setattr__(self, '_registered_bindings', None)
+            object.__setattr__(self, 'plugin_paths', ())
+        else:
+            object.__setattr__(self, '_registration', deepcopy(self._registration.restrict(catalog)))
+            object.__setattr__(self, '_registered_bindings', (shape, slots))
+            object.__setattr__(self, 'plugin_paths', tuple(self.plugin_paths))
 
     @classmethod
     def from_components(cls, components, *, decision, lab=None, **options):
@@ -370,9 +349,6 @@ class ModuleAssembly:
                 if not callable(value):
                     raise TypeError(f'Component {name} must return a {role} factory')
                 factories[role] = value
-        if factories['controller'] is not None and factories['decision'] is None:
-            raise ValueError('controller_factory requires decision_factory: the decision factory '
-                             'reports which Controller instance the Host activates')
         return factories
 
     def build(self, context: AssemblyContext, *, run_policy=None, cleanup_timeout_seconds=30):
@@ -384,16 +360,31 @@ class ModuleAssembly:
         return _assemble_runner(context, self, run_policy=run_policy,
                                 cleanup_timeout_seconds=cleanup_timeout_seconds)
 
+    @property
+    def registration(self):
+        """Detached selection for inspection, or None for an explicit Python assembly."""
+        return deepcopy(self._registration)
+
+    @property
+    def registry_source(self):
+        """Trusted parent bootstrap: portable selection plus this host's explicitly loaded paths."""
+        if self._registration is not None:
+            return {'selection': self._registration.configuration(), 'paths': list(self.plugin_paths)}
+        return None
+
+    @property
+    def registered_labs(self):
+        """Public bindings of the actual Lab factory; private callables have no registration."""
+        return self.lab_factory.registrations() if isinstance(self.lab_factory, _BoundLabs) else {}
+
     def validate_saved(self, directory):
         """One assembly identity check for durable and snapshot restore."""
         saved = read_saved_module_layout(directory)
-        if saved is not None:
-            saved.pop('lab_profiles', None)
-            saved.pop('evaluation_operations', None)  # Validated after constructing the Lab.
-            if saved != self.configuration():
-                raise TypeError('Supply the original module assembly when restoring this workspace')
-        elif self.method_identity is not None:
-            raise TypeError('Workspace has no method identity')
+        saved.pop('lab_profiles', None)
+        saved.pop('evaluation_operations', None)  # Validated after constructing the Lab.
+        saved.pop('candidate_identity_fields', None)
+        if config_json(saved) != config_json(self.configuration()):
+            raise TypeError('Supply the original module assembly when restoring this workspace')
 
     def component_configuration(self):
         return {**self.components.configuration(), 'bindings': dict(self.component_bindings)}
@@ -411,16 +402,17 @@ class ModuleAssembly:
             layout['components'] = self.component_configuration()
         if self.method_identity is not None:
             layout['method'] = self.method_identity.configuration()
+        if self._registration is not None:
+            layout['registry_selection'] = self._registration.configuration()
+        elif bindings := self.registered_labs:
+            # Direct Python MethodDefinition.factory()/MethodCatalog.select() paths.
+            layout['registered_labs'] = bindings
         if self.controller_activator is not None or self.controller_learner is not None:
             layout['controller_learning'] = {name: _factory_identity(type(value)) if value is not None else None
                 for name, value in (('activator', self.controller_activator), ('learner', self.controller_learner))}
         if self.controller_catalog:
-            layout['controller_catalog'] = {name: {
-                'policy': _factory_identity(item.policy),
-                'memory': _factory_identity(item.memory) if item.memory else None,
-                'harness': _factory_identity(item.harness) if item.harness else None,
-                'endpoint': item.endpoint,
-            } for name, item in sorted(self.controller_catalog.items())}
+            layout['controller_catalog'] = {name: item.describe_factories(_factory_identity)
+                                             for name, item in sorted(self.controller_catalog.items())}
             layout['controller_selection'] = deepcopy(self.controller_selection)
         if self.model_session is not None:
             from dataclasses import asdict
@@ -429,19 +421,25 @@ class ModuleAssembly:
         return layout
 
 
-def _build_policy_assembly(controller, options, selected_labs):
-    """Share lifecycle wiring between whole methods and explicit Controller/Lab selections."""
-    from rsicomposer.runtime.orchestration.lab_group import LabGroup
+@dataclass(frozen=True)
+class _BoundLabs:
+    """The same frozen options describe the binding and construct its independent instances."""
+    selected: tuple
 
-    def lab_factory(context):
+    def registrations(self):
+        return {alias: {'name': definition.registered_name, 'version': definition.version, 'config': json.loads(params)}
+                for alias, definition, params in self.selected if definition.registered_name is not None}
+
+    def __call__(self, context):
+        from rsicomposer.runtime.orchestration.lab_group import LabGroup
         group = LabGroup(receipts=context.data_dir / 'lab_receipts' if context.data_dir is not None else None,
                          artifacts=context.artifacts, experience=context.experience,
                          artifact_access=context._artifact_access)
         # Retain partial constructions if a later factory/catalog fails.
         context.add_owned_cleanup(group.close)
-        for alias, definition, config in selected_labs:
+        for alias, definition, config in self.selected:
             scoped = LabContext(context, alias)
-            options = deepcopy(config)
+            options = json.loads(config)
             capacity = options.pop('max_concurrent', 1)
             scoped.models.max_concurrent = capacity
             lab = definition.factory(scoped, options)
@@ -449,52 +447,35 @@ def _build_policy_assembly(controller, options, selected_labs):
                       declare_roles=scoped.resources.declare)
         return group
 
-    # The registered pair shares one construction through this cell rather than
-    # through a context attribute: the Controller is built before the loop that
-    # reports it, and nothing outside these two factories needs to see it.
-    built = []
 
-    def decision_factory(context, execution):
-        """Report the loop of the Controller that controller_factory built."""
-        if not built or built[0][0] is not context:
-            raise RuntimeError('controller_factory must build the Controller before decision_factory')
-        return built[0][1].instance.endpoint
-
+def _build_policy_assembly(controller: ControllerDefinition, options, selected_labs, validate_controller):
+    """Share lifecycle wiring between whole methods and explicit Controller/Lab selections."""
     def controller_factory(context, execution):
         from rsicomposer.host.lifecycle import build_controller, initial_controller_version
-        definition = ControllerDefinition(controller.factory, memory=controller.memory,
-                                          endpoint=controller.endpoint, harness=controller.harness)
-        selection = {'name': 'current', 'config': deepcopy(options)}
+        selection = context._controller_selection
         override = getattr(context, '_initial_controller_version', None)
         version = override or initial_controller_version(selection, context.roles.get('decision_maker'))
-        params = options
+        name, params = version.config['name'], version.config['config']
+        if name not in context._controller_catalog:
+            raise ValueError('Initial version selects an unavailable Controller')
+        definition = context._controller_catalog[name]
         initial_memory = getattr(context, '_initial_memory', None)
         if override is not None:
-            if version.config['name'] not in context._controller_catalog:
-                raise ValueError('Initial version selects an unavailable Controller')
-            definition = context._controller_catalog[version.config['name']]
-            params = version.config['config']
-            validator = context._controller_validators.get(version.config['name'])
+            validator = context._controller_validators.get(name)
             if validator is not None and validator(deepcopy(params)) is not None:
                 raise TypeError('Controller validators must return None')
-            if definition.memory is not None:
+            if definition.memory is not None or name != 'current':
                 initial_memory = None
         instance = build_controller(context, definition, params, version, initial=True, memory=initial_memory)
-        context.add_owned_cleanup(instance.close)
-        # One ModuleAssembly may build several contexts (a run and its resume),
-        # so the cell keys on the context it belongs to instead of accumulating.
-        built[:] = [(context, ControllerPort(instance, version))]
-        return built[0][1]
+        return ControllerPort(instance, version)
 
     from rsicomposer.method_state import method_state_factory
-    return ModuleAssembly(decision_factory=decision_factory, controller_factory=controller_factory,
-                          lab_factory=lab_factory, state_factory=method_state_factory,
-                          controller_catalog={'current': ControllerDefinition(controller.factory,
-                              memory=controller.memory, endpoint=controller.endpoint,
-                              harness=controller.harness)},
+    return ModuleAssembly(controller_factory=controller_factory,
+                          lab_factory=_BoundLabs(tuple(selected_labs)), state_factory=method_state_factory,
+                          controller_catalog={'current': controller},
                           controller_selection={'name': 'current', 'config': deepcopy(options)},
-                          controller_validators=({'current': controller.validate_config}
-                              if controller.validate_config is not None else {}))
+                          controller_validators=({'current': validate_controller}
+                                                 if validate_controller is not None else {}))
 
 
 def _ray_service_binding(config, nodes, node_ip):
@@ -537,10 +518,6 @@ def _ray_service_binding(config, nodes, node_ip):
 
 def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_seconds=30):
     """Construct loops, integrations, state and cleanup once for a run."""
-    # Every assembled run may checkpoint, so the built-in state registry has to be
-    # populated here rather than only in the application composition root: a caller
-    # that composes ModuleAssembly from rsicomposer.api never imports Application.
-    import rsicomposer.snapshot.codec  # noqa: F401  registers built-in checkpoint state types
     if context._closed:
         raise RuntimeError('Assembly is closed')
     if context._assembled:
@@ -594,62 +571,55 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     context._model_access = HostModelAccess(context, pool_factory=ChatPool, transport_factory=build_serving_backend)
     context.add_owned_cleanup(context._model_access.close)
     from rsicomposer.host.execution import HostExecution
+    from rsicomposer.host.lifecycle import validate_controller_requirements, validate_host_endpoint
     if context.host_execution is None:
         context.host_execution = HostExecution(experience=context.experience)
         context.add_owned_cleanup(context.host_execution.close)
+    context._controller_selection = modules.controller_selection
+    context._controller_catalog = dict(modules.controller_catalog)
+    context._controller_validators = dict(modules.controller_validators)
+    context._initial_memory = modules.memory
+    context._nested_services = build_nested_services(context)
     if modules.components is not None:
         if context.components is not None:
             raise RuntimeError('Components are already assembled')
         context.components = modules.components.build(context, bindings=modules.component_bindings)
-    context._controller_catalog = dict(modules.controller_catalog)
-    context._controller_validators = dict(modules.controller_validators)
-    context._initial_memory = modules.memory
-    from rsicomposer.runtime.models.delegation import prepare_nested_models
-    context.prepare_nested_models = lambda child_budget, call_id, host_config, version, labs: prepare_nested_models(
-        context._model_access, child_budget, call_id, host_config, version, labs)
-    def nested_manifest(controller, labs):
-        from rsicomposer.nested_worker import build_nested_manifest
-        from rsicomposer.loops.contracts.controller_version import ControllerVersion
-        host = getattr(context, 'controller_host', None)
-        inherited = host.approve_memory_history(controller) if host is not None and isinstance(controller, ControllerVersion) else ()
-        return build_nested_manifest(controller, labs, context.host_config, catalog=context._controller_catalog,
-                                     inherited_history=inherited)
-    context.nested_manifest = nested_manifest
     factories = modules._factories(context)
-    decision, port = _assemble_loops(context, factories)
-    # Whether this run has a replaceable Controller is decided by whether the
-    # assembly supplied a Controller port, and never by an attribute some
-    # factory happened to set. Every branch below selects the whole Controller
-    # lifecycle from this, so a run cannot end up half-hosted.
-    # Resolve the current harness at close, including domain configuration before
-    # the first step. Owned close retains its dependencies if cleanup must retry.
-    def close_decision():
-        harness = getattr(decision, 'harness', None)
-        close = optional_method(harness, 'close')
-        if close is not None and not (context.components is not None and context.components.owns(decision.harness)):
-            close()
-    if port is None:
-        host_loop = isinstance(decision, DecisionMakingLoop) and isinstance(decision.host_execution, HostExecution)
+    _assemble_lab(context, factories['lab'])
+    port = None
+    if factories['controller'] is None:
+        decision = factories['decision'](context, context.lab_execution)
+        host_loop = isinstance(decision, DecisionMakingLoop) and isinstance(context.host_execution, HostExecution)
         if host_loop and decision.host_execution is not context.host_execution:
+            # A borrowed endpoint's harness is still owned by its original run.
             raise ValueError('Controller endpoint belongs to another run execution')
+
+        def close_decision():
+            harness = getattr(decision, 'harness', None)
+            close = optional_method(harness, 'close')
+            if close is not None and not (context.components is not None and context.components.owns(harness)):
+                close()
         context.add_owned_cleanup(close_decision)
         if host_loop:
+            # Memory may need this execution's history while installing its own
+            # tools. Check routing before binding, but authorize the final catalog.
             if decision.operation_router.lab is not context.lab_execution:
                 raise ValueError('Controller endpoint must retain the assembled Lab routing')
-            from rsicomposer.host.lifecycle import validate_controller_requirements
-            from rsicomposer.loops.decision_making.action_space.access import enforce_host_permissions
-            validate_controller_requirements(decision, context.lab_execution)
-            decision.action_space = enforce_host_permissions(decision.action_space, context.action_permissions)
             if context.host_execution.endpoint is not decision:
                 context.host_execution.activate(decision, getattr(decision, 'controller_version', None))
             context.controller_report = optional_method(decision.policy, 'report')
     else:
-        # The Host owns the initial instance and every replacement, so their
-        # cleanup belongs to it; a harness close here would outlive its owner.
-        if decision is not port.instance.endpoint:
-            raise ValueError('The Controller port instance must be the decision loop its factory '
-                             'reports: the Host activates that instance')
-        context.controller_report = optional_method(decision.policy, 'report')
+        _advertise_controller_host(context)
+        port = factories['controller'](context, context.lab_execution)
+        if not isinstance(port, ControllerPort):
+            raise TypeError('controller_factory must return a ControllerPort')
+        # Keep one retryable owner across construction. Until ControllerHost is
+        # ready, every failure closes the returned instance; afterwards the Host
+        # closes whichever version is active, without retaining the initial one.
+        controller_owner = port.instance
+        context.add_owned_cleanup(lambda: controller_owner.close())
+        decision = port.instance.endpoint
+        validate_host_endpoint(decision, context)
     context.resources.validate_roles()
     validate_weight_sync_roles(context.weight_sync, context.resources)
     profiles = optional_method(context.lab_execution, 'profile_identity')
@@ -660,10 +630,13 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     if context.method_identity is not None:
         from rsicomposer.methods import validate_method_ports
         validate_method_ports(decision, context.lab_execution)
-    if modules.memory is not None and port is None:
-        modules.memory.install(decision, owner=context, path=context.data_dir / 'feedback_learning.json'
-                                          if context.data_dir is not None else None)
-    if port is not None:
+    if port is None:
+        if modules.memory is not None:
+            modules.memory.install(decision, owner=context, path=context.data_dir / 'feedback_learning.json'
+                                              if context.data_dir is not None else None)
+        if host_loop:
+            validate_host_endpoint(decision, context)
+    else:
         from rsicomposer.host.lifecycle import ControllerEndpoint, build_controller
         from rsicomposer.host.lifecycle import ControllerHost
         initial = port.instance
@@ -677,28 +650,29 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
             definition = context._controller_catalog[name]
             inherited = modules.memory if definition.memory is None and name == 'current' else None
             return build_controller(context, definition, options, version, memory=inherited)
-        host = ControllerHost(context, initial, context._initial_controller_version, construct_version,
+        host = ControllerHost(context, initial, port.version, construct_version,
                               activator=modules.controller_activator, learner=modules.controller_learner)
-        context.add_owned_cleanup(host.close)
+        controller_owner = host
         context.controller_host = host
-        if port.version is not None:
-            version = port.version
-            policy = initial.policy
+        version = port.version
+        # Rebuild a seeded run at its original version/root. Its state adapters
+        # restore the checkpoint; replaying the initial seed could rewind live Memory.
+        restoring_seed = context.restoring and getattr(context, '_initial_controller_version', None) is not None
+        if not restoring_seed:
             if version.policy_state is not None:
-                restore = optional_method(policy, 'restore')
+                restore = optional_method(initial.policy, 'restore')
                 if restore is None or restore(deepcopy(version.policy_state)) is not None:
                     raise TypeError('Initial Controller must restore its version state explicitly')
             host._restore_memory(initial, version.memory_state)
-            if version.model is not None:
-                initial.bind_model(version.model)
-            current_model = initial.endpoint.current_model()
-            if current_model is not None:
-                initial.bind_model(current_model)
+        if version.model is not None:
+            initial.bind_model(version.model)
+        current_model = initial.endpoint.current_model()
+        if current_model is not None:
+            initial.bind_model(current_model)
+        if not restoring_seed:
+            validate_controller_requirements(initial.endpoint, context.lab_execution)
         decision = ControllerEndpoint(host)
-        context.controller_report = lambda: (host.active.context.controller_report()
-            if host.active.context.controller_report is not None else {})
-        context._memory_observer = lambda event: (host.active.context._memory_observer(event)
-            if host.active.context._memory_observer is not None else None)
+        host.bind_context_callbacks()
     if modules.state_factory is not None:
         from rsicomposer.runtime.state.component_state import (
             assembly_bindings,
@@ -707,7 +681,7 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
         adapters = validate_adapters(modules.state_factory(context, decision))
         automatic = {}
         if context.components is not None:
-            automatic.update(context.components.state_adapters())
+            automatic.update(context.components.state_adapters(adapters, lab_execution=context.lab_execution))
         if context.method_identity is not None:
             from rsicomposer.components import _StaticState
             automatic['method_manifest'] = _StaticState(context.method_identity.configuration())
@@ -729,38 +703,14 @@ def _assemble_runner(context, modules, *, run_policy=None, cleanup_timeout_secon
     return runner
 
 
-def _assemble_loops(context: AssemblyContext, factories):
-    """Construct the Lab, then the Controller ports, in dependency order.
-
-    A Lab must exist before a Controller can be built against it, and a
-    Controller port reports the loop the Host will activate. Both facts are
-    returned so the caller decides the lifecycle from the port itself.
-    """
-    if factories['lab'] is not None:
-        context.lab_execution = factories['lab'](context)
+def _assemble_lab(context: AssemblyContext, factory):
+    if factory is not None:
+        context.lab_execution = factory(context)
         if context.lab_execution is None:
             raise TypeError('lab_factory must return a LabExecution provider')
         close = optional_method(context.lab_execution, 'close')
         if close is not None and not (context.components is not None and context.components.owns(context.lab_execution)):
             context.add_owned_cleanup(close)
-    port = None
-    if factories['controller'] is not None:
-        # Advertise before construction: the Controller being built is the first
-        # thing that may need to request its own replacement, and the handler
-        # resolves the Host lazily, so nothing has to exist yet.
-        _advertise_controller_host(context)
-        port = factories['controller'](context, context.lab_execution)
-        if not isinstance(port, ControllerPort):
-            raise TypeError('controller_factory must return a ControllerPort')
-        # Recorded by the assembly, from the port it was given. A factory that
-        # set these itself could make an unhosted run look hosted.
-        context._initial_controller_instance = port.instance
-        context._initial_controller_version = port.version
-    decision = factories['decision'](context, context.lab_execution)
-    if port is not None and decision is not port.instance.endpoint:
-        raise ValueError('The Controller port instance must be the decision loop its factory reports: '
-                         'the Host activates that instance')
-    return decision, port
 
 
 def _advertise_controller_host(context):
@@ -793,14 +743,21 @@ class AssemblyRunner(Runner):
                  *, run_policy: RunPolicy | None = None, cleanup_timeout_seconds: float = 30):
         from rsicomposer.runtime.orchestration.lab_group import LabGroup
         lab = assembly.lab_execution
-        if not isinstance(lab, LabGroup) and (split_roles := optional_method(lab, 'split_roles')) is not None:
+        if not isinstance(lab, LabGroup):
             from collections.abc import Mapping
-            from rsicomposer.loops.contracts.profiles import SplitRole
-            roles = split_roles()
-            if not isinstance(roles, Mapping) or any(not isinstance(role, SplitRole) for role in roles.values()):
-                raise TypeError('Lab split_roles() must map split names to SplitRole')
-            if any(role.after_finish_only for role in roles.values()):
-                raise ValueError('Sealed splits require a Lab composed through LabGroup or the Registry')
+            from rsicomposer.loops.contracts.profiles import Invariant, SplitRole
+            if (declare := optional_method(lab, 'split_roles')) is not None:
+                roles = declare()
+                if not isinstance(roles, Mapping) or any(not isinstance(role, SplitRole) for role in roles.values()):
+                    raise TypeError('Lab split_roles() must map split names to SplitRole')
+                if any(role.after_finish_only for role in roles.values()):
+                    raise ValueError('Sealed splits require a Lab composed through LabGroup or the Registry')
+            if (declare := optional_method(lab, 'invariants')) is not None:
+                rules = declare()
+                if not isinstance(rules, tuple) or any(not isinstance(rule, Invariant) for rule in rules):
+                    raise TypeError('Lab invariants() must return an Invariant tuple')
+                if any(rule.kind in ('min_candidates', 'measured_selection') for rule in rules):
+                    raise ValueError('Candidate history invariants require a Lab composed through LabGroup or the Registry')
         super().__init__(decision, run_policy=run_policy,
                          cleanup_timeout_seconds=cleanup_timeout_seconds,
                          execution_shutdown=optional_method(lab, 'shutdown'),
@@ -815,6 +772,9 @@ class AssemblyRunner(Runner):
             self._declared_evaluations = evaluation_operations(assembly.lab_execution,
                                                                assembly.lab_execution.describe(), 'execution')
             self._evaluation_operations = self._declared_evaluations.__contains__
+        from rsicomposer.host.execution import HostExecution
+        if isinstance(assembly.host_execution, HostExecution):
+            assembly.host_execution.bind_evaluations(lab, self._evaluation_operations, grouped=isinstance(lab, LabGroup))
         self.host_budget = assembly.budget
         self._guard_actions = True
 
@@ -829,8 +789,7 @@ class AssemblyRunner(Runner):
                              if call['call_id'] == receipt.call_id), None)
                 if call is not None and classify(call['name']) is True:
                     from rsicomposer.loops.contracts.decision import OperationCall
-                    from rsicomposer.runtime.orchestration.run_policy import EvaluationOutcome
-                    outcome = EvaluationOutcome.from_call(OperationCall(**call), receipt)
+                    outcome = execution.evaluation_outcome(OperationCall(**call), receipt)
                     if outcome is not None:
                         return outcome
         return super()._classify_outcome(receipt, decision_id)

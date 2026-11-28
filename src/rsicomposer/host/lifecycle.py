@@ -1,11 +1,12 @@
 """Controller construction, version adoption, recovery and training lifecycle."""
 from copy import deepcopy
 from dataclasses import asdict, replace
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
-from rsicomposer.component_context import ControllerContext, EndpointContext
+from rsicomposer.component_context import ControllerContext, ControllerVersionScope, EndpointContext
 from rsicomposer.harnesses.decision.learner import DecisionTrainingRequest
 from rsicomposer.loops.contracts.artifacts import ArtifactRef
 from rsicomposer.loops.contracts.coordination import LoopStepResult, OperationResult
@@ -14,12 +15,18 @@ from rsicomposer.loops.contracts.jobs import JobStatus
 from rsicomposer.loops.contracts.metrics import InvalidMetrics, validated_metrics
 from rsicomposer.loops.contracts.model_service import ModelRef
 from rsicomposer.loops.contracts.training import ModelActivationPending, TrainingResult
+from rsicomposer.loops.decision_making.action_space.access import (
+    ActionPermissions, SensitivePolicy, enforce_host_permissions,
+)
 from rsicomposer.loops.decision_making.action_space.capabilities import Capabilities, Capability
 from rsicomposer.runtime.capabilities import optional_method
 from rsicomposer.runtime.evidence.records import ExperienceRecord
 from rsicomposer.runtime.models.model_session import validate_model_route
 from rsicomposer.runtime.orchestration.jobs import JobBook
-from rsicomposer.runtime.state.controller_versions import save_controller_version
+from rsicomposer.runtime.state.controller_versions import (
+    controller_version_bytes, load_controller_version, save_controller_version,
+)
+from rsicomposer.runtime.storage.codec import encode, same_metadata
 from rsicomposer.runtime.storage.files import json_bytes
 
 
@@ -30,6 +37,18 @@ class BuiltController:
     @property
     def policy(self):
         return _policy(self.endpoint)
+
+    def can_archive(self):
+        """No capture at construction: an ordinary Policy need not have any state ports."""
+        parts = (self.policy, self.endpoint.harness)
+        integration = self.endpoint.integration
+        if integration is not None:
+            parts += (integration,)
+            memory_archive = optional_method(integration, 'can_archive')
+            if memory_archive is not None and not memory_archive():
+                return False
+        return all(optional_method(part, name) is not None
+                   for part in parts for name in ('state', 'restore'))
 
     def capture(self):
         from rsicomposer.method_state import PolicyDecisionState
@@ -43,7 +62,7 @@ class BuiltController:
             self.bind_model(current_model)
 
     def bind_model(self, model):
-        validate_model_route(self.context, model)
+        self.context.validate_model(model)
         policy = self.policy
         current = getattr(policy, 'model', None)
         if isinstance(current, ModelRef) and current != model:
@@ -105,7 +124,7 @@ class ControllerHostState:
         self.host.validate_snapshot()
 
 
-def _context(owner, version, *, initial, endpoint):
+def _version_scope(owner, version, *, initial):
     from rsicomposer.runtime.evidence.retrieval import controller_experience
 
     root = owner.data_dir
@@ -114,18 +133,12 @@ def _context(owner, version, *, initial, endpoint):
         root = Path(root) / 'controller_versions' / sha256(version.version_id.encode()).hexdigest() / 'workspace'
         root.mkdir(parents=True, exist_ok=True)
     roles = dict(owner.roles)
+    admit = partial(validate_model_route, owner)
     if version.model is not None:
-        validate_model_route(owner, version.model)
+        admit(version.model)
         roles['decision_maker'] = version.model
-    local = replace(owner, data_dir=root, roles=roles, experience=controller_experience(owner.experience),
-                    restoring=owner.restoring or not initial)
-    local._artifact_access, local._model_access = owner._artifact_access, owner._model_access
-    local._controller_version = version.version_id
-    local._evidence_owner = owner
-    if hasattr(owner, '_worker_services'):
-        local._worker_services = owner._worker_services
-    scope = EndpointContext if endpoint else ControllerContext
-    return local, scope(local, owner)
+    return ControllerVersionScope(version.version_id, root, roles, controller_experience(owner.experience),
+                                  admit, restoring=owner.restoring or not initial, resuming=owner.resuming)
 
 
 def _controller_parts(endpoint):
@@ -139,19 +152,41 @@ def _require_independent(part, protected, role):
         raise TypeError(f'Controller construction must return an independently owned {role}')
 
 
-def _own_close(local, part):
-    close = optional_method(part, 'close')
-    if close is not None:
-        local.add_owned_cleanup(close)
+def _registered_to(callback, protected):
+    bound = getattr(callback, '__self__', None)
+    return bound is not None and any(bound is part for part in protected)
 
 
-def _discard_borrowed_cleanups(local, protected):
-    # A factory may have explicitly registered a bound close before returning
-    # a part or raising. Do not let rejection release someone else's resource.
-    callbacks = getattr(local, '_cleanup', None)
-    if callbacks and protected:
-        callbacks[:] = [(callback, owned) for callback, owned in callbacks
-                        if not any(getattr(callback, '__self__', None) is part for part in protected)]
+def _discard_borrowed_cleanups(owner, protected):
+    # Manual Controller ports need not implement callback registration or transfer.
+    relinquish = optional_method(owner, 'relinquish_cleanups')
+    if relinquish is not None:
+        relinquish(lambda callback: _registered_to(callback, protected))
+
+
+def _claim_parts(scope, exposed_policy, harness, protected):
+    """Replace factory close registrations with one owned pair (Harness closes first)."""
+    policy = _policy_implementation(exposed_policy)
+    policy_close, adapter_close, harness_close = (optional_method(part, 'close')
+                                                  for part in (policy, exposed_policy, harness))
+    _discard_borrowed_cleanups(scope, protected)
+    # Register fresh parts before reporting a borrowed one: they still need a close on rejection.
+    if any(policy is part or exposed_policy is part for part in protected):
+        # A fresh adapter may forward its close to a borrowed implementation.
+        scope.relinquish_cleanups(lambda close: close in (policy_close, adapter_close))
+    else:
+        scope.claim_close(policy_close, aliases=(adapter_close,))
+    if harness is not None and not any(harness is part for part in protected):
+        relinquish = optional_method(harness, 'relinquish_cleanups')
+        if relinquish is not None:
+            relinquish(lambda close: close in (policy_close, adapter_close, harness_close)
+                       or _registered_to(close, protected))
+        if harness is not policy:
+            scope.claim_close(harness_close)
+    if harness is not None:
+        _require_independent(harness, protected, 'harness')
+    _require_independent(exposed_policy, protected, 'policy')
+    _require_independent(policy, protected, 'policy')
 
 
 def validate_controller_requirements(endpoint, lab):
@@ -162,6 +197,20 @@ def validate_controller_requirements(endpoint, lab):
     validate = optional_method(lab, 'validate_controller')
     operations = set()
     for owner in (policy,) if endpoint is policy else (policy, endpoint):
+        requirements = optional_method(owner, 'required_lab_bindings')
+        if requirements is not None:
+            from rsicomposer.components import config_json
+            bindings = requirements()
+            if (not isinstance(bindings, dict) or any(not isinstance(alias, str) or not alias.strip()
+                    or not isinstance(requirement, dict) for alias, requirement in bindings.items())):
+                raise TypeError('required_lab_bindings() must map Lab aliases to JSON objects')
+            config_json(bindings)
+            if bindings:
+                check = optional_method(lab, 'validate_bindings')
+                if check is None:
+                    raise ValueError('Controller requires a Lab provider that validates binding requirements')
+                if check(deepcopy(bindings)) is not None:
+                    raise TypeError('Lab binding validators must return None')
         if validate is not None:
             validate(owner)
         elif (required := optional_method(owner, 'required_profiles')) is not None:
@@ -183,51 +232,57 @@ def validate_controller_requirements(endpoint, lab):
             raise ValueError('Controller requires missing Lab operations: ' + ', '.join(sorted(missing)))
 
 
+def validate_host_endpoint(endpoint, context):
+    """Bind a completed endpoint to this run's execution, Lab and admission policy."""
+    if getattr(endpoint, 'host_execution', None) is not context.host_execution:
+        raise ValueError('Controller endpoint belongs to another run execution')
+    if endpoint.operation_router.lab is not context.lab_execution:
+        raise ValueError('Controller endpoint must retain the assembled Lab routing')
+    validate_controller_requirements(endpoint, context.lab_execution)
+    endpoint.action_space = enforce_host_permissions(endpoint.action_space, context.action_permissions)
+
+
 def build_controller(owner, definition, options, version, *, initial=False, memory=None):
     """Rebuild a catalog-selected policy, harness and Memory with local ownership."""
     from rsicomposer.assembly import build_default_decision
     from rsicomposer.harnesses.defaults import build_harness_decision
-    from rsicomposer.loops.decision_making.action_space.access import enforce_host_permissions
     host = getattr(owner, 'controller_host', None)
-    protected = _controller_parts(getattr(owner.host_execution, 'endpoint', None))
+    protected = tuple(part for part in (owner, owner.host_execution, owner.lab_execution, *owner.owned_resources(),
+                                        *_controller_parts(getattr(owner.host_execution, 'endpoint', None)))
+                      if part is not None)
     if host is not None:
         protected += (host.active.context,)
-    local, scoped = _context(owner, version, initial=initial, endpoint=definition.endpoint)
+        if isinstance(host.active.context, ControllerVersionScope):
+            protected += host.active.context.owned_resources()
+    local = _version_scope(owner, version, initial=initial)
     try:
+        scoped = (EndpointContext if definition.endpoint else ControllerContext)(owner, local)
         if definition.endpoint:
             endpoint = definition.policy(scoped, owner.lab_execution, deepcopy(options))
             if getattr(endpoint, 'host_execution', None) is not owner.host_execution:
+                if getattr(endpoint, 'policy', None) is not None and getattr(endpoint, 'harness', None) is not None:
+                    _discard_borrowed_cleanups(local, _controller_parts(endpoint))
                 raise ValueError('Controller endpoint belongs to another run execution')
             _require_independent(endpoint, protected, 'endpoint')
-            _require_independent(endpoint.harness, protected, 'harness')
-            _own_close(local, endpoint.harness)
+            _claim_parts(local, endpoint.policy, endpoint.harness, protected)
         else:
             policy = definition.policy(scoped, deepcopy(options))
-            _require_independent(policy, protected, 'policy')
-            _own_close(local, policy)
+            _claim_parts(local, policy, None, protected)
             if not callable(policy) and optional_method(policy, 'decide') is None:
                 raise TypeError('Controller factory must return a policy or explicit endpoint')
             custom = definition.harness(scoped, deepcopy(options)) if definition.harness is not None else None
             if custom is not None:
-                _require_independent(custom, protected, 'harness')
-                if custom is not policy:
-                    _own_close(local, custom)
+                _claim_parts(local, policy, custom, protected)
                 endpoint = build_harness_decision(scoped, owner.lab_execution, policy=policy, harness=custom)
             else:
                 endpoint = build_default_decision(scoped, owner.lab_execution, policy=policy)
-                _own_close(local, endpoint.harness)
+                _claim_parts(local, policy, endpoint.harness, protected)
         required_policy = _policy(endpoint)
-        _require_independent(endpoint.policy, protected, 'policy')
-        _require_independent(required_policy, protected, 'policy')
-        _discard_borrowed_cleanups(local, protected)
-        endpoint.controller_version = local._controller_version
+        endpoint.controller_version = local.version_id
         endpoint.model_scope = scoped.models.scope
         if endpoint.operation_router.lab is not owner.lab_execution:
             raise ValueError('Controller endpoint must retain the assembled Lab routing')
-        if definition.endpoint:
-            endpoint.action_space = enforce_host_permissions(endpoint.action_space, owner.action_permissions)
         local.controller_report = optional_method(required_policy, 'report')
-        validate_controller_requirements(endpoint, owner.lab_execution)
         if memory is None and definition.memory is not None:
             memory = definition.memory(deepcopy(options))
         if (memory is None and initial and local.restoring and local.data_dir is not None
@@ -236,6 +291,10 @@ def build_controller(owner, definition, options, version, *, initial=False, memo
         if memory is not None:
             memory.install(endpoint, owner=local,
                 path=local.data_dir / 'feedback_learning.json' if local.data_dir is not None else None)
+        if not initial:
+            # Assembly validates the initial port; Memory can extend the final action space.
+            validate_host_endpoint(endpoint, owner)
+        _discard_borrowed_cleanups(local, protected)
         return BuiltController(endpoint, local)
     except BaseException as error:
         _discard_borrowed_cleanups(local, protected)
@@ -254,14 +313,16 @@ def build_controller(owner, definition, options, version, *, initial=False, memo
 def initial_controller_version(selection, model):
     from rsicomposer.loops.contracts.controller_version import ControllerVersion
     # Config/model determine the initial version without a random restore ID.
-    from rsicomposer.runtime.storage.codec import encode
-    identity = sha256(json_bytes(encode({'selection': selection, 'model': model}))).hexdigest()
+    identity = sha256(json_bytes({'selection': selection, 'model': encode(model)})).hexdigest()
     return ControllerVersion('initial-' + identity, deepcopy(selection), model=model)
 
 
 def _policy(endpoint):
+    return _policy_implementation(endpoint.policy)
+
+
+def _policy_implementation(policy):
     from rsicomposer.harnesses.decision.public_policy import ResearchPolicyAdapter
-    policy = endpoint.policy
     return policy.implementation if isinstance(policy, ResearchPolicyAdapter) else policy
 
 
@@ -275,6 +336,12 @@ def _version_ref(value):
         raise OperationArgumentError('version must be a ControllerVersion ArtifactRef')
     value.__post_init__()
     return value
+
+
+def _check_controller_training(result, model):
+    if not isinstance(result, TrainingResult) or result.model != model:
+        raise ValueError('Training result must match the requested Controller model')
+    result.require_target('decision_maker')
 
 
 def controller_capabilities(handler):
@@ -312,12 +379,42 @@ class ControllerHost:
             from rsicomposer.harnesses.decision.learner.backends.mock import MockDecisionLearner
             learner = MockDecisionLearner(context.artifacts)
         self.learning = ControllerLearning(self, learner)
-        self.capabilities = controller_capabilities(self.request)
+        self.capabilities = self._prepare_capabilities(self.active)
         self._label(self.active)
+
+    def _prepare_capabilities(self, instance):
+        # An explicit ControllerPort owns its own capture/restore contract. Only
+        # the built-in adapter depends on the Policy and Harness state ports.
+        if isinstance(instance, BuiltController) and not instance.can_archive():
+            denied = ActionPermissions(check=SensitivePolicy('controller-archive', '1', (
+                {'name': 'host.adopt_controller'},)))
+            endpoint = instance.endpoint
+            endpoint.action_space = enforce_host_permissions(endpoint.action_space, denied)
+            return Capabilities()
+        return controller_capabilities(self.request)
 
     @property
     def version_id(self):
         return self.current_version.version_id
+
+    def bind_context_callbacks(self):
+        """Route run-level callbacks to the newly installed Controller owner."""
+        source = self.active.context
+        if source is self.context:
+            # A manual initial port may already have installed both callbacks on
+            # the assembly itself. Never replace them with proxies to themselves.
+            if source.controller_report is None:
+                source.controller_report = lambda: {}
+            return
+        self.context.controller_report = lambda: (source.controller_report()
+            if source.controller_report is not None else {})
+        self.context._memory_observer = lambda event: (source._memory_observer(event)
+            if source._memory_observer is not None else None)
+
+    def _used_version_id(self, version_id):
+        # The initial Controller has no adopted artifact, even after retirement.
+        return (version_id == self.version_id or version_id in self._adopted
+                or any(entry['version'].version_id == version_id for entry in self.archives))
 
     def _label(self, instance, *, delivery=None):
         self.context.host_execution.activate(instance.endpoint, self.version_id, delivery=delivery)
@@ -366,24 +463,32 @@ class ControllerHost:
         return self.request_version(_version_ref(self._validate(arguments).arguments['version']))
 
     def request_version(self, ref, *, training_result=None):
-        from rsicomposer.runtime.state.controller_versions import load_controller_version
+        if not self.capabilities.bindings:
+            raise ValueError('Controller adoption requires an archivable active Controller')
         ref = _version_ref(ref)
         version = load_controller_version(self.context.artifacts, ref)
         registered_training = self.learning.training_result(ref)
         if training_result is None:
             training_result = registered_training
-        elif registered_training is not None and registered_training != training_result:
+        elif registered_training is not None and not same_metadata(registered_training, training_result):
             raise ValueError('Controller training result differs from its registered candidate')
+        if training_result is not None:
+            _check_controller_training(training_result, version.model)
         if version.version_id == self.version_id:
-            if version != self.current_version:
+            if controller_version_bytes(version) != controller_version_bytes(self.current_version):
                 raise ValueError('Controller version ID is already bound to different content')
             return OperationResult('Controller version already active', (ref,), False,
                                    data={'controller_version': self.version_id, 'status': 'active'})
         if self.pending is not None:
-            if self.pending['ref'] != ref:
+            if self.pending['version'].version_id != version.version_id:
                 raise RuntimeError('A Controller adoption is already pending')
+            if controller_version_bytes(version) != controller_version_bytes(self.pending['version']):
+                raise ValueError('Controller version ID is already bound to different content')
+            if training_result is not None and not same_metadata(training_result, self.pending['training_result']):
+                raise ValueError('Controller training result differs from its pending adoption')
+            ref, training_result = self.pending['ref'], self.pending['training_result']
         else:
-            if version.version_id in self._adopted:
+            if self._used_version_id(version.version_id):
                 raise ValueError('Controller version IDs cannot be reused')
             calls = tuple(row['operation'] for row in self.active.endpoint.in_flight_operations()
                           if row['operation'].name != 'host.adopt_controller')
@@ -444,7 +549,7 @@ class ControllerHost:
         training = self.pending['training_result']
         if training is not None:
             from rsicomposer.runtime.models.activation import prepare_model_activation
-            self._prepared_model_target(training.model, training)
+            self._prepared_model_target(version.model, training)
             try:
                 ready = prepare_model_activation(training, self.activator,
                     idempotency_key='controller-version:' + version.version_id)
@@ -459,15 +564,23 @@ class ControllerHost:
                                           'activation_key': 'controller-version:' + version.version_id}
             if before_adoption is not None:
                 before_adoption()
-        candidate = self.build_controller(deepcopy(version))
         execution = self.context.host_execution
+        event = {'adoption_id': self.pending['adoption_id'], 'controller_version': version.version_id}
+        candidate = None
+        rejection = 'candidate construction failed'
+        invalid = (TypeError, ValueError)
         try:
+            candidate = self.build_controller(deepcopy(version))
             self._validate_replacement(candidate)
+            rejection = 'candidate state could not be restored'
+            invalid = (TypeError, ValueError, KeyError, RuntimeError)
             if version.policy_state is not None:
                 restore = optional_method(_policy(candidate.endpoint), 'restore')
                 if restore is None or restore(deepcopy(version.policy_state)) is not None:
                     raise TypeError('Candidate Controller must restore its policy state explicitly')
             self._restore_memory(candidate, version.memory_state)
+            # Binding, the outgoing archive and the guard are not candidate-state failures.
+            rejection = None
             if version.model is not None:
                 candidate.bind_model(version.model)
                 if candidate.endpoint.current_model() != version.model:
@@ -476,21 +589,50 @@ class ControllerHost:
             if actual_model is not None:
                 candidate.bind_model(actual_model)
             archive = {'version': deepcopy(self.current_version), 'state': deepcopy(old.capture())}
+            if self.context.durable:
+                json_bytes(encode(archive))
             adopted_version = deepcopy(version)
             adopted_ref = deepcopy(self.pending['ref'])
-            event = {'adoption_id': self.pending['adoption_id'], 'controller_version': version.version_id}
+            capabilities = self._prepare_capabilities(candidate)
             activation = execution.prepare_activation(candidate.endpoint, version.version_id,
                                                        delivery=self.pending['delivery'])
+            # Restoration, model binding and the staged Harness can all change
+            # requirements. Check the instance that would actually be published.
+            rejection = 'restored Controller is incompatible with its Labs'
+            invalid = (TypeError, ValueError)
+            validate_controller_requirements(candidate.endpoint, self.context.lab_execution)
+            if self.context.durable:
+                # Validate what will be frozen *after* bind_execution, just as
+                # the next durable checkpoint will see it. Portable vetoes don't apply.
+                rejection = 'state cannot be checkpointed'
+                invalid = (TypeError, ValueError, RuntimeError, RecursionError, OverflowError)
+                json_bytes(encode(deepcopy(candidate.capture())))
+            rejection = None  # A stop/guard interruption must leave the request pending.
             if before_adoption is not None:
                 before_adoption()
         except BaseException as error:
-            self._close_rejected(candidate, error)
-            raise
+            if candidate is not None:
+                self._close_rejected(candidate, error)
+            # Validation exceptions can be domain-specific subclasses (including
+            # JSONDecodeError). Specialized RuntimeErrors, however, include Host
+            # control, worker loss and RecoveryRequired; do not commit a rejection.
+            candidate_error = (type(error) in invalid if isinstance(error, RuntimeError)
+                               else isinstance(error, invalid))
+            if not self.context.durable or rejection is None or not candidate_error:
+                raise
+            # The old Controller is still live. Reject this intent normally, so
+            # DurableRecovery commits the outcome instead of wedging the run.
+            self.pending = None
+            self.context.record('controller_adoption_rejected', {**event, 'reason': rejection,
+                                                                 'error_type': type(error).__name__})
+            return LoopStepResult('progressed', reason='Controller adoption rejected: ' + rejection, decision_steps=0)
         # The activation and Host identity change together, with no user callbacks.
         execution.commit_activation(activation)
+        self.capabilities = capabilities
         self.archives.append(archive)
         self._retired.append(old)
         self.current_version, self.active = adopted_version, candidate
+        self.bind_context_callbacks()
         self._adopted[version.version_id] = adopted_ref
         self._pending_adoption_event = event
         self.pending = None
@@ -551,12 +693,14 @@ class ControllerHost:
         # Candidates cannot make receipt-shaped JSON into trusted evidence.
         for row in self.context.host_execution.memory.history():
             trusted[row.record_id] = row
-        if any(trusted.get(row.record_id) != row for row in state['history']):
+        if any(not same_metadata(trusted.get(row.record_id), row) for row in state['history']):
             raise ValueError('Controller Memory version cites missing or altered host evidence')
         return deepcopy(tuple(state['history']))
 
     def version(self, *, version_id=None, model=None):
         """Capture a candidate of the current configuration, including policy and Memory."""
+        if version_id is not None and self._used_version_id(version_id):
+            raise ValueError('Controller version IDs cannot be reused')
         policy = _policy(self.active.endpoint)
         capture = optional_method(policy, 'state')
         integration = getattr(self.active.endpoint, 'integration', None)
@@ -589,23 +733,9 @@ class ControllerHost:
             authorize(model)
 
     def _prepared_model_target(self, model, training, *, prepared=False):
-        """Reject an unusable serving route before starting deployment effects."""
-        session = getattr(self.context, 'model_session', None)
-        backend = (session.backends.get(model.backend_id) if session is not None else
-                   getattr(self.context, 'backends', {}).get(model.backend_id))
-        from rsicomposer.backends.serving.chat_completions import RemoteModelBackend
-        from rsicomposer.runtime.models.accounting import AccountedModelBackend
-        transport = backend.transport if isinstance(backend, AccountedModelBackend) else backend
-        if (not training.simulated and isinstance(transport, RemoteModelBackend)
-                and training.base.model_id == model.model_id):
-            from collections.abc import Mapping
-            bindings = getattr(transport, 'models', None)
-            if optional_method(transport, 'bind') is None or not isinstance(bindings, Mapping):
-                raise ValueError('Revision-only weight adoption requires a revision-aware serving route; '
-                                 'RemoteModelBackend must use a distinct prepared model alias')
-            if prepared and model not in bindings:
-                raise ValueError('Prepared Controller model has no registered serving alias')
-        return session if session is not None else backend
+        from rsicomposer.runtime.models.model_session import prepared_model_target
+        _check_controller_training(training, model)
+        return prepared_model_target(self.context, model, training, prepared=prepared)
 
     def restore(self, state):
         if (not isinstance(state, dict) or set(state) != {'schema', 'current_version', 'pending', 'archives',
@@ -614,7 +744,6 @@ class ControllerHost:
             raise ValueError('Invalid Controller host state')
         from rsicomposer.loops.contracts.controller_version import ControllerVersion
         from rsicomposer.loops.contracts.training import TrainingResult
-        from rsicomposer.runtime.state.controller_versions import load_controller_version
         version = state['current_version']
         if not isinstance(version, ControllerVersion):
             raise ValueError('Invalid active Controller version')
@@ -631,8 +760,11 @@ class ControllerHost:
                            for key, value in pending['plan'].items())
                     or pending['training_result'] is not None and not isinstance(pending['training_result'], TrainingResult)):
                 raise ValueError('Invalid pending Controller adoption')
-            if load_controller_version(self.context.artifacts, _version_ref(pending['ref'])) != pending['version']:
+            artifact_version = load_controller_version(self.context.artifacts, _version_ref(pending['ref']))
+            if controller_version_bytes(artifact_version) != controller_version_bytes(pending['version']):
                 raise ValueError('Pending Controller version differs from its artifact')
+            if pending['training_result'] is not None:
+                _check_controller_training(pending['training_result'], pending['version'].model)
         deliveries = state['version_deliveries']
         execution = self.context.host_execution.state
         def valid_delivery(delivery):
@@ -651,12 +783,35 @@ class ControllerHost:
             raise ValueError('Invalid pending Controller adoption event')
         if (not isinstance(state['archives'], list)
                 or any(not isinstance(entry, dict) or set(entry) != {'version', 'state'}
-                       or not isinstance(entry['version'], ControllerVersion) or not isinstance(entry['state'], dict)
+                       or not isinstance(entry['version'], ControllerVersion)
                        for entry in state['archives'])
                 or not isinstance(state['adopted'], dict)
                 or any(not isinstance(key, str) or not key or not isinstance(ref, ArtifactRef)
                        for key, ref in state['adopted'].items())):
             raise ValueError('Invalid Controller version archive')
+        # Retired state belongs to its port. Its checkpoint encoding, not a dict
+        # shape specific to BuiltController, is the Host's storage contract.
+        if self.context.durable:
+            for entry in state['archives']:
+                json_bytes(encode(entry['state']))
+        archived_ids = {entry['version'].version_id for entry in state['archives']}
+        used_ids = archived_ids | {version.version_id} | state['adopted'].keys()
+        if (len(archived_ids) != len(state['archives']) or version.version_id in archived_ids
+                or (pending is not None and pending['version'].version_id in used_ids)):
+            raise ValueError('Controller version IDs cannot be reused')
+        history = [entry['version'] for entry in state['archives']] + [version]
+        initial = self.archives[0]['version'] if self.archives else self.current_version
+        if controller_version_bytes(history[0]) != controller_version_bytes(initial):
+            raise ValueError('Initial Controller version differs from its bootstrap')
+        if state['adopted'].keys() != {item.version_id for item in history[1:]}:
+            raise ValueError('Controller adoption inventory differs from version history')
+        for item in history[1:]:
+            artifact_version = load_controller_version(self.context.artifacts, _version_ref(state['adopted'][item.version_id]))
+            if controller_version_bytes(artifact_version) != controller_version_bytes(item):
+                raise ValueError('Adopted Controller version differs from its artifact')
+        replacing = version.version_id != self.version_id
+        if not replacing and controller_version_bytes(version) != controller_version_bytes(self.current_version):
+            raise ValueError('Controller version ID is already bound to different content')
         from rsicomposer.loops.contracts.model_service import ModelRef
         prepared = state['prepared_models']
         if (not isinstance(prepared, dict) or any(not isinstance(model, ModelRef)
@@ -667,6 +822,8 @@ class ControllerHost:
             raise ValueError('Invalid prepared Controller model inventory')
         from rsicomposer.runtime.models.activation import prepare_model_activation
         for model, entry in prepared.items():
+            _check_controller_training(entry['result'], model)
+        for model, entry in prepared.items():
             self._prepared_model_target(model, entry['result'])
             ready = prepare_model_activation(entry['result'], self.activator,
                                              idempotency_key=entry['activation_key'])
@@ -674,7 +831,6 @@ class ControllerHost:
                 raise ValueError('Recovered Controller deployment differs from its prepared model')
             self._grant_prepared_model(ready, entry['result'])
         restored = deepcopy(state)
-        replacing = version != self.current_version
         candidate = self.build_controller(deepcopy(version)) if replacing else self.active
         execution = self.context.host_execution
         try:
@@ -683,16 +839,22 @@ class ControllerHost:
             else:
                 self._validate_execution(candidate.endpoint)
             candidate.restore(restored['active'])
+            capabilities = self._prepare_capabilities(candidate)
             activation = execution.prepare_activation(candidate.endpoint, version.version_id, reset_delivery=False)
+            validate_controller_requirements(candidate.endpoint, self.context.lab_execution)
+            if self.context.durable:
+                json_bytes(encode(deepcopy(candidate.capture())))
             self.learning.restore(restored['learning'])
         except BaseException as error:
             if replacing:
                 self._close_rejected(candidate, error)
             raise
         execution.commit_activation(activation)
+        self.capabilities = capabilities
         if replacing:
             self._retired.append(self.active)
         self.active, self.current_version = candidate, restored['current_version']
+        self.bind_context_callbacks()
         self.pending, self.archives, self._adopted = restored['pending'], restored['archives'], restored['adopted']
         self.prepared_models = restored['prepared_models']
         self._version_deliveries = restored['version_deliveries']
@@ -750,29 +912,30 @@ class ControllerLearning:
             raise ValueError('Training references must identify visible experience records')
         return self.training.submit(request, idempotency_key=idempotency_key)
 
-    def _normalize(self, outcome):
-        result = outcome.result
-        if outcome.status != JobStatus.SUCCEEDED or not isinstance(result, TrainingResult):
-            return outcome
-        request = self.training.request(outcome.job)
-        if result.base != request.base or 'decision_maker' not in result.candidate.affected_roles:
-            return outcome
+    @staticmethod
+    def _check_result(request, result):
+        if not isinstance(result, TrainingResult) or result.base != request.base:
+            raise ValueError('Training result does not match the submitted base')
+        result.require_target('decision_maker')
         try:
             validated_metrics(result.metrics, 'training metrics')
-        except InvalidMetrics:
+        except InvalidMetrics as error:
+            raise ValueError('Invalid training metrics: expected nonempty names and finite numeric values') from error
+
+    def _normalize(self, outcome):
+        if outcome.status != JobStatus.SUCCEEDED:
+            return outcome
+        try:
+            self._check_result(self.training.request(outcome.job), outcome.result)
+        except ValueError as error:
             return replace(outcome, status=JobStatus.FAILED, result=None,
-                simulated=outcome.simulated or result.simulated,
-                error='Invalid training metrics: expected nonempty names and finite numeric values')
+                simulated=outcome.simulated or (isinstance(outcome.result, TrainingResult) and outcome.result.simulated),
+                error=str(error))
         return outcome
 
     def _record(self, outcome):
         request = self.training.request(outcome.job)
         result = outcome.result
-        if outcome.status == JobStatus.SUCCEEDED:
-            if not isinstance(result, TrainingResult) or result.base != request.base:
-                raise ValueError('Training result does not match the submitted base')
-            if 'decision_maker' not in result.candidate.affected_roles:
-                raise ValueError('Training result does not target the Controller role')
         if outcome.terminal and outcome.job not in self.recorded:
             self.host.context.experience.record(ExperienceRecord(
                 self.record_ids.setdefault(outcome.job, str(uuid4())), 'training_run', 'decision_maker', None,
@@ -851,5 +1014,9 @@ class ControllerLearning:
         if (not isinstance(state, dict) or set(state) != {'schema', 'training', 'recorded', 'record_ids', 'candidates'}
                 or type(state['schema']) is not int or state['schema'] != 2):
             raise ValueError('Invalid Controller learning state')
-        _restore_book(self.training, deepcopy(state['training']))
+        book = state['training']
+        for job, (outcome, _) in book['handles'].items():
+            if outcome is not None and outcome.status == JobStatus.SUCCEEDED:
+                self._check_result(book['requests'][job], outcome.result)
+        _restore_book(self.training, deepcopy(book))
         self.recorded, self.record_ids, self.candidates = deepcopy(state['recorded']), deepcopy(state['record_ids']), deepcopy(state['candidates'])

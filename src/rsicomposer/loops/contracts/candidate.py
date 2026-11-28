@@ -7,7 +7,7 @@ from .model_service import Role
 
 @dataclass(frozen=True)
 class Candidate:
-    """Proposed component changes; training base and experiment parent are distinct."""
+    """Training artifacts and their intended roles, not permission to install changes."""
     candidate_id: str
     base_version: str
     changes: dict[str, ArtifactRef]

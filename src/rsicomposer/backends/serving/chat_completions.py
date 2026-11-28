@@ -46,6 +46,15 @@ class RemoteModelBackend:
     def supports_response_schema(self):
         return self.binding.kind == 'openai_chat_completions'
 
+    def validate_activation_route(self, base, model, *, prepared):
+        # The wire sends only model_id. A response's optional revision label
+        # cannot direct the request to new weights under an unchanged ID.
+        if model.backend_id != self.binding.backend_id:
+            raise ValueError('Trained model does not use this backend')
+        if base.model_id == model.model_id:
+            raise ValueError('Revision-only weight adoption requires a revision-aware serving route; '
+                             'this backend must use a distinct prepared model alias')
+
     def _validate_request(self, request):
         if not isinstance(request, GenerationRequest) or request.model.backend_id != self.binding.backend_id:
             raise ValueError('Generation request does not match this backend')

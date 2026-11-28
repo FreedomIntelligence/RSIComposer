@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import re
 
+from rsicomposer.components import config_json
 from .feedback_context import EVIDENCE_SOURCES
 from .model_service import ModelRef
 
@@ -25,7 +26,7 @@ class ControllerVersion:
                 or not isinstance(self.config.get('config', {}), dict)):
             raise ValueError('Controller version config must select a registered name and config')
         config = {'name': self.config['name'], 'config': self.config.get('config', {})}
-        object.__setattr__(self, 'config', json.loads(json.dumps(config, allow_nan=False)))
+        object.__setattr__(self, 'config', json.loads(config_json(config)))
         if self.model is not None and (not isinstance(self.model, ModelRef)
                 or any(not isinstance(value, str) or not value.strip()
                        for value in (self.model.backend_id, self.model.model_id, self.model.revision))):

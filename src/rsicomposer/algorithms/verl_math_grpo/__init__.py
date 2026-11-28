@@ -111,6 +111,12 @@ class GRPOMathLab(MathLab):
             'candidate': {'enum': ['base', 'trained']}}, 'required': ['split', 'candidate'],
             'additionalProperties': False}
 
+    def evaluation_operations(self):
+        return ('evaluate',)
+
+    def candidate_identity_fields(self):
+        return {'evaluate': ('candidate',)}
+
     def final_evaluations(self):
         if self.checkpoint_files is None or 'test' not in self.datasets:
             return ()

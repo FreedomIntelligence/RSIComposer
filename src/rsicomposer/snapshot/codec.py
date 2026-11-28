@@ -1,9 +1,4 @@
-"""State types of the bundled harnesses and contracts, registered with the runtime codec.
-
-Importing this module is what makes built-in checkpoints decodable; the
-application composition root imports it. Custom components register their
-own dataclasses with rsicomposer.runtime.storage.codec.register_types.
-"""
+"""The bundled checkpoint schema. Importing it does not mutate a type registry."""
 from rsicomposer.harnesses.decision.learner import DecisionTrainingRequest
 from rsicomposer.harnesses.decision.state import (
     DecisionContext,
@@ -31,11 +26,11 @@ from rsicomposer.loops.contracts.training import ResumeMode, TrainingOrigin, Tra
 from rsicomposer.runtime.evidence.records import ExperienceRecord
 from rsicomposer.runtime.orchestration.run_policy import EvaluationOutcome, ExperimentOutcome, RunDecision
 from rsicomposer.runtime.orchestration.runner import RunnerStep
-from rsicomposer.runtime.storage.codec import decode, encode, register_enums, register_types
+from rsicomposer.runtime.storage.codec import decode, encode
 
 __all__ = ['decode', 'encode']
 
-register_types(
+STATE_TYPES = (
     ControllerVersion, EvidenceScope,
     MetricSpec, SplitRole, Invariant, LabProfile,
     OperationProgress, JobControl, Decision, RunnerStep, RunDecision, ExperimentOutcome, EvaluationOutcome, JobOutcome,
@@ -46,4 +41,4 @@ register_types(
     TrainingResult, TrainingOrigin, OperationCall, OperationResult, HostExecutionState, ControllerHarnessState,
     SFTSpec, RLSpec, EvaluationSpec, PromptSpec,
 )
-register_enums(JobStatus, ExecutionStatus, ResumeMode)
+STATE_ENUMS = (JobStatus, ExecutionStatus, ResumeMode)

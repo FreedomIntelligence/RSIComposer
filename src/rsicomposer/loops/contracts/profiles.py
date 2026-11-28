@@ -69,6 +69,7 @@ class Invariant:
 
     baseline_before gates an operation on a successful baseline evaluation;
     min_candidates gates final sealed evaluation on distinct measured candidates;
+    measured_selection and min_candidates require declared candidate identity fields;
     once_per gates an operation on a tuple of argument values. Failed attempts
     do not satisfy rules. Replaying the same call_id retains its earlier receipt.
     """
@@ -107,8 +108,8 @@ class Invariant:
         return cls('once_per', operation=operation, key=key)
 
     @classmethod
-    def measured_selection(cls):
-        return cls('measured_selection', operation='select')
+    def measured_selection(cls, operation='select'):
+        return cls('measured_selection', operation=operation)
 
     @classmethod
     def sealed_after_finish(cls):
@@ -125,6 +126,8 @@ class LabProfile:
     primary_metric: bool = True
     split_roles: Mapping[str, SplitRole] = field(default_factory=dict)
     invariants: tuple[Invariant, ...] = ()
+    evaluation_operations: tuple[str, ...] = ()
+    candidate_identity_fields: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self):
         _text(self.name, 'Profile name')
@@ -139,6 +142,11 @@ class LabProfile:
             raise ValueError('Profile operations must be distinct OperationSpec tuples')
         if not isinstance(self.invariants, tuple) or any(not isinstance(rule, Invariant) for rule in self.invariants):
             raise TypeError('Profile invariants must be an Invariant tuple')
+        names = {spec.name for spec in specs}
+        if (not isinstance(self.evaluation_operations, tuple)
+                or any(not isinstance(name, str) or name not in names for name in self.evaluation_operations)
+                or len(set(self.evaluation_operations)) != len(self.evaluation_operations)):
+            raise ValueError('Profile evaluations must name distinct profile operations')
         if (not isinstance(self.split_roles, Mapping)
                 or any(not isinstance(name, str) or not name or not isinstance(role, SplitRole)
                        for name, role in self.split_roles.items())):
@@ -151,6 +159,7 @@ class LabProfile:
         object.__setattr__(self, 'split_roles', dict(self.split_roles))
         object.__setattr__(self, 'operations', deepcopy(self.operations))
         object.__setattr__(self, 'optional_operations', deepcopy(self.optional_operations))
+        object.__setattr__(self, 'candidate_identity_fields', candidate_fields(self.candidate_identity_fields, names))
 
     @property
     def identity(self):
@@ -190,6 +199,22 @@ class LabProfile:
                     raise ValueError(f'{self.identity}: {expected.name}.{name} must accept type {wanted}')
 
 
+def candidate_fields(declaration, operations):
+    """Detach and validate ordered, dot-separated object paths before dispatch."""
+    if not isinstance(declaration, Mapping):
+        raise TypeError('candidate_identity_fields must map operation names to field tuples')
+    result = {}
+    for name, fields in declaration.items():
+        if name not in operations:
+            raise ValueError(f'candidate_identity_fields names an undeclared operation: {name}')
+        if (not isinstance(fields, tuple) or not fields or any(not isinstance(path, str)
+                or any(not part.strip() for part in path.split('.')) for path in fields)
+                or len(set(fields)) != len(fields)):
+            raise ValueError(f'{name} candidate identity requires distinct argument paths as a nonempty tuple')
+        result[name] = fields
+    return result
+
+
 def _op(name, **fields):
     return OperationSpec(name, f'{name} profile contract', {
         'type': 'object', 'properties': {key: {'type': kind} for key, kind in fields.items()},
@@ -204,14 +229,17 @@ WEIGHT_TRAINING = LabProfile('weight-training', 1, (
 ), tuple(_op(name) for name in ('filter', 'reward', 'adapt', 'select')), {
     'generate': {'dataset': 'string', 'count': 'integer'},
     'train': {'model': 'string'}, 'evaluate': {'quality_metrics': 'object'},
-}, split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),))
+}, split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),), evaluation_operations=('evaluate',),
+    candidate_identity_fields={'evaluate': ('model',)})
 ROUND_WEIGHT_TRAINING = LabProfile('round-weight-training', 1, (
     _op('generate', round='integer', model='string', dataset='string', samples_per_prompt='integer',
         temperature='number', condition='string'),
     _op('train', round='integer', parent='string', dataset='string'),
     _op('evaluate', round='integer', model='string', dataset='string', split='string'),
 ), WEIGHT_TRAINING.optional_operations, WEIGHT_TRAINING.receipt_fields,
-    split_roles=WEIGHT_TRAINING.split_roles, invariants=WEIGHT_TRAINING.invariants)
+    split_roles=WEIGHT_TRAINING.split_roles, invariants=WEIGHT_TRAINING.invariants,
+    evaluation_operations=WEIGHT_TRAINING.evaluation_operations,
+    candidate_identity_fields=WEIGHT_TRAINING.candidate_identity_fields)
 REFERENCE_WEIGHT_TRAINING = replace(ROUND_WEIGHT_TRAINING, name='reference-weight-training', operations=(
     ROUND_WEIGHT_TRAINING.operations[0],
     _op('train', round='integer', parent='string', dataset='string', reference='string'),
@@ -224,16 +252,19 @@ ARTIFACT_SEARCH = LabProfile('artifact-search', 1, (
     'register': {'candidate_id': 'string'},
     'evaluate': {'valid': 'boolean', 'scored': 'boolean', 'scores': 'array',
                  'trace_refs': 'array', 'feedback': 'array', 'quality_metrics': 'object'},
-}, split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),))
+}, split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),), evaluation_operations=('evaluate',),
+    candidate_identity_fields={'evaluate': ('candidate_id',)})
 PROGRAM_EXECUTION = LabProfile('program-execution', 1, (
     _op('execute', program='string', split='string'),
 ), (_op('preview'),), {'execute': {'term_out': 'string', 'exc_type': ['string', 'null'],
     'exec_time': 'number', 'metrics': 'object'}}, primary_metric=False,
-    split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),))
+    split_roles=SPLIT_ROLES, invariants=(Invariant.sealed_after_finish(),), evaluation_operations=('execute',),
+    candidate_identity_fields={'execute': ('program',)})
 CODING_TASK = LabProfile('coding-task', 1, (
     _op('evaluate', artifact='object', split='string', trials='integer', task_ids='array'),
 ), receipt_fields={'evaluate': {'quality_metrics': 'object'}}, split_roles=SPLIT_ROLES,
-    invariants=(Invariant.sealed_after_finish(),))
+    invariants=(Invariant.sealed_after_finish(),), evaluation_operations=('evaluate',),
+    candidate_identity_fields={'evaluate': ('artifact.sha256',)})
 
 _BUILTINS = {profile.identity: profile for profile in (
     WEIGHT_TRAINING, ROUND_WEIGHT_TRAINING, REFERENCE_WEIGHT_TRAINING,

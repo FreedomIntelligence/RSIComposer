@@ -1,7 +1,7 @@
 """Decision action definitions and validation, independent of tool execution."""
 
 from collections.abc import Iterable
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import Protocol
 
 from rsicomposer.loops.contracts.decision import OperationCall, OperationSpec
@@ -32,6 +32,16 @@ class ModularDecisionActionSpace:
         if not isinstance(self.permissions, ActionPermissions):
             raise TypeError('Expected ActionPermissions')
         self._definitions: dict[str, DecisionActionDefinition] = {}
+        self._add(definitions)
+
+    def with_definitions(self, definitions):
+        """Extend this endpoint's catalog without mutating another endpoint's space."""
+        extended = copy(self)
+        extended._definitions = self._definitions.copy()
+        extended._add(definitions)
+        return extended
+
+    def _add(self, definitions):
         for definition in definitions:
             if not isinstance(definition.spec, OperationSpec):
                 raise TypeError("Decision definitions require an OperationSpec")

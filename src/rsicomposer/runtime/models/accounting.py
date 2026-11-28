@@ -13,6 +13,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from rsicomposer.loops.contracts.model_service import ModelRef, ModelResponseError
+from rsicomposer.runtime.models.activation import validate_activation_route
 from rsicomposer.runtime.storage.files import atomic_write, json_bytes
 
 
@@ -116,6 +117,10 @@ class AccountedModelBackend:
         if binding is not None and model.backend_id != binding.backend_id:
             return False
         return self.allowed_models is None or model in self.allowed_models
+
+    def validate_activation_route(self, base, model, *, prepared):
+        """Checking addressability does not grant admission or debit a call."""
+        validate_activation_route(self.transport, base, model, prepared=prepared)
 
     def authorize_prepared_model(self, model):
         """Host checkpoint port; call only after successful model preparation.

@@ -27,8 +27,8 @@ class OperationSpec:
     with string keys) and forwards the call, and the Lab is what enforces the
     schema. That split is deliberate, because the Host cannot know that a value is
     meaningless in the domain while the Lab can. A Lab that rejects arguments
-    raises OperationArgumentError, which the Host records as failed feedback the
-    Controller may correct; an ordinary exception keeps normal error semantics.
+    returns a failed OperationResult or raises LabToolError, which the Host records
+    as feedback the Controller may correct. Ordinary exceptions remain Host faults.
     Whatever the Lab does not enforce, the Controller is free to send.
 
     idempotent=True declares that executing the same OperationCall.call_id again,
@@ -67,7 +67,8 @@ class OperationCall:
 class OperationArgumentError(ValueError):
     """A validator's explicit rejection of model-correctable call arguments.
 
-    The default executor records this as failed feedback before calling a tool.
+    Only a pre-dispatch validator's rejection is recorded as correctable feedback.
+    From Lab.execute(), use LabToolError instead: OperationArgumentError there is a Host fault.
     It never retries the call. Permission, identity and internal provider faults
     must not use this signal; ordinary exceptions keep their host semantics.
     """

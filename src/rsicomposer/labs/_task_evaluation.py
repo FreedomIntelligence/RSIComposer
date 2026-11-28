@@ -135,6 +135,9 @@ class TaskEvaluationLab:
         """`evaluate` is this Lab's measurement; see describe()."""
         return ('evaluate',)
 
+    def candidate_identity_fields(self):
+        return {'evaluate': ('instruction',)}
+
     def state(self):
         return {'protocol': self.protocol_version, 'primary': self.primary,
                 'bindings': [binding.identity for binding in self.bindings]}

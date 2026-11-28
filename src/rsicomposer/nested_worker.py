@@ -1,128 +1,56 @@
 """Trusted composition bootstrap for independent, explicitly budgeted child runs."""
-from dataclasses import asdict, is_dataclass, replace
-from hashlib import sha256
-import importlib
-import inspect
+from dataclasses import asdict, is_dataclass
 import json
 import os
 from pathlib import Path
 import signal
 import sys
 
+from rsicomposer.components import config_json
 from rsicomposer.loops.contracts.controller_version import ControllerVersion, EvidenceScope
+from rsicomposer.loops.decision_making.action_space.access import restore_action_permissions
 from rsicomposer.runtime.storage.codec import decode, encode
 from rsicomposer.runtime.storage.files import atomic_write, json_bytes
+from rsicomposer.selection import RegistrySelection
 
 
-_MANIFEST_SCHEMA = 2
+_MANIFEST_SCHEMA = 4
 
 
-def _factory_manifest(factory):
-    if factory is None:
-        return None
-    module, qualname = getattr(factory, '__module__', None), getattr(factory, '__qualname__', None)
-    if not module or not qualname or '<' in qualname or module == '__main__':
-        raise ValueError('Nested Python factories must be importable module-level definitions; closures are unsupported')
-    imported = importlib.import_module(module)
-    target = imported
-    for part in qualname.split('.'):
-        target = getattr(target, part)
-    if target is not factory:
-        raise ValueError('Nested factory does not match its module-level binding')
-    source = inspect.getsourcefile(factory)
-    if source is None:
-        raise ValueError('Nested factories need a verifiable Python source file')
-    return {'module': module, 'qualname': qualname, 'sha256': sha256(Path(source).read_bytes()).hexdigest()}
-
-
-def _load_factory(spec):
-    target = importlib.import_module(spec['module'])
-    for part in spec['qualname'].split('.'):
-        target = getattr(target, part)
-    if _factory_manifest(target) != spec:
-        raise ValueError('Nested factory source changed after admission')
-    return target
-
-
-def build_nested_manifest(controller, labs, host_config, *, catalog=None, inherited_history=()):
+def build_nested_manifest(controller, labs, host_config, *, permissions, catalog, inherited_history=()):
     """Serialize trusted selections; arbitrary JSON import strings are forbidden."""
     from rsicomposer.methods import ControllerDefinition
-    definition = None
-    if isinstance(controller, ControllerDefinition):
-        definition = {'policy': _factory_manifest(controller.policy),
-                      'memory': _factory_manifest(controller.memory),
-                      'harness': _factory_manifest(controller.harness), 'endpoint': controller.endpoint}
-        version = ControllerVersion('nested-initial', {'name': 'nested_python', 'config': {}})
-    else:
-        version = controller if isinstance(controller, ControllerVersion) else ControllerVersion('nested-initial', controller)
-        if catalog is not None and version.config['name'] not in catalog:
-            raise ValueError('Nested candidate selects an unknown Controller')
-    if labs is not None and (not isinstance(labs, dict) or not labs):
-        raise ValueError('Nested labs must explicitly map aliases to registered selections, or be None')
+    definition = controller if isinstance(controller, ControllerDefinition) else None
+    version = (controller if isinstance(controller, ControllerVersion) else ControllerVersion(
+        'nested-initial', {'name': 'nested_python'} if definition is not None else controller))
     source = host_config.get('registry_source')
     if source is None and definition is None:
         raise ValueError('Registered NestedRun needs trusted registry_source from its parent assembly')
     if source is None and labs is None:
         raise ValueError('An explicit Python Controller needs explicit registered Labs')
-    manifest = {'schema': _MANIFEST_SCHEMA, 'version': encode(version), 'source': source, 'labs': labs, 'definition': definition,
-                'inherited_history': encode(tuple(inherited_history))}
-    # Validate in the parent before reserving budget or launching any worker.
-    _build_modules(manifest)
-    return json.loads(json.dumps(manifest, allow_nan=False))
+    parent = RegistrySelection.parse(source['selection']) if source is not None else RegistrySelection(None, True, [])
+    child = parent.restrict(catalog).child(version.config, labs, definition)
+    from rsicomposer.registry import Registry
+    paths = list(source['paths']) if source is not None else []
+    # Inherit the parent's pins or resolve explicit replacements once at admission.
+    # Workers reconstruct this exact selected inventory, never an unpinned override.
+    selected = Registry._rebuild(child, paths, nested=True).registration
+    return {'schema': _MANIFEST_SCHEMA, 'version': encode(version), 'selection': selected.configuration(),
+            'plugins': paths, 'action_permissions': permissions.to_dict(),
+            'inherited_history': encode(tuple(inherited_history))}
 
 
 def _build_modules(manifest):
     if not isinstance(manifest, dict) or type(manifest.get('schema')) is not int or manifest['schema'] != _MANIFEST_SCHEMA:
         raise ValueError('Unsupported nested manifest schema')
-    from rsicomposer.methods import ControllerDefinition, MethodDefinition
     from rsicomposer.registry import Registry
-    registry = Registry()
-    source = manifest['source']
-    if source is not None:
-        for plugin in source['plugins']:
-            registry.load_plugin(plugin['path'], expected_sha256=plugin['sha256'])
-            if registry._plugin_sources[-1] != plugin:
-                raise ValueError('Nested registration plugin source changed after admission')
-        original = registry.build(source['framework'])
-    else:
-        original = None
     version = decode(manifest['version'])
     if not isinstance(version, ControllerVersion):
         raise TypeError('Nested manifest needs an explicit ControllerVersion')
-    if manifest['definition'] is not None:
-        raw = manifest['definition']
-        definition = ControllerDefinition(_load_factory(raw['policy']),
-            memory=_load_factory(raw['memory']) if raw['memory'] else None, endpoint=raw['endpoint'],
-            harness=_load_factory(raw['harness']) if raw['harness'] else None)
-    elif version.config['name'] == 'current':
-        definition = original.controller_catalog['current']
-    elif version.config['name'] in registry._controllers:
-        definition = registry._controllers[version.config['name']].factory
-    else:
-        raise ValueError('Nested Controller is not available in the trusted registry')
-    labs = manifest['labs']
-    if labs is None:
-        # Initial version injection by Application selects/configures this
-        # catalog entry before any decision, including memory/model restoration.
-        catalog = dict(original.controller_catalog)
-        catalog[version.config['name']] = definition
-        return replace(original, controller_catalog=catalog,
-                       controller_selection=version.config), version
-    selected, validators, options = {}, {}, {}
-    for alias, selection in labs.items():
-        if (not isinstance(selection, dict) or set(selection) - {'name', 'config'}
-                or selection.get('name') not in registry._labs or not isinstance(selection.get('config', {}), dict)):
-            raise ValueError('Nested Lab must select a registered name and JSON config')
-        entry = registry._labs[selection['name']]
-        selected[alias], options[alias] = entry.factory, selection.get('config', {})
-        if entry.validate_config is not None:
-            validators[alias] = entry.validate_config
-    modules = MethodDefinition.from_factories(controller=definition, labs=selected,
-        version='nested-1', validate_labs=validators).factory({'controller': version.config['config'], 'labs': options})
-    catalog = dict(modules.controller_catalog)
-    catalog[version.config['name']] = definition
-    return replace(modules, controller_catalog=catalog, controller_selection=version.config,
-                   registry_source=source), version
+
+    if config_json(manifest['selection']['controller']) != config_json(version.config):
+        raise ValueError('Nested Controller version differs from the admitted selection')
+    return Registry.reconstruct(manifest['selection'], plugins=manifest['plugins'], _nested=True), version
 
 
 def _export_evidence(view, store):
@@ -209,6 +137,7 @@ def main(path):
     app = None
     try:
         app = Application(config, modules=modules, _host_budget=budget,
+                          action_permissions=restore_action_permissions(bootstrap['manifest']),
                           _initial_controller_version=version,
                           _delegated_models=bootstrap['delegated_models'],
                           _inherited_controller_history=decode(bootstrap['manifest']['inherited_history']))

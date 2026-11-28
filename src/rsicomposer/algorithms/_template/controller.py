@@ -15,7 +15,7 @@ contract:
     state(), restore()      Save and reload Policy state for durable runs.
 
 The factory receives (context, config). context.lab_catalog describes the Labs;
-config is this Controller's section of the run config.
+the assembly passes this Policy only its search options.
 
 The first candidate is evaluated synchronously and the rest as background jobs,
 so one run shows both receipt paths. While a job runs, its call ID is in
@@ -32,16 +32,11 @@ CANDIDATES = (
 
 
 def validate_config(config):
-    # harness and memory select the optional prototypes registered in __init__.py.
     limit = config.get('max_evaluations', len(CANDIDATES))
-    if set(config) - {'max_evaluations', 'harness', 'memory', 'scoreboard_rows'}:
-        raise ValueError('Unknown template Controller option')
+    if set(config) - {'max_evaluations'}:
+        raise ValueError('Unknown prompt search Policy option')
     if type(limit) is not int or not 1 <= limit <= len(CANDIDATES):
         raise ValueError(f'max_evaluations must be between 1 and {len(CANDIDATES)}')
-    if config.get('harness', 'default') not in ('default', 'scoreboard'):
-        raise ValueError('harness must be default or scoreboard')
-    if config.get('memory', 'none') not in ('none', 'best_score'):
-        raise ValueError('memory must be none or best_score')
 
 
 class PromptSearchController:

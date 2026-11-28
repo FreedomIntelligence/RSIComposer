@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from rsicomposer.loops.contracts.model_service import ModelRef
 
 
-SNAPSHOT_SCHEMA_VERSION = 35
+SNAPSHOT_SCHEMA_VERSION = 36
 
 
 @dataclass(frozen=True)

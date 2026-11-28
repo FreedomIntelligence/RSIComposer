@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rsicomposer.assembly import AssemblyContext, ModuleAssembly, read_saved_module_layout
+from rsicomposer.components import config_json
 from rsicomposer.loops.contracts.model_service import BackendBinding, ModelRef
 from rsicomposer.loops.decision_making.action_space.access import ActionPermissions, restore_action_permissions
 from rsicomposer.runtime.evidence.retrieval import BasicEvidenceRepository
@@ -22,7 +23,6 @@ from rsicomposer.runtime.orchestration.run_policy import RunPolicy
 from rsicomposer.runtime.state.provenance import RunSource
 from rsicomposer.runtime.storage.artifacts import FileArtifactStore
 from rsicomposer.runtime.storage.files import atomic_write, json_bytes
-import rsicomposer.snapshot.codec  # noqa: F401  registers built-in checkpoint state types
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,15 @@ class Application:
                  _cli_launch: bytes | None = None, _initial_literature: tuple[Path, ...] = ()):
         if (_cli_launch is not None or _initial_literature) and (not durable or _restore or _resume):
             raise ValueError('CLI launch metadata requires a new durable run')
+        from rsicomposer.runtime.state.controller_versions import controller_run_record, restore_controller_seed
+        self._requires_parent = _host_budget is not None or any((_delegated_models or {}).values())
+        if self._requires_parent and (durable or _restore):
+            raise ValueError('Parent-bound runs cannot use independent durable recovery or snapshot restore')
+        if _restore and (_initial_controller_version is not None or _inherited_controller_history):
+            raise ValueError('Cannot replace the saved Controller bootstrap during restore')
+        if not _restore:
+            self._run_record = json_bytes(controller_run_record(config, _initial_controller_version,
+                _inherited_controller_history, parent_bound=self._requires_parent))
         if not isinstance(modules, ModuleAssembly):
             raise TypeError('modules must be a ModuleAssembly')
         has_lab = modules.has_port('lab')
@@ -184,21 +193,19 @@ class Application:
                 if (root / 'lab_execution.json').exists() and (
                         not has_lab or (recovery_contract is None and modules.state_factory is None)):
                     raise TypeError('Lab execution requires explicit recovery integration; automatic restore is unsupported')
-                if (root / 'research_assembly.json').exists() and memory is None:
-                    # Registered Controllers construct Memory only after the
-                    # restored workspace and permissions are established.
-                    selection = (_initial_controller_version.config if _initial_controller_version is not None
-                                 else modules.controller_selection)
-                    definition = modules.controller_catalog.get(selection['name']) if selection is not None else None
-                    if (definition is None or definition.memory is None
-                            or (modules.registry_source is None and modules.method_identity is None)):
+                self._run_record = (root / 'run.json').read_bytes()
+                if _resume:
+                    from hashlib import sha256
+                    if checkpoint.get('run_bootstrap_sha256') != sha256(self._run_record).hexdigest():
+                        raise ValueError('Recovery run bootstrap digest mismatch')
+                _initial_controller_version, _inherited_controller_history = restore_controller_seed(
+                    json.loads(self._run_record), config)
+                if (root / 'research_assembly.json').exists() and not module_layout['memory']:
+                    initial = (modules.controller_catalog.get(_initial_controller_version.config['name'])
+                               if _initial_controller_version is not None else None)
+                    if initial is None or initial.memory is None:
                         raise ValueError('Supply the original Controller Memory when restoring this workspace')
                 modules.validate_saved(root)
-                existing = json.loads((root / 'run.json').read_text())
-                if existing['run_id'] != config.run_id or existing['objective'] != config.objective:
-                    raise ValueError('Restored run identity does not match configuration')
-                if existing.get('parent_run_id') != config.parent_run_id:
-                    raise ValueError('Restored run source does not match configuration')
             self.store = SQLiteExperienceStore(root / 'experience.sqlite3')
             self._resources.callback(self.store.close)
             self.experience = BasicEvidenceRepository(self.store, run_id=config.run_id)
@@ -212,14 +219,13 @@ class Application:
                 sandbox=self.sandbox, roles=dict(config.roles), data_dir=root, execution=config.execution,
                 with_learning=config.learning == 'mock', experience_limit=config.experience_limit,
                 memory_limit=config.memory_limit, restoring=_restore, resuming=_resume,
-                action_permissions=self._action_permissions,
+                action_permissions=self._action_permissions, durable=durable, budget=_host_budget,
+                host_config={'application': config.to_dict(), 'registry_source': modules.registry_source},
             )
             self.assembly._delegated_models = _delegated_models
-            self.assembly.budget = _host_budget
             self.assembly._initial_controller_version = _initial_controller_version
             self.assembly._inherited_controller_history = deepcopy(tuple(_inherited_controller_history))
             self.assembly.run_id, self.assembly.parent_run_id = config.run_id, config.parent_run_id
-            self.assembly.host_config = {'application': config.to_dict(), 'registry_source': modules.registry_source}
             self.assembly._resource_config = config.resources
             self.assembly._budget_config = config.budget
             # A shared executor can own work beyond the active Lab/environment.
@@ -234,14 +240,17 @@ class Application:
                 module_layout['lab_profiles'] = declared
             if self.runner._declared_evaluations:
                 module_layout['evaluation_operations'] = sorted(self.runner._declared_evaluations)
+                candidate_fields = optional_method(self.assembly.host_execution, 'evaluation_candidate_fields')
+                if candidate_fields is not None and (fields := candidate_fields()):
+                    module_layout['candidate_identity_fields'] = fields
             saved_layout = read_saved_module_layout(root) if _restore else None
-            if saved_layout is not None and saved_layout != module_layout:
-                raise ValueError('Lab profile, primary metric or evaluation operations differ from saved method identity')
+            if saved_layout is not None and config_json(saved_layout) != config_json(module_layout):
+                raise ValueError('Lab profile, primary metric, evaluation operations or candidate identity differ from saved method identity')
             atomic_write(root / 'module_assembly.json', json_bytes(module_layout))
             if self.assembly.lab_execution is not None:
                 atomic_write(root / 'lab_execution.json', json_bytes({'restore': 'requires_explicit_integration'}))
             if not _restore:
-                atomic_write(root / 'run.json', json_bytes({**config.source.to_dict(), 'objective': config.objective}))
+                atomic_write(root / 'run.json', self._run_record)
                 atomic_write(root / 'config.json', json_bytes(config.to_dict()))
             if durable:
                 self.recovery = DurableRecovery(self, recovery_contract)
@@ -267,7 +276,7 @@ class Application:
             raise
 
     @classmethod
-    def resume(cls, data_dir, *, modules=None, recovery_contract=None, run_policy=None):
+    def resume(cls, data_dir, *, modules=None, plugins=(), recovery_contract=None, run_policy=None):
         """Reopen the same durable workspace; uncertain effects remain blocked.
 
         Factories must reconstruct resources without starting work. The workspace
@@ -282,6 +291,11 @@ class Application:
             # Older applications saved relative paths from their launch directory.
             # The locked checkpoint verifies the original absolute path before assembly.
             config = replace(config, data_dir=root)
+        if modules is None:
+            from rsicomposer.registry import Registry
+            modules = Registry.from_workspace(root, plugins=plugins)
+        elif plugins:
+            raise ValueError('Supply either modules or registration plugins for resume')
         return cls(config, modules=modules, recovery_contract=recovery_contract, run_policy=run_policy,
                    durable=True, _restore=True, _resume=True)
 

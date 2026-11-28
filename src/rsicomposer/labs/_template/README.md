@@ -64,8 +64,9 @@ and `poll_job()` checks it.
    `cp -R src/rsicomposer/labs/_template ./my_lab`.
 2. Register a Lab name in [`__init__.py`](__init__.py) and select it in
    [`configs/run.json`](configs/run.json) under `framework.labs.math.name`.
-   `math` is the run-local alias used by the template Controller. Give the
-   matching Lab component registration the same name if a method factory will resolve it.
+   `math` is the run-local alias used by the template Controller. The method
+   reuses that same registration via `registry.lab('template_math')`; if you
+   rename the public Lab, update that lookup when using the whole method.
 3. Set `framework.labs.math.config.datasets.train` and `.dev` to your input
    files. The template resolves relative paths from the current directory.
    To use the copied fixtures, set the paths to `my_lab/data/train.jsonl`
@@ -89,8 +90,9 @@ The Controller calls `math.evaluate`; the Lab receives `evaluate` and returns
 its declared primary metric (`accuracy` in this example).
 
 Keep train and dev disjoint. For blind final evaluation, declare a `SEALED`
-split and implement `final_evaluations()` to give the host a final-evaluation
-plan; see [Coding Meta-Agent’s Lab](../../algorithms/coding_meta_agent/lab.py).
+split and implement `final_evaluations()` with operations declared as evaluations
+by your profile or `evaluation_operations()`; see
+[Coding Meta-Agent’s Lab](../../algorithms/coding_meta_agent/lab.py).
 The template declares its inputs in `data_bindings()`: one
 [`DatasetBinding`](../../loops/contracts/data.py) per split, with the split role,
 source path, format version, content hash, and row IDs. The host records the

@@ -13,8 +13,10 @@ from rsicomposer.harnesses.decision.tools import bind_operation_result, execute_
 from rsicomposer.harnesses.memory import HistoryEntry
 from rsicomposer.loops.contracts.coordination import LoopStepResult, OperationResult
 from rsicomposer.loops.contracts.decision import Decision, DecisionInput, _host_decision_id
+from rsicomposer.loops.contracts.evaluation import tag_evaluation_identity
 from rsicomposer.loops.contracts.jobs import JobOutcome, JobRef, JobStatus, OperationProgress
 from rsicomposer.loops.contracts.lifecycle import ExecutionStatus
+from rsicomposer.loops.contracts.profiles import candidate_fields
 from rsicomposer.loops.decision_making.action_space.access import authorized_space
 from rsicomposer.runtime.capabilities import optional_method
 from rsicomposer.runtime.evidence.records import ExperienceRecord
@@ -157,9 +159,41 @@ class HostExecution:
         self.state = HostExecutionState()
         self.endpoint = None
         self.in_flight_hook = None
+        self._evaluations = {}
         self._receipt_listeners, self._cleanup_callbacks = [], []
         self.operation_scheduler = OperationScheduler(self)
         self.ledger = OperationLedger(self)
+
+    def bind_evaluations(self, lab, classify, *, grouped):
+        """Bind the installed catalog before execution, never query a provider while delivering a receipt."""
+        catalog = {spec.name for spec in lab.describe()} if classify is not None else set()
+        names = {name for name in catalog if classify(name)}
+        self._evaluations = {}
+        if not names:
+            return
+        if grouped:
+            metrics = lab.catalog_metrics()
+            declarations = {name: metrics[name.rpartition('.')[0]] for name in names}
+        else:
+            declare = optional_method(lab, 'primary_metric')
+            declarations = dict.fromkeys(names, declare() if declare is not None else None)
+        # A declared evaluation need not announce a scorer. Its receipt can
+        # still explicitly attest a protocol; never take it from the request.
+        declare = optional_method(lab, 'candidate_identity_fields')
+        fields = candidate_fields(declare() if declare is not None else {}, catalog)
+        for name, metric in declarations.items():
+            scorer = getattr(metric, 'scorer', None)
+            self._evaluations[name] = (scorer if isinstance(scorer, str) and scorer.strip() else None,
+                                       fields.get(name, ()))
+
+    def evaluation_candidate_fields(self):
+        return {name: list(fields) for name, (_, fields) in self._evaluations.items() if fields}
+
+    def evaluation_outcome(self, call, receipt):
+        from rsicomposer.runtime.orchestration.run_policy import EvaluationOutcome
+        if call.name in self._evaluations:
+            return EvaluationOutcome.from_call(call, receipt, candidate_fields=self._evaluations[call.name][1])
+        return None
 
     def activate(self, endpoint, controller_version=None, *, reset_delivery=True, delivery=None):
         self.commit_activation(self.prepare_activation(endpoint, controller_version,
@@ -230,7 +264,16 @@ class HostExecution:
         return self.ledger._decision_graph()
 
     def add_receipt_listener(self, listener, *, owner):
-        self._receipt_listeners.append((owner, listener))
+        """Return an idempotent detach for this registration, not for all equal callbacks."""
+        registration = (owner, listener)
+        self._receipt_listeners.append(registration)
+
+        def detach():
+            for index, item in enumerate(self._receipt_listeners):
+                if item is registration:
+                    del self._receipt_listeners[index]
+                    break
+        return detach
 
     def add_cleanup(self, callback):
         self._cleanup_callbacks.append(callback)
@@ -982,12 +1025,16 @@ class OperationScheduler:
 
     def complete(self, ident, result, *, elapsed=None, error=None):
         task = self.tasks[ident]
-        read_elapsed = optional_method(getattr(self.host.tools, 'lab', None), 'receipt_elapsed')
+        lab = getattr(self.host.tools, 'lab', None)
+        read_elapsed = optional_method(lab, 'receipt_elapsed')
         if read_elapsed is not None:
             saved_elapsed = read_elapsed(task['call'])
             if saved_elapsed is not None:
                 elapsed = saved_elapsed
         result = bind_operation_result(task['call'], result, simulated=task['simulated'])
+        declaration = self.host._evaluations.get(task['call'].name)
+        if declaration is not None:
+            result = tag_evaluation_identity(task['call'], result, *declaration)
         try:
             self.host.ledger._adoption(task['decision_id'], result)
         except (TypeError, ValueError) as invalid:
@@ -1009,19 +1056,30 @@ class OperationScheduler:
                 raise ValueError('Interrupted call is absent from the restored operation queue')
         lab = getattr(self.host.tools, 'lab', None)
         stored = optional_method(lab, 'stored_receipt')
-        receipts = [stored(call) if stored is not None else None for call in calls]
-        for call, saved in zip(calls, receipts):
+        read_job = optional_method(lab, 'receipt_job')
+        receipts = []
+        for call in calls:
+            saved = stored(call) if stored is not None else None
             task = self.tasks[call.call_id]
-            if task['status'] == 'waiting' and not (isinstance(saved, OperationResult) or
-                    (isinstance(saved, JobRef) and saved == task['job'])):
+            terminal = isinstance(saved, OperationResult)
+            job = read_job(call) if terminal and read_job is not None else (None if terminal else saved)
+            if job is not None and not isinstance(job, JobRef):
+                raise TypeError('Journaled terminal JobRef is invalid')
+            if task['status'] == 'waiting' and job != task['job'] and not (terminal and read_job is None):
                 raise ValueError('Journaled Lab job does not match the interrupted JobRef')
-        for call, saved in zip(calls, receipts):
-            if isinstance(saved, JobRef) and lab.reattach_job(call, saved) is None:
-                self.tasks[call.call_id].update(status='waiting', job=saved)
+            receipts.append((call, task, job, terminal))
+        for call, task, job, terminal in receipts:
+            if job is not None and not terminal and lab.reattach_job(call, job) is not None:
+                # Reattachment can itself settle a lost job. A managed journal
+                # still owns progress newer than the interrupted Host cursor.
+                if read_job is None or read_job(call) != job:
+                    job = None
+            if job is not None:
+                task.update(status='waiting', job=job)
             else:
-                self.tasks[call.call_id].update(status='queued', job=None, checkpoint=None)
-                self.tasks[call.call_id].pop('cancel_requested', None)
-            self.host.state.decision_records[self.tasks[call.call_id]['decision_id']]['status'] = 'executing'
+                task.update(status='queued', job=None, checkpoint=None)
+                task.pop('cancel_requested', None)
+            self.host.state.decision_records[task['decision_id']]['status'] = 'executing'
 
     def close(self):
         # Pending submissions can be cancelled; Python cannot safely interrupt

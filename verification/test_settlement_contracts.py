@@ -1,16 +1,26 @@
-"""Offline regressions for Controller/Lab settlement and receipt ownership."""
+"""Offline regressions for settlement, model activation and receipt ownership."""
 from copy import deepcopy
+from dataclasses import asdict, replace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from rsicomposer.application import Application
+from rsicomposer.backends.serving import MockModelBackend, RemoteModelBackend
+from rsicomposer.backends.serving.vllm import VLLMBackend
+from rsicomposer.loops.contracts.candidate import Candidate
 from rsicomposer.loops.contracts.coordination import OperationResult
 from rsicomposer.loops.contracts.decision import Decision
 from rsicomposer.loops.contracts.jobs import JobOutcome, JobRef, JobStatus
+from rsicomposer.loops.contracts.model_service import BackendBinding, GenerationRequest, GenerationResponse, ModelRef
+from rsicomposer.loops.contracts.training import TrainingResult
+from rsicomposer.methods import ControllerDefinition
+from rsicomposer.runtime.models.accounting import AccountedModelBackend
+from rsicomposer.runtime.models.model_session import HostModelSession
 from rsicomposer.runtime.orchestration.run_policy import TimeRunPolicy
+from rsicomposer.runtime.state.controller_versions import save_controller_version
 from rsicomposer.runtime.state.recovery import RecoveryRequired
 from rsicomposer.runtime.storage.codec import decode, encode
-from verification import test_run_control as run
+from verification import test_controller_adoption as adoption, test_run_control as run
 
 
 class SettlementContractsTest(unittest.TestCase):
@@ -301,6 +311,218 @@ class SettlementContractsTest(unittest.TestCase):
                         with self.assertRaises(RecoveryRequired):
                             resumed.runner.step(resumed.config.objective)
                     self.assertEqual(lab.calls, ['first'])
+
+
+class ModelActivationContractsTest(unittest.TestCase):
+    base = ModelRef('engine', 'weights', 'r1')
+    target = replace(base, revision='r2')
+    binding = BackendBinding(base.backend_id, 'http', 'http://localhost:1/v1')
+
+    def queue(self, transport, *, owner='session', model=None, simulated=False):
+        self.built = []
+
+        def candidate(context, options):
+            self.built.append(adoption.Policy())
+            return self.built[-1]
+
+        app, host = adoption.ControllerAdoptionTests.application(self, ControllerDefinition(candidate), model=self.base)
+        self.old = host.active
+        model = self.target if model is None else model
+        backend = transport
+        if owner != 'raw':
+            backend = AccountedModelBackend(transport, None, app.config.data_dir / 'account', max_calls=2,
+                                            max_input_tokens=None, allowed_models=(self.base,))
+        app.assembly.backends[self.base.backend_id] = backend
+        if owner == 'session':
+            app.assembly.model_session = HostModelSession({self.base.backend_id: backend}, (self.base,))
+        self.activation = Mock(return_value=model)
+        if not simulated:
+            host.activator = Mock(activate=self.activation)
+        self.training = TrainingResult(self.base, model, Candidate('trained', 'r1', {}, ('decision_maker',)),
+                                       simulated=simulated)
+        version = replace(adoption.make_version(), model=model)
+        host.request_version(save_controller_version(app.artifacts, version), training_result=self.training)
+        return host
+
+    def assert_unpublished(self, host):
+        self.assertIs(host.active, self.old)
+        self.assertEqual(self.built, [])
+        self.assertEqual(host.prepared_models, {})
+
+    def test_direct_training_intent_cannot_substitute_role_or_model(self):
+        app, host = adoption.ControllerAdoptionTests.application(self, ControllerDefinition(lambda *_: adoption.Policy()),
+                                                                model=self.base)
+        old = host.active
+        host.activator = Mock()
+        version = replace(adoption.make_version(), model=self.target)
+        ref = save_controller_version(app.artifacts, version)
+        for roles, model, message in ((('actor',), self.target, 'only decision_maker'),
+                                      (('decision_maker', 'actor'), self.target, 'only decision_maker'),
+                                      (('decision_maker',), replace(self.target, revision='other'), 'requested Controller model')):
+            with self.subTest(roles=roles, model=model):
+                result = TrainingResult(self.base, model, Candidate('trained', 'r1', {}, roles))
+                with self.assertRaisesRegex(ValueError, message):
+                    host.request_version(ref, training_result=result)
+                self.assertIsNone(host.pending)
+                self.assertIs(host.active, old)
+                host.activator.activate.assert_not_called()
+
+    def test_learner_caches_mistargeted_result_as_failure(self):
+        _, host = adoption.ControllerAdoptionTests.application(self, ControllerDefinition(lambda *_: adoption.Policy()),
+                                                               model=self.base)
+        learner = Mock()
+        job = JobRef('trained', 'offline')
+        learner.submit.return_value = job
+        wrong = TrainingResult(self.base, self.target, Candidate('trained', 'r1', {}, ('actor',)), simulated=True)
+        learner.poll.return_value = JobOutcome(job, JobStatus.SUCCEEDED, wrong)
+        host.learning.training.backend = learner
+        self.assertEqual(host.learning.train(recipe_ref='offline', idempotency_key='once'), job)
+        outcome = host.learning.poll(job)
+        self.assertEqual(outcome.status, JobStatus.FAILED)
+        self.assertTrue(outcome.simulated)
+        self.assertIn('only decision_maker', outcome.error)
+        with self.assertRaisesRegex(RuntimeError, 'no usable result'):
+            host.learning.candidate(job)
+        host.learning.close()
+        learner.poll.assert_called_once()
+        learner.cancel.assert_not_called()
+        self.assertEqual(host.learning.candidates, {})
+
+    def test_restore_rejects_wrong_training_role_before_deployment(self):
+        host = self.queue(MockModelBackend())
+        wrong = replace(self.training, candidate=replace(self.training.candidate, affected_roles=('actor',)))
+        for phase in ('pending', 'prepared'):
+            with self.subTest(phase=phase):
+                saved = host.capture()
+                if phase == 'pending':
+                    saved['pending']['training_result'] = wrong
+                else:
+                    saved['prepared_models'][self.target] = {'result': wrong, 'activation_key': 'saved'}
+                with self.assertRaisesRegex(ValueError, 'only decision_maker'):
+                    host.restore(saved)
+                self.activation.assert_not_called()
+                self.assert_unpublished(host)
+
+    def test_model_id_only_route_rejects_before_any_activation_or_grant(self):
+        for owner in ('raw', 'account', 'session'):
+            with self.subTest(owner=owner):
+                host = self.queue(RemoteModelBackend(self.binding), owner=owner)
+                with self.assertRaisesRegex(ValueError, 'revision-aware serving route'):
+                    host.advance()
+                self.activation.assert_not_called()
+                self.assert_unpublished(host)
+                if owner != 'raw':
+                    account = host.context.backends[self.base.backend_id]
+                    self.assertEqual((account.allowed_models, account.calls), ((self.base,), 0))
+
+    def test_native_backend_requires_exact_binding_after_activation(self):
+        for model in (self.target, replace(self.target, model_id='new-weights')):
+            with self.subTest(model=model):
+                transport = VLLMBackend(replace(self.binding, kind='vllm'), {
+                    self.base: 'base', replace(model, revision='other'): 'unrelated-adapter'})
+                host = self.queue(transport, model=model)
+                session = host.context.model_session
+                with self.assertRaisesRegex(ValueError, 'explicit serving binding'):
+                    host.advance()
+                self.activation.assert_called_once_with(self.training, idempotency_key='controller-version:replacement-v1')
+                self.assertFalse(session.is_model_authorized(model))
+                self.assert_unpublished(host)
+
+                def publish(result, *, idempotency_key):
+                    transport.bind(result.model, 'adapter-r2')
+                    return result.model
+
+                self.activation.side_effect = publish
+                host.advance()
+                self.assertEqual(host.active.endpoint.model_binding, model)
+                self.assertTrue(session.is_model_authorized(model))
+                self.assertEqual(session.backends[model.backend_id].calls, 0)
+                reply = {'model': 'adapter-r2', 'choices': [{'message': {'content': 'ok'}, 'finish_reason': 'stop'}]}
+                with patch.object(transport, '_request', return_value=reply) as provider:
+                    self.assertEqual(session.generate(GenerationRequest('actor', model, 'test')).provider_model, 'adapter-r2')
+                    self.assertEqual(provider.call_args.args[1]['model'], 'adapter-r2')
+                self.assertEqual(session.backends[model.backend_id].calls, 1)
+
+    def test_custom_revision_route_survives_checkpoint_without_an_alias_table(self):
+        checks, serving = [], set()
+
+        class RevisionAddressedBackend(RemoteModelBackend):
+            def validate_activation_route(self, base, model, *, prepared):
+                checks.append((base, model, prepared))
+                if prepared and model.revision not in serving:
+                    raise ValueError('revision not published')
+
+            def generate(self, request):
+                if request.model.revision not in serving:
+                    raise ValueError('revision not published')
+                return GenerationResponse('ok', request.model, False, provider_model=request.model.revision)
+
+        def publish(result, *, idempotency_key):
+            serving.add(result.model.revision)
+            return result.model
+
+        host = self.queue(RevisionAddressedBackend(self.binding))
+        self.activation.side_effect = publish
+        host.advance()
+        expected = [(self.base, self.target, False), (self.base, self.target, True)]
+        self.assertEqual(checks, expected)
+        response = host.context.model_session.generate(GenerationRequest('actor', self.target, 'test'))
+        self.assertEqual(response.provider_model, 'r2')
+        saved = host.capture()
+        serving.clear()
+        checks.clear()
+        host.restore(saved)
+        self.assertEqual(checks, expected)
+        self.assertEqual(serving, {'r2'})
+        self.assertEqual([call.kwargs['idempotency_key'] for call in self.activation.call_args_list],
+                         ['controller-version:replacement-v1'] * 2)
+
+    def test_plain_name_change_and_mock_still_adopt(self):
+        for backend, model, simulated in ((RemoteModelBackend(self.binding), replace(self.target, model_id='isolated'), False),
+                                          (MockModelBackend(), self.target, True)):
+            with self.subTest(model=model):
+                host = self.queue(backend, owner='raw', model=model, simulated=simulated)
+                host.advance()
+                self.assertEqual(host.active.endpoint.model_binding, model)
+                self.assertEqual(self.activation.call_count, int(not simulated))
+
+    def test_local_backend_needs_an_exact_readiness_receipt(self):
+        class LocalBackend:
+            def generate(self, request):
+                return GenerationResponse('ok', request.model, False)
+
+        host = self.queue(LocalBackend())
+        wrong = replace(self.target, revision='r3')
+        self.activation.return_value = wrong
+        with self.assertRaisesRegex(ValueError, 'match the requested trained version'):
+            host.advance()
+        session = host.context.model_session
+        self.assertFalse(session.is_model_authorized(wrong))
+        self.assertFalse(session.is_model_authorized(self.target))
+        self.assert_unpublished(host)
+        self.activation.return_value = self.target
+        host.advance()
+        self.assertEqual(session.generate(GenerationRequest('actor', self.target, 'test')).model, self.target)
+
+    def test_ready_receipt_cannot_create_a_missing_host_route(self):
+        host = self.queue(MockModelBackend(), owner='raw')
+        del host.context.backends[self.base.backend_id]
+        with self.assertRaisesRegex(ValueError, 'no available host backend'):
+            host.advance()
+        self.activation.assert_called_once()
+        self.assert_unpublished(host)
+
+    def test_child_activation_cannot_expand_parent_delegation(self):
+        host = self.queue(MockModelBackend(), owner='raw')
+        pins = [asdict(self.base)]
+        host.context._delegated_models = {'backends': {self.base.backend_id: {'models': pins}}}
+        with self.assertRaisesRegex(PermissionError, 'delegated model pins'):
+            host.advance()
+        self.activation.assert_not_called()
+        self.assert_unpublished(host)
+        pins.append(asdict(self.target))
+        host.advance()
+        self.assertEqual(host.active.endpoint.model_binding, self.target)
 
 
 if __name__ == '__main__':
