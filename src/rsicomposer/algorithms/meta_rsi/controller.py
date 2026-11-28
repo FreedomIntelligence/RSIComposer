@@ -6,11 +6,13 @@ import math
 from pathlib import Path
 from random import Random
 from time import monotonic
+from uuid import uuid4
 
 from rsicomposer.api import Decision, ExecutionStatus, OperationCall
 
 from .campaign import CROSS_TERM_TARGETS, VERTICAL_TARGETS, campaign_config, change_order, diagnose, route, vertical_patch
 from .evidence import comparable, trial_score
+from .trial_inputs import validate_inputs, validate_seed_id
 
 
 OPERATORS = ('data', 'harness', 'model')
@@ -22,7 +24,7 @@ NAME = 'meta_rsi'
 def validate_config(config):
     allowed = {'order', 'profiles', 'evidence', 'history_seed', 'steps', 'warmup', 'min_delta',
                'trial_steps', 'trial_budget', 'trial_lab', 'meta_targets', 'allow_simulated_trials', 'trial',
-               'campaign', 'round_offset'}
+               'campaign', 'round_offset', 'trial_inputs'}
     if not isinstance(config, dict) or set(config) - allowed:
         raise ValueError('Unknown MetaRSI Controller options')
     campaign = campaign_config(config.get('campaign'))
@@ -60,6 +62,10 @@ def validate_config(config):
         raise ValueError('Invalid development history seed')
     if config.get('trial') and targets:
         raise ValueError('A trial Controller must not start new trials')
+    if config.get('trial'):
+        validate_inputs(config.get('trial_inputs'))
+    elif 'trial_inputs' in config:
+        raise ValueError('Only a trial Controller takes a parent-approved input binding')
     if campaign is not None and (campaign['track'] == 'trial') != config.get('trial', False):
         raise ValueError('Campaign track and trial mode must agree')
     if campaign is None and set(targets) & VERTICAL_TARGETS.keys():
@@ -107,6 +113,8 @@ class MetaRSIController:
                   'adopt_ref': None, 'active_version': None, 'failed': None, 'simulated': None}
         if self.campaign:
             self.s.update(term=None, terms=[], diagnoses={}, snapshot_start=None)
+        if self.targets:
+            self.s.update(trial_seed_call_id=uuid4().hex, trial_inputs=None)
 
     def required_operations(self):
         required = ['math.' + name for name in ('seed', 'propose', 'evaluate', 'select')]
@@ -116,16 +124,30 @@ class MetaRSIController:
             required += ['math.snapshot', 'reflect.build_candidate', 'reflect.start']
         return tuple(required)
 
+    def required_lab_bindings(self):
+        requirement = {'operation_mode': 'rule'}
+        if self.targets:
+            requirement.update(trial_lab=self.config['trial_lab'], seed_call_id=self.s['trial_seed_call_id'],
+                               approved_trial_inputs=self.s['trial_inputs'], fresh_run=not self.context.restoring)
+        elif self.config.get('trial'):
+            requirement['mounted_trial_inputs'] = self.config['trial_inputs']
+        return {'math': requirement}
+
     def state(self):
         return deepcopy(self.s)
 
     def restore(self, state):
         if not isinstance(state, dict) or set(state) != set(self.s):
             raise ValueError('Invalid MetaRSI Controller state')
+        if self.targets:
+            validate_seed_id(state['trial_seed_call_id'])
+            if state['initial'] is not None or state['trial_inputs'] is not None:
+                validate_inputs(state['trial_inputs'])
         self.s = deepcopy(state)
 
     def _send(self, phase, name, **args):
-        call = OperationCall(name, args)
+        call = (OperationCall(name, args, call_id=self.s['trial_seed_call_id'])
+                if self.targets and phase == 'seed' else OperationCall(name, args))
         self.s['pending'] = {'id': call.call_id, 'phase': phase, 'name': name, 'args': args}
         if self.campaign and name.startswith('math.') and name != 'math.snapshot':
             self.s['pending']['issued_at'] = monotonic()
@@ -193,6 +215,7 @@ class MetaRSIController:
         original = {k: deepcopy(self.config[k]) for k in ('order', 'profiles', 'evidence', 'min_delta')
                     if k in self.config}
         original.update(trial=True, steps=self.trial_steps, warmup=0, meta_targets=[],
+                        trial_inputs=deepcopy(self.s['trial_inputs']),
                         history_seed=[{k: row[k] for k in ('operator', 'candidate', 'parent', 'data_count')}
                                       for row in self.s['attempts'][-24:]])
         if self.campaign:
@@ -330,6 +353,9 @@ class MetaRSIController:
             elif s['simulated'] != receipt.simulated:
                 raise ValueError('Unexpected real/simulated Math Lab transition')
         if phase == 'seed':
+            if self.targets:
+                validate_inputs(payload.get('approved_trial_inputs'))
+                s['trial_inputs'] = deepcopy(payload['approved_trial_inputs'])
             ident = self._record_candidate(payload)
             s.update(initial=ident, current=ident, available=s['candidate_data'][ident]['available'])
             return self._eval('baseline', ident, 'validation')
@@ -413,7 +439,8 @@ class MetaRSIController:
                 result = trial_score(self.context.artifacts, receipt, version_id=pair['version_id'],
                                      candidate_ref=pair['ref'], allow_simulated=self.config.get(
                                          'allow_simulated_trials', False),
-                                     expected_steps=pair['arms'][pair['i']]['steps'], start_id=s['current'])
+                                     expected_steps=pair['arms'][pair['i']]['steps'], start_id=s['current'],
+                                     approved_inputs=s['trial_inputs'])
             except (KeyError, TypeError, ValueError, OSError) as exc:
                 result = {'error': str(exc)}
             result['parent_observed_wall_seconds'] = max(0., monotonic() - pair.pop('started'))

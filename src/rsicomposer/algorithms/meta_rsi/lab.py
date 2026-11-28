@@ -10,7 +10,7 @@ from unicodedata import normalize
 
 from rsicomposer.api import MathAttempt, MathLab, ModelRef, OperationCall, OperationResult, OperationSpec, json_bytes
 from rsicomposer.labs.math.tasks import load_splits
-from rsicomposer.loops.contracts.domain_agent import DomainAgentSpec
+from rsicomposer.loops.contracts.domain_agent import DomainAgentSpec, runtime_identity
 from rsicomposer.loops.contracts.execution import LabToolError
 from rsicomposer.loops.contracts.profiles import SPLIT_ROLES
 from rsicomposer.runtime.storage.files import atomic_write
@@ -19,6 +19,7 @@ from . import aime, aime_synthesis
 from .engine import (
     FixtureEngine, TransformersEngine, digest, fit_checkpoint, inherit_checkpoint, model_identity, model_stamp, read_checkpoint,
 )
+from .trial_inputs import mounted_inputs, validate_inputs, validate_seed_id
 
 
 PROFILE = 'meta-rsi/v1'
@@ -142,48 +143,64 @@ def _manifest_subset(path, names, directory):
     return subset
 
 
-def validate_trial_cohorts(parent_config, child_config):
-    """Host-side preflight: common train; child development independent of parent measurements."""
-    for config in (parent_config, child_config):
-        validate_config(config)
+def _trial_settings(config):
+    base = config.get('base_model')
+    return (config.get('engine', 'fixture'), Path(base).expanduser().resolve() if base else None,
+            {**DEFAULT_OPTIONS, **config.get('model_options', {})}, deepcopy(config.get('wide_loop')),
+            aime.check_options(config['aime']) if 'aime' in config else None,
+            config.get('model_driven', False), config.get('paper_kernel'))
+
+
+def _cohort_identity(roles, rows, bindings):
+    train = next(binding for binding in bindings if binding.split == roles['train'])
+    train_rows = [(row.id, row.prompt, row.answer, row.verifier.spec) for row in rows[roles['train']]]
+    measured = [row for role, name in roles.items() if role != 'train' for row in rows[name]]
+    return ((train.content_digest, train.provenance, train_rows), {row.id for row in measured},
+            {' '.join(normalize('NFKC', row.prompt).split()).casefold() for row in measured})
+
+
+def _cohort_protocols(names, bindings, runtime_settings, aime_options, model_driven):
+    return {role: digest({'profile': PROFILE, 'role': role, 'content': binding.content_digest,
+        'benchmarks': binding.provenance['benchmarks'], 'runtime': runtime_settings,
+        **({'synthesis': 'model-authored-v1' if model_driven else aime_options['data_policy']}
+           if aime_options is not None and role == 'train' else {})})
+        for role, name in names.items() for binding in bindings if binding.split == name}
+
+
+def _load_trial_data(config, runtime):
+    names = config['split_roles']
+    path = Path(config['manifest']).expanduser().resolve()
+    with TemporaryDirectory(prefix='meta-rsi-preflight-') as temporary:
+        rows, bindings, _, _ = load_splits(_manifest_subset(path, names.values(), temporary), {
+            name: SPLIT_ROLES[MATH_ROLES[role]] for role, name in names.items()}, budgets=False, runtime=runtime)
+    return rows, bindings
+
+
+def _check_trial(settings, parent, child_config, *, runtime=None):
+    validate_config(child_config)
     if 'test' in child_config['split_roles']:
         raise ValueError('MetaRSI child trials may not mount a sealed split')
-
-    def runtime_inputs(config):
-        base = config.get('base_model')
-        return (config.get('engine', 'fixture'), Path(base).expanduser().resolve() if base else None,
-                {**DEFAULT_OPTIONS, **config.get('model_options', {})})
-
-    if (runtime_inputs(parent_config) != runtime_inputs(child_config)
-            or parent_config.get('wide_loop') != child_config.get('wide_loop')
-            or ('aime' in parent_config) != ('aime' in child_config)
-            or ('aime' in parent_config and 'aime' in child_config
-                and aime.check_options(parent_config['aime']) != aime.check_options(child_config['aime']))):
+    if settings != _trial_settings(child_config):
         raise ValueError('MetaRSI trials must use the parent base model, engine and generation/training options')
-
-    def load(config):
-        names = config['split_roles']
-        path = Path(config['manifest']).expanduser().resolve()
-        with TemporaryDirectory(prefix='meta-rsi-preflight-') as temporary:
-            rows, bindings, _, _ = load_splits(_manifest_subset(path, names.values(), temporary), {
-                name: SPLIT_ROLES[MATH_ROLES[role]] for role, name in names.items()}, budgets=False)
-        by_role = {role: rows[name] for role, name in names.items()}
-        train = next(binding for binding in bindings if binding.split == names['train'])
-        return by_role, (train.content_digest, train.provenance)
-
-    def measurement_ids(by_role):
-        rows = [row for role in by_role if role != 'train' for row in by_role[role]]
-        return {row.id for row in rows}, {' '.join(normalize('NFKC', row.prompt).split()).casefold() for row in rows}
-
-    parent, parent_train = load(parent_config)
-    child, child_train = load(child_config)
-    def train_rows(problems):
-        return [(row.id, row.prompt, row.answer, row.verifier.spec) for row in problems]
-
-    if parent_train != child_train or train_rows(parent['train']) != train_rows(child['train']):
+    names = child_config['split_roles']
+    rows, bindings = _load_trial_data(child_config, runtime)
+    child = _cohort_identity(names, rows, bindings)
+    if parent[0] != child[0]:
         raise ValueError('MetaRSI parent and child must share the same verified training cohort')
-    if any(a & b for a, b in zip(measurement_ids(parent), measurement_ids(child), strict=True)):
+    if parent[1] & child[1] or parent[2] & child[2]:
         raise ValueError('MetaRSI child measurement cohorts must not overlap parent measurements')
+    if runtime is not None:
+        protocols = _cohort_protocols(names, bindings, runtime['settings'],
+            aime.check_options(child_config['aime']) if 'aime' in child_config else None,
+            child_config.get('model_driven', False))
+        return mounted_inputs(names, rows, protocols)
+
+
+def validate_trial_cohorts(parent_config, child_config):
+    """Offline preflight. Live bindings use the parent's already mounted cohorts."""
+    validate_config(parent_config)
+    parent = _cohort_identity(parent_config['split_roles'], *_load_trial_data(parent_config, None))
+    _check_trial(_trial_settings(parent_config), parent, child_config)
 
 
 def _spec(name, description, properties, *, read_only=False):
@@ -220,6 +237,7 @@ class MetaRSILab(MathLab):
 
     def __init__(self, context, config):
         validate_config(config)
+        self._trial_settings = _trial_settings(config)
         self.aime = aime.check_options(config['aime']) if 'aime' in config else None
         self.wide = config.get('wide_loop')
         self._model_stage = None
@@ -267,11 +285,13 @@ class MetaRSILab(MathLab):
         self._candidates = {}
         self._measured = {}
         self._selected = None
-        self._protocols = {role: digest({'profile': PROFILE, 'role': role, 'content': binding.content_digest,
-            'benchmarks': binding.provenance['benchmarks'], 'runtime': self.runtime.settings,
-            **({'synthesis': 'model-authored-v1' if self.model_driven else self.aime['data_policy']}
-               if self.aime is not None and role == 'train' else {})})
-            for role, name in self.cohorts.items() for binding in self.bindings if binding.split == name}
+        self._protocols = _cohort_protocols(self.cohorts, self.bindings, self.runtime.settings, self.aime, self.model_driven)
+        self._trial_offers = {}  # Candidates are not active; only their own seed call can commit an offer.
+        self._approved_trial_inputs = None  # The comparison protocol survives Controller replacement.
+        # An observation about the actual mount, independent of any prospective Controller.
+        self._mounted_inputs = (mounted_inputs(self.cohorts, self.datasets, self._protocols)
+                                if 'test' not in self.cohorts and not self.model_driven else None)
+        self._mounted_inputs_sha256 = digest(self._mounted_inputs) if self._mounted_inputs is not None else None
 
         seed = {'harness': {'instruction': 'seed', 'few_shot': False}, 'data': [], 'model': {'checkpoint': None}}
         inherited = deepcopy(config.get('initial_snapshot'))
@@ -302,6 +322,48 @@ class MetaRSILab(MathLab):
         self._seed = seed
         self._seed_id = self._id(seed)
 
+    def validate_binding(self, requirement):
+        mode = 'paper_kernel' if self.paper_kernel is not None else 'model' if self.model_driven else 'rule'
+        if requirement.get('operation_mode') != mode:
+            raise ValueError(f'MetaRSI Controller and Lab operation modes differ: Lab requires {mode}')
+        fields = requirement.keys() - {'operation_mode'}
+        if mode == 'rule' and not fields:
+            return
+        if mode == 'rule' and fields == {'trial_lab', 'approved_trial_inputs', 'seed_call_id', 'fresh_run'}:
+            ticket = requirement['seed_call_id']
+            validate_seed_id(ticket)
+            if type(requirement['fresh_run']) is not bool:
+                raise ValueError('Invalid MetaRSI trial admission mode')
+            parent = _cohort_identity(self.cohorts, self.datasets, self.bindings)
+            approved = _check_trial(self._trial_settings, parent, requirement['trial_lab'],
+                                    runtime=runtime_identity(self.runtime))
+            prior_state = requirement['approved_trial_inputs']
+            if prior_state is not None and self._approved_trial_inputs is None and not requirement['fresh_run']:
+                raise ValueError('Cannot restore past the trial seed without approval from this parent Lab')
+            for prior in (self._trial_offers.get(ticket), self._approved_trial_inputs, prior_state):
+                if prior is not None:
+                    validate_inputs(prior)
+                    if prior != approved:
+                        raise ValueError('MetaRSI approved trial inputs changed since admission')
+            if requirement['fresh_run']:
+                self._approved_trial_inputs = approved
+            elif self._approved_trial_inputs is None:
+                self._trial_offers[ticket] = approved
+        elif mode == 'rule' and fields == {'mounted_trial_inputs'}:
+            expected = requirement['mounted_trial_inputs']
+            validate_inputs(expected)
+            if self._mounted_inputs != expected:
+                raise ValueError('Mounted MetaRSI trial inputs differ from parent approval')
+        elif mode != 'rule' and fields == {'min_delta'}:
+            if type(requirement['min_delta']) not in (int, float) or not 0 <= requirement['min_delta'] <= 1:
+                raise ValueError('Invalid model-driven MetaRSI release requirement')
+            if self.paper_kernel is not None:
+                from .aime_release import validate_release_options
+                if validate_release_options(self.paper_kernel)['min_gain'] < requirement['min_delta']:
+                    raise ValueError('Fixed paired release cannot be weaker than the controller margin')
+        else:
+            raise ValueError('Unknown MetaRSI Controller binding requirement')
+
     # MathLab's constructor calls self.validate_config on its *derived* configuration.
     def bind_actor(self, context, config):
         return ModelRef('local-weights', self.engine.name, self.base_digest or 'arithmetic-fixture')
@@ -317,6 +379,9 @@ class MetaRSILab(MathLab):
 
     def evaluation_operations(self):
         return ('evaluate',)
+
+    def candidate_identity_fields(self):
+        return {'evaluate': ('candidate',)}
 
     def final_evaluations(self):
         with self._lock:
@@ -362,12 +427,24 @@ class MetaRSILab(MathLab):
     def state(self):
         with self._lock:
             return {'binding': self.binding(), 'candidates': sorted(self._candidates),
-                    'measured': deepcopy(self._measured), 'selected': self._selected}
+                    'measured': deepcopy(self._measured), 'selected': self._selected,
+                    'approved_trial_inputs': deepcopy(self._approved_trial_inputs), 'trial_offers': deepcopy(self._trial_offers)}
 
     def restore(self, state):
         with self._lock:
             if not isinstance(state, dict) or state.get('binding') != self.binding():
                 raise ValueError('MetaRSI Lab input binding changed since the checkpoint')
+            approved = state['approved_trial_inputs']
+            if approved is not None:
+                validate_inputs(approved)
+            if self._approved_trial_inputs is not None and self._approved_trial_inputs != approved:
+                raise ValueError('MetaRSI approved trial inputs differ from the checkpoint')
+            offers = state['trial_offers']
+            if not isinstance(offers, dict) or (approved is not None and offers):
+                raise ValueError('Invalid MetaRSI trial admission checkpoint')
+            for ticket, offered in offers.items():
+                validate_seed_id(ticket)
+                validate_inputs(offered)
             ids, measured, selected = (state.get(key) for key in ('candidates', 'measured', 'selected'))
             if (not isinstance(ids, list) or not all(_text(key) for key in ids) or len(set(ids)) != len(ids)
                     or (ids and self._seed_id not in ids) or not isinstance(measured, dict)
@@ -389,6 +466,8 @@ class MetaRSILab(MathLab):
             self._candidates, self._measured, self._selected = candidates, deepcopy(measured), selected
             if self.paper_kernel is not None and selected is not None and not self._release_qualified(selected):
                 raise ValueError('Checkpointed selection no longer passes the paired release chain')
+            self._approved_trial_inputs = deepcopy(approved)
+            self._trial_offers = deepcopy(offers)
 
     def execute(self, call):
         args = call.arguments
@@ -401,7 +480,14 @@ class MetaRSILab(MathLab):
                 return self._model_policy(call)
             if call.name == 'seed' and args == {}:
                 key = self._write_candidate(self._seed)
-                receipt = self._receipt(call, self._candidate_data(key, self._seed), components=self._seed)
+                data = self._candidate_data(key, self._seed)
+                approval = self._approved_trial_inputs or self._trial_offers.get(call.call_id)
+                if approval is not None:
+                    data['approved_trial_inputs'] = approval
+                receipt = self._receipt(call, data, components=self._seed)
+                if approval is not None:
+                    self._approved_trial_inputs = approval
+                    self._trial_offers.clear()
                 self._candidates[key] = self._seed
                 return receipt
             required = {'parent', 'operator', 'round', 'profile'} | ({'strategy'} if self.model_driven else set())
@@ -670,6 +756,8 @@ class MetaRSILab(MathLab):
 
     def _receipt(self, call, values, *, components=None):
         data = {'protocol': PROFILE, 'simulated': self.engine.simulated, **deepcopy(values)}
+        if self._mounted_inputs_sha256 is not None:
+            data['trial_inputs_sha256'] = self._mounted_inputs_sha256
         payload = {'operation': call.name, 'request': call.arguments, 'result': data}
         if components is not None:
             if self.wide is not None:
@@ -1755,7 +1843,8 @@ class MetaRSILab(MathLab):
             if self._read_owned(self.root, name) is None:
                 self._write_named(name, make_measurement(key, self._protocols[role], records))
         return {'split': role, 'candidate_id': arguments['candidate_id'], 'baseline': arguments['baseline'],
-                'score': sum(record['correct'] for record in records) / len(records),
-                'protocol': PROFILE, 'protocol_id': self._protocols[role], 'training_performed': False,
+                 'score': sum(record['correct'] for record in records) / len(records),
+                 'protocol': PROFILE, 'protocol_id': self._protocols[role], 'training_performed': False,
+                 **({'trial_inputs_sha256': self._mounted_inputs_sha256} if self._mounted_inputs_sha256 is not None else {}),
                  **({'prompt_overlength': sum(row['finish_reason'] == 'prompt_budget' for row in records)}
                     if self.aime is not None and role in aime.DEV_ROLES else {})}

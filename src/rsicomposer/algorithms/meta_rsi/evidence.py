@@ -4,8 +4,11 @@ import math
 
 from rsicomposer.api import ArtifactRef
 
+from .engine import digest
+from .trial_inputs import validate_inputs
 
-def trial_score(store, receipt, *, version_id, candidate_ref, allow_simulated, expected_steps, start_id=None):
+
+def trial_score(store, receipt, *, version_id, candidate_ref, allow_simulated, expected_steps, approved_inputs, start_id=None):
     data = receipt.data
     terminal = data.get('validation', {})
     if (terminal.get('status') != 'finished' or terminal.get('shutdown_complete') is not True
@@ -22,6 +25,8 @@ def trial_score(store, receipt, *, version_id, candidate_ref, allow_simulated, e
     ledger = json.loads(store.read(ref))
     if ledger['parent_call_id'] != receipt.call_id or ledger['child_run_id'] != data['child_run_id']:
         raise ValueError('Nested evidence identity mismatch')
+    validate_inputs(approved_inputs)
+    inputs_sha256 = digest(approved_inputs)
     selected, seed, scores, attempts = [], [], {}, []
     mode = None
     for event in ledger['events']:
@@ -34,6 +39,14 @@ def trial_score(store, receipt, *, version_id, candidate_ref, allow_simulated, e
         if req.get('call_id') != output.get('call_id') or event.get('identity', {}).get(
                 'issuing_controller_version') != version_id or output.get('status') != 'completed':
             raise ValueError('Unexpected issuing Controller or unsuccessful child operation')
+        if payload.get('trial_inputs_sha256') != inputs_sha256:
+            raise ValueError('Child receipt does not attest the approved MetaRSI trial inputs')
+        if name == 'math.evaluate':
+            role = args.get('split')
+            if (role not in ('search', 'validation') or payload.get('split') != role
+                    or payload.get('protocol_id') != approved_inputs[role]['protocol']
+                    or type(payload.get('count')) is not int or payload['count'] != approved_inputs[role]['count']):
+                raise ValueError('Child evaluation does not match the approved MetaRSI cohort')
         is_simulated = output.get('simulated')
         if type(is_simulated) is not bool or (is_simulated and not allow_simulated):
             raise ValueError('Child evidence simulation flag does not match experiment policy')
@@ -73,9 +86,9 @@ def trial_score(store, receipt, *, version_id, candidate_ref, allow_simulated, e
     return {'baseline': base['score'], 'selected_score': winner['score'], 'delta': winner['score'] - base['score'],
             'start_id': seed[0], 'selected_id': selected[0], 'count': base['count'], 'protocol': base['protocol'],
             'attempts': [list(x) for x in attempts], 'simulated': mode, 'evidence_ref': data['evidence_ref'],
-            'allocated_budget': budget, 'budget_used': data['budget_used']}
+            'allocated_budget': budget, 'budget_used': data['budget_used'], 'trial_inputs_sha256': inputs_sha256}
 
 
 def comparable(a, b):
     return all(a[key] == b[key] for key in ('start_id', 'baseline', 'count', 'protocol', 'simulated',
-                                             'allocated_budget'))
+                                             'allocated_budget', 'trial_inputs_sha256'))

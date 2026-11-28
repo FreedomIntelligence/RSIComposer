@@ -397,3 +397,64 @@ def register(registry):
                 check=lambda request: False)) as parent:
             with self.assertRaisesRegex(TypeError, 'serializable ActionPermissions'):
                 parent.assembly.nested_manifest({'name': 'current'}, None)
+
+
+class MethodBindingTest(unittest.TestCase):
+    data = Path(__file__).resolve().parents[1] / 'src/rsicomposer/algorithms/meta_rsi/configs/cpu/data'
+
+    def options(self, *, overlap):
+        roles = {'train': 'train', 'search': 'search', 'validation': 'validation'}
+        parent = {'manifest': str(self.data / 'manifest.json'), 'split_roles': {**roles, 'test': 'test'}}
+        child = ({'manifest': parent['manifest'], 'split_roles': roles} if overlap else
+                 {'manifest': str(self.data / 'meta-manifest.json'),
+                  'split_roles': {**roles, 'search': 'meta_search', 'validation': 'meta_validation'}})
+        return {'meta_targets': ['schedule'], 'trial_lab': child, 'trial_budget': {'seconds': 24}}, parent
+
+    @staticmethod
+    def modules(style, controller, math, name='meta_rsi'):
+        if style == 'pair':
+            selection = {'controller': {'name': name, 'config': controller}, 'labs': {
+                'math': {'name': 'meta_rsi', 'config': math}, 'reflect': {'name': 'self_reflection'}}}
+        else:
+            selection = {'method': {'name': name, 'config': {'controller': controller,
+                         'labs': {'math': math, 'reflect': {}}}}}
+        return Registry().build(selection)
+
+    def test_independent_validation_is_required_for_both_compositions(self):
+        for style in ('method', 'pair'):
+            with self.subTest(style=style), TemporaryDirectory() as temp:
+                cfg = ApplicationConfig('matched trials', Path(temp) / 'invalid', {}, {})
+                with self.assertRaisesRegex(ValueError, 'must not overlap'):
+                    with Application(cfg, modules=self.modules(style, *self.options(overlap=True))):
+                        self.fail('A trial sharing its parent measurements was mounted')
+                with Application(replace(cfg, data_dir=Path(temp) / 'valid'),
+                                 modules=self.modules(style, *self.options(overlap=False))) as app:
+                    self.assertEqual(app.assembly.lab_execution.aliases, ('math', 'reflect'))
+
+    def test_adoption_rechecks_against_the_live_labs(self):
+        bad, math = self.options(overlap=True)
+        with TemporaryDirectory() as temp, Application(ApplicationConfig('replace', Path(temp), {}, {}),
+                modules=self.modules('pair', {}, math)) as app:
+            host = app.assembly.controller_host
+            old = host.active
+            version = ControllerVersion('overlapping', {'name': 'meta_rsi', 'config': bad})
+            host.request_version(save_controller_version(app.artifacts, version))
+            with self.assertRaisesRegex(ValueError, 'must not overlap'):
+                host.advance()
+            self.assertIs(host.active, old)
+
+    def test_model_paired_release_must_respect_actual_controller_margin(self):
+        _, math = self.options(overlap=False)
+        math['split_roles'].pop('test')
+        math.update(model_driven=True, aime={}, paper_kernel={'min_gain': 0.1})
+        controller = {'campaign': {'track': 'adaptive'}, 'paper_kernel': True,
+                      'warmup': 0, 'steps': 2, 'min_delta': 0.2}
+        for style in ('method', 'pair'):
+            with self.subTest(style=style), TemporaryDirectory() as temp:
+                cfg = ApplicationConfig('release gate', Path(temp) / 'invalid', {}, {})
+                with self.assertRaisesRegex(ValueError, 'weaker than the controller margin'):
+                    with Application(cfg, modules=self.modules(style, controller, math, 'meta_rsi_model')):
+                        self.fail('Weak release bound')
+                with Application(replace(cfg, data_dir=Path(temp) / 'valid'), modules=self.modules(
+                        style, {**controller, 'min_delta': 0.1}, math, 'meta_rsi_model')) as app:
+                    self.assertIsNotNone(app.assembly.controller_host)
